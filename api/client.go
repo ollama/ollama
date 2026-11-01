@@ -46,12 +46,12 @@ func checkError(resp *http.Response, body []byte) error {
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		authError := AuthorizationError{StatusCode: resp.StatusCode}
+		authError := AuthorizationError{StatusCode: resp.StatusCode, Status: resp.Status}
 		json.Unmarshal(body, &authError)
 		return authError
 	}
 
-	apiError := StatusError{StatusCode: resp.StatusCode}
+	apiError := StatusError{StatusCode: resp.StatusCode, Status: resp.Status}
 
 	err := json.Unmarshal(body, &apiError)
 	if err != nil {

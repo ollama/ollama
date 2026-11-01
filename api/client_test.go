@@ -236,7 +236,7 @@ func TestClientDo(t *testing.T) {
 				message:    "test error message",
 				statusCode: http.StatusBadRequest,
 			},
-			wantErr:        "test error message",
+			wantErr:        "400 Bad Request: test error message",
 			wantStatusCode: http.StatusBadRequest,
 		},
 		{
@@ -245,7 +245,7 @@ func TestClientDo(t *testing.T) {
 				message:    "internal error",
 				statusCode: http.StatusInternalServerError,
 			},
-			wantErr:        "internal error",
+			wantErr:        "500 Internal Server Error: internal error",
 			wantStatusCode: http.StatusInternalServerError,
 		},
 		{
@@ -265,7 +265,7 @@ func TestClientDo(t *testing.T) {
 				statusCode: http.StatusInternalServerError,
 				raw:        true,
 			},
-			wantErr:        "internal server error",
+			wantErr:        "500 Internal Server Error: internal server error",
 			wantStatusCode: http.StatusInternalServerError,
 		},
 		{
@@ -275,7 +275,17 @@ func TestClientDo(t *testing.T) {
 				statusCode: http.StatusNotFound,
 				raw:        true,
 			},
-			wantErr:        "<html><body>404 Not Found</body></html>",
+			wantErr:        "404 Not Found: <html><body>404 Not Found</body></html>",
+			wantStatusCode: http.StatusNotFound,
+		},
+		{
+			name: "plain text 404 preserves status",
+			response: testError{
+				message:    "404 page not found",
+				statusCode: http.StatusNotFound,
+				raw:        true,
+			},
+			wantErr:        "404 Not Found: 404 page not found",
 			wantStatusCode: http.StatusNotFound,
 		},
 	}
@@ -374,7 +384,7 @@ func TestHeadBlob(t *testing.T) {
 			name:       "server error",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":"stat failed"}`,
-			wantErr:    "stat failed",
+			wantErr:    "500 Internal Server Error: stat failed",
 		},
 	}
 
