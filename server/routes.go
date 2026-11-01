@@ -2902,6 +2902,13 @@ func thinkingCloseForCompletion(builtinParser parsers.Parser, thinkTagParser *th
 	return nil
 }
 
+func toolCallDelimitersForCompletion(builtinParser parsers.Parser, tools []api.Tool) (string, string) {
+	if p, ok := builtinParser.(parsers.ToolCallDelimiterParser); ok && len(tools) > 0 {
+		return p.ToolCallDelimiters()
+	}
+	return "", ""
+}
+
 func leadingBOSForModel(m *Model) string {
 	if m == nil || m.Config.Renderer == "" {
 		return ""
@@ -3329,6 +3336,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 && (builtinParser == nil || !builtinParser.HasToolSupport()) {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
+	toolCallOpen, toolCallClose := toolCallDelimitersForCompletion(builtinParser, processedTools)
 
 	ch := make(chan any)
 	go func() {
@@ -3352,6 +3360,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			ToolCallTag:     toolCallTagForCompletion(toolParser),
 			LeadingBOS:      leadingBOSForModel(m),
 			ThinkingClose:   thinkingCloseForCompletion(builtinParser, thinkTagParser),
+			ToolCallOpen:    toolCallOpen,
+			ToolCallClose:   toolCallClose,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,
