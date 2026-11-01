@@ -141,9 +141,23 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 			if !slices.Contains(files, "default-voice.safetensors") {
 				return nil, fmt.Errorf("Phonon checkpoint requires default-voice.safetensors")
 			}
+			voices, err := phononVoiceFiles(dir)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, voices...)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
+	}
+	if codecDir, err := lfm3CodecDir(dir); err != nil {
+		return nil, err
+	} else if codecDir != "" {
+		file, err := lfm3CodecFile(dir, codecDir, "model.safetensors")
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, file)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "readout.safetensors")); errors.Is(err, os.ErrNotExist) {
 		return files, nil
@@ -208,6 +222,15 @@ func SafetensorsConfigFiles(dir string) ([]string, error) {
 			}
 			names = append(names, name)
 		}
+	}
+	if codecDir, err := lfm3CodecDir(dir); err != nil {
+		return nil, err
+	} else if codecDir != "" {
+		name, err := lfm3CodecFile(dir, codecDir, "config.json")
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
 	}
 	hasSidecar, err := hasPplxSidecar(dir)
 	if err != nil {

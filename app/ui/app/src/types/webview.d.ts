@@ -66,6 +66,7 @@ interface CodexDesktopStatus {
   supported: boolean;
   installed: boolean;
   connected: boolean;
+  disconnectPending?: boolean;
   running: boolean;
   model?: string;
   models?: string[];

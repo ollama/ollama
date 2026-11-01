@@ -13,7 +13,7 @@ Start [Ollama](/quickstart) v0.40.9 or later, then download [Phonon](https://oll
 ollama pull phonon
 ```
 
-The default Phonon model uses Gradium's 31M English checkpoint and its included voice. The voice name is `default`.
+Phonon uses Gradium's 31M English checkpoint and comes with Gradium's English voices, such as `Zoey`, `Easton`, and `Freya`. Without a voice, it speaks with the checkpoint's own voice, `default`. `ollama show phonon` lists every voice. Voice names work in any case and with or without accents.
 
 ## Speak from the terminal
 
@@ -22,6 +22,9 @@ The default Phonon model uses Gradium's 31M English checkpoint and its included 
 ```shell examples.sh
 # Speak some text
 ollama run phonon "Hello from Ollama."
+
+# Choose a voice
+ollama run phonon --voice Zoey "Hi, this is Zoey."
 
 # Speak text from another program
 echo "Text from another program works too." | ollama run phonon
@@ -118,8 +121,8 @@ curl -sN http://localhost:11434/v1/audio/speech \
 ### Limits
 
 - `input` can be up to 4,096 characters per request. `ollama run` splits longer text at paragraph and sentence breaks for you.
-- Text is spoken as written. Numbers, dates, and abbreviations are not expanded into words, so write them out (`twenty-one`, not `21`) for predictable results. Emoji, bullet characters, and `*` emphasis markers are skipped.
+- Prices, numbers, symbols, email addresses, and URLs are spelled out before speaking, so `$4.59` is read as "4 dollars and 59 cents". Times and numeric dates are read as written, so write dates out (`October 23`, not `10/23`) for a natural reading. Emoji, bullet characters, and markdown markers such as `*` and `#` are skipped.
 - Options the model doesn't support, such as other formats, speeds, or `instructions`, return a `400` error instead of being ignored. An unknown voice returns a `400` error that lists the available voices.
 - Speech models only generate speech: chat, completion, and embedding requests to them return a `400` error.
 
-`ollama show phonon` and `/api/show` list the model's capabilities as `speech`. See [OpenAI compatibility](/api/openai-compatibility) for every supported field.
+`ollama show phonon` and `/api/show` list the model's capabilities as `speech`, and its voices (`voices` in `/api/show`). See [OpenAI compatibility](/api/openai-compatibility) for every supported field.

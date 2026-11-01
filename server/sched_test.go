@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -526,7 +527,7 @@ closeWait:
 		case <-ctx.Done():
 			t.Fatal("timeout")
 		default:
-			if b.srv.closeCalled {
+			if b.srv.closeCalled.Load() {
 				break closeWait
 			}
 			time.Sleep(1 * time.Millisecond)
@@ -1239,8 +1240,8 @@ func TestSchedUnloadAllRunners(t *testing.T) {
 	s.loadedMu.Unlock()
 	s.unloadAllRunners()
 
-	require.True(t, llm1.closeCalled)
-	require.True(t, llm2.closeCalled)
+	require.True(t, llm1.closeCalled.Load())
+	require.True(t, llm2.closeCalled.Load())
 }
 
 func TestSchedUnload(t *testing.T) {
@@ -1248,7 +1249,7 @@ func TestSchedUnload(t *testing.T) {
 	r1 := &runnerRef{llama: llm1, numParallel: 1}
 	r2 := withModel(&runnerRef{numParallel: 1}, &Model{AdapterPaths: []string{"A"}})
 	r1.unload()
-	require.True(t, llm1.closeCalled)
+	require.True(t, llm1.closeCalled.Load())
 	r2.unload()
 	require.Nil(t, r2.model.Load())
 }
@@ -2145,7 +2146,7 @@ type mockLlm struct {
 	detokenizeResp    string
 	detonekizeRespErr error
 	closeResp         error
-	closeCalled       bool
+	closeCalled       atomic.Bool
 	vramSize          uint64
 	totalSize         uint64
 	contextLength     int
@@ -2210,7 +2211,7 @@ func (s *mockLlm) Detokenize(ctx context.Context, tokens []int) (string, error) 
 }
 
 func (s *mockLlm) Close() error {
-	s.closeCalled = true
+	s.closeCalled.Store(true)
 	return s.closeResp
 }
 

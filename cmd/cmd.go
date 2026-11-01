@@ -921,7 +921,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	opts.WordWrap = !nowrap
+	// Wrapping rewrites the line with cursor escapes, which only a terminal
+	// can interpret; piped or redirected output stays plain text.
+	opts.WordWrap = !nowrap && term.IsTerminal(int(os.Stdout.Fd()))
 
 	// Fill out the rest of the options based on information about the
 	// model.
@@ -956,8 +958,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	applyShowResponseToRunOptions(&opts, info)
 
 	// prepend stdin to the prompt if provided; speech models read it as it
-	// arrives instead
-	speech := slices.Contains(info.Capabilities, model.CapabilitySpeech)
+	// arrives instead. Models that also chat speak when --voice is given and
+	// chat otherwise.
+	speech := slices.Contains(info.Capabilities, model.CapabilitySpeech) &&
+		(!slices.Contains(info.Capabilities, model.CapabilityCompletion) || cmd.Flags().Changed("voice"))
 	if stdinPiped && !speech {
 		in, err := io.ReadAll(os.Stdin)
 		if err != nil {
@@ -1506,6 +1510,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 						[]string{"", "    default", fmt.Sprint(resp.Thinking.Default)},
 					)
 				}
+			}
+			return
+		})
+	}
+
+	if len(resp.Voices) > 0 {
+		tableRender("Voices", func() (rows [][]string) {
+			for _, voice := range resp.Voices {
+				rows = append(rows, []string{"", voice})
 			}
 			return
 		})
@@ -2541,19 +2554,12 @@ func NewCLI() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if version, _ := cmd.Flags().GetBool("version"); version {
 				versionHandler(cmd, args)
-				return
+				return nil
 			}
-
-			if err := runWelcome(); err != nil {
-				if !errors.Is(err, launch.ErrCancelled) {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				}
-				return
-			}
-			runInteractiveTUI(cmd)
+			return cmd.Help()
 		},
 	}
 

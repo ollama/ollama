@@ -170,15 +170,15 @@ type ChatCompletionChunk struct {
 type CompletionRequest struct {
 	Model            string         `json:"model"`
 	Prompt           string         `json:"prompt"`
-	FrequencyPenalty float32        `json:"frequency_penalty"`
+	FrequencyPenalty *float32       `json:"frequency_penalty"`
 	MaxTokens        *int           `json:"max_tokens"`
-	PresencePenalty  float32        `json:"presence_penalty"`
+	PresencePenalty  *float32       `json:"presence_penalty"`
 	Seed             *int           `json:"seed"`
 	Stop             any            `json:"stop"`
 	Stream           bool           `json:"stream"`
 	StreamOptions    *StreamOptions `json:"stream_options"`
 	Temperature      *float32       `json:"temperature"`
-	TopP             float32        `json:"top_p"`
+	TopP             *float32       `json:"top_p"`
 	Suffix           string         `json:"suffix"`
 	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
@@ -627,7 +627,11 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
 			}
 		}
-		switch content := msg.Content.(type) {
+		content := msg.Content
+		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
+			content = ""
+		}
+		switch content := content.(type) {
 		case string:
 			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 			if err != nil {
@@ -750,8 +754,6 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
@@ -768,8 +770,6 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else {
-		options["top_p"] = 1.0
 	}
 
 	var format json.RawMessage
@@ -900,22 +900,22 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
 		options["seed"] = *r.Seed
 	}
 
-	options["frequency_penalty"] = r.FrequencyPenalty
+	if r.FrequencyPenalty != nil {
+		options["frequency_penalty"] = *r.FrequencyPenalty
+	}
 
-	options["presence_penalty"] = r.PresencePenalty
+	if r.PresencePenalty != nil {
+		options["presence_penalty"] = *r.PresencePenalty
+	}
 
-	if r.TopP != 0.0 {
-		options["top_p"] = r.TopP
-	} else {
-		options["top_p"] = 1.0
+	if r.TopP != nil {
+		options["top_p"] = *r.TopP
 	}
 
 	var logprobs bool
@@ -937,43 +937,25 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}, nil
 }
 
-// TranscriptionResponse is the response format for /v1/audio/transcriptions.
+// TranscriptionResponse is the response format for /v1/audio/transcriptions
+// and /v1/audio/translations.
 type TranscriptionResponse struct {
 	Text string `json:"text"`
 }
 
-// TranscriptionRequest holds parsed fields from the multipart form.
-type TranscriptionRequest struct {
-	Model          string
-	AudioData      []byte
-	ResponseFormat string // "json", "text", "verbose_json"
-	Language       string
-	Prompt         string
+// TranscriptionVerboseResponse is the verbose_json response format, with one
+// segment per transcribed clip.
+type TranscriptionVerboseResponse struct {
+	Task     string                 `json:"task"`
+	Language string                 `json:"language,omitempty"`
+	Duration float64                `json:"duration"`
+	Text     string                 `json:"text"`
+	Segments []TranscriptionSegment `json:"segments"`
 }
 
-// FromTranscriptionRequest converts a transcription request into a ChatRequest
-// by wrapping the audio with a system prompt for transcription.
-func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
-	// The audio may itself contain a question or instruction. Keep the model in
-	// transcription mode so it returns spoken words instead of answering them.
-	systemPrompt := "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio."
-	if r.Language != "" {
-		systemPrompt += " The audio is in " + r.Language + "."
-	}
-	if r.Prompt != "" {
-		systemPrompt += " Context: " + r.Prompt
-	}
-
-	stream := true
-	return &api.ChatRequest{
-		Model: r.Model,
-		Messages: []api.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "What exact words are spoken in this audio?", Images: []api.ImageData{r.AudioData}},
-		},
-		Stream: &stream,
-		Options: map[string]any{
-			"temperature": 0,
-		},
-	}, nil
+type TranscriptionSegment struct {
+	ID    int     `json:"id"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Text  string  `json:"text"`
 }

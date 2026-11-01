@@ -12,9 +12,12 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+const responsesUnavailableImageNotice = "[This image is unavailable. Attach the image again, or continue without the image.]"
+
 // ResponsesContent is a discriminated union for input content types.
 // Concrete types: ResponsesTextContent, ResponsesImageContent,
-// ResponsesOutputTextContent, ResponsesFileContent.
+// ResponsesOutputTextContent, ResponsesRefusalContent, ResponsesFileContent,
+// ResponsesEncryptedContent.
 type ResponsesContent interface {
 	responsesContent() // unexported marker method
 }
@@ -44,6 +47,14 @@ type ResponsesOutputTextContent struct {
 }
 
 func (ResponsesOutputTextContent) responsesContent() {}
+
+// ResponsesRefusalContent preserves a prior assistant refusal as visible text.
+type ResponsesRefusalContent struct {
+	Type    string `json:"type"`
+	Refusal string `json:"refusal"`
+}
+
+func (ResponsesRefusalContent) responsesContent() {}
 
 type ResponsesFileContent struct {
 	Type     string `json:"type"` // always "input_file"
@@ -143,6 +154,17 @@ func unmarshalResponsesContent(data []byte) (ResponsesContent, error) {
 			return nil, err
 		}
 		return content, nil
+	case "refusal":
+		var content struct {
+			Refusal *string `json:"refusal"`
+		}
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+		if content.Refusal == nil {
+			return nil, errors.New("refusal content requires refusal")
+		}
+		return ResponsesRefusalContent{Type: "refusal", Refusal: *content.Refusal}, nil
 	case "input_file":
 		var content ResponsesFileContent
 		if err := json.Unmarshal(data, &content); err != nil {
@@ -259,6 +281,8 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 			outputText.WriteString(v.Text)
 		case ResponsesOutputTextContent:
 			outputText.WriteString(v.Text)
+		case ResponsesRefusalContent:
+			outputText.WriteString(v.Refusal)
 		}
 	}
 	o.Output = outputText.String()
@@ -297,10 +321,46 @@ type ResponsesReasoningInput struct {
 	ID               string                      `json:"id,omitempty"`
 	Type             string                      `json:"type"` // always "reasoning"
 	Summary          []ResponsesReasoningSummary `json:"summary,omitempty"`
+	Content          []ResponsesReasoningContent `json:"content,omitempty"`
 	EncryptedContent string                      `json:"encrypted_content,omitempty"`
 }
 
 func (ResponsesReasoningInput) responsesInputItem() {}
+
+type ResponsesReasoningContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func (c *ResponsesReasoningContent) UnmarshalJSON(data []byte) error {
+	var part struct {
+		Type string  `json:"type"`
+		Text *string `json:"text"`
+	}
+	if err := json.Unmarshal(data, &part); err != nil {
+		return err
+	}
+	// Codex history can mix reasoning_text and text parts in the same item.
+	if part.Type != "reasoning_text" && part.Type != "text" {
+		return fmt.Errorf("unsupported reasoning content type %q", part.Type)
+	}
+	if part.Text == nil {
+		return errors.New("reasoning content requires text")
+	}
+	*c = ResponsesReasoningContent{Type: part.Type, Text: *part.Text}
+	return nil
+}
+
+func (r ResponsesReasoningInput) text() string {
+	var parts []string
+	for _, part := range r.Summary {
+		parts = append(parts, part.Text)
+	}
+	for _, part := range r.Content {
+		parts = append(parts, part.Text)
+	}
+	return strings.Join(parts, "\n")
+}
 
 // AgentMessageEnvelopeFormat is the routing prefix for converted agent
 // messages; internal/proxy uses the same text (cross-pinned by tests).
@@ -640,26 +700,23 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 		}
 		switch v := item.(type) {
 		case ResponsesReasoningInput:
-			// Ollama writes the same text to summary and encrypted_content. Only
-			// the summary is portable; another provider's ciphertext is opaque.
-			var parts []string
-			for _, part := range v.Summary {
-				parts = append(parts, part.Text)
-			}
-			if summary := strings.Join(parts, "\n"); summary != "" {
+			// Preserve both readable fields. Another provider's encrypted_content
+			// is opaque and must not be interpreted as plaintext reasoning.
+			if text := v.text(); text != "" {
 				if pendingThinking != "" {
 					pendingThinking += "\n"
 				}
-				pendingThinking += summary
+				pendingThinking += text
 			}
 		case ResponsesAgentMessageInput:
-			content, _, err := convertResponsesContent(v.Content)
+			content, images, err := convertResponsesContent(v.Content)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, api.Message{
 				Role:    "user",
 				Content: agentMessageContent(v.Author, v.Recipient, content),
+				Images:  images,
 			})
 		case ResponsesInputMessage:
 			msg, err := convertInputMessage(v)
@@ -794,18 +851,10 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else { //nolint:staticcheck // SA9003: empty branch
-		// TODO(drifkin): OpenAI defaults to 1.0 here, but we don't follow that here
-		// in case the model has a different default. It would be best if we
-		// understood whether there was a model-specific default and if not, we
-		// should also default to 1.0, but that will require some additional
-		// plumbing
 	}
 
 	if r.MaxOutputTokens != nil {
@@ -1122,17 +1171,23 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 	var content string
 	var images []api.ImageData
 
-	for _, c := range contents {
+	for i, c := range contents {
 		switch v := c.(type) {
 		case ResponsesTextContent:
 			content += v.Text
 		case ResponsesOutputTextContent:
 			content += v.Text
+		case ResponsesRefusalContent:
+			content += v.Refusal
 		case ResponsesEncryptedContent:
 			content += v.EncryptedContent
 		case ResponsesImageContent:
 			if v.ImageURL == "" {
-				continue // Skip if no URL (FileID not supported)
+				if strings.TrimSpace(v.FileID) != "" {
+					content += "\n\n" + responsesUnavailableImageNotice + "\n\n"
+					continue
+				}
+				return "", nil, fmt.Errorf("content[%d]: image input requires image_url as a base64 data URL", i)
 			}
 			img, err := decodeImageURL(v.ImageURL)
 			if err != nil {
@@ -1173,6 +1228,8 @@ type ResponsesIncompleteDetails struct {
 	Reason string `json:"reason"`
 }
 
+// ResponsesResponse is a Responses API response. TopP and Temperature are nil
+// (null) when the request left them to the model's defaults.
 type ResponsesResponse struct {
 	ID                 string                      `json:"id"`
 	Object             string                      `json:"object"`
@@ -1190,11 +1247,11 @@ type ResponsesResponse struct {
 	Truncation         string                      `json:"truncation"`
 	ParallelToolCalls  bool                        `json:"parallel_tool_calls"`
 	Text               ResponsesTextField          `json:"text"`
-	TopP               float64                     `json:"top_p"`
+	TopP               *float64                    `json:"top_p"`
 	PresencePenalty    float64                     `json:"presence_penalty"`
 	FrequencyPenalty   float64                     `json:"frequency_penalty"`
 	TopLogprobs        int                         `json:"top_logprobs"`
-	Temperature        float64                     `json:"temperature"`
+	Temperature        *float64                    `json:"temperature"`
 	Reasoning          *ResponsesReasoningOutput   `json:"reasoning"`
 	Usage              *ResponsesUsage             `json:"usage"`
 	MaxOutputTokens    *int                        `json:"max_output_tokens"`
@@ -1288,16 +1345,10 @@ func intValue(v *int) int {
 	return *v
 }
 
-// derefFloat64 returns the value of a float64 pointer, or a default if nil.
-func derefFloat64(p *float64, def float64) float64 {
-	if p != nil {
-		return *p
-	}
-	return def
-}
-
 // ToResponse converts an api.ChatResponse to a Responses API response.
-// The request is used to echo back request parameters in the response.
+// The request is used to echo back request parameters in the response; a
+// caller that knows the model's resolved sampling defaults sets them on the
+// request so the response reports what ran.
 func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse, request ResponsesRequest) ResponsesResponse {
 	var output []ResponsesOutputItem
 
@@ -1411,11 +1462,11 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		Truncation:         truncation,
 		ParallelToolCalls:  true, // Default value
 		Text:               text,
-		TopP:               derefFloat64(request.TopP, 1.0),
+		TopP:               request.TopP,
 		PresencePenalty:    0, // Default value
 		FrequencyPenalty:   0, // Default value
 		TopLogprobs:        0, // Default value
-		Temperature:        derefFloat64(request.Temperature, 1.0),
+		Temperature:        request.Temperature,
 		Reasoning:          reasoning,
 		Usage: &ResponsesUsage{
 			InputTokens:        chatResponse.PromptEvalCount,
@@ -1495,7 +1546,9 @@ func (c *ResponsesStreamConverter) newEvent(eventType string, data map[string]an
 	}
 }
 
-// NewResponsesStreamConverter creates a new converter with the given configuration.
+// NewResponsesStreamConverter creates a new converter with the given
+// configuration. As with ToResponse, the request's sampling settings are
+// reported, null when left to the model's defaults.
 func NewResponsesStreamConverter(responseID, itemID, model string, request ResponsesRequest) *ResponsesStreamConverter {
 	return &ResponsesStreamConverter{
 		responseID: responseID,
@@ -1599,16 +1652,6 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		reasoning = r
 	}
 
-	// Build top_p and temperature with defaults
-	topP := 1.0
-	if c.request.TopP != nil {
-		topP = *c.request.TopP
-	}
-	temperature := 1.0
-	if c.request.Temperature != nil {
-		temperature = *c.request.Temperature
-	}
-
 	return map[string]any{
 		"id":                   c.responseID,
 		"object":               "response",
@@ -1626,11 +1669,11 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"truncation":           truncation,
 		"parallel_tool_calls":  true,
 		"text":                 map[string]any{"format": textFormat},
-		"top_p":                topP,
+		"top_p":                c.request.TopP,
 		"presence_penalty":     0,
 		"frequency_penalty":    0,
 		"top_logprobs":         0,
-		"temperature":          temperature,
+		"temperature":          c.request.Temperature,
 		"reasoning":            reasoning,
 		"usage":                usage,
 		"max_output_tokens":    c.request.MaxOutputTokens,

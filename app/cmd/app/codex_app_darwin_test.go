@@ -27,6 +27,10 @@ type fakeCodexDesktopController struct {
 	installed            bool
 	running              bool
 	configured           bool
+	restorePending       bool
+	restores             int
+	restoreErrs          []error
+	restoreBeforeError   bool
 	launched             string
 	models               []string
 	stopped              bool
@@ -43,7 +47,8 @@ func (f *fakeCodexDesktopController) Installed() bool { return f.installed }
 func (f *fakeCodexDesktopController) OllamaConfigured() bool {
 	return f.configured
 }
-func (f *fakeCodexDesktopController) Running() bool { return f.running }
+func (f *fakeCodexDesktopController) RestorePending() bool { return f.restorePending }
+func (f *fakeCodexDesktopController) Running() bool        { return f.running }
 func (f *fakeCodexDesktopController) OllamaRequestCount() uint64 {
 	return f.requests
 }
@@ -133,9 +138,22 @@ func (f *fakeCodexDesktopController) RestoreFromDesktop(restartConfirmed bool) e
 	if f.running && !restartConfirmed {
 		return errCodexDesktopRestartConfirmationRequired
 	}
+	f.restores++
+	if len(f.restoreErrs) > 0 {
+		err := f.restoreErrs[0]
+		f.restoreErrs = f.restoreErrs[1:]
+		if err != nil {
+			if f.restoreBeforeError {
+				f.configured = false
+				f.restorePending = true
+			}
+			return err
+		}
+	}
 	f.stopped = true
 	f.running = false
 	f.configured = false
+	f.restorePending = false
 	return nil
 }
 
@@ -261,6 +279,56 @@ func TestSetCodexDesktopConnectionRestoresProfileAfterPartialSwitchFailure(t *te
 	}
 	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 1 || got[0] != "old-model" {
 		t.Fatalf("saved models = %v, want previous selection", got)
+	}
+}
+
+func TestChangeCodexDesktopConnectionReportsPartialCleanupAndRetry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	fake := &fakeCodexDesktopController{
+		installed: true, configured: true, restoreBeforeError: true,
+		restoreErrs: []error{errors.New("/private/fixture cleanup obstruction")},
+	}
+	codexDesktop = fake
+	result := changeCodexDesktopConnection(false, false)
+	if result.Error == "" || result.Status.Connected || !result.Status.DisconnectPending {
+		t.Fatalf("partial disconnect reported as complete: %+v", result)
+	}
+	if result.Error != "Couldn’t disconnect ChatGPT. Try again." {
+		t.Fatalf("unexpected recovery message: %q", result.Error)
+	}
+	result = changeCodexDesktopConnection(false, false)
+	if result.Error != "" || result.Status.Connected || result.Status.DisconnectPending || fake.restores != 2 {
+		t.Fatalf("cleanup retry did not finish: result=%+v, restores=%d", result, fake.restores)
+	}
+}
+
+func TestChangeCodexDesktopConnectionPendingCleanupRequiresRestartConsent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	fake := &fakeCodexDesktopController{installed: true, running: true, restorePending: true}
+	codexDesktop = fake
+	result := changeCodexDesktopConnection(false, false)
+	if !result.RestartConfirmationRequired || !result.Status.DisconnectPending || fake.restores != 0 {
+		t.Fatalf("pending cleanup bypassed restart consent: %+v", result)
+	}
+	result = changeCodexDesktopConnection(false, true)
+	if result.Error != "" || result.Status.DisconnectPending || fake.restores != 1 {
+		t.Fatalf("confirmed cleanup did not finish: %+v", result)
+	}
+}
+
+func TestChangeCodexDesktopConnectionHidesErrorDetails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	original := codexDesktop
+	t.Cleanup(func() { codexDesktop = original })
+	stubCodexDesktopModelLoader(t)
+	codexDesktop = &fakeCodexDesktopController{installed: true, launchErrs: []error{errors.New("/private/fixture token=secret")}}
+	result := changeCodexDesktopConnection(true, false)
+	if result.Error != "Couldn’t connect ChatGPT. Try again." {
+		t.Fatalf("unexpected connection message: %q", result.Error)
 	}
 }
 

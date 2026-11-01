@@ -291,6 +291,7 @@
 #define mlx_map_string_to_string_iterator_next mlx_map_string_to_string_iterator_next_mlx_gen_orig_
 #define mlx_clear_cache mlx_clear_cache_mlx_gen_orig_
 #define mlx_get_active_memory mlx_get_active_memory_mlx_gen_orig_
+#define mlx_get_array_buffer_size mlx_get_array_buffer_size_mlx_gen_orig_
 #define mlx_get_cache_memory mlx_get_cache_memory_mlx_gen_orig_
 #define mlx_get_memory_limit mlx_get_memory_limit_mlx_gen_orig_
 #define mlx_get_peak_memory mlx_get_peak_memory_mlx_gen_orig_
@@ -438,6 +439,7 @@
 #define mlx_logsumexp mlx_logsumexp_mlx_gen_orig_
 #define mlx_masked_scatter mlx_masked_scatter_mlx_gen_orig_
 #define mlx_matmul mlx_matmul_mlx_gen_orig_
+#define mlx_matrix_transpose mlx_matrix_transpose_mlx_gen_orig_
 #define mlx_max_axes mlx_max_axes_mlx_gen_orig_
 #define mlx_max_axis mlx_max_axis_mlx_gen_orig_
 #define mlx_max mlx_max_mlx_gen_orig_
@@ -557,6 +559,7 @@
 #define mlx_triu mlx_triu_mlx_gen_orig_
 #define mlx_trunc mlx_trunc_mlx_gen_orig_
 #define mlx_unflatten mlx_unflatten_mlx_gen_orig_
+#define mlx_unique mlx_unique_mlx_gen_orig_
 #define mlx_unstack_axis mlx_unstack_axis_mlx_gen_orig_
 #define mlx_unstack mlx_unstack_mlx_gen_orig_
 #define mlx_var_axes mlx_var_axes_mlx_gen_orig_
@@ -969,6 +972,7 @@
 #undef mlx_map_string_to_string_iterator_next
 #undef mlx_clear_cache
 #undef mlx_get_active_memory
+#undef mlx_get_array_buffer_size
 #undef mlx_get_cache_memory
 #undef mlx_get_memory_limit
 #undef mlx_get_peak_memory
@@ -1116,6 +1120,7 @@
 #undef mlx_logsumexp
 #undef mlx_masked_scatter
 #undef mlx_matmul
+#undef mlx_matrix_transpose
 #undef mlx_max_axes
 #undef mlx_max_axis
 #undef mlx_max
@@ -1235,6 +1240,7 @@
 #undef mlx_triu
 #undef mlx_trunc
 #undef mlx_unflatten
+#undef mlx_unique
 #undef mlx_unstack_axis
 #undef mlx_unstack
 #undef mlx_var_axes
@@ -1886,6 +1892,7 @@ extern int (*mlx_fast_scaled_dot_product_attention_)(
     const mlx_array keys,
     const mlx_array values,
     float scale,
+    int window_size,
     const char* mask_mode,
     const mlx_array mask_arr /* may be null */,
     const mlx_array sinks /* may be null */,
@@ -2235,6 +2242,7 @@ extern int (*mlx_map_string_to_string_iterator_next_)(
     mlx_map_string_to_string_iterator it);
 extern int (*mlx_clear_cache_)(void);
 extern int (*mlx_get_active_memory_)(size_t* res);
+extern int (*mlx_get_array_buffer_size_)(size_t* res, const mlx_vector_array arrays);
 extern int (*mlx_get_cache_memory_)(size_t* res);
 extern int (*mlx_get_memory_limit_)(size_t* res);
 extern int (*mlx_get_peak_memory_)(size_t* res);
@@ -2923,6 +2931,7 @@ extern int (*mlx_matmul_)(
     const mlx_array a,
     const mlx_array b,
     const mlx_stream s);
+extern int (*mlx_matrix_transpose_)(mlx_array* res, const mlx_array a, const mlx_stream s);
 extern int (*mlx_max_axes_)(
     mlx_array* res,
     const mlx_array a,
@@ -3579,6 +3588,15 @@ extern int (*mlx_unflatten_)(
     int axis,
     const int* shape,
     size_t shape_num,
+    const mlx_stream s);
+extern int (*mlx_unique_)(
+    mlx_vector_array* res,
+    const mlx_array a,
+    int size,
+    bool return_index,
+    bool return_inverse,
+    bool return_counts,
+    const mlx_array fill_value /* may be null */,
     const mlx_stream s);
 extern int (*mlx_unstack_axis_)(
     mlx_vector_array* res,
@@ -4855,12 +4873,13 @@ static inline int mlx_fast_scaled_dot_product_attention(
     const mlx_array keys,
     const mlx_array values,
     float scale,
+    int window_size,
     const char* mask_mode,
     const mlx_array mask_arr /* may be null */,
     const mlx_array sinks /* may be null */,
     bool force_fused,
     const mlx_stream s) {
-    return mlx_fast_scaled_dot_product_attention_(res, queries, keys, values, scale, mask_mode, mask_arr, sinks, force_fused, s);
+    return mlx_fast_scaled_dot_product_attention_(res, queries, keys, values, scale, window_size, mask_mode, mask_arr, sinks, force_fused, s);
 }
 static inline int mlx_fft_fft(
     mlx_array* res,
@@ -5391,6 +5410,9 @@ static inline int mlx_clear_cache(void) {
 }
 static inline int mlx_get_active_memory(size_t* res) {
     return mlx_get_active_memory_(res);
+}
+static inline int mlx_get_array_buffer_size(size_t* res, const mlx_vector_array arrays) {
+    return mlx_get_array_buffer_size_(res, arrays);
 }
 static inline int mlx_get_cache_memory(size_t* res) {
     return mlx_get_cache_memory_(res);
@@ -6374,6 +6396,9 @@ static inline int mlx_matmul(
     const mlx_stream s) {
     return mlx_matmul_(res, a, b, s);
 }
+static inline int mlx_matrix_transpose(mlx_array* res, const mlx_array a, const mlx_stream s) {
+    return mlx_matrix_transpose_(res, a, s);
+}
 static inline int mlx_max_axes(
     mlx_array* res,
     const mlx_array a,
@@ -7268,6 +7293,17 @@ static inline int mlx_unflatten(
     size_t shape_num,
     const mlx_stream s) {
     return mlx_unflatten_(res, a, axis, shape, shape_num, s);
+}
+static inline int mlx_unique(
+    mlx_vector_array* res,
+    const mlx_array a,
+    int size,
+    bool return_index,
+    bool return_inverse,
+    bool return_counts,
+    const mlx_array fill_value /* may be null */,
+    const mlx_stream s) {
+    return mlx_unique_(res, a, size, return_index, return_inverse, return_counts, fill_value, s);
 }
 static inline int mlx_unstack_axis(
     mlx_vector_array* res,

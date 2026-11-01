@@ -72,6 +72,38 @@ function connectionButton(renderer: ReactTestRenderer) {
 }
 
 describe("CodexDesktopRow", () => {
+  it("retries a pending disconnect after reopening Apps", async () => {
+    const disconnect = vi.fn().mockResolvedValue({ status: status() });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      setCodexDesktopConnected: disconnect,
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={status({ disconnectPending: true })}
+          />,
+        );
+      });
+      const retry = connectionButton(renderer!);
+      expect(retry.props["aria-label"]).toBe("Retry disconnecting ChatGPT");
+      expect(retry.props["aria-pressed"]).toBe(false);
+      expect(retry.props.disabled).toBe(false);
+      await act(async () => retry.props.onClick());
+      expect(disconnect).toHaveBeenCalledWith(false, false);
+      expect(connectionButton(renderer!).props["aria-label"]).toBe(
+        "Add Ollama models to ChatGPT",
+      );
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
   it("matches Claude's connected copy before the first request", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
@@ -615,7 +647,7 @@ describe("CodexDesktopRow", () => {
       })
       .mockResolvedValueOnce({
         status: status({ running: true }),
-        error: "quit ChatGPT: timed out waiting for ChatGPT to exit",
+        error: "Couldn’t connect ChatGPT. Try again.",
       });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
@@ -645,7 +677,7 @@ describe("CodexDesktopRow", () => {
 
       expect(getStatus).not.toHaveBeenCalled();
       expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
-        "quit ChatGPT: timed out waiting for ChatGPT to exit",
+        "Couldn’t connect ChatGPT. Try again.",
       );
       expect(toggle.props["aria-pressed"]).toBe(false);
     } finally {

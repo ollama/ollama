@@ -821,6 +821,15 @@ func TestModelCapabilities(t *testing.T) {
 		"clip.vision.block_count": uint32(1),
 	}, []*gguftest.Tensor{})
 
+	// LFM3-Audio's projector: audio in and out, no vision encoder.
+	audioOnlyProjectorPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture":          "clip",
+		"clip.has_audio_encoder":        true,
+		"clip.audio.projector_type":     "lfm3a",
+		"clip.has_gen_audio_encoder":    true,
+		"clip.gen.audio.projector_type": "lfm3a_gen",
+	}, []*gguftest.Tensor{})
+
 	nemotronOmniModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":                 "nemotron_h_omni",
 		"nemotron_h_omni.vision.block_count":   uint32(1),
@@ -972,6 +981,24 @@ func TestModelCapabilities(t *testing.T) {
 			model: Model{
 				ModelPath:      completionModelPath,
 				ProjectorPaths: []string{audioProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
+		},
+		{
+			name: "audio-only projector does not add vision",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioOnlyProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio},
+		},
+		{
+			name: "audio-only projector beside a vision projector keeps vision",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioOnlyProjectorPath, audioProjectorPath},
 				Template:       chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},

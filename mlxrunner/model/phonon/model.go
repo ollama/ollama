@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
@@ -233,8 +236,8 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		}
 		m.Voices[voice] = m.prefillVoice(t)
 	}
-	if len(m.Voices) == 0 {
-		return fmt.Errorf("model has no voices")
+	if m.Voices["default"] == nil {
+		return fmt.Errorf("model has no default voice")
 	}
 	return nil
 }
@@ -247,9 +250,12 @@ func (m *Model) prefillVoice(prompt *mlx.Array) *Voice {
 	}
 	kv := mlx.ScopedEval(func() []*mlx.Array {
 		m.Flow.forward(prompt, 0, caches)
+		// Copy out the prompt's frames so the cache's padded buffers are freed.
 		var kv []*mlx.Array
 		for _, c := range caches {
-			kv = append(kv, c.State()...)
+			for _, s := range c.State() {
+				kv = append(kv, mlx.Contiguous(s, false))
+			}
 		}
 		return kv
 	})
@@ -273,13 +279,37 @@ func (m *Model) MaxContextLength() int           { return 0 }
 
 func (m *Model) VoiceNames() []string { return slices.Sorted(maps.Keys(m.Voices)) }
 
-func (m *Model) Speak(ctx context.Context, req llm.SpeechRequest, emit func([]float32) error) error {
-	name := req.Voice
+// voice finds a voice by name in any case and with or without accents, as
+// the publisher's runtime does. No name means the checkpoint's own voice,
+// default.
+func (m *Model) voice(name string) *Voice {
 	if name == "" {
-		name = m.VoiceNames()[0]
+		name = "default"
 	}
-	voice, ok := m.Voices[name]
-	if !ok {
+	if v, ok := m.Voices[name]; ok {
+		return v
+	}
+	for n, v := range m.Voices {
+		if foldVoiceName(n) == foldVoiceName(name) {
+			return v
+		}
+	}
+	return nil
+}
+
+func foldVoiceName(s string) string {
+	var b strings.Builder
+	for _, r := range norm.NFD.String(s) {
+		if !unicode.Is(unicode.Mn, r) {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+func (m *Model) Speak(ctx context.Context, req llm.SpeechRequest, emit func([]float32) error) error {
+	voice := m.voice(req.Voice)
+	if voice == nil {
 		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("voice %q not found; available voices: %s", req.Voice, strings.Join(m.VoiceNames(), ", "))}
 	}
 	chunks, err := m.tok.chunks(req.Input)

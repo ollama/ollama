@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/fs/gguf"
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -1361,6 +1362,109 @@ func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
 				t.Fatalf("context_length = %v, want 512", resp.ModelInfo["test.context_length"])
 			}
 		})
+	}
+}
+
+func TestGetModelInfo_ManifestVoices(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// Voices described in the prompt rather than stored as voice tensors are
+	// named in the manifest config.
+	config, err := manifest.NewLayer(strings.NewReader(`{"model_type":"test"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Name = "config.json"
+	createSafetensorsTestModel(t, "show-manifest-voices", model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"completion", "speech"}, Voices: []string{"default", "male-french"},
+	}, []manifest.Layer{config})
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: "show-manifest-voices"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(resp.Voices, []string{"default", "male-french"}) {
+		t.Fatalf("voices %v, want default and male-french", resp.Voices)
+	}
+}
+
+func TestGetModelInfo_GGUFSpeechVoices(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, tt := range []struct {
+		name      string
+		renderer  string
+		projector bool
+		want      []string
+	}{
+		{"lfm3-audio", "lfm3-audio", true, renderers.LFM3SpeechVoices()},
+		{"lfm3-omni", "lfm3-omni", true, renderers.LFM3SpeechVoices()},
+		{"lfm3-audio without projector", "lfm3-audio", false, nil},
+		{"lfm3 text", "lfm3", true, nil},
+		{"no renderer", "", true, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, digest := createBinFile(t, gguftest.KV{"general.architecture": "lfm3"}, nil)
+			modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers := []manifest.Layer{modelLayer}
+			if tt.projector {
+				_, projector := createBinFile(t, gguftest.KV{"general.architecture": "clip"}, nil)
+				layers = append(layers, manifest.Layer{MediaType: "application/vnd.ollama.image.projector", Digest: projector})
+			}
+			configLayer, err := createConfigLayer(model.ConfigV2{ModelFormat: "gguf", Renderer: tt.renderer, Capabilities: []string{"completion", "speech"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := model.ParseName("show-gguf-speech")
+			if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
+				t.Fatal(err)
+			}
+
+			resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(resp.Voices, tt.want) {
+				t.Fatalf("voices %v, want %v", resp.Voices, tt.want)
+			}
+		})
+	}
+
+	// Safetensors speech models list the voices their package stores, never the GGUF fallback.
+	t.Run("safetensors", func(t *testing.T) {
+		_, projector := createBinFile(t, gguftest.KV{"general.architecture": "clip"}, nil)
+		createSafetensorsTestModel(t, "show-safetensors-speech", model.ConfigV2{ModelFormat: "safetensors", Renderer: "lfm3-audio", Capabilities: []string{"completion", "speech"}},
+			[]manifest.Layer{{MediaType: "application/vnd.ollama.image.projector", Digest: projector}})
+		resp, err := GetModelInfo(api.ShowRequest{Model: "show-safetensors-speech"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Voices) != 0 {
+			t.Fatalf("voices %v, want none", resp.Voices)
+		}
+	})
+}
+
+func TestGetModelInfo_SafetensorsManifestLengthsWin(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// The language model config is nested where config.json reading doesn't
+	// look; create recorded its lengths in the manifest.
+	config, err := manifest.NewLayer(strings.NewReader(`{"model_type":"test","lm":{"max_position_embeddings":128000,"hidden_size":2048}}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Name = "config.json"
+	createSafetensorsTestModel(t, "show-manifest-lengths", model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"completion"}, ContextLen: 128000, EmbedLen: 2048,
+	}, []manifest.Layer{config})
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: "show-manifest-lengths"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ModelInfo["test.context_length"] != 128000 || resp.ModelInfo["test.embedding_length"] != 2048 {
+		t.Fatalf("context_length %v, embedding_length %v, want 128000 and 2048", resp.ModelInfo["test.context_length"], resp.ModelInfo["test.embedding_length"])
 	}
 }
 
