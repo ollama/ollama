@@ -1053,6 +1053,7 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 }
 
 func TestClaudeDesktopRestoreRemainsAvailableOnWindows(t *testing.T) {
+	setTestHome(t, t.TempDir())
 	localAppData := t.TempDir()
 	t.Setenv("LOCALAPPDATA", localAppData)
 	withClaudeDesktopPlatform(t, "windows")
