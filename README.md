@@ -214,7 +214,7 @@ console.log(response.message.content);
 - [Continue](https://github.com/continuedev/continue) - Open-source AI code assistant for any IDE
 - [Void](https://github.com/voideditor/void) - Open source AI code editor, Cursor alternative
 - [Copilot for Obsidian](https://github.com/logancyang/obsidian-copilot) - AI assistant for Obsidian
-- [twinny](https://github.com/rjmacarthy/twinny) - Copilot and Copilot chat alternative
+- [twinny](https://github.com/twinnydotdev/twinny) - VS Code code completion, chat and inline edit with Ollama models
 - [gptel Emacs client](https://github.com/karthink/gptel) - LLM client for Emacs
 - [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) - Use Ollama as GitHub Copilot
 - [Obsidian Local GPT](https://github.com/pfrankov/obsidian-local-gpt) - Local AI for Obsidian
