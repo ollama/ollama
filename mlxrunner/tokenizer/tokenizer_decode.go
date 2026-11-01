@@ -29,7 +29,14 @@ func (t *Tokenizer) Decode(ids []int32) string {
 			}
 			sb.WriteString(token)
 		default:
-			// GPT-2 BPE style: decode byte-level encoding
+			// GPT-2 BPE style: decode byte-level encoding.
+			// As in Hugging Face's ByteLevel decoder, a token with a rune outside
+			// the byte-level alphabet (an added token such as <｜end▁of▁sentence｜>)
+			// is written as is.
+			if !isByteLevelToken(token) {
+				sb.WriteString(token)
+				continue
+			}
 			for _, r := range token {
 				switch {
 				case r == 0x0100:
@@ -51,4 +58,16 @@ func (t *Tokenizer) Decode(ids []int32) string {
 	}
 
 	return sb.String()
+}
+
+// isByteLevelToken reports whether every rune of token is in the GPT-2
+// byte-level alphabet: printable Latin-1 runes stand for themselves and
+// U+0100..U+0143 stand for the other bytes.
+func isByteLevelToken(token string) bool {
+	for _, r := range token {
+		if !(r >= 0x21 && r <= 0x7e || r >= 0xa1 && r <= 0xac || r >= 0xae && r <= 0x143) {
+			return false
+		}
+	}
+	return true
 }
