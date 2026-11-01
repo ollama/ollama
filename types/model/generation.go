@@ -122,25 +122,25 @@ func ParseGGUFGenerationDefaults(intValue func(string) (int64, bool), floatValue
 }
 
 func intGenerationDefault(data json.RawMessage) (int64, bool) {
-	var value int64
-	if err := json.Unmarshal(data, &value); err == nil {
-		return value, true
+	var value *int64
+	if err := json.Unmarshal(data, &value); err == nil && value != nil {
+		return *value, true
 	}
 
-	var f float64
-	if err := json.Unmarshal(data, &f); err != nil {
+	var f *float64
+	if err := json.Unmarshal(data, &f); err != nil || f == nil {
 		return 0, false
 	}
 
 	// Match api.Options.FromMap; rounding may be better for near-integers.
-	return int64(f), true
+	return int64(*f), true
 }
 
 func floatGenerationDefault(data json.RawMessage) (float64, bool) {
-	var value float64
-	if err := json.Unmarshal(data, &value); err != nil {
+	var value *float64
+	if err := json.Unmarshal(data, &value); err != nil || value == nil {
 		return 0, false
 	}
 
-	return value, true
+	return *value, true
 }
