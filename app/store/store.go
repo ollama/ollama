@@ -177,6 +177,9 @@ type Settings struct {
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
 
+	// AutoRestart indicates if the application should automatically restart after an update is downloaded
+	AutoRestart bool
+
 	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
 	ClaudeDesktopUsed bool
 
