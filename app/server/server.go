@@ -18,11 +18,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/store"
 )
 
 const restartDelay = time.Second
+const maxRestartDelay = 30 * time.Second
+const restartDelayResetThreshold = 5 * restartDelay
+const serverCheckTimeout = time.Second
+const serverCheckInterval = 5 * time.Second
 
 // Server is a managed ollama server process
 type Server struct {
@@ -188,11 +193,35 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	reaped := false
+	retryDelay := restartDelay
+	var nextRestartAt time.Time
+	checkDelay := restartDelay
+	reportedFailure := false
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(restartDelay):
+		case <-time.After(checkDelay):
+		}
+
+		if serverRunning(ctx) {
+			retryDelay = restartDelay
+			nextRestartAt = time.Time{}
+			checkDelay = serverCheckInterval
+			reportedFailure = false
+			continue
+		}
+		if !nextRestartAt.IsZero() {
+			now := time.Now()
+			if now.Before(nextRestartAt) {
+				checkDelay = nextRestartCheckDelay(nextRestartAt, now)
+				continue
+			}
+		}
+		checkDelay = restartDelay
+
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
 		cmd, err := s.cmd(ctx)
@@ -209,7 +238,29 @@ func (s *Server) Run(ctx context.Context) error {
 			slog.Warn("failed to write pid file", "file", pidFile, "err", err)
 		}
 
-		if err = cmd.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+		startedAt := time.Now()
+		err = cmd.Wait()
+		if errors.Is(err, context.Canceled) {
+			continue
+		}
+
+		runDuration := time.Since(startedAt)
+		retryDelay = nextRestartDelay(retryDelay, runDuration)
+		nextRestartAt = time.Now().Add(retryDelay)
+		checkDelay = nextRestartCheckDelay(nextRestartAt, time.Now())
+		if runDuration >= restartDelayResetThreshold {
+			reportedFailure = false
+		}
+		if !reportedFailure {
+			if err != nil {
+				slog.Error("ollama exited", "err", err, "retry_delay", retryDelay)
+			} else {
+				slog.Warn("ollama exited", "retry_delay", retryDelay)
+			}
+			reportedFailure = true
+		}
+
+		if err != nil {
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && !s.dev && !reaped {
 				reaped = true
@@ -221,10 +272,48 @@ func (s *Server) Run(ctx context.Context) error {
 					continue
 				}
 			}
-			slog.Error("ollama exited", "err", err)
 		}
 	}
 	return ctx.Err()
+}
+
+func nextRestartDelay(current, runDuration time.Duration) time.Duration {
+	if runDuration >= restartDelayResetThreshold {
+		return restartDelay
+	}
+
+	if current < restartDelay {
+		current = restartDelay
+	}
+	if current >= maxRestartDelay/2 {
+		return maxRestartDelay
+	}
+
+	return current * 2
+}
+
+func nextRestartCheckDelay(nextRestartAt, now time.Time) time.Duration {
+	untilRestart := nextRestartAt.Sub(now)
+	if untilRestart <= 0 {
+		return restartDelay
+	}
+	if untilRestart > serverCheckInterval {
+		return serverCheckInterval
+	}
+	return untilRestart
+}
+
+func serverRunning(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, serverCheckTimeout)
+	defer cancel()
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false
+	}
+
+	version, err := client.Version(ctx)
+	return err == nil && version != ""
 }
 
 func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
