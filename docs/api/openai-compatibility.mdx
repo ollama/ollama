@@ -252,6 +252,10 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 
 `reasoning_effort` and `reasoning.effort` control model thinking. Use `/api/show` to discover each model's supported values and default. When a model uses its metadata to resolve named levels, supported names are applied exactly and unsupported names resolve to the model default. Boolean-only models that support enabling thinking map recognized compatibility efforts to `true`, while `"none"` requests `false`. Models without metadata retain the existing compatibility aliases: `"minimal"` maps to `"low"`, and `"xhigh"` or `"ultra"` map to `"max"`. GPT-OSS keeps its existing OpenAI compatibility conversion: `"minimal"` uses `"low"`, `"xhigh"` or `"ultra"` use `"high"`, and `"none"` requests no thinking output.
 
+#### Response extensions
+
+Responses may include a `timings` object with server-side performance metrics (`prompt_n`, `prompt_ms`, `predicted_n`, `predicted_ms`, and per-token and per-second derivatives). When a request drafted, Ollama additionally reports `draft_n` and `draft_n_accepted` (proposed and accepted draft tokens) and, for runners that count forward passes, `draft_steps` and `steps` (all decode forward passes). Fields are absent when not reported. See [Speculative decoding metrics](/api#speculative-decoding-metrics).
+
 ### `/v1/completions`
 
 #### Supported features

@@ -567,6 +567,10 @@ type Metrics struct {
 	PromptEvalDuration    time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount             int           `json:"eval_count,omitempty"`
 	EvalDuration          time.Duration `json:"eval_duration,omitempty"`
+	DraftCount            *int          `json:"draft_count,omitempty"`
+	DraftAcceptedCount    *int          `json:"draft_accepted_count,omitempty"`
+	DraftStepCount        *int          `json:"draft_step_count,omitempty"`
+	StepCount             *int          `json:"step_count,omitempty"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
@@ -1109,6 +1113,15 @@ func (m *Metrics) Summary() {
 	if m.EvalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", m.EvalDuration)
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
+	}
+
+	if m.StepCount != nil && *m.StepCount > 0 {
+		fmt.Fprintf(os.Stderr, "tokens per step:      %.2f\n", float64(m.EvalCount)/float64(*m.StepCount))
+		fmt.Fprintf(os.Stderr, "time per step:        %v\n", (m.EvalDuration / time.Duration(*m.StepCount)).Round(time.Microsecond))
+	}
+
+	if m.DraftCount != nil && m.DraftAcceptedCount != nil && *m.DraftCount > 0 {
+		fmt.Fprintf(os.Stderr, "draft acceptance:     %.1f%%\n", 100*float64(*m.DraftAcceptedCount)/float64(*m.DraftCount))
 	}
 }
 

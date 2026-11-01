@@ -1432,6 +1432,59 @@ func TestToTimings(t *testing.T) {
 	}
 }
 
+func TestToTimingsSpeculative(t *testing.T) {
+	ints := func(v ...int) []*int {
+		ptrs := make([]*int, len(v))
+		for i := range v {
+			ptrs[i] = &v[i]
+		}
+		return ptrs
+	}
+
+	t.Run("counts map under llama-server names", func(t *testing.T) {
+		c := ints(766, 400, 110, 112)
+		got := ToTimings(api.Metrics{
+			EvalCount: 512, EvalDuration: 6 * time.Second,
+			DraftCount: c[0], DraftAcceptedCount: c[1], DraftStepCount: c[2], StepCount: c[3],
+		})
+		if got == nil || got.DraftN == nil || got.DraftNAccepted == nil || got.DraftSteps == nil || got.Steps == nil {
+			t.Fatalf("ToTimings = %+v, want all draft fields set", got)
+		}
+		if *got.DraftN != 766 || *got.DraftNAccepted != 400 || *got.DraftSteps != 110 || *got.Steps != 112 {
+			t.Errorf("draft timings = (%d, %d, %d, %d), want (766, 400, 110, 112)",
+				*got.DraftN, *got.DraftNAccepted, *got.DraftSteps, *got.Steps)
+		}
+	})
+
+	t.Run("unreported fields stay absent", func(t *testing.T) {
+		data, err := json.Marshal(ToTimings(api.Metrics{EvalCount: 10, EvalDuration: time.Second}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"draft_n", "draft_n_accepted", "draft_steps", "steps"} {
+			if strings.Contains(string(data), `"`+key+`"`) {
+				t.Errorf("timings unexpectedly contain %q: %s", key, data)
+			}
+		}
+	})
+
+	t.Run("zero counts are still reported", func(t *testing.T) {
+		c := ints(0, 0, 0, 40)
+		data, err := json.Marshal(ToTimings(api.Metrics{
+			EvalCount: 40, EvalDuration: time.Second,
+			DraftCount: c[0], DraftAcceptedCount: c[1], DraftStepCount: c[2], StepCount: c[3],
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{`"draft_n":0`, `"draft_n_accepted":0`, `"draft_steps":0`, `"steps":40`} {
+			if !strings.Contains(string(data), want) {
+				t.Errorf("timings missing %q: %s", want, data)
+			}
+		}
+	})
+}
+
 func TestNonStreamingResponsesOmitTimings(t *testing.T) {
 	chat, err := json.Marshal(ToChatCompletion("id", api.ChatResponse{
 		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
