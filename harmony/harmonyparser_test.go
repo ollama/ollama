@@ -536,3 +536,85 @@ func TestFunctionConvertAndAdd(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractToolCallJSON(t *testing.T) {
+	tests := []struct {
+		name         string
+		raw          string
+		wantJSON     string
+		wantThinking string
+	}{
+		{
+			name:         "clean JSON",
+			raw:          `{"path": "/tmp"}`,
+			wantJSON:     `{"path": "/tmp"}`,
+			wantThinking: "",
+		},
+		{
+			name:         "JSON with leading whitespace",
+			raw:          `   {"path": "/tmp"}`,
+			wantJSON:     `{"path": "/tmp"}`,
+			wantThinking: "",
+		},
+		{
+			name:         "analysis segment before JSON",
+			raw:          `<|channel|>analysis<|message|>We need to list files.{"path": "/tmp"}`,
+			wantJSON:     `{"path": "/tmp"}`,
+			wantThinking: "We need to list files.",
+		},
+		{
+			name:         "analysis segment with just thinking",
+			raw:          `<|channel|>analysis<|message|>Let me check{"arg": "value"}`,
+			wantJSON:     `{"arg": "value"}`,
+			wantThinking: "Let me check",
+		},
+		{
+			name:         "multiple analysis segments",
+			raw:          `<|channel|>analysis<|message|>First thought<|channel|>analysis<|message|>Second thought{"path": "/home"}`,
+			wantJSON:     `{"path": "/home"}`,
+			wantThinking: "First thought Second thought",
+		},
+		{
+			name:         "nested JSON objects",
+			raw:          `<|channel|>analysis<|message|>Thinking{"nested": {"key": "value"}, "arr": [1, 2]}`,
+			wantJSON:     `{"nested": {"key": "value"}, "arr": [1, 2]}`,
+			wantThinking: "Thinking",
+		},
+		{
+			name:         "JSON with escaped quotes",
+			raw:          `<|channel|>analysis<|message|>Think{"message": "Hello \"world\""}`,
+			wantJSON:     `{"message": "Hello \"world\""}`,
+			wantThinking: "Think",
+		},
+		{
+			name:         "whitespace before channel tag",
+			raw:          `  <|channel|>analysis<|message|>Thinking{"path": "/tmp"}`,
+			wantJSON:     `{"path": "/tmp"}`,
+			wantThinking: "Thinking",
+		},
+		{
+			name:         "content before channel tag (extracts JSON anyway)",
+			raw:          `some text<|channel|>analysis<|message|>{"path": "/tmp"}`,
+			wantJSON:     `{"path": "/tmp"}`,
+			wantThinking: "",
+		},
+		{
+			name:         "JSON with trailing content",
+			raw:          `{"path": "/tmp"}<|call|>`,
+			wantJSON:     `{"path": "/tmp"}`,
+			wantThinking: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotJSON, gotThinking := extractToolCallJSON(tt.raw)
+			if gotJSON != tt.wantJSON {
+				t.Errorf("extractToolCallJSON() JSON = %q, want %q", gotJSON, tt.wantJSON)
+			}
+			if gotThinking != tt.wantThinking {
+				t.Errorf("extractToolCallJSON() thinking = %q, want %q", gotThinking, tt.wantThinking)
+			}
+		})
+	}
+}
