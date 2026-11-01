@@ -256,6 +256,7 @@ console.log(response.message.content);
 - [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) - Julia LLM toolkit ([example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama))
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama) - R SDK
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama) - AI gateway
+- [Ollama Herd](https://github.com/geeks-accelerator/ollama-herd) - Router that load-balances requests across multiple Ollama machines
 - [Testcontainers](https://testcontainers.com/modules/ollama/) - Container-based testing
 - [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama) - PHP AI framework
 
