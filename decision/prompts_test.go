@@ -2,12 +2,47 @@ package decision
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 )
+
+func TestCompiledPromptBudget(t *testing.T) {
+	req := testRequest(t)
+	req.State = json.RawMessage(`"` + strings.Repeat("x", 1<<20) + `"`)
+	req.Questions = &Questions{}
+	for i := range 64 {
+		req.Questions.Set(fmt.Sprintf("q%d", i), Question{Type: "noul", Instructions: json.RawMessage(`"q"`)})
+	}
+	for _, encoding := range []string{"", "tev1", "strands"} {
+		t.Run(encoding, func(t *testing.T) {
+			_, err := Compile(req, encoding)
+			if !errors.Is(err, llm.ErrScorePromptTooLarge) {
+				t.Fatalf("Compile() error = %v, want prompt budget error", err)
+			}
+		})
+	}
+}
+
+func TestRenderedPromptBudget(t *testing.T) {
+	compiled, err := Compile(testRequest(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := strings.Repeat("x", llm.MaxScorePromptBytes/2+1)
+	if err := compiled.RenderChat(func([]api.Message) (string, error) { return large, nil }); !errors.Is(err, llm.ErrScorePromptTooLarge) {
+		t.Fatalf("Render() error = %v, want prompt budget error", err)
+	}
+	for i, row := range compiled.Request.Rows {
+		if row.Prompt != "" {
+			t.Fatalf("row %d retained a prompt after the budget rejection", i)
+		}
+	}
+}
 
 func TestPublisherPrompts(t *testing.T) {
 	var req Request
@@ -26,7 +61,7 @@ func TestPublisherPrompts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := compiled.Render(func(messages []api.Message) (string, error) { return messages[0].Content, nil }); err != nil {
+			if err := compiled.RenderChat(func(messages []api.Message) (string, error) { return messages[0].Content, nil }); err != nil {
 				t.Fatal(err)
 			}
 			if got := compiled.Request.Rows[0].Prompt; got != tc.want {
@@ -43,7 +78,7 @@ func TestTevQuestions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := compiled.Render(func(messages []api.Message) (string, error) { return messages[0].Content, nil }); err != nil {
+	if err := compiled.RenderChat(func(messages []api.Message) (string, error) { return messages[0].Content, nil }); err != nil {
 		t.Fatal(err)
 	}
 	descriptions := [][]string{{"Charges and refunds", "technical"}, {"No", "Yes"}, {"Routine", "Urgent", "Emergency"}}

@@ -32,6 +32,9 @@ func TestCompileD1PassesQuestionsInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if c.NeedsChatRender() {
+		t.Fatal("D1 must prepare its own prompts")
+	}
 	native := c.Request.Native
 	if native == nil || string(native.State) != string(req.State) {
 		t.Fatalf("native request %+v does not carry the state", native)

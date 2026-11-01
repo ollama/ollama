@@ -24,6 +24,8 @@ type compiledField struct {
 	order   []int // Model option index to original API option index, when different.
 }
 
+// Compiled carries answer mapping and scoring input. messages is populated only
+// when the server must apply a chat template; otherwise Request is model-native.
 type Compiled struct {
 	Request  llm.ScoreRequest
 	fields   []compiledField
@@ -169,14 +171,31 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	return c, nil
 }
 
-// Render prepares scoring prompts using the model's system prompt and chat template.
+// NeedsChatRender reports whether Request has rows awaiting the server's chat
+// renderer. Generic and Tev1 requests return true; model-native D3 requests
+// return false.
+func (c *Compiled) NeedsChatRender() bool { return len(c.messages) > 0 }
+
+// RenderChat prepares scoring prompts using the model's system prompt and chat template.
 // The caller must set Request.MaxTokens to the loaded context size before scoring.
-func (c *Compiled) Render(render func([]api.Message) (string, error)) error {
+func (c *Compiled) RenderChat(render func([]api.Message) (string, error)) error {
+	if !c.NeedsChatRender() {
+		return fmt.Errorf("decision encoding %q does not use chat rendering", c.encoding)
+	}
+	var total int
+	prompts := make([]string, len(c.messages))
 	for i, messages := range c.messages {
 		prompt, err := render(messages)
 		if err != nil {
 			return err
 		}
+		if len(prompt) > llm.MaxScorePromptBytes-total {
+			return llm.ErrScorePromptTooLarge
+		}
+		total += len(prompt)
+		prompts[i] = prompt
+	}
+	for i, prompt := range prompts {
 		c.Request.Rows[i].Prompt = prompt
 	}
 	return nil

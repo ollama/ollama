@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -43,11 +42,8 @@ func TestPplxCompilePreservesQuestionAndOptionOrder(t *testing.T) {
 	if !slices.Equal([]string{c.fields[0].Name, c.fields[1].Name, c.fields[2].Name}, []string{"category", "approved", "rating"}) {
 		t.Errorf("question order changed: %+v", c.fields)
 	}
-	if err := c.Render(func([]api.Message) (string, error) {
-		t.Fatal("PPLX prompts must be rendered by the model scorer")
-		return "", nil
-	}); err != nil {
-		t.Fatal(err)
+	if c.NeedsChatRender() {
+		t.Fatal("PPLX must prepare its own prompts")
 	}
 }
 
