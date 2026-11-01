@@ -232,6 +232,32 @@ func TestStore(t *testing.T) {
 	})
 }
 
+func TestShowMenuBarIconSettingDefaultsAndPersists(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	settings, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.ShowMenuBarIcon {
+		t.Fatal("expected menu bar icon to be enabled by default")
+	}
+
+	settings.ShowMenuBarIcon = false
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	settings, err = s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.ShowMenuBarIcon {
+		t.Fatal("expected disabled menu bar icon preference to persist")
+	}
+}
+
 func TestOnboardingVersionRoundTrip(t *testing.T) {
 	s, cleanup := setupTestStore(t)
 	defer cleanup()

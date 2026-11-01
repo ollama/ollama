@@ -183,6 +183,9 @@ type Settings struct {
 	// CodexDesktopUsed records whether ChatGPT has successfully connected through Ollama.
 	// Only MarkCodexDesktopUsed updates it; SetSettings preserves the stored value.
 	CodexDesktopUsed bool
+
+	// ShowMenuBarIcon controls the macOS menu bar status item.
+	ShowMenuBarIcon bool
 }
 
 // Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
