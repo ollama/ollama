@@ -44,7 +44,7 @@ func (p *Poolside) Run(model string, _ []LaunchModel, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(),
-		"POOLSIDE_STANDALONE_BASE_URL="+envconfig.Host().String()+"/v1",
+		"POOLSIDE_STANDALONE_BASE_URL="+envconfig.ConnectableHost().String()+"/v1",
 		"POOLSIDE_API_KEY=ollama",
 	)
 	return cmd.Run()

@@ -531,7 +531,7 @@ func (p *Pi) Paths() []string {
 }
 
 func piBaseURL() string {
-	return strings.TrimRight(envconfig.Host().String(), "/") + "/v1"
+	return strings.TrimRight(envconfig.ConnectableHost().String(), "/") + "/v1"
 }
 
 func (p *Pi) Edit(models []LaunchModel) error {
