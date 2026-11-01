@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,7 +103,6 @@ func TestOrigins(t *testing.T) {
 			"http://0.0.0.0:*",
 			"https://0.0.0.0:*",
 			"app://*",
-			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
 			"vscode-file://*",
@@ -122,7 +122,6 @@ func TestOrigins(t *testing.T) {
 			"http://0.0.0.0:*",
 			"https://0.0.0.0:*",
 			"app://*",
-			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
 			"vscode-file://*",
@@ -143,7 +142,6 @@ func TestOrigins(t *testing.T) {
 			"http://0.0.0.0:*",
 			"https://0.0.0.0:*",
 			"app://*",
-			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
 			"vscode-file://*",
@@ -164,7 +162,6 @@ func TestOrigins(t *testing.T) {
 			"http://0.0.0.0:*",
 			"https://0.0.0.0:*",
 			"app://*",
-			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
 			"vscode-file://*",
@@ -435,5 +432,15 @@ func TestNoCloud(t *testing.T) {
 				t.Errorf("NoCloudSource() = %q, want %q", got, tt.wantSource)
 			}
 		})
+	}
+}
+
+func TestDefaultOriginsExcludeFileScheme(t *testing.T) {
+	t.Setenv("OLLAMA_ORIGINS", "")
+
+	for _, origin := range AllowedOrigins() {
+		if strings.HasPrefix(origin, "file://") {
+			t.Errorf("default origins include %q", origin)
+		}
 	}
 }
