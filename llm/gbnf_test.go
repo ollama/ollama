@@ -77,3 +77,21 @@ func TestThinkingGrammarRules(t *testing.T) {
 		t.Errorf("grammar does not avoid the format's rule prefix:\n%s", grammar)
 	}
 }
+
+func TestToolGrammarRules(t *testing.T) {
+	format := "root ::= object\nobject ::= \"{\" \"}\"\n"
+	grammar := toolGrammar([]string{"<tool_call>", "<tool_call>"}, format)
+
+	for _, want := range []string{
+		`root ::= ollama-format | "<tool_call>" ollama-tool`,
+		`ollama-tool ::= [\U00000000-\U0010FFFF]*`,
+		`ollama-format ::= object`,
+	} {
+		if !strings.Contains(grammar, want) {
+			t.Errorf("grammar lacks %q:\n%s", want, grammar)
+		}
+	}
+	if got := strings.Count(grammar, `"<tool_call>" ollama-tool`); got != 1 {
+		t.Errorf("tool-call alternative occurs %d times, want once:\n%s", got, grammar)
+	}
+}
