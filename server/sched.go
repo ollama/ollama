@@ -30,13 +30,14 @@ import (
 )
 
 type LlmRequest struct {
-	ctx             context.Context //nolint:containedctx
-	model           *Model
-	opts            api.Options
-	sessionDuration *api.Duration
-	successCh       chan *runnerRef
-	errCh           chan error
-	schedAttempts   uint
+	ctx              context.Context //nolint:containedctx
+	model            *Model
+	opts             api.Options
+	sessionDuration  *api.Duration
+	successCh        chan *runnerRef
+	errCh            chan error
+	schedAttempts    uint
+	evictionCriteria *runnerEvictionCriteria
 
 	// oomRetryAttempted is set after a llama-server load crash triggers an
 	// evict-all-and-retry. Prevents infinite retry on persistent load failures.
@@ -58,6 +59,13 @@ type LlmRequest struct {
 	// request-level shift option before scheduling.
 	contextShift bool
 	shift        *bool
+}
+
+type runnerEvictionCriteria struct {
+	predictedMemory uint64
+	systemInfo      ml.SystemInfo
+	gpus            []ml.DeviceInfo
+	opts            api.Options
 }
 
 type Scheduler struct {
@@ -284,6 +292,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			logutil.Trace("processing incoming request", "model", pending.model.ModelPath)
 
 			for {
+				pending.evictionCriteria = nil
 				var runnerToExpire *runnerRef
 				pendingKey := schedulerModelKey(pending.model)
 				s.loadedMu.Lock()
@@ -307,7 +316,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 				} else if maxRunners > 0 && loadedCount >= int(maxRunners) {
 					slog.Debug("max runners achieved, unloading one to make room", "runner_count", loadedCount)
-					runnerToExpire = s.findRunnerToUnload()
+					runnerToExpire = s.findRunnerToUnload(nil)
 				} else {
 					// Either no models are loaded or below envconfig.MaxRunners
 					// Get a refreshed GPU list
@@ -368,7 +377,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						continue
 					}
 
-					runnerToExpire = s.findRunnerToUnload()
+					runnerToExpire = s.findRunnerToUnload(pending.evictionCriteria)
 				}
 
 				if runnerToExpire == nil {
@@ -601,6 +610,12 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 						"gpu_free", format.HumanBytes2(gpuFreeMemory),
 						"system_free", format.HumanBytes2(systemInfo.FreeMemory),
 						"system_limited", systemLimited)
+					req.evictionCriteria = &runnerEvictionCriteria{
+						predictedMemory: predictedForLoad,
+						systemInfo:      systemInfo,
+						gpus:            slices.Clone(loadGpus),
+						opts:            launchOpts,
+					}
 					s.loadedMu.Unlock()
 					return true
 				}
@@ -1604,35 +1619,6 @@ func (runner *runnerRef) HasExited() bool {
 	return true
 }
 
-type ByDurationAndName []*runnerRef
-
-func (a ByDurationAndName) Len() int      { return len(a) }
-func (a ByDurationAndName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a ByDurationAndName) Less(i, j int) bool {
-	// Primary sort by session duration (uint64 to handle negatives)
-	d1 := uint64(a[i].sessionDuration)
-	d2 := uint64(a[j].sessionDuration)
-	if d1 != d2 {
-		return d1 < d2
-	}
-	// Secondary sort by model key/path lex order
-	n1 := a[i].modelPath
-	if n1 == "" {
-		n1 = a[i].modelKey
-	}
-	n2 := a[j].modelPath
-	if n2 == "" {
-		n2 = a[j].modelKey
-	}
-	return n1 < n2
-}
-
-// TODO - future consideration to pick runners based on size
-// type BySize []*runnerRef
-// func (a BySize) Len() int           { return len(a) }
-// func (a BySize) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-// func (a BySize) Less(i, j int) bool { return a[i].vramSize < a[j].vramSize }
-
 // evictAllAndWait synchronously expires every currently loaded runner except
 // the one being loaded (matched by modelKey) and waits for all unload events
 // to drain. Returns false if the context was cancelled mid-wait so the caller
@@ -1710,8 +1696,62 @@ func (s *Scheduler) expireRunnersForRuntimeOOM(model *Model, err error) {
 	}
 }
 
-// findRunnerToUnload finds a runner to unload to make room for a new model
-func (s *Scheduler) findRunnerToUnload() *runnerRef {
+type runnerEvictionCandidate struct {
+	runner          *runnerRef
+	refCount        uint
+	sessionDuration time.Duration
+	expiresAt       time.Time
+	reclaimedVRAM   uint64
+	fits            bool
+}
+
+func (candidate runnerEvictionCandidate) name() string {
+	if candidate.runner.modelPath != "" {
+		return candidate.runner.modelPath
+	}
+	return candidate.runner.modelKey
+}
+
+func (criteria *runnerEvictionCriteria) memoryAfterUnloading(runner *runnerRef) (uint64, uint64) {
+	gpus := slices.Clone(criteria.gpus)
+	systemInfo := criteria.systemInfo
+
+	var reclaimed uint64
+	runner.refMu.Lock()
+	if runner.llama != nil {
+		for i := range gpus {
+			memory := runner.llama.VRAMByGPU(gpus[i].DeviceID)
+			reclaimed += memory
+			if memory == 0 {
+				continue
+			}
+
+			if total := gpus[i].TotalMemory; total > 0 {
+				if gpus[i].FreeMemory < total {
+					gpus[i].FreeMemory += min(memory, total-gpus[i].FreeMemory)
+				}
+			} else {
+				gpus[i].FreeMemory += memory
+			}
+
+			if gpus[i].Integrated {
+				systemInfo.FreeMemory += memory
+				if total := systemInfo.TotalMemory; total > 0 && systemInfo.FreeMemory > total {
+					systemInfo.FreeMemory = total
+				}
+			}
+		}
+	}
+	runner.refMu.Unlock()
+
+	available, _, _ := availableMemoryForPlacement(systemInfo, gpus, criteria.opts)
+	return reclaimed, available
+}
+
+// findRunnerToUnload prefers an idle runner that lets the pending model fit,
+// then minimizes the memory reclaimed. If none fits, it prefers the least
+// recently used runner after keep-alive duration.
+func (s *Scheduler) findRunnerToUnload(criteria *runnerEvictionCriteria) *runnerRef {
 	s.loadedMu.Lock()
 	runnerList := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {
@@ -1723,23 +1763,73 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 		return nil
 	}
 
-	// In the future we can enhance the algorithm to be smarter about picking the optimal runner to unload
-	// e.g., if we have multiple options, will one make room for the request?
-	sort.Sort(ByDurationAndName(runnerList))
-
-	// First try to find a runner that's already idle
+	candidates := make([]runnerEvictionCandidate, 0, len(runnerList))
 	for _, runner := range runnerList {
 		runner.refMu.Lock()
-		rc := runner.refCount
-		runner.refMu.Unlock()
-		if rc == 0 {
-			slog.Debug("found an idle runner to unload", "runner", runner)
-			return runner
+		candidate := runnerEvictionCandidate{
+			runner:          runner,
+			refCount:        runner.refCount,
+			sessionDuration: runner.sessionDuration,
+			expiresAt:       runner.expiresAt,
 		}
+		runner.refMu.Unlock()
+
+		if criteria != nil && candidate.refCount == 0 {
+			var available uint64
+			candidate.reclaimedVRAM, available = criteria.memoryAfterUnloading(runner)
+			candidate.fits = criteria.predictedMemory <= available*80/100
+		}
+		candidates = append(candidates, candidate)
 	}
-	// None appear idle, just wait for the one with the shortest duration
-	slog.Debug("no idle runners, picking the shortest duration", "runner_count", len(runnerList), "runner", runnerList[0])
-	return runnerList[0]
+
+	sort.Slice(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if uint64(left.sessionDuration) != uint64(right.sessionDuration) {
+			return uint64(left.sessionDuration) < uint64(right.sessionDuration)
+		}
+		if !left.expiresAt.Equal(right.expiresAt) {
+			return left.expiresAt.Before(right.expiresAt)
+		}
+		return left.name() < right.name()
+	})
+
+	for start := 0; start < len(candidates); {
+		end := start + 1
+		for end < len(candidates) && uint64(candidates[end].sessionDuration) == uint64(candidates[start].sessionDuration) {
+			end++
+		}
+
+		idle := make([]runnerEvictionCandidate, 0, end-start)
+		for _, candidate := range candidates[start:end] {
+			if candidate.refCount == 0 {
+				idle = append(idle, candidate)
+			}
+		}
+		if len(idle) > 0 {
+			sort.Slice(idle, func(i, j int) bool {
+				left, right := idle[i], idle[j]
+				if criteria != nil {
+					if left.fits != right.fits {
+						return left.fits
+					}
+					if left.fits && left.reclaimedVRAM != right.reclaimedVRAM {
+						return left.reclaimedVRAM < right.reclaimedVRAM
+					}
+				}
+				if !left.expiresAt.Equal(right.expiresAt) {
+					return left.expiresAt.Before(right.expiresAt)
+				}
+				return left.name() < right.name()
+			})
+			slog.Debug("found an idle runner to unload", "runner", idle[0].runner)
+			return idle[0].runner
+		}
+
+		start = end
+	}
+	// None appear idle, so wait for the runner with the shortest duration.
+	slog.Debug("no idle runners, picking the shortest duration", "runner_count", len(candidates), "runner", candidates[0].runner)
+	return candidates[0].runner
 }
 
 func (s *Scheduler) unloadAllRunners() {

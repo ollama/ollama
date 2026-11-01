@@ -909,11 +909,149 @@ func TestSchedFindRunnerToUnload(t *testing.T) {
 	s.loaded["b"] = r2
 	s.loadedMu.Unlock()
 
-	resp := s.findRunnerToUnload()
+	resp := s.findRunnerToUnload(nil)
 	require.Equal(t, r2, resp)
 	r2.refCount = 1
-	resp = s.findRunnerToUnload()
+	resp = s.findRunnerToUnload(nil)
 	require.Equal(t, r1, resp)
+}
+
+func TestSchedFindRunnerToUnloadPrefersSmallestSufficientIdleRunner(t *testing.T) {
+	device := ml.DeviceInfo{
+		DeviceID:    ml.DeviceID{ID: "0", Library: "Metal"},
+		TotalMemory: 100,
+		FreeMemory:  30,
+	}
+	makeRunner := func(key string, vram uint64, duration time.Duration, expiresAt time.Time, refCount uint) *runnerRef {
+		return &runnerRef{
+			llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{device.DeviceID: vram}},
+			modelKey:        key,
+			sessionDuration: duration,
+			expiresAt:       expiresAt,
+			refCount:        refCount,
+		}
+	}
+
+	now := time.Now()
+	small := makeRunner("a-small", 15, time.Hour, now.Add(-time.Hour), 0)
+	fitting := makeRunner("b-fitting", 20, time.Hour, now.Add(-30*time.Minute), 0)
+	large := makeRunner("c-large", 30, time.Hour, now.Add(-time.Minute), 0)
+	active := makeRunner("0-active", 100, time.Hour, now.Add(-2*time.Hour), 1)
+
+	s := InitScheduler(t.Context())
+	s.loaded = map[string]*runnerRef{
+		small.modelKey:   small,
+		fitting.modelKey: fitting,
+		large.modelKey:   large,
+		active.modelKey:  active,
+	}
+
+	got := s.findRunnerToUnload(&runnerEvictionCriteria{
+		predictedMemory: 40,
+		gpus:            []ml.DeviceInfo{device},
+		opts:            api.DefaultOptions(),
+	})
+	require.Same(t, fitting, got)
+}
+
+func TestSchedFindRunnerToUnloadSkipsActiveRunner(t *testing.T) {
+	device := ml.DeviceInfo{
+		DeviceID:    ml.DeviceID{ID: "0", Library: "Metal"},
+		TotalMemory: 100,
+		FreeMemory:  10,
+	}
+	active := &runnerRef{
+		llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{device.DeviceID: 80}},
+		modelKey:        "active",
+		sessionDuration: time.Hour,
+		expiresAt:       time.Now().Add(-time.Hour),
+		refCount:        1,
+	}
+	idle := &runnerRef{
+		llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{device.DeviceID: 1}},
+		modelKey:        "idle",
+		sessionDuration: time.Hour,
+		expiresAt:       time.Now(),
+	}
+
+	s := InitScheduler(t.Context())
+	s.loaded = map[string]*runnerRef{
+		active.modelKey: active,
+		idle.modelKey:   idle,
+	}
+
+	got := s.findRunnerToUnload(&runnerEvictionCriteria{
+		predictedMemory: 50,
+		gpus:            []ml.DeviceInfo{device},
+		opts:            api.DefaultOptions(),
+	})
+	require.Same(t, idle, got)
+}
+
+func TestSchedFindRunnerToUnloadFallsBackToLeastRecentlyUsed(t *testing.T) {
+	device := ml.DeviceInfo{
+		DeviceID:    ml.DeviceID{ID: "0", Library: "Metal"},
+		TotalMemory: 100,
+		FreeMemory:  10,
+	}
+	oldest := &runnerRef{
+		llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{device.DeviceID: 10}},
+		modelKey:        "z-oldest",
+		sessionDuration: time.Hour,
+		expiresAt:       time.Now().Add(-time.Hour),
+	}
+	newer := &runnerRef{
+		llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{device.DeviceID: 20}},
+		modelKey:        "a-newer",
+		sessionDuration: time.Hour,
+		expiresAt:       time.Now().Add(-time.Minute),
+	}
+
+	s := InitScheduler(t.Context())
+	s.loaded = map[string]*runnerRef{
+		oldest.modelKey: oldest,
+		newer.modelKey:  newer,
+	}
+
+	got := s.findRunnerToUnload(&runnerEvictionCriteria{
+		predictedMemory: 50,
+		gpus:            []ml.DeviceInfo{device},
+		opts:            api.DefaultOptions(),
+	})
+	require.Same(t, oldest, got)
+}
+
+func TestSchedFindRunnerToUnloadKeepsSessionDurationPriority(t *testing.T) {
+	device := ml.DeviceInfo{
+		DeviceID:    ml.DeviceID{ID: "0", Library: "Metal"},
+		TotalMemory: 100,
+		FreeMemory:  10,
+	}
+	shortDuration := &runnerRef{
+		llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{device.DeviceID: 5}},
+		modelKey:        "short-duration",
+		sessionDuration: time.Hour,
+		expiresAt:       time.Now(),
+	}
+	longDuration := &runnerRef{
+		llama:           &mockLlm{vramByGPU: map[ml.DeviceID]uint64{device.DeviceID: 80}},
+		modelKey:        "long-duration",
+		sessionDuration: 2 * time.Hour,
+		expiresAt:       time.Now().Add(-time.Hour),
+	}
+
+	s := InitScheduler(t.Context())
+	s.loaded = map[string]*runnerRef{
+		shortDuration.modelKey: shortDuration,
+		longDuration.modelKey:  longDuration,
+	}
+
+	got := s.findRunnerToUnload(&runnerEvictionCriteria{
+		predictedMemory: 50,
+		gpus:            []ml.DeviceInfo{device},
+		opts:            api.DefaultOptions(),
+	})
+	require.Same(t, shortDuration, got)
 }
 
 func TestSchedNeedsReload(t *testing.T) {
@@ -2130,7 +2268,7 @@ func TestSchedLlamaServerEvictsExistingOnPending(t *testing.T) {
 	require.True(t, hasLoadedRunner(s))
 
 	// The findRunnerToUnload should find and return the llama-server runner
-	runner := s.findRunnerToUnload()
+	runner := s.findRunnerToUnload(nil)
 	require.NotNil(t, runner)
 }
 
@@ -2248,7 +2386,7 @@ func TestRunnerCanBeEvicted(t *testing.T) {
 	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
 
-	runner := s.findRunnerToUnload()
+	runner := s.findRunnerToUnload(nil)
 	require.NotNil(t, runner)
 	require.Equal(t, "/fake/model", runner.modelPath)
 }
