@@ -178,16 +178,8 @@ func prepareAutoReviewRequest(body []byte) ([]byte, error) {
 			return nil, fmt.Errorf("decode tools: %w", err)
 		}
 	}
-	for _, raw := range tools {
-		var tool struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &tool); err != nil {
-			return nil, fmt.Errorf("decode tool: %w", err)
-		}
-		if tool.Name == guardianDecisionToolName {
-			return nil, fmt.Errorf("tool name %q is reserved by the Codex proxy", guardianDecisionToolName)
-		}
+	if err := rejectReservedGuardianTools(tools); err != nil {
+		return nil, err
 	}
 	decisionTool, err := json.Marshal(guardianDecisionTool)
 	if err != nil {
@@ -203,6 +195,26 @@ func prepareAutoReviewRequest(body []byte) ([]byte, error) {
 	var input []json.RawMessage
 	if err := json.Unmarshal(payload["input"], &input); err != nil {
 		return nil, fmt.Errorf("decode input: %w", err)
+	}
+	for _, rawItem := range input {
+		var item struct {
+			Type  string          `json:"type"`
+			Tools json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(rawItem, &item); err != nil {
+			return nil, fmt.Errorf("decode input item: %w", err)
+		}
+		if item.Type == "tool_search_output" {
+			if rawTools := bytes.TrimSpace(item.Tools); len(rawTools) > 0 && !bytes.Equal(rawTools, []byte("null")) {
+				var searchTools []json.RawMessage
+				if err := json.Unmarshal(rawTools, &searchTools); err != nil {
+					return nil, fmt.Errorf("decode tool_search_output tools: %w", err)
+				}
+				if err := rejectReservedGuardianTools(searchTools); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	foundUserMessage := false
 	for i := len(input) - 1; i >= 0; i-- {
@@ -251,6 +263,38 @@ func prepareAutoReviewRequest(body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 	return encoded, nil
+}
+
+func rejectReservedGuardianTools(tools []json.RawMessage) error {
+	for _, raw := range tools {
+		var tool struct {
+			Type  string          `json:"type"`
+			Name  string          `json:"name"`
+			Tools json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(raw, &tool); err != nil {
+			return fmt.Errorf("decode tool: %w", err)
+		}
+		if isReservedGuardianToolName(tool.Name) {
+			return fmt.Errorf("tool name %q is reserved by the Codex proxy", guardianDecisionToolName)
+		}
+		if tool.Type == "namespace" {
+			if rawMembers := bytes.TrimSpace(tool.Tools); len(rawMembers) > 0 && !bytes.Equal(rawMembers, []byte("null")) {
+				var members []json.RawMessage
+				if err := json.Unmarshal(rawMembers, &members); err != nil {
+					return fmt.Errorf("decode namespace tools: %w", err)
+				}
+				if err := rejectReservedGuardianTools(members); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func isReservedGuardianToolName(name string) bool {
+	return name == guardianDecisionToolName || strings.HasSuffix(name, "."+guardianDecisionToolName)
 }
 
 func appendAutoReviewInstructionToContent(content json.RawMessage) (json.RawMessage, bool, error) {
@@ -302,8 +346,19 @@ type guardianDecision struct {
 type autoReviewOutputItem struct {
 	ID        string `json:"id"`
 	Type      string `json:"type"`
+	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+}
+
+func (item autoReviewOutputItem) isGuardianDecisionCall() bool {
+	return item.Type == "function_call" && item.Namespace == "" && item.Name == guardianDecisionToolName
+}
+
+func isGuardianDecisionEventItem(item map[string]any, decisionItemID string) bool {
+	return itemString(item, "id") == decisionItemID &&
+		itemString(item, "namespace") == "" &&
+		itemString(item, "name") == guardianDecisionToolName
 }
 
 func transformAutoReviewResponse(body []byte, contentType string) ([]byte, bool, error) {
@@ -342,7 +397,7 @@ func transformAutoReviewJSON(body []byte) ([]byte, bool, error) {
 		if _, discard := inspection.discardedMessageIDs[item.ID]; discard && item.Type == "message" {
 			continue
 		}
-		if item.Type == "function_call" && item.Name == guardianDecisionToolName {
+		if inspection.hasDecision && item.isGuardianDecisionCall() {
 			output[i], err = json.Marshal(autoReviewDecisionMessage(inspection.itemID, inspection.decisionJSON))
 			if err != nil {
 				return nil, false, fmt.Errorf("encode Guardian decision message: %w", err)
@@ -364,6 +419,7 @@ func transformAutoReviewJSON(body []byte) ([]byte, bool, error) {
 type autoReviewInspection struct {
 	decisionJSON        string
 	itemID              string
+	hasDecision         bool
 	discardedMessageIDs map[string]struct{}
 	passthrough         bool
 }
@@ -371,6 +427,7 @@ type autoReviewInspection struct {
 func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, error) {
 	result := autoReviewInspection{discardedMessageIDs: make(map[string]struct{})}
 	decisionCalls := 0
+	hasInvestigativeCall := false
 	otherTerminalOutput := false
 	var decisionText string
 	messageCount := 0
@@ -393,11 +450,14 @@ func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, er
 				decisionText, _ = autoReviewMessageText(raw)
 			}
 		case "function_call":
-			if item.Name != guardianDecisionToolName {
+			if !item.isGuardianDecisionCall() {
+				if isReservedGuardianToolName(item.Name) {
+					return result, fmt.Errorf("tool name %q is reserved by the Codex proxy", guardianDecisionToolName)
+				}
 				if decisionCalls > 0 {
 					otherTerminalOutput = true
 				} else {
-					result.passthrough = true
+					hasInvestigativeCall = true
 				}
 				continue
 			}
@@ -411,11 +471,16 @@ func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, er
 			}
 			result.decisionJSON = decisionJSON
 			result.itemID = item.ID
+			result.hasDecision = true
 		default:
 			otherTerminalOutput = true
 		}
 	}
-	if result.passthrough && decisionCalls == 0 {
+	if hasInvestigativeCall && decisionCalls == 0 {
+		if otherTerminalOutput {
+			return result, errors.New("Guardian mixed its tool call with other terminal output")
+		}
+		result.passthrough = len(result.discardedMessageIDs) == 0
 		return result, nil
 	}
 	if decisionCalls == 0 {
@@ -431,7 +496,7 @@ func inspectAutoReviewOutput(output []json.RawMessage) (autoReviewInspection, er
 		result.passthrough = true
 		return result, nil
 	}
-	if result.passthrough || otherTerminalOutput {
+	if hasInvestigativeCall || otherTerminalOutput {
 		return result, errors.New("Guardian mixed its decision with other terminal output")
 	}
 	return result, nil
@@ -607,7 +672,7 @@ func transformAutoReviewEventStream(body []byte) ([]byte, bool, error) {
 		switch event.event {
 		case "response.output_item.added":
 			item, _ := payload["item"].(map[string]any)
-			if itemString(item, "id") == inspection.itemID && itemString(item, "name") == guardianDecisionToolName {
+			if inspection.hasDecision && isGuardianDecisionEventItem(item, inspection.itemID) {
 				outputIndex := payload["output_index"]
 				transformed = append(transformed,
 					newServerSentEvent("response.output_item.added", map[string]any{
@@ -625,12 +690,12 @@ func transformAutoReviewEventStream(body []byte) ([]byte, bool, error) {
 				continue
 			}
 		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
-			if itemString(payload, "item_id") == inspection.itemID {
+			if inspection.hasDecision && itemString(payload, "item_id") == inspection.itemID {
 				continue
 			}
 		case "response.output_item.done":
 			item, _ := payload["item"].(map[string]any)
-			if itemString(item, "id") == inspection.itemID && itemString(item, "name") == guardianDecisionToolName {
+			if inspection.hasDecision && isGuardianDecisionEventItem(item, inspection.itemID) {
 				if !addedDecisionMessage {
 					return nil, false, errors.New("Guardian decision stream has no output_item.added event")
 				}
@@ -655,7 +720,7 @@ func transformAutoReviewEventStream(body []byte) ([]byte, bool, error) {
 				continue
 			}
 		case "response.completed":
-			if !finishedDecisionMessage {
+			if inspection.hasDecision && !finishedDecisionMessage {
 				return nil, false, errors.New("Guardian decision stream has no output_item.done event")
 			}
 			response, ok := payload["response"].(map[string]any)
@@ -672,7 +737,7 @@ func transformAutoReviewEventStream(body []byte) ([]byte, bool, error) {
 				if _, discard := inspection.discardedMessageIDs[itemString(item, "id")]; discard && itemString(item, "type") == "message" {
 					continue
 				}
-				if itemString(item, "id") == inspection.itemID && itemString(item, "name") == guardianDecisionToolName {
+				if inspection.hasDecision && isGuardianDecisionEventItem(item, inspection.itemID) {
 					value = autoReviewDecisionMessage(inspection.itemID, inspection.decisionJSON)
 				}
 				transformedOutput = append(transformedOutput, value)
