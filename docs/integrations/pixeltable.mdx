@@ -1,0 +1,64 @@
+---
+title: Pixeltable
+---
+
+[Pixeltable](https://pixeltable.com/) is an open source Python library for building AI applications with images, video, audio, documents, and text. It stores your data and model outputs together in tables. With its Ollama integration, you can run local models automatically when you add or update data.
+
+## Install
+
+Install and start [Ollama](https://ollama.com/download), then pull a model:
+
+```shell
+ollama pull qwen3:0.6b
+```
+
+Install Pixeltable:
+
+```shell
+pip install pixeltable ollama
+```
+
+## Use Ollama with Pixeltable
+
+Create a table with an input column and add an Ollama response as a computed column:
+
+```python
+import pixeltable as pxt
+import pixeltable.functions as pxtf
+
+pxt.drop_dir('ollama_demo', force=True, if_not_exists='ignore')
+pxt.create_dir('ollama_demo')
+
+t = pxt.create_table('ollama_demo/chat', {'input': pxt.String})
+messages = [{'role': 'user', 'content': t.input}]
+
+t.add_computed_column(
+    output=pxtf.ollama.chat(
+        messages=messages,
+        model='qwen3:0.6b',
+        options={'max_tokens': 300, 'top_p': 0.9, 'temperature': 0.5},
+    )
+)
+t.add_computed_column(response=t.output.message.content)
+```
+
+When you insert a prompt, Pixeltable calls Ollama and stores the response:
+
+```python
+t.insert(input='Give me five llama-themed names for my next multimodal app.')
+t.select(t.input, t.response).collect()
+```
+
+```text
+Here are five imaginative llama-themed names for your multimodal app, blending loyalty, adaptability, and integration:
+
+1. LlamaLoom
+2. LlamaVoice
+3. LlamaVibe
+4. LlamaFlow
+5. LlamaNet
+
+Let me know if you'd like more options! 🐾
+```
+
+See the [full Pixeltable tutorial](https://docs.pixeltable.com/howto/providers/working-with-ollama) for local, Colab, and remote server setup. You can also open the tutorial as an interactive notebook.
