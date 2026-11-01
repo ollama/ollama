@@ -47,9 +47,9 @@ _build_darwin() {
     status "Preparing shared native sources"
     cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS=metal_v3 -DOLLAMA_LLAMA_BACKENDS=
     cmake --build "$SOURCE_BUILD" --target ollama-llama-cpp-source --target ollama-mlx-sources
-    LLAMA_CPP_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/llama_cpp-src"
-    MLX_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/mlx-src"
-    MLX_C_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/mlx-c-src"
+    LLAMA_CPP_SHARED_SRC="${OLLAMA_LLAMA_CPP_SOURCE:-$(pwd)/$SOURCE_BUILD/_deps/llama_cpp-src}"
+    MLX_SHARED_SRC="${OLLAMA_MLX_SOURCE:-$(pwd)/$SOURCE_BUILD/_deps/mlx-src}"
+    MLX_C_SHARED_SRC="${OLLAMA_MLX_C_SOURCE:-$(pwd)/$SOURCE_BUILD/_deps/mlx-c-src}"
 
     for ARCH in $ARCHS; do
         status "Building darwin $ARCH"
