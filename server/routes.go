@@ -1223,10 +1223,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	adjustTokenLimit := func(tokens []int, limit int) int {
-		if bos := m.metadata.Int("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && m.metadata.Bool("add_bos_token", true) {
+		if bos := m.metadata.Int("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && m.metadata.Bool("tokenizer.ggml.add_bos_token", true) {
 			limit--
 		}
-		if eos := m.metadata.Int("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && m.metadata.Bool("add_eos_token", true) {
+		if eos := m.metadata.Int("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && m.metadata.Bool("tokenizer.ggml.add_eos_token", true) {
 			limit--
 		}
 		return limit
