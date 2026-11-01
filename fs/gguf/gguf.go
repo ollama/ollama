@@ -216,7 +216,7 @@ func (f *File) readKeyValue() (KeyValue, error) {
 		case typeString:
 			return readString(f)
 		case typeArray:
-			return readArray(f)
+			return f.readArray(key)
 		default:
 			return nil, fmt.Errorf("%w type %d", ErrUnsupported, t)
 		}
@@ -269,7 +269,7 @@ func readString(f *File) (string, error) {
 	return string(bts), nil
 }
 
-func readArray(f *File) (any, error) {
+func (f *File) readArray(key string) (any, error) {
 	t, err := read[uint32](f)
 	if err != nil {
 		return nil, err
@@ -304,7 +304,7 @@ func readArray(f *File) (any, error) {
 	case typeBool:
 		return readArrayData[bool](f, n)
 	case typeString:
-		return readArrayString(f, n)
+		return f.readArrayString(key, n)
 	default:
 		return nil, fmt.Errorf("%w type %d", ErrUnsupported, t)
 	}
@@ -344,12 +344,24 @@ func readArrayData[T any](f *File, n uint64) (any, error) {
 	return s, nil
 }
 
-func readArrayString(f *File, n uint64) (any, error) {
+func (f *File) readArrayString(key string, n uint64) (any, error) {
 	size, err := checkedLength(n, "array size", MaxArraySize)
 	if err != nil {
 		return nil, err
 	}
 	if f.maxArraySize >= 0 && size > f.maxArraySize {
+		// GGUF v4 Fast-Path: when skipping tokenizer.ggml.tokens, if gguf4.tokens_byte_span is present,
+		// skip the entire byte payload in O(1) via a single stream discard rather than per-string loops.
+		if key == "tokenizer.ggml.tokens" {
+			if spanKV := f.KeyValue("gguf4.tokens_byte_span"); spanKV.Valid() {
+				if span, ok := spanKV.UintOK(); ok && span > 0 {
+					if _, err := io.CopyN(io.Discard, f.reader, int64(span)); err == nil {
+						return skippedArray{size: size}, nil
+					}
+				}
+			}
+		}
+
 		for range size {
 			if err := skipString(f); err != nil {
 				return nil, err
@@ -436,7 +448,7 @@ func (f *File) close() error {
 }
 
 func (f *File) KeyValue(key string) KeyValue {
-	if !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "tokenizer.") {
+	if !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "gguf4.") {
 		key = f.KeyValue("general.architecture").String() + "." + key
 	}
 
