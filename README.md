@@ -205,6 +205,7 @@ console.log(response.message.content);
 #### Mobile
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
+- [BayesChat](https://bayeschat.xyz) - Native iPhone and iPad client for Ollama and other BYOK providers ([App Store](https://apps.apple.com/app/id6777948055))
 
 > SwiftChat, Enchanted, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
 
