@@ -258,6 +258,7 @@ console.log(response.message.content);
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama) - AI gateway
 - [Testcontainers](https://testcontainers.com/modules/ollama/) - Container-based testing
 - [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama) - PHP AI framework
+- [Respan Gateway](https://github.com/respanai/respan-gateway) - Open-source gateway: use the OpenAI, Anthropic and Gemini SDKs with Ollama models
 
 ### Frameworks & Agents
 
