@@ -281,6 +281,7 @@ console.log(response.message.content);
 - [Archyve](https://github.com/nickthecook/archyve) - RAG-enabling document library
 - [Casibase](https://casibase.org) - AI knowledge base with RAG and SSO
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) - Native client with RAG and multi-agent automation
+- [Cognito](https://github.com/mert-ogul/Cognito) - Local desktop document chat with citations for PDF, Word, and Markdown files
 
 ### Bots & Messaging
 
