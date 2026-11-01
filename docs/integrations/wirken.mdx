@@ -1,0 +1,45 @@
+---
+title: Wirken
+---
+
+Wirken is an agent gateway. It connects one or more agents to messaging channels and a WebChat UI, keeps credentials in an encrypted vault, runs tools in a sandbox, and writes a signed, hash-chained audit log.
+
+## Install
+
+Install [Wirken](https://github.com/gebruder/wirken#install). `ollama launch wirken` needs Wirken 2.1.0 or later.
+
+## Usage with Ollama
+
+### Quick setup
+
+```shell
+ollama launch wirken
+```
+
+On the first launch, `wirken setup` runs before the gateway starts. It asks for a provider, channels, credentials, sandbox mode and audit log settings. Each launch then runs the default agent on the model chosen in `ollama launch`. WebChat is served at `http://localhost:18790`.
+
+### Run directly with a model
+
+```shell
+ollama launch wirken --model glm-5.3:cloud
+```
+
+The model applies to Wirken's default agent for that run. Wirken's own provider configuration is left as it is.
+
+### Pass arguments through to Wirken
+
+Arguments after `--` are passed to `wirken run`:
+
+```shell
+ollama launch wirken -- --port 18791
+```
+
+## Manual setup
+
+1. Run `wirken setup` and choose Ollama as the provider.
+
+2. Start Wirken with an Ollama model:
+
+```shell
+wirken run --provider ollama --model glm-5.3:cloud --base-url http://localhost:11434/v1
+```
