@@ -533,12 +533,12 @@ func ToListCompletion(r api.ListResponse) ListCompletion {
 func ToEmbeddingList(model string, r api.EmbedResponse, encodingFormat string) EmbeddingList {
 	data := make([]Embedding, 0, len(r.Embeddings))
 	for i, e := range r.Embeddings {
-			var embedding any
-			if strings.EqualFold(encodingFormat, "base64") {
-				embedding = floatsToBase64(e)
-			} else {
-				embedding = e
-			}
+		var embedding any
+		if strings.EqualFold(encodingFormat, "base64") {
+			embedding = floatsToBase64(e)
+		} else {
+			embedding = e
+		}
 
 		data = append(data, Embedding{
 			Object:    "embedding",
@@ -556,6 +556,7 @@ func ToEmbeddingList(model string, r api.EmbedResponse, encodingFormat string) E
 			TotalTokens:  r.PromptEvalCount,
 		},
 	}
+}
 
 // floatsToBase64 encodes a []float32 to a base64 string
 func floatsToBase64(floats []float32) string {
