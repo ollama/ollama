@@ -220,7 +220,7 @@ func newLlamaServerHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			DisableKeepAlives: true,
-			Proxy:             nil,
+		    Proxy:               http.ProxyFromEnvironment, // Enable proxy from environment
 		},
 	}
 }
