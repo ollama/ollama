@@ -287,18 +287,21 @@ check_gpu() {
                 nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
             esac ;;
-        nvidia-smi) available nvidia-smi || return 1 ;;
+        nvidia-smi) nvidia-smi > /dev/null 2>&1 || return 1 ;;
     esac
 }
 
+HAS_CUDA=false
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
-    exit 0
+    HAS_CUDA=true
 fi
 
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    if [ "$HAS_CUDA" != true ]; then
+        warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    fi
     exit 0
 fi
 
@@ -307,6 +310,11 @@ if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
 
     install_success
     status "AMD GPU ready."
+    exit 0
+fi
+
+if [ "$HAS_CUDA" = true ]; then
+    install_success
     exit 0
 fi
 
