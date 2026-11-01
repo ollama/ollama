@@ -345,6 +345,7 @@ console.log(response.message.content);
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
+- [rGPU](https://github.com/ymcrcat/rgpu) - Run Ollama unchanged on a remote NVIDIA GPU from a machine without one
 
 #### Package Managers
 
