@@ -168,10 +168,27 @@ func TestFlintRendererDecodedToolArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The existing API decodes both 1 and 1.0 as float64, including nested
-	// arguments. The renderer can only format the typed values it receives.
-	const want = `<|assistant|><tool_call>compute<arg_key>integer</arg_key><arg_value>1.0</arg_value><arg_key>one</arg_key><arg_value>1.0</arg_value><arg_key>nested</arg_key><arg_value>{"value": 1.0}</arg_value></tool_call><|assistant|>`
+	// Decoding keeps integer literals as int64, including nested arguments,
+	// so only true floats render with a decimal point.
+	const want = `<|assistant|><tool_call>compute<arg_key>integer</arg_key><arg_value>1</arg_value><arg_key>one</arg_key><arg_value>1.0</arg_value><arg_key>nested</arg_key><arg_value>{"value": 1}</arg_value></tool_call><|assistant|>`
 	if got != want {
 		t.Errorf("decoded tool arguments = %q, want %q", got, want)
+	}
+}
+
+func TestFlintRendererDecodedIntegerArguments(t *testing.T) {
+	var arguments api.ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(`{"command":"ls","timeout_ms":30000,"rate":1.5,"one":1.0}`), &arguments); err != nil {
+		t.Fatal(err)
+	}
+	messages := []api.Message{{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "shell", Arguments: arguments}}}}}
+	got, err := (&FlintRenderer{}).Render(messages, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Integers decoded from JSON history keep their integer form (ollama#19191).
+	want := "<|assistant|><tool_call>shell<arg_key>command</arg_key><arg_value>ls</arg_value><arg_key>timeout_ms</arg_key><arg_value>30000</arg_value><arg_key>rate</arg_key><arg_value>1.5</arg_value><arg_key>one</arg_key><arg_value>1.0</arg_value></tool_call><|assistant|>"
+	if got != want {
+		t.Errorf("decoded integer arguments = %q, want %q", got, want)
 	}
 }

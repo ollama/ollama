@@ -85,7 +85,7 @@ func TestLagunaParserJSONToolCall(t *testing.T) {
 	if got, _ := calls[0].Function.Arguments.Get("location"); got != "Paris" {
 		t.Fatalf("location=%v, want Paris", got)
 	}
-	if got, _ := calls[0].Function.Arguments.Get("days"); got != float64(3) {
+	if got, _ := calls[0].Function.Arguments.Get("days"); got != int64(3) {
 		t.Fatalf("days=%v, want 3", got)
 	}
 }
