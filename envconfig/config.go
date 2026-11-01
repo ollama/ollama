@@ -97,9 +97,9 @@ func AllowedOrigins() (origins []string) {
 		)
 	}
 
+	// file:// origins stay opt-in: a locally opened HTML file could otherwise call the API.
 	origins = append(origins,
 		"app://*",
-		"file://*",
 		"tauri://*",
 		"vscode-webview://*",
 		"vscode-file://*",
