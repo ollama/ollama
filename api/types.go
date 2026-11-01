@@ -599,6 +599,7 @@ type Runner struct {
 	UseMMap         *bool `json:"use_mmap,omitempty"`
 	NumThread       int   `json:"num_thread,omitempty"`
 	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
+	PromptCache     *int  `json:"prompt_cache,omitempty"`
 }
 
 // SystemOneRequest is the request passed to [Client.SystemOne]. It asks a
@@ -1210,6 +1211,10 @@ func (opts *Options) FromMap(m map[string]any) error {
 				return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 			}
 		}
+	}
+
+	if opts.PromptCache != nil && (*opts.PromptCache < -1 || int64(*opts.PromptCache) > math.MaxInt64>>20) {
+		return fmt.Errorf("option %q must be -1 or between 0 and %d MiB", "prompt_cache", math.MaxInt64>>20)
 	}
 
 	return nil

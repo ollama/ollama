@@ -216,6 +216,36 @@ func TestMainGPUParsingFromJSON(t *testing.T) {
 	}
 }
 
+func TestPromptCacheParsingFromJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		req  string
+		want *int
+	}{
+		{name: "unset", req: `{}`},
+		{name: "zero", req: `{"prompt_cache":0}`, want: testIntPtr(0)},
+		{name: "positive", req: `{"prompt_cache":2048}`, want: testIntPtr(2048)},
+		{name: "unlimited", req: `{"prompt_cache":-1}`, want: testIntPtr(-1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var values map[string]any
+			require.NoError(t, json.Unmarshal([]byte(tt.req), &values))
+
+			opts := DefaultOptions()
+			require.NoError(t, opts.FromMap(values))
+			assert.Equal(t, tt.want, opts.PromptCache)
+		})
+	}
+
+	opts := DefaultOptions()
+	require.Error(t, opts.FromMap(map[string]any{"prompt_cache": float64(-2)}))
+
+	opts = DefaultOptions()
+	require.Error(t, opts.FromMap(map[string]any{"prompt_cache": float64(math.MaxInt64>>20 + 1)}))
+}
+
 func TestGenerationDefaultMappingsAreOptions(t *testing.T) {
 	jsonOpts := make(map[string]struct{})
 	for _, field := range reflect.VisibleFields(reflect.TypeOf(Options{})) {

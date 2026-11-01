@@ -7,6 +7,19 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+func TestModelOptionsPromptCacheRequestOverride(t *testing.T) {
+	opts, err := (&Server{}).modelOptions(
+		&Model{Options: map[string]any{"prompt_cache": float64(2048)}},
+		map[string]any{"prompt_cache": float64(0)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.PromptCache == nil || *opts.PromptCache != 0 {
+		t.Fatalf("PromptCache = %v, want 0", opts.PromptCache)
+	}
+}
+
 func TestModelOptionsNumCtxPriority(t *testing.T) {
 	tests := []struct {
 		name           string

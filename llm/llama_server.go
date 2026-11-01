@@ -408,6 +408,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "-np", "16", "--kv-unified", "--cache-ram", "0")
 	} else {
 		params = append(params, "-np", strconv.Itoa(launch.numParallel))
+		params = appendPromptCacheArgs(params, launch.opts)
 	}
 	params = appendLlamaServerLogArgs(params)
 	params = appendJinjaArgs(params, launch.config)
@@ -607,6 +608,13 @@ func embeddingBatchSize(opts api.Options, numParallel int) int {
 		batchSize = min(batchSize, opts.NumCtx*max(numParallel, 1))
 	}
 	return batchSize
+}
+
+func appendPromptCacheArgs(params []string, opts api.Options) []string {
+	if opts.PromptCache != nil {
+		params = append(params, "--cache-ram", strconv.Itoa(*opts.PromptCache))
+	}
+	return params
 }
 
 func appendLlamaServerLogArgs(params []string) []string {
