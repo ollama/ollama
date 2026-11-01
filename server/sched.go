@@ -377,33 +377,46 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					slog.Debug("runner to expire was nil, retrying")
 					continue
 				}
-				// Trigger an expiration to unload once it's done
+				// Trigger an expiration to unload once it's done. The request is
+				// recorded on the runner itself so a keep_alive from a request that
+				// lands while we wait cannot cancel it.
 				runnerToExpire.refMu.Lock()
 				slog.Debug("resetting model to expire immediately to make room", "runner", runnerToExpire, "refCount", runnerToExpire.refCount)
-				if runnerToExpire.expireTimer != nil {
-					runnerToExpire.expireTimer.Stop()
-					runnerToExpire.expireTimer = nil
-				}
-				runnerToExpire.sessionDuration = 0
-				if runnerToExpire.refCount <= 0 {
+				expireNow := runnerToExpire.requestEvictionLocked()
+				runnerToExpire.refMu.Unlock()
+				if expireNow {
 					s.expiredCh <- runnerToExpire
 				}
-				runnerToExpire.refMu.Unlock()
 				// Wait for the unload to happen
 				slog.Debug("waiting for pending requests to complete and unload to occur", "runner", runnerToExpire)
-				select {
-				case <-ctx.Done():
-					slog.Debug("shutting down scheduler pending loop")
-					return
-				case <-s.unloadedCh:
-					slog.Debug("unload completed", "runner", runnerToExpire)
-					continue
+				if !s.awaitUnload(ctx, pending, runnerToExpire) {
+					break
 				}
 			}
 		case <-s.unloadedCh:
 			// An unload request when there are no pending request can be ignored
 			slog.Debug("ignoring unload event with no pending requests")
 		}
+	}
+}
+
+// awaitUnload waits for runner to unload. If pending is cancelled first it drops
+// the eviction claim, so the runner keeps its normal keep_alive. Returns false to
+// stop scheduling pending.
+func (s *Scheduler) awaitUnload(ctx context.Context, pending *LlmRequest, runner *runnerRef) bool {
+	select {
+	case <-s.unloadedCh:
+		slog.Debug("unload completed", "runner", runner)
+		return true
+	case <-pending.ctx.Done():
+		runner.refMu.Lock()
+		s.cancelEvictionLocked(runner)
+		runner.refMu.Unlock()
+		slog.Debug("pending request cancelled while waiting for unload", "runner", runner)
+		return false
+	case <-ctx.Done():
+		slog.Debug("shutting down scheduler pending loop")
+		return false
 	}
 }
 
@@ -425,32 +438,14 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			}
 			runner.refMu.Lock()
 			runner.refCount--
-			if runner.refCount <= 0 {
-				if runner.sessionDuration <= 0 {
-					slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
-					if runner.expireTimer != nil {
-						runner.expireTimer.Stop()
-						runner.expireTimer = nil
-					}
-					s.expiredCh <- runner
-				} else if runner.expireTimer == nil {
-					slog.Debug("runner with non-zero duration has gone idle, adding timer", "runner", runner, "duration", runner.sessionDuration)
-					runner.expireTimer = time.AfterFunc(runner.sessionDuration, func() {
-						slog.Debug("timer expired, expiring to unload", "runner", runner)
-						runner.refMu.Lock()
-						defer runner.refMu.Unlock()
-						if runner.expireTimer != nil {
-							runner.expireTimer.Stop()
-							runner.expireTimer = nil
-						}
-						s.expiredCh <- runner
-					})
-					runner.expiresAt = time.Now().Add(runner.sessionDuration)
-				} else {
-					slog.Debug("runner with non-zero duration has gone idle, resetting timer", "runner", runner, "duration", runner.sessionDuration)
-					runner.expireTimer.Reset(runner.sessionDuration)
-					runner.expiresAt = time.Now().Add(runner.sessionDuration)
-				}
+			// Re-check the runner's state on the refCount -> 0 transition. This
+			// is the only place that decides "it is idle now, what next?", so a
+			// pending eviction cannot be lost between the mark and the unload.
+			if s.settleIdleLocked(runner) {
+				slog.Debug("runner has gone idle and must unload now", "runner", runner, "state", runner.state, "refCount", runner.refCount)
+				s.expiredCh <- runner
+			} else if runner.state == runnerStateEvictRequested {
+				slog.Debug("runner is draining before eviction", "runner", runner, "refCount", runner.refCount)
 			}
 			slog.Debug("after processing request finished event", "runner", runner, "refCount", runner.refCount)
 			runner.refMu.Unlock()
@@ -459,12 +454,19 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner.refMu.Lock()
 			if runner.refCount > 0 {
 				slog.Debug("expired event with positive ref count, retrying", "runner", runner, "refCount", runner.refCount)
+				// We can't unload yet, but want to as soon as the current request
+				// completes. Keep the claim on the runner so nothing can revive it.
+				runner.state = runnerStateEvictRequested
 				go func(runner *runnerRef) {
-					// We can't unload yet, but want to as soon as the current request completes
 					// So queue up another expired event
 					time.Sleep(10 * time.Millisecond)
 					s.expiredCh <- runner
 				}(runner)
+				runner.refMu.Unlock()
+				continue
+			}
+			if !runner.beginUnloadLocked() {
+				slog.Debug("duplicate expired event for runner already unloading", "runner", runner)
 				runner.refMu.Unlock()
 				continue
 			}
@@ -523,8 +525,14 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
 	}
+	// A pending eviction wins: this request's keep_alive must not cancel it.
 	if pending.sessionDuration != nil {
-		runner.sessionDuration = pending.sessionDuration.Duration
+		if runner.state == runnerStateEvictRequested {
+			slog.Debug("ignoring keep_alive on runner pending eviction",
+				"runner", runner, "keep_alive", pending.sessionDuration.Duration)
+		} else {
+			runner.sessionDuration = pending.sessionDuration.Duration
+		}
 	}
 	pending.successCh <- runner
 	go func() {
@@ -1374,6 +1382,27 @@ func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {
 	}
 }
 
+// runnerState records why a runner is (or is about to be) unloaded. It replaces
+// overloading sessionDuration == 0, which an incoming keep_alive could overwrite.
+type runnerState uint8
+
+const (
+	runnerStateLoaded runnerState = iota
+	runnerStateEvictRequested
+	runnerStateUnloading
+)
+
+func (state runnerState) String() string {
+	switch state {
+	case runnerStateEvictRequested:
+		return "evict_requested"
+	case runnerStateUnloading:
+		return "unloading"
+	default:
+		return "loaded"
+	}
+}
+
 // TODO consolidate sched_types.go
 type runnerRef struct {
 	refMu    sync.Mutex
@@ -1391,6 +1420,7 @@ type runnerRef struct {
 	sessionDuration time.Duration
 	expireTimer     *time.Timer
 	expiresAt       time.Time
+	state           runnerState
 
 	// model is atomic so lookups can read it without contending on refMu.
 	model        atomic.Pointer[Model]
@@ -1420,10 +1450,113 @@ func (runner *runnerRef) unload() {
 	runner.contextShift = false
 }
 
+// requestEvictionLocked claims the runner for eviction and reports whether the
+// caller must send an expiredCh event because the runner is already idle.
+// Callers must hold runner.refMu.
+func (runner *runnerRef) requestEvictionLocked() bool {
+	if runner.state == runnerStateUnloading {
+		return false
+	}
+	if runner.state != runnerStateEvictRequested {
+		slog.Debug("marking runner for eviction", "runner", runner, "refCount", runner.refCount)
+		runner.state = runnerStateEvictRequested
+	}
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
+	// Surface an imminent expiry while the runner drains its requests.
+	runner.expiresAt = time.Now()
+	return runner.refCount <= 0
+}
+
+// beginUnloadLocked claims the runner for unloading, reporting false when
+// another expiry event already claimed it. Callers must hold runner.refMu.
+func (runner *runnerRef) beginUnloadLocked() bool {
+	if runner.state == runnerStateUnloading {
+		return false
+	}
+	runner.state = runnerStateUnloading
+	if runner.expireTimer != nil {
+		runner.expireTimer.Stop()
+		runner.expireTimer = nil
+	}
+	return true
+}
+
+// settleIdleLocked re-evaluates a runner after its refCount or eviction state
+// changed and reports whether the caller must send an expiredCh event.
+// Callers must hold runner.refMu.
+func (s *Scheduler) settleIdleLocked(runner *runnerRef) bool {
+	switch runner.state {
+	case runnerStateUnloading:
+		return false
+	case runnerStateEvictRequested:
+		// Unload as soon as the last request completes, whatever keep_alive the
+		// draining requests asked for.
+		return runner.refCount <= 0
+	}
+
+	if runner.refCount > 0 {
+		return false
+	}
+
+	if runner.sessionDuration <= 0 {
+		slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
+		return true
+	}
+
+	if runner.expireTimer == nil {
+		slog.Debug("runner with non-zero duration has gone idle, adding timer", "runner", runner, "duration", runner.sessionDuration)
+		runner.expireTimer = s.newExpireTimer(runner, runner.sessionDuration)
+	} else {
+		slog.Debug("runner with non-zero duration has gone idle, resetting timer", "runner", runner, "duration", runner.sessionDuration)
+		runner.expireTimer.Reset(runner.sessionDuration)
+	}
+	runner.expiresAt = time.Now().Add(runner.sessionDuration)
+	return false
+}
+
+// newExpireTimer returns the keep-alive timer for an idle runner. Expiry is
+// recorded as a pending eviction, so a request landing between the timer firing
+// and the unload cannot revive a runner that is on its way out.
+func (s *Scheduler) newExpireTimer(runner *runnerRef, d time.Duration) *time.Timer {
+	return time.AfterFunc(d, func() {
+		slog.Debug("timer expired, expiring to unload", "runner", runner)
+		runner.refMu.Lock()
+		defer runner.refMu.Unlock()
+		runner.expireTimer = nil
+		if runner.state == runnerStateUnloading {
+			return
+		}
+		runner.state = runnerStateEvictRequested
+		runner.expiresAt = time.Now()
+		s.expiredCh <- runner
+	})
+}
+
+// cancelEvictionLocked drops a pending eviction when whoever requested it stops
+// waiting, so the runner keeps its normal keep-alive behaviour. It only applies
+// while requests are still draining: once the runner is idle the unload has
+// already been committed. Callers must hold runner.refMu.
+func (s *Scheduler) cancelEvictionLocked(runner *runnerRef) {
+	if runner.state != runnerStateEvictRequested || runner.refCount == 0 {
+		return
+	}
+	slog.Debug("cancelling pending eviction, waiting request went away", "runner", runner, "refCount", runner.refCount)
+	runner.state = runnerStateLoaded
+	runner.expiresAt = time.Time{}
+}
+
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
 	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+
+	// we make the caller queue for a fresh load instead of handing out a dying runner
+	if runner.state == runnerStateUnloading {
+		return true
+	}
 
 	timeout := 10 * time.Second
 	if runner.loading {
@@ -1655,15 +1788,11 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 	slog.Info("evicting all other loaded models for OOM retry", "count", len(runnersToExpire))
 	for _, runner := range runnersToExpire {
 		runner.refMu.Lock()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
-		if runner.refCount <= 0 {
+		expireNow := runner.requestEvictionLocked()
+		runner.refMu.Unlock()
+		if expireNow {
 			s.expiredCh <- runner
 		}
-		runner.refMu.Unlock()
 	}
 
 	// Wait for every unload event. Each runner produces exactly one
@@ -1698,15 +1827,11 @@ func (s *Scheduler) expireRunnersForRuntimeOOM(model *Model, err error) {
 	slog.Warn("runtime OOM detected; expiring loaded models to clear memory before next request", "model", schedulerModelKey(model), "error", err)
 	for _, runner := range runners {
 		runner.refMu.Lock()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
-		if runner.refCount <= 0 {
+		expireNow := runner.requestEvictionLocked()
+		runner.refMu.Unlock()
+		if expireNow {
 			s.expiredCh <- runner
 		}
-		runner.refMu.Unlock()
 	}
 }
 
@@ -1778,16 +1903,11 @@ func (s *Scheduler) expireRunner(model *Model) {
 
 	for _, runner := range runners {
 		runner.refMu.Lock()
-		runner.expiresAt = time.Now()
-		if runner.expireTimer != nil {
-			runner.expireTimer.Stop()
-			runner.expireTimer = nil
-		}
-		runner.sessionDuration = 0
-		if runner.refCount <= 0 {
+		expireNow := runner.requestEvictionLocked()
+		runner.refMu.Unlock()
+		if expireNow {
 			s.expiredCh <- runner
 		}
-		runner.refMu.Unlock()
 	}
 }
 
@@ -1800,6 +1920,7 @@ type loadedModel struct {
 	sizeVRAM      int64
 	contextLength int
 	expiresAt     time.Time
+	evicting      bool // the scheduler has claimed this runner for unload
 }
 
 // loadedModels returns a snapshot of the currently loaded models for status
@@ -1829,6 +1950,9 @@ func (s *Scheduler) loadedModels() []loadedModel {
 			size:      int64(r.totalSize),
 			sizeVRAM:  int64(r.vramSize),
 			expiresAt: r.expiresAt,
+			// Anything past runnerStateLoaded is on its way out, either waiting
+			// for its in-flight requests to finish or already being torn down.
+			evicting: r.state != runnerStateLoaded,
 		}
 		if r.llama != nil {
 			lm.contextLength = r.llama.ContextLength()
