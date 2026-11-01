@@ -203,6 +203,28 @@ func TestBool(t *testing.T) {
 	}
 }
 
+func TestEnableSYCL(t *testing.T) {
+	t.Run("default disabled", func(t *testing.T) {
+		if EnableSYCL(false) {
+			t.Error("expected SYCL discovery to default to disabled")
+		}
+	})
+
+	t.Run("opt-in enabled", func(t *testing.T) {
+		t.Setenv("OLLAMA_SYCL", "1")
+		if !EnableSYCL(false) {
+			t.Error("expected OLLAMA_SYCL=1 to enable SYCL discovery")
+		}
+	})
+
+	t.Run("explicit opt-out", func(t *testing.T) {
+		t.Setenv("OLLAMA_SYCL", "0")
+		if EnableSYCL(false) {
+			t.Error("expected OLLAMA_SYCL=0 to leave SYCL discovery disabled")
+		}
+	})
+}
+
 func TestUint(t *testing.T) {
 	cases := map[string]uint{
 		"0":    0,
