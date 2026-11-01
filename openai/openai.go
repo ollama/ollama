@@ -652,6 +652,14 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 						return nil, errors.New("invalid message format")
 					}
 					messages = append(messages, api.Message{Role: msg.Role, Content: text})
+				case "refusal":
+					// assistant history may carry a refusal part instead of text;
+					// keep it as visible content, as the Responses API does
+					refusal, ok := data["refusal"].(string)
+					if !ok {
+						return nil, errors.New("invalid message format")
+					}
+					messages = append(messages, api.Message{Role: msg.Role, Content: refusal})
 				case "image_url":
 					var url string
 					if urlMap, ok := data["image_url"].(map[string]any); ok {
