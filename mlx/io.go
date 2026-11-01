@@ -6,6 +6,7 @@ import "C"
 import (
 	"fmt"
 	"iter"
+	"log/slog"
 	"runtime"
 	"sort"
 	"unsafe"
@@ -18,7 +19,7 @@ type SafetensorsFile struct {
 }
 
 func loadSafetensorsStream() C.mlx_stream {
-	if runtime.GOOS == "darwin" {
+	if !GPUIsAvailable() || runtime.GOOS == "darwin" {
 		return C.mlx_default_cpu_stream_new()
 	}
 	return C.mlx_default_gpu_stream_new()
@@ -96,6 +97,7 @@ func Load(path string) iter.Seq2[string, *Array] {
 	return func(yield func(string, *Array) bool) {
 		sf, err := LoadSafetensorsNative(path)
 		if err != nil {
+			slog.Error("Failed to load safetensors", "path", path, "error", err)
 			return
 		}
 		defer sf.Free()

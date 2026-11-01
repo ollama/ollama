@@ -49,18 +49,29 @@ func LoadedLibraryPath() (string, error) {
 // mlxLibraryCandidates returns the mlxc shared library in dir, if present.
 func mlxLibraryCandidates(dir string) []string {
 	// On Windows, MSVC produces mlxc.dll (no lib prefix)
+	// while MinGW/Clang produces libmlxc.dll.
 	// On Unix, it's libmlxc.so or libmlxc.dylib
-	name := "libmlxc.so"
 	switch runtime.GOOS {
 	case "windows":
-		name = "mlxc.dll"
-	case "darwin":
-		name = "libmlxc.dylib"
-	}
-	if info, err := os.Stat(filepath.Join(dir, name)); err != nil || !info.Mode().IsRegular() {
+		for _, name := range []string{"mlxc.dll", "libmlxc.dll"} {
+			if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() {
+				return []string{name}
+			}
+		}
 		return nil
+	case "darwin":
+		name := "libmlxc.dylib"
+		if info, err := os.Stat(filepath.Join(dir, name)); err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		return []string{name}
+	default:
+		name := "libmlxc.so"
+		if info, err := os.Stat(filepath.Join(dir, name)); err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		return []string{name}
 	}
-	return []string{name}
 }
 
 // tryLoadFromDir searches a directory for the mlxc shared library and loads it.
@@ -113,6 +124,10 @@ func libOllamaRoots() []string {
 			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 		case "windows":
 			roots = append(roots, filepath.Join(exeDir, "lib", "ollama"))
+			roots = append(roots, filepath.Join(exeDir, "lib", "ollama", "mlx"))
+			if matches, err := filepath.Glob(filepath.Join(exeDir, "lib", "ollama", "mlx*")); err == nil {
+				roots = append(roots, matches...)
+			}
 			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
 		}
 	}
@@ -159,12 +174,14 @@ func libOllamaRoots() []string {
 // repoBuildDirs returns candidate build/ directories relative to cwd and repo root.
 func repoBuildDirs() []string {
 	var dirs []string
-	if cwd, err := os.Getwd(); err == nil {
-		dirs = append(dirs, filepath.Join(cwd, "build"))
-		for dir := cwd; ; {
+	seen := make(map[string]bool)
+	addBase := func(start string) {
+		for dir := start; ; {
 			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-				if dir != cwd {
-					dirs = append(dirs, filepath.Join(dir, "build"))
+				b := filepath.Join(dir, "build")
+				if !seen[b] {
+					seen[b] = true
+					dirs = append(dirs, b)
 				}
 				break
 			}
@@ -174,6 +191,18 @@ func repoBuildDirs() []string {
 			}
 			dir = parent
 		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		b := filepath.Join(cwd, "build")
+		seen[b] = true
+		dirs = append(dirs, b)
+		addBase(cwd)
+	}
+	if exe, err := os.Executable(); err == nil {
+		if eval, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = eval
+		}
+		addBase(filepath.Dir(exe))
 	}
 	return dirs
 }
