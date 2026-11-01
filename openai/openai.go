@@ -127,6 +127,9 @@ type ChatCompletionRequest struct {
 	Logprobs         *bool           `json:"logprobs"`
 	TopLogprobs      int             `json:"top_logprobs"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	// Think is an Ollama extension used when a model's native thinking control
+	// cannot be represented exactly by OpenAI's string-valued reasoning effort.
+	Think *api.ThinkValue `json:"think,omitempty"`
 	// Ollama extension: without it an OpenAI-API client cannot release a model.
 	KeepAlive *api.Duration `json:"keep_alive,omitempty"`
 }
@@ -182,6 +185,9 @@ type CompletionRequest struct {
 	Suffix           string         `json:"suffix"`
 	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
+	// Think is an Ollama extension used when a model's native thinking control
+	// cannot be represented exactly by OpenAI parameters.
+	Think *api.ThinkValue `json:"think,omitempty"`
 }
 
 type Completion struct {
@@ -785,17 +791,30 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		}
 	}
 
-	var effort string
+	think := r.Think
+	if think != nil {
+		if !think.IsValid() {
+			return nil, fmt.Errorf("invalid think value")
+		}
+		if len(thinking) == 0 || !thinking[0].Valid() {
+			if err := api.ValidateLegacyThinking(think); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		var effort string
 
-	if r.Reasoning != nil {
-		effort = r.Reasoning.Effort
-	} else if r.ReasoningEffort != nil {
-		effort = *r.ReasoningEffort
-	}
+		if r.Reasoning != nil {
+			effort = r.Reasoning.Effort
+		} else if r.ReasoningEffort != nil {
+			effort = *r.ReasoningEffort
+		}
 
-	think, err := ThinkingFromReasoningEffort(effort, thinking...)
-	if err != nil {
-		return nil, err
+		converted, err := ThinkingFromReasoningEffort(effort, thinking...)
+		if err != nil {
+			return nil, err
+		}
+		think = converted
 	}
 
 	return &api.ChatRequest{
@@ -877,6 +896,16 @@ func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 
 // FromCompleteRequest converts a CompletionRequest to api.GenerateRequest
 func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
+	think := r.Think
+	if think != nil {
+		if !think.IsValid() {
+			return api.GenerateRequest{}, fmt.Errorf("invalid think value")
+		}
+		if err := api.ValidateLegacyThinking(think); err != nil {
+			return api.GenerateRequest{}, err
+		}
+	}
+
 	options := make(map[string]any)
 
 	switch stop := r.Stop.(type) {
@@ -934,6 +963,7 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		Logprobs:        logprobs,
 		TopLogprobs:     topLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
+		Think:           think,
 	}, nil
 }
 
