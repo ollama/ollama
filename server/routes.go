@@ -165,7 +165,9 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 		opts.NumBatch = llm.DefaultEmbeddingNumBatch
 	}
 
-	if model != nil && model.DraftPath == "" && !draftNumPredictSet {
+	// llama-server drafts embedded (no draft file) models only on request:
+	// unset becomes 0 = disabled. MLX models draft by default; 0 disables it.
+	if model != nil && !model.IsMLX() && model.DraftPath == "" && !draftNumPredictSet {
 		opts.DraftNumPredict = 0
 	}
 
