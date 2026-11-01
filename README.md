@@ -320,6 +320,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [Kimiko](https://kimiko.app/) - Local-first AI note taker for meetings on Mac and Windows; can use Ollama for summaries and chat
 
 ### Observability & Monitoring
 
