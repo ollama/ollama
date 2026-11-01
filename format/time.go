@@ -43,7 +43,9 @@ func humanDuration(d time.Duration) string {
 		return fmt.Sprintf("%d months", hours/24/30)
 	}
 
-	return fmt.Sprintf("%d years", int(d.Hours())/24/365)
+	// hours, not int(d.Hours()): the switch above picked this branch from the
+	// rounded count, and the two disagree in the last half hour of a year.
+	return fmt.Sprintf("%d years", hours/24/365)
 }
 
 func HumanTime(t time.Time, zeroValue string) string {
