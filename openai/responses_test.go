@@ -2112,6 +2112,44 @@ func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamConverter_ItemIDsAreUnique(t *testing.T) {
+	// Clients replay output items in later requests, so item IDs must stay
+	// unique across responses. The response ID is fixed here so that only the
+	// randomness of the item IDs is exercised.
+	const responses = 5000
+
+	request := ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}}
+	seen := make(map[string]bool)
+	counts := make(map[string]int)
+	for range responses {
+		converter := NewResponsesStreamConverter("resp_test", "msg_test", "test", request)
+		events := converter.Process(api.ChatResponse{Message: api.Message{Thinking: "Look it up."}})
+		events = append(events, converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{
+			{ID: "call_search", Function: api.ToolCallFunction{Name: "tool_search", Arguments: testArgs(map[string]any{"query": "orders"})}},
+			{ID: "call_weather", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+		}}})...)
+
+		for _, event := range events {
+			if event.Event != "response.output_item.done" {
+				continue
+			}
+			id := event.Data.(map[string]any)["item"].(map[string]any)["id"].(string)
+			prefix, _, _ := strings.Cut(id, "_")
+			counts[prefix]++
+			if seen[id] {
+				t.Fatalf("duplicate item id %q", id)
+			}
+			seen[id] = true
+		}
+	}
+
+	for _, prefix := range []string{"rs", "tsc", "fc"} {
+		if counts[prefix] != responses {
+			t.Errorf("got %d %s_ items, want %d (counts: %v)", counts[prefix], prefix, responses, counts)
+		}
+	}
+}
+
 func TestResponsesStreamConverter_Reasoning(t *testing.T) {
 	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
