@@ -1077,6 +1077,28 @@ func TestSchedNeedsReloadUsesEffectiveExplicitContext(t *testing.T) {
 	require.True(t, runner.needsReload(ctx, req))
 }
 
+func TestSchedNeedsReloadMLXPromptCache(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	opts := api.DefaultOptions()
+	model := &Model{Config: model.ConfigV2{ModelFormat: "safetensors"}}
+	runner := &runnerRef{
+		Options: &opts,
+		llama:   &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+	}
+	runner.model.Store(model)
+	req := &LlmRequest{model: model, opts: api.DefaultOptions()}
+
+	budget := 0
+	req.opts.PromptCache = &budget
+	require.True(t, runner.needsReload(ctx, req))
+
+	same := 0
+	opts.PromptCache = &same
+	require.False(t, runner.needsReload(ctx, req))
+}
+
 func TestSchedNeedsReloadIgnoresAutomaticNumBatchDerivation(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()

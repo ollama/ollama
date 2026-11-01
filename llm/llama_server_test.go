@@ -2144,6 +2144,28 @@ func TestAppendMainGPUArgs(t *testing.T) {
 	}
 }
 
+func TestAppendPromptCacheArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		opts api.Options
+		want []string
+	}{
+		{name: "unset leaves llama-server default", opts: api.DefaultOptions(), want: []string{"base"}},
+		{name: "zero disables cache", opts: api.Options{Runner: api.Runner{PromptCache: testIntPtr(0)}}, want: []string{"base", "--cache-ram", "0"}},
+		{name: "negative one is unlimited", opts: api.Options{Runner: api.Runner{PromptCache: testIntPtr(-1)}}, want: []string{"base", "--cache-ram", "-1"}},
+		{name: "positive budget", opts: api.Options{Runner: api.Runner{PromptCache: testIntPtr(2048)}}, want: []string{"base", "--cache-ram", "2048"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendPromptCacheArgs([]string{"base"}, tt.opts)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendPromptCacheArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendLoadModeArgs(t *testing.T) {
 	mmapOff := api.DefaultOptions()
 	mmapOff.UseMMap = testBoolPtr(false)

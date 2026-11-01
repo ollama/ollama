@@ -38,7 +38,8 @@ type Client struct {
 	port                int
 	modelName           string
 	contextLength       atomic.Int64
-	softContextLength   int // recommended limit to avoid poor performance
+	softContextLength   int  // recommended limit to avoid poor performance
+	promptCache         *int // prompt cache budget in MiB; nil uses the runner default
 	memory              atomic.Uint64
 	embeddingDimensions atomic.Value // []int
 	done                chan struct{}
@@ -54,7 +55,7 @@ var ErrRuntimeUnavailable = errors.New("MLX runtime is not available")
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
-func NewClient(modelName string, softContextLength int) (*Client, error) {
+func NewClient(modelName string, softContextLength int, promptCache *int) (*Client, error) {
 	if err := CheckRuntime(); err != nil {
 		return nil, err
 	}
@@ -62,6 +63,7 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 	c := &Client{
 		modelName:         modelName,
 		softContextLength: softContextLength,
+		promptCache:       promptCache,
 		done:              make(chan struct{}),
 		client:            http.DefaultClient,
 	}
@@ -389,6 +391,14 @@ func (c *Client) HasExited() bool {
 	}
 }
 
+func (c *Client) runnerArgs() []string {
+	args := []string{"runner", "--model", c.modelName, "--port", strconv.Itoa(c.port)}
+	if c.promptCache != nil {
+		args = append(args, "--prompt-cache", strconv.Itoa(*c.promptCache))
+	}
+	return args
+}
+
 // Load checks whether the model fits in GPU memory and starts the subprocess.
 func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	if len(gpus) > 0 {
@@ -435,8 +445,8 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 		exe = eval
 	}
 
-	// Spawn subprocess: ollama runner --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port))
+	// Spawn subprocess: ollama runner --model <name> --port <port> [--prompt-cache <MiB>]
+	cmd := exec.Command(exe, c.runnerArgs()...)
 	cmd.Env = os.Environ()
 	loadedLibraryPath, err := mlx.LoadedLibraryPath()
 	if err != nil {

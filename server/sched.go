@@ -630,7 +630,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 		} else {
 			modelName := req.model.ShortName
-			llama, err = mlxrunner.NewClient(modelName, req.opts.NumCtx)
+			llama, err = mlxrunner.NewClient(modelName, req.opts.NumCtx, req.opts.PromptCache)
 		}
 		if err != nil {
 			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
@@ -1467,6 +1467,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		!reflect.DeepEqual(loaded.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(loaded.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		(!loaded.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
+		(loaded.IsMLX() && !reflect.DeepEqual(optsExisting.PromptCache, optsNew.PromptCache)) || // MLX fixes the prompt cache budget at launch
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}

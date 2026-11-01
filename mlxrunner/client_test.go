@@ -2,6 +2,7 @@ package mlxrunner
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/llm"
@@ -45,5 +46,20 @@ func TestRequestGrammar(t *testing.T) {
 				t.Fatalf("requestGrammar = %s, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunnerArgsPromptCache(t *testing.T) {
+	c := &Client{modelName: "m", port: 1234}
+	want := []string{"runner", "--model", "m", "--port", "1234"}
+	if got := c.runnerArgs(); !slices.Equal(got, want) {
+		t.Fatalf("runnerArgs() = %v, want %v", got, want)
+	}
+
+	budget := 0
+	c.promptCache = &budget
+	want = append(want, "--prompt-cache", "0")
+	if got := c.runnerArgs(); !slices.Equal(got, want) {
+		t.Fatalf("runnerArgs() = %v, want %v", got, want)
 	}
 }

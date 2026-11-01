@@ -33,6 +33,13 @@ func Execute(args []string) error {
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
+	flagSet.Func("prompt-cache", "Prompt cache budget in MiB (-1 unlimited, 0 disables)", func(s string) error {
+		mib, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		return setPromptCacheBudget(mib)
+	})
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
 

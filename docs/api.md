@@ -408,10 +408,13 @@ curl http://localhost:11434/api/generate -d '{
     "num_gpu": 1,
     "main_gpu": 0,
     "use_mmap": true,
-    "num_thread": 8
+    "num_thread": 8,
+    "prompt_cache": 4096
   }
 }'
 ```
+
+`prompt_cache` sets the runner's prompt cache budget in MiB. Use `0` to keep only the active conversation or `-1` for unlimited; omitting it keeps the backend default.
 
 ##### Response
 

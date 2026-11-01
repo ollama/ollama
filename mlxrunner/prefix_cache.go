@@ -32,6 +32,7 @@ import (
 	"cmp"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"time"
 
@@ -42,7 +43,19 @@ import (
 
 const prefillSnapshotInterval = 8192
 
-const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
+var maxPagedOutBytes int64 = 8 << 30 // 8 GiB default eviction threshold for paged-out snapshot memory
+
+func setPromptCacheBudget(mib int) error {
+	if mib < -1 || int64(mib) > math.MaxInt64>>20 {
+		return fmt.Errorf("prompt-cache must be -1 or between 0 and %d MiB", math.MaxInt64>>20)
+	}
+	if mib == -1 {
+		maxPagedOutBytes = math.MaxInt64
+	} else {
+		maxPagedOutBytes = int64(mib) << 20
+	}
+	return nil
+}
 
 type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
