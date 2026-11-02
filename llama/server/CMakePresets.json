@@ -230,6 +230,16 @@
         "OLLAMA_RUNNER_DIR": "vulkan",
         "OLLAMA_GPU_BACKEND": "vulkan"
       }
+    },
+    {
+      "name": "rocket",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocket",
+      "cacheVariables": {
+        "GGML_ROCKET": "ON",
+        "OLLAMA_RUNNER_DIR": "rocket",
+        "OLLAMA_GPU_BACKEND": "rocket"
+      }
     }
   ],
   "buildPresets": [
@@ -332,6 +342,11 @@
       "name": "vulkan",
       "configurePreset": "vulkan",
       "targets": ["ggml-vulkan"]
+    },
+    {
+      "name": "rocket",
+      "configurePreset": "rocket",
+      "targets": ["ggml-rocket"]
     }
   ]
 }

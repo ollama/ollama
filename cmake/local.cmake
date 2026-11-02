@@ -7,7 +7,7 @@
 include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
-    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
+    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;rocket;cuda_jetpack5;cuda_jetpack6")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
@@ -476,6 +476,12 @@ function(ollama_add_llama_server_build name)
         ${_ggml_cache_args}
         ${_llama_cache_args}
     )
+    foreach(_fc_arg IN ITEMS
+            FETCHCONTENT_SOURCE_DIR_GGML_ROCKET
+            FETCHCONTENT_SOURCE_DIR_ROCKET_USERSPACE
+            FETCHCONTENT_SOURCE_DIR_RKNPU_SUBMIT)
+        ollama_append_cache_arg_if_set(_cmake_args ${_fc_arg})
+    endforeach()
 
     if(APPLE)
         if(CMAKE_OSX_ARCHITECTURES)
@@ -748,9 +754,21 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
         endif()
     endif()
 
+    set(_local_targets llama-server llama-quantize)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(_default_ggml_rocket ON)
+        if(DEFINED GGML_ROCKET AND NOT GGML_ROCKET)
+            set(_default_ggml_rocket OFF)
+        endif()
+        if(_default_ggml_rocket)
+            list(APPEND _cpu_args -DGGML_ROCKET=ON)
+            list(APPEND _local_targets ggml-rocket)
+        endif()
+    endif()
+
     ollama_add_llama_server_build(local
         RUNNER_DIR ""
-        TARGETS llama-server llama-quantize
+        TARGETS ${_local_targets}
         CMAKE_ARGS ${_cpu_args})
 
     add_custom_target(ollama-local ALL
@@ -821,6 +839,19 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                     -DGGML_VULKAN=ON
                     -DOLLAMA_GPU_BACKEND=vulkan)
             list(APPEND _backend_targets ollama-llama-server-vulkan)
+        elseif(_backend STREQUAL "rocket")
+            if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+                message(FATAL_ERROR "OLLAMA_LLAMA_BACKENDS=rocket is only supported on Linux")
+            endif()
+            ollama_add_llama_server_build(rocket
+                RUNNER_DIR rocket
+                TARGETS ggml-rocket
+                CMAKE_ARGS
+                    -DBUILD_SHARED_LIBS=ON
+                    -DGGML_BACKEND_DL=ON
+                    -DGGML_ROCKET=ON
+                    -DOLLAMA_GPU_BACKEND=rocket)
+            list(APPEND _backend_targets ollama-llama-server-rocket)
         elseif(_backend STREQUAL "cuda_jetpack5")
             if(CMAKE_CUDA_ARCHITECTURES)
                 set(_cuda_preset llama_cuda_jetpack5_user_arch)

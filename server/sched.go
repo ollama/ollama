@@ -1115,8 +1115,19 @@ func betterPlacementGPU(candidate ml.DeviceInfo, candidateAvailable uint64, curr
 	if candidate.Integrated != current.Integrated {
 		return !candidate.Integrated
 	}
+	if candidate.Integrated && current.Integrated && candidate.Library != current.Library && ml.SimilarDeviceMemory(candidateAvailable, currentAvailable) {
+		if candidate.PreferredLibrary(current) {
+			return true
+		}
+		if current.PreferredLibrary(candidate) {
+			return false
+		}
+	}
+	if candidateAvailable != currentAvailable {
+		return candidateAvailable > currentAvailable
+	}
 
-	return candidateAvailable > currentAvailable
+	return candidate.PreferredLibrary(current)
 }
 
 func bestGPUGroupByAvailableMemory(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo) []ml.DeviceInfo {
@@ -1139,8 +1150,22 @@ func betterPlacementGroup(candidate []ml.DeviceInfo, candidateAvailable uint64, 
 	if candidateDiscrete != currentDiscrete {
 		return candidateDiscrete
 	}
+	if !candidateDiscrete && !currentDiscrete && len(candidate) > 0 && len(current) > 0 && candidate[0].Library != current[0].Library && ml.SimilarDeviceMemory(candidateAvailable, currentAvailable) {
+		if candidate[0].PreferredLibrary(current[0]) {
+			return true
+		}
+		if current[0].PreferredLibrary(candidate[0]) {
+			return false
+		}
+	}
+	if candidateAvailable != currentAvailable {
+		return candidateAvailable > currentAvailable
+	}
+	if len(candidate) > 0 && len(current) > 0 {
+		return candidate[0].PreferredLibrary(current[0])
+	}
 
-	return candidateAvailable > currentAvailable
+	return false
 }
 
 func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {

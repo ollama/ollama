@@ -244,6 +244,8 @@ func normalizeNativeProbeLibrary(library string) string {
 		return "ROCm"
 	case "vulkan":
 		return "Vulkan"
+	case "rocket":
+		return "Rocket"
 	case "metal":
 		return "Metal"
 	default:

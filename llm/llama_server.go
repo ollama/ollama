@@ -423,6 +423,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	}
 
 	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
+	params = appendRocketArgs(params, launch.opts, launch.gpus, launch.extraEnvs)
 
 	// KV cache type
 	if launch.kvCacheType != "" {
@@ -449,7 +450,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "-t", strconv.Itoa(launch.opts.NumThread))
 	}
 
-	params = appendMainGPUArgs(params, launch.opts)
+	params = appendMainGPUArgs(params, launch.opts, launch.gpus...)
 
 	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 
@@ -678,12 +679,46 @@ func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo)
 	return params
 }
 
-func appendMainGPUArgs(params []string, opts api.Options) []string {
+// appendRocketArgs disables CPU tensor repacking (--no-repack) when the Rockchip
+// NPU (Rocket) backend is active so quantized model weights stay in host buffers
+// (CPU_Mapped / CPU) instead of CPU_REPACK, allowing ROCKET to accelerate
+// quantized MAT_MUL prefill operations.
+func appendRocketArgs(params []string, opts api.Options, gpus []ml.DeviceInfo, extraEnvs map[string]string) []string {
+	if opts.NumGPU == 0 {
+		return params
+	}
+	if extraEnvs["LLAMA_ARG_REPACK"] != "" || os.Getenv("LLAMA_ARG_REPACK") != "" {
+		return params
+	}
+	for _, g := range gpus {
+		if strings.EqualFold(g.Library, "Rocket") {
+			return append(params, "--no-repack")
+		}
+	}
+	return params
+}
+
+func appendMainGPUArgs(params []string, opts api.Options, gpus ...ml.DeviceInfo) []string {
 	if opts.MainGPU == nil {
+		return params
+	}
+	if len(gpus) > 0 && allDevicesAreRocket(gpus) {
 		return params
 	}
 
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
+}
+
+func allDevicesAreRocket(gpus []ml.DeviceInfo) bool {
+	if len(gpus) == 0 {
+		return false
+	}
+	for _, g := range gpus {
+		if !strings.EqualFold(g.Library, "Rocket") {
+			return false
+		}
+	}
+	return true
 }
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
@@ -3011,6 +3046,24 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 		if isGPUBuffer(key.backend) {
 			gpu += buffer.bytes
 			byDevice[deviceName(key.backend)] += buffer.bytes
+		}
+	}
+
+	// Rockchip NPU (ROCKET) is a GGML_BACKEND_DEVICE_TYPE_ACCEL device sharing
+	// unified system DRAM: model weights stay in host/mmap buffers so the NPU
+	// and CPU can both access them without duplication. Attribute the unified
+	// footprint to the ROCKET device when no discrete GPU buffer lines are logged.
+	if gpu == 0 && total > 0 && w.runner.options.NumGPU != 0 {
+		for _, g := range w.runner.gpus {
+			if strings.EqualFold(g.Library, "Rocket") {
+				devName := g.Name
+				if devName == "" {
+					devName = "ROCKET"
+				}
+				gpu = total
+				byDevice[devName] = total
+				break
+			}
 		}
 	}
 

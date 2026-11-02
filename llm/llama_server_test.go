@@ -4058,3 +4058,63 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 		t.Errorf("json format converted a schema, %d conversions", got)
 	}
 }
+
+func TestRocketArgsAndMemoryAccounting(t *testing.T) {
+	rocketGPU := ml.DeviceInfo{
+		DeviceID:    ml.DeviceID{ID: "0", Library: "Rocket"},
+		Name:        "ROCKET",
+		Description: "Rockchip RK3588 NPU (rknpu)",
+		Integrated:  true,
+		TotalMemory: 32 * 1024 * 1024 * 1024,
+		FreeMemory:  28 * 1024 * 1024 * 1024,
+	}
+
+	t.Run("appendRocketArgs adds --no-repack", func(t *testing.T) {
+		params := appendRocketArgs(nil, api.Options{Runner: api.Runner{NumGPU: -1}}, []ml.DeviceInfo{rocketGPU}, nil)
+		if !reflect.DeepEqual(params, []string{"--no-repack"}) {
+			t.Fatalf("appendRocketArgs = %v, want [--no-repack]", params)
+		}
+	})
+
+	t.Run("appendRocketArgs respects cpu-only or explicit LLAMA_ARG_REPACK", func(t *testing.T) {
+		if params := appendRocketArgs(nil, api.Options{Runner: api.Runner{NumGPU: 0}}, []ml.DeviceInfo{rocketGPU}, nil); len(params) != 0 {
+			t.Fatalf("expected no rocket args when NumGPU=0, got %v", params)
+		}
+		if params := appendRocketArgs(nil, api.Options{Runner: api.Runner{NumGPU: -1}}, []ml.DeviceInfo{rocketGPU}, map[string]string{"LLAMA_ARG_REPACK": "1"}); len(params) != 0 {
+			t.Fatalf("expected no rocket args when LLAMA_ARG_REPACK is set, got %v", params)
+		}
+	})
+
+	t.Run("appendMainGPUArgs skips --main-gpu for Rocket ACCEL device", func(t *testing.T) {
+		mainGPU := 0
+		opts := api.Options{Runner: api.Runner{MainGPU: &mainGPU}}
+		if params := appendMainGPUArgs(nil, opts, rocketGPU); len(params) != 0 {
+			t.Fatalf("expected appendMainGPUArgs to skip --main-gpu for Rocket, got %v", params)
+		}
+	})
+
+	t.Run("memoryParsingWriter attributes unified DRAM buffers to ROCKET", func(t *testing.T) {
+		runner := &llamaServerRunner{
+			options:          api.Options{Runner: api.Runner{NumGPU: -1}},
+			vramByDevice:     make(map[string]uint64),
+			systemFreeAtLoad: make(map[string]uint64),
+			gpus:             []ml.DeviceInfo{rocketGPU},
+		}
+		w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+		logOutput := "llama_model_loader: CPU_Mapped model buffer size = 1024.00 MiB\n" +
+			"llama_context: CPU KV buffer size = 128.00 MiB\n" +
+			"llama_context: CPU compute buffer size = 64.00 MiB\n"
+		if _, err := w.Write([]byte(logOutput)); err != nil {
+			t.Fatal(err)
+		}
+
+		wantBytes := uint64((1024 + 128 + 64) * 1024 * 1024)
+		total, vram := runner.MemorySize()
+		if total != wantBytes || vram != wantBytes {
+			t.Fatalf("MemorySize() = (%d, %d), want (%d, %d)", total, vram, wantBytes, wantBytes)
+		}
+		if got := runner.VRAMByGPU(rocketGPU.DeviceID); got != wantBytes {
+			t.Fatalf("VRAMByGPU() = %d, want %d", got, wantBytes)
+		}
+	})
+}

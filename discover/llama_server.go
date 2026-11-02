@@ -466,6 +466,8 @@ func inferLibrary(name, description string) string {
 	switch {
 	case strings.Contains(combined, "cuda"):
 		return "CUDA"
+	case strings.Contains(combined, "rocket") || strings.Contains(combined, "rknpu") || strings.Contains(combined, "rockchip"):
+		return "Rocket"
 	case strings.Contains(combined, "rocm") || strings.Contains(combined, "hip"):
 		return "ROCm"
 	case strings.Contains(combined, "metal") || strings.Contains(combined, "apple"):
@@ -479,6 +481,9 @@ func inferLibrary(name, description string) string {
 
 func isIntegratedLlamaServerDevice(library string, deviceIndex int, integratedByIndex map[int]bool) bool {
 	if library == "Vulkan" && integratedByIndex[deviceIndex] {
+		return true
+	}
+	if library == "Rocket" {
 		return true
 	}
 

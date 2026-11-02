@@ -226,6 +226,7 @@ func probeGGMLDevicesLinux(libDirs []string) ([]nativeProbeDevice, error) {
 			if props.MemoryTotal == 0 {
 				continue
 			}
+			integrated := ggmlDeviceTypeIntegrated(props.Type) || library == "Rocket"
 			devices = append(devices, nativeProbeDevice{
 				Library:             library,
 				Index:               i,
@@ -233,13 +234,14 @@ func probeGGMLDevicesLinux(libDirs []string) ([]nativeProbeDevice, error) {
 				Name:                cString(props.Name),
 				Description:         cString(props.Description),
 				DeviceID:            cString(props.DeviceID),
-				Integrated:          ggmlDeviceTypeIntegrated(props.Type),
+				Integrated:          integrated,
 				IntegratedKnown: props.Type == ggmlBackendDeviceTypeGPU ||
-					props.Type == ggmlBackendDeviceTypeIGPU,
+					props.Type == ggmlBackendDeviceTypeIGPU ||
+					library == "Rocket",
 				TotalMemory: uint64(props.MemoryTotal),
 				FreeMemory:  uint64(props.MemoryFree),
 			})
-			slog.Debug("GGML GPU device type", "library", library, "index", i, "ggml_type", props.Type, "integrated", ggmlDeviceTypeIntegrated(props.Type))
+			slog.Debug("GGML GPU device type", "library", library, "index", i, "ggml_type", props.Type, "integrated", integrated)
 		}
 	}
 

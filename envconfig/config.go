@@ -232,6 +232,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// EnableVulkan controls Vulkan backend discovery.
 	EnableVulkan = BoolWithDefault("OLLAMA_VULKAN")
+	// EnableRocket controls Rockchip NPU (Rocket/RKNPU) backend discovery.
+	EnableRocket = BoolWithDefault("OLLAMA_ROCKET")
 	// EnableIntegratedGPU controls whether integrated GPUs may be selected.
 	EnableIntegratedGPU = BoolWithDefault("OLLAMA_IGPU_ENABLE")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
@@ -254,6 +256,7 @@ var (
 	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
 	VkVisibleDevices      = String("GGML_VK_VISIBLE_DEVICES")
+	RocketDev             = String("ROCKET_DEV")
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
@@ -361,6 +364,8 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(true), "Enable Vulkan support"}
+		ret["OLLAMA_ROCKET"] = EnvVar{"OLLAMA_ROCKET", EnableRocket(true), "Enable Rockchip NPU (Rocket/RKNPU) support"}
+		ret["ROCKET_DEV"] = EnvVar{"ROCKET_DEV", RocketDev(), "Device node path override for Rockchip NPU (e.g. /dev/accel/accel0 or /dev/dri/renderD128)"}
 	}
 
 	return ret
