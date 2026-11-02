@@ -82,7 +82,6 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 				return err
 			}
 			picked = true
-			pick = false
 		}
 		remaining := modelShowTimeout
 		model, err := c.piTargetModel(ctx, target, &remaining)

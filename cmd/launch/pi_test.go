@@ -1410,7 +1410,6 @@ func TestPiEdit(t *testing.T) {
 			t.Fatalf("invalid settings changed: %s, %v", data, err)
 		}
 	})
-
 }
 
 func TestPiEdit_CreatesDistinctBackupsForEachManagedFile(t *testing.T) {
