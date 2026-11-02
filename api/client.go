@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -64,25 +65,63 @@ func checkError(resp *http.Response, body []byte) error {
 
 // ClientFromEnvironment creates a new [Client] using configuration from the
 // environment variable OLLAMA_HOST, which points to the network host and
-// port on which the ollama service is listening. The format of this variable
-// is:
+// port on which the ollama service is listening. It can also be set to a Unix
+// domain socket URL, such as unix:///run/ollama.sock. The format is:
 //
 //	<scheme>://<host>:<port>
+//	unix://<absolute socket path>
 //
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
-	return &Client{
-		base: envconfig.Host(),
-		http: http.DefaultClient,
-	}, nil
+	return NewClient(envconfig.Host(), http.DefaultClient), nil
 }
 
 func NewClient(base *url.URL, http *http.Client) *Client {
+	base, http = HTTPClientForHost(base, http)
 	return &Client{
 		base: base,
 		http: http,
 	}
+}
+
+// HTTPClientForHost configures an HTTP client for a host returned by
+// envconfig.Host. Unix socket hosts are represented to HTTP as localhost and
+// dialed over the configured socket path.
+func HTTPClientForHost(base *url.URL, client *http.Client) (*url.URL, *http.Client) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	if base.Scheme != "unix" {
+		return base, client
+	}
+
+	socketPath := base.Path
+	base = &url.URL{Scheme: "http", Host: "localhost"}
+	clientCopy := *client
+	switch transport := client.Transport.(type) {
+	case nil:
+		clientCopy.Transport = UnixSocketTransport(socketPath)
+	case *http.Transport:
+		clientCopy.Transport = unixSocketTransport(socketPath, transport)
+	}
+
+	return base, &clientCopy
+}
+
+// UnixSocketTransport returns an HTTP transport that connects through socketPath.
+func UnixSocketTransport(socketPath string) *http.Transport {
+	return unixSocketTransport(socketPath, http.DefaultTransport.(*http.Transport))
+}
+
+func unixSocketTransport(socketPath string, transport *http.Transport) *http.Transport {
+	transport = transport.Clone()
+	transport.Proxy = nil
+	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+	}
+	return transport
 }
 
 func getAuthorizationToken(ctx context.Context, challenge string) (string, error) {

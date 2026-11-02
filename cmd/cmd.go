@@ -16,6 +16,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path"
@@ -168,6 +169,9 @@ func getModelfileName(cmd *cobra.Command) (string, error) {
 // isLocalhost returns true if the configured Ollama host is a loopback or unspecified address.
 func isLocalhost() bool {
 	host := envconfig.Host()
+	if host.Scheme == "unix" {
+		return true
+	}
 	h, _, _ := net.SplitHostPort(host.Host)
 	if h == "localhost" {
 		return true
@@ -2271,7 +2275,7 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", envconfig.Host().Host)
+	ln, err := listen(envconfig.Host())
 	if err != nil {
 		return err
 	}
@@ -2282,6 +2286,28 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	}
 
 	return err
+}
+
+func listen(host *url.URL) (net.Listener, error) {
+	network, address := "tcp", host.Host
+	if host.Scheme == "unix" {
+		network, address = "unix", host.Path
+		if address == "" || !filepath.IsAbs(address) {
+			return nil, fmt.Errorf("OLLAMA_HOST Unix socket path must be absolute")
+		}
+	}
+
+	ln, err := net.Listen(network, address)
+	if err != nil {
+		return nil, err
+	}
+	if network == "unix" && runtime.GOOS != "windows" {
+		if err := os.Chmod(address, 0o600); err != nil {
+			ln.Close()
+			return nil, err
+		}
+	}
+	return ln, nil
 }
 
 func initializeKeypair() error {
