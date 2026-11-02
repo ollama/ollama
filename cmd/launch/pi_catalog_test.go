@@ -26,9 +26,9 @@ func TestPiPrimaryMetadataBudget(t *testing.T) {
 			home := t.TempDir()
 			setLaunchTestHome(t, home)
 			withLauncherHooks(t)
-			oldTimeout := modelShowTimeout
-			modelShowTimeout = 50 * time.Millisecond
-			t.Cleanup(func() { modelShowTimeout = oldTimeout })
+			oldTimeout := piModelDiscoveryTimeout
+			piModelDiscoveryTimeout = 50 * time.Millisecond
+			t.Cleanup(func() { piModelDiscoveryTimeout = oldTimeout })
 			if err := config.SaveIntegration("pi", []string{"primary"}); err != nil {
 				t.Fatal(err)
 			}
@@ -81,11 +81,8 @@ func TestPiPrimaryMetadataBudget(t *testing.T) {
 			}()
 			select {
 			case err := <-finished:
-				if complete && err != nil {
-					t.Fatalf("complete inventory should avoid /show: %v", err)
-				}
-				if !complete && !errors.Is(err, context.DeadlineExceeded) {
-					t.Fatalf("metadata error = %v; want deadline", err)
+				if err != nil {
+					t.Fatalf("partial discovery should succeed: %v", err)
 				}
 			case <-time.After(time.Second):
 				cancel()
@@ -93,9 +90,13 @@ func TestPiPrimaryMetadataBudget(t *testing.T) {
 				t.Fatal("primary /show exceeded the metadata budget")
 			}
 			if !complete {
-				data, err := os.ReadFile(path)
-				if err != nil || string(data) != original {
-					t.Fatalf("config changed on metadata timeout: %s, %v", data, err)
+				data, err := fileutil.ReadJSON(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				models := data["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
+				if len(models) != 1 || models[0].(map[string]any)["contextWindow"] != float64(8192) {
+					t.Fatalf("known metadata changed on timeout: %v", models)
 				}
 			}
 		})
@@ -703,7 +704,7 @@ func TestPiManualEquivalentPrimaryKeepsItsID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"providers":{"ollama":{"models":[{"id":"primary:latest","contextWindow":4096,"custom":true}]}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	primary, err := (&Pi{}).writeConfig([]LaunchModel{{Name: "primary", ContextLength: 32768}})
+	primary, err := (&Pi{}).writeConfig([]LaunchModel{{Name: "primary", ContextLength: 32768}}, false)
 	if err != nil || primary != "primary:latest" {
 		t.Fatalf("configured primary = %q, %v", primary, err)
 	}

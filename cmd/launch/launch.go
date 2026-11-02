@@ -406,7 +406,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
+	cmd.Flags().StringVarP(&modelFlag, "model", "m", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
 	cmd.Flags().BoolVar(&restoreFlag, "restore", false, "Restore an integration to its default profile")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")

@@ -34,7 +34,10 @@ const (
 
 func (p *Pi) String() string { return "Pi" }
 
-var npmRegistryBaseURL = "https://registry.npmjs.org"
+var (
+	npmRegistryBaseURL      = "https://registry.npmjs.org"
+	piModelDiscoveryTimeout = 10 * time.Second
+)
 
 func piHasModelArgs(args []string) bool {
 	for i := 0; i < len(args); i++ {
@@ -55,18 +58,27 @@ func piHasModelArgs(args []string) bool {
 // independently of that choice. Only the starting model needs readiness checks.
 func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	current := primaryModelFromConfig(saved)
+	if model, err := pi.currentModel(); err != nil {
+		return err
+	} else if model != "" {
+		current = model
+	}
 	target := req.ModelOverride
 	if target == "" && !req.ForceConfigure && !req.ConfigureOnly {
 		target = current
 	}
+	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, piModelDiscoveryTimeout)
+	defer cancelDiscovery()
 	if isCloudModelName(target) && !req.ForceConfigure && !req.ConfigureOnly {
-		if disabled, _ := cloudStatusDisabled(ctx, c.apiClient); disabled {
+		if disabled, _ := cloudStatusDisabled(discoveryCtx, c.apiClient); disabled {
 			return fmt.Errorf("cloud is disabled; enable cloud to use %s", target)
 		}
 	}
-	// A failed inventory request is not an empty catalog. Leave both configs intact.
-	if _, err := c.modelInventory().Load(ctx); err != nil {
-		return err
+	// Resolve an explicit model before spending the discovery budget on the catalog.
+	if req.ModelOverride == "" {
+		if _, err := c.modelInventory().Load(discoveryCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 	}
 	if target == "" {
 		target = current
@@ -76,15 +88,21 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	var models []LaunchModel
 	for {
 		if pick {
+			cancelDiscovery()
 			var err error
 			target, err = c.selectSingleModelWithSelectorReady(ctx, "Select model for Pi:", target, DefaultSingleSelector, false, "Pi", "pi")
 			if err != nil {
 				return err
 			}
 			picked = true
+			discoveryCtx, cancelDiscovery = context.WithTimeout(ctx, piModelDiscoveryTimeout)
+			defer cancelDiscovery()
 		}
-		remaining := modelShowTimeout
-		model, err := c.piTargetModel(ctx, target, &remaining)
+		remaining := piModelDiscoveryTimeout
+		model, err := c.piTargetModel(discoveryCtx, target, &remaining)
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			err = nil
+		}
 		var status api.StatusError
 		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
 			if !picked && req.ModelOverride == "" {
@@ -117,7 +135,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 					paymentTarget = strings.TrimSuffix(paymentTarget, ":latest") + ":cloud"
 				}
 			}
-			if err := c.confirmCloudModelPayment(ctx, paymentTarget); err != nil {
+			if err := c.confirmCloudModelPayment(discoveryCtx, paymentTarget); err != nil {
 				if errors.Is(err, errModelPaymentDeclined) {
 					pick = true
 					continue
@@ -125,7 +143,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 				return err
 			}
 		}
-		cloudRec, localRec := c.agentCapableRecommendations(ctx)
+		cloudRec, localRec := c.agentCapableRecommendations(discoveryCtx)
 		err = confirmDeprecatedLaunchModel(target, "Pi", "pi", cloudRec, localRec)
 		if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 			pick = true
@@ -140,34 +158,64 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			}
 			if len(model.Capabilities) == 0 {
 				// Authentication may make previously unavailable metadata readable.
-				model, err = c.piTargetModel(ctx, target, &remaining)
+				model, err = c.piTargetModel(discoveryCtx, target, &remaining)
+				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+					err = nil
+				}
 				if err != nil {
 					return err
 				}
 			}
 		}
-		models, err = c.piModelCatalog(ctx, model, remaining)
+		models, err = c.piModelCatalog(discoveryCtx, model, remaining)
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		break
 	}
 
-	configured, err := pi.writeConfig(models)
+	configured, err := pi.writeConfig(models, discoveryCtx.Err() != nil)
 	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	if err := config.SaveIntegration("pi", []string{configured}); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
-	return launchAfterConfiguration("pi", pi, configured, models, req)
+	runtimeModel := ""
+	if req.ModelOverride != "" || picked {
+		runtimeModel = configured
+	}
+	return launchAfterConfiguration("pi", pi, runtimeModel, models, req)
+}
+
+func (p *Pi) currentModel() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(home, ".pi", "agent", "settings.json")
+	settings, err := fileutil.ReadJSON(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read Pi config %s: %w", path, err)
+	}
+	if provider, _ := settings["defaultProvider"].(string); provider != "ollama" {
+		return "", nil
+	}
+	model, _ := settings["defaultModel"].(string)
+	return model, nil
 }
 
 // piTargetModel retains remote routing metadata even when /show requires sign-in.
 func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration) (LaunchModel, error) {
-	inventory, err := c.modelInventory().Load(ctx)
-	if err != nil {
-		return LaunchModel{}, err
+	var inventory []LaunchModel
+	if c.inventory != nil {
+		inventory = c.inventory.snapshot()
 	}
 	model, _ := findLaunchModel(inventory, name)
 	model.Name = name
@@ -188,6 +236,14 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 	if err != nil {
 		if showCtx.Err() != nil {
 			return model, showCtx.Err()
+		}
+		if len(inventory) == 0 {
+			inventory, _ = c.modelInventory().Load(ctx)
+			if listed, ok := findLaunchModel(inventory, name); ok {
+				model = listed
+				model.Name = name
+				model.Remote = model.Remote || isCloudModelName(name)
+			}
 		}
 		var status api.StatusError
 		if model.Remote && !(errors.As(err, &status) && status.StatusCode == http.StatusNotFound) {
@@ -228,6 +284,9 @@ func (c *launcherClient) piSelectableModels(ctx context.Context, items []ModelIt
 
 func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel, budget time.Duration) ([]LaunchModel, error) {
 	inventory, err := c.modelInventory().Load(ctx)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return []LaunchModel{primary}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -261,8 +320,8 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 		seen[key] = true
 		models = append(models, LaunchModel{Name: rec.Name, Remote: true, ContextLength: rec.Details.ContextLength, MaxOutputTokens: rec.MaxOutputTokens})
 	}
-	// /tags supplies most metadata. Bound the remaining /show work for older
-	// servers and cloud recommendations; no catalog entry triggers a download.
+	// Discovery is best effort: some models may be missing when the timeout expires.
+	// TODO: Use a more narrowly scoped model metadata API instead of /show here.
 	showCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	for i := range models {
@@ -295,12 +354,17 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 			}
 		})
 	}
+queue:
 	for i := 1; i < len(models); i++ {
-		jobs <- i
+		select {
+		case jobs <- i:
+		case <-showCtx.Done():
+			break queue
+		}
 	}
 	close(jobs)
 	wg.Wait()
-	if err := ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
 	if !piSupportsChat(models[0]) {
@@ -823,11 +887,11 @@ func piBaseURL() string {
 }
 
 func (p *Pi) Edit(models []LaunchModel) error {
-	_, err := p.writeConfig(models)
+	_, err := p.writeConfig(models, false)
 	return err
 }
 
-func (p *Pi) writeConfig(models []LaunchModel) (string, error) {
+func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, error) {
 	if len(models) == 0 {
 		return "", nil
 	}
@@ -884,6 +948,10 @@ func (p *Pi) writeConfig(models []LaunchModel) (string, error) {
 	var newModels []any
 	manual := make(map[string]string)
 	managed := make(map[string]map[string]any)
+	found := make(map[string]bool, len(models))
+	for _, model := range models {
+		found[launchModelRecommendationKey(model.Name)] = true
+	}
 	for _, entry := range existingModels {
 		model, _ := entry.(map[string]any)
 		id, _ := model["id"].(string)
@@ -894,7 +962,11 @@ func (p *Pi) writeConfig(models []LaunchModel) (string, error) {
 				manual[key] = id
 			}
 		} else {
-			managed[launchModelRecommendationKey(id)] = model
+			key := launchModelRecommendationKey(id)
+			managed[key] = model
+			if preserveCatalog && !found[key] {
+				newModels = append(newModels, entry)
+			}
 		}
 	}
 	for _, model := range models {

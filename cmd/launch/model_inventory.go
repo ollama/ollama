@@ -176,6 +176,12 @@ func (i *modelInventory) Load(ctx context.Context) ([]LaunchModel, error) {
 	return i.load(ctx, false)
 }
 
+func (i *modelInventory) snapshot() []LaunchModel {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return cloneLaunchModels(i.models)
+}
+
 func (i *modelInventory) Refresh(ctx context.Context) ([]LaunchModel, error) {
 	return i.load(ctx, true)
 }

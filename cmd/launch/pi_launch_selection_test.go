@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/spf13/cobra"
@@ -43,6 +44,7 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 		{name: "configure replaces disabled cloud default", saved: []string{"remote:cloud", "keep-model"}, args: []string{"--config"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "configure replaces disabled explicit cloud target", saved: []string{"keep-model"}, args: []string{"--config", "--model", "remote:cloud"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "saved embedding model requires a chat model", saved: []string{"embeddings", "keep-model"}, wantPicker: 1, wantModel: "chosen"},
+		{name: "short model flag", saved: []string{"keep-model"}, args: []string{"-m", "chosen"}, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen"}},
 		{name: "explicit embedding model is rejected", saved: []string{"keep-model"}, args: []string{"--model", "embeddings"}, wantError: "does not support chat"},
 		{name: "legacy saved embedding model requires a chat model", saved: []string{"legacy-embedding"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "disabled saved cloud alias", saved: []string{"remote-alias", "keep-model"}, wantError: "cloud is disabled"},
@@ -52,7 +54,7 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 		{name: "native override ignores unused malformed launch config", runtimeOverride: true, corruptConfig: true, saved: []string{"keep-model"}, args: []string{"--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
 		{name: "forwarded provider and model", runtimeOverride: true, saved: []string{"remote:cloud", "keep-model"}, args: []string{"--", "--provider", "fixture-user", "--model", "user-choice"}, wantPiArgs: []string{"--provider", "fixture-user", "--model", "user-choice"}},
 		{name: "forwarded model replaces explicit cloud target", runtimeOverride: true, saved: []string{"keep-model"}, args: []string{"--model", "remote:cloud", "--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
-		{name: "model flag inside a prompt is not an override", wantModel: "keep-model", saved: []string{"keep-model"}, args: []string{"--", "--system-prompt", "--model", "probe"}, wantPiArgs: []string{"--provider", "ollama", "--model", "keep-model", "--system-prompt", "--model", "probe"}},
+		{name: "model flag inside a prompt is not an override", wantModel: "keep-model", saved: []string{"keep-model"}, args: []string{"--", "--system-prompt", "--model", "probe"}, wantPiArgs: []string{"--system-prompt", "--model", "probe"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -176,7 +178,10 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 			}
 
 			data, err := os.ReadFile(argsPath)
-			want := []string{"--provider", "ollama", "--model", tc.wantModel}
+			var want []string
+			if tc.wantPicker > 0 {
+				want = []string{"--provider", "ollama", "--model", tc.wantModel}
+			}
 			if tc.wantPiArgs != nil {
 				want = tc.wantPiArgs
 			}
@@ -274,5 +279,136 @@ func TestPiRun_PassesSelectedModelToClient(t *testing.T) {
 	want := []string{"--provider", "ollama", "--model", "chosen:latest", "--offline", "--print", "probe"}
 	if got := strings.Split(strings.TrimSpace(string(data)), "\n"); !slices.Equal(got, want) {
 		t.Fatalf("Pi process arguments = %v, want %v", got, want)
+	}
+}
+
+func TestLaunchIntegrationPiPreservesModelChoice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+	for _, tc := range []struct {
+		name         string
+		current      string
+		override     string
+		configure    bool
+		stallCatalog bool
+		extra        []string
+		want         string
+		wantArgs     []string
+	}{
+		{name: "saved Pi default", current: "model-b", want: "model-b"},
+		{name: "resume restores its own model", current: "model-a", extra: []string{"--continue"}, want: "model-a", wantArgs: []string{"--continue"}},
+		{name: "explicit override wins", current: "model-b", override: "model-a", extra: []string{"--continue"}, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a", "--continue"}},
+		{name: "explicit lookup precedes timed out catalog", current: "model-b", override: "model-a", stallCatalog: true, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
+		{name: "explicit configuration wins", current: "model-b", configure: true, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			setLaunchTestHome(t, home)
+			withLauncherHooks(t)
+			withInteractiveSession(t, true)
+			if err := config.SaveIntegration("pi", []string{"model-a", "stale"}); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(home, ".pi", "agent")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.stallCatalog {
+				oldTimeout := piModelDiscoveryTimeout
+				piModelDiscoveryTimeout = 50 * time.Millisecond
+				t.Cleanup(func() { piModelDiscoveryTimeout = oldTimeout })
+				if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"providers":{"ollama":{"models":[{"id":"model-b","_launch":true,"contextWindow":8192}]}}}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			firstLookup := make(chan string, 1)
+			settingsPath := filepath.Join(dir, "settings.json")
+			settings := fmt.Sprintf(`{"defaultProvider":"ollama","defaultModel":%q,"editorPaddingX":7}`, tc.current)
+			if err := os.WriteFile(settingsPath, []byte(settings), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := t.TempDir()
+			argsPath := filepath.Join(home, "pi-args")
+			for name, content := range map[string]string{
+				"pi":           fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\n", argsPath),
+				"npm":          "#!/bin/sh\nexit 1\n",
+				"package.json": `{"name":"@earendil-works/pi-coding-agent"}`,
+			} {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte(content), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", bin)
+			DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) {
+				if !tc.configure {
+					t.Fatal("ordinary launch unexpectedly opened the picker")
+				}
+				return "model-a", nil
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/status":
+					fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
+				case "/api/tags":
+					if tc.stallCatalog {
+						select {
+						case firstLookup <- "tags":
+						default:
+						}
+						<-r.Context().Done()
+						return
+					}
+					fmt.Fprint(w, `{"models":[{"name":"model-a","capabilities":["completion"],"details":{"context_length":32768}},{"name":"model-b","capabilities":["completion"],"details":{"context_length":32768}}]}`)
+				case "/api/show":
+					select {
+					case firstLookup <- "show":
+					default:
+					}
+					fmt.Fprint(w, `{"capabilities":["completion"],"model_info":{"test.context_length":32768}}`)
+				case "/api/experimental/model-recommendations":
+					fmt.Fprint(w, `{"recommendations":[{"model":"model-a"}]}`)
+				default:
+					t.Errorf("unexpected request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			for range 2 {
+				select {
+				case <-firstLookup:
+				default:
+				}
+				err := LaunchIntegration(t.Context(), IntegrationLaunchRequest{Name: "pi", ModelOverride: tc.override, ForceConfigure: tc.configure, ExtraArgs: tc.extra})
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(settingsPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var settings map[string]any
+				if err := json.Unmarshal(data, &settings); err != nil {
+					t.Fatal(err)
+				}
+				if settings["defaultModel"] != tc.want || settings["editorPaddingX"] != float64(7) {
+					t.Errorf("Pi settings = %s, want default %s and preserved padding", data, tc.want)
+				}
+				if tc.stallCatalog {
+					if lookup := <-firstLookup; lookup != "show" {
+						t.Errorf("first model lookup = %s, want show", lookup)
+					}
+					data, err := os.ReadFile(filepath.Join(dir, "models.json"))
+					if err != nil || !strings.Contains(string(data), `"model-b"`) {
+						t.Errorf("partial discovery discarded known catalog: %s, %v", data, err)
+					}
+				}
+				args, err := os.ReadFile(argsPath)
+				if err != nil || !slices.Equal(strings.Fields(string(args)), tc.wantArgs) {
+					t.Errorf("Pi args = %q, %v; want %v", args, err, tc.wantArgs)
+				}
+			}
+		})
 	}
 }
