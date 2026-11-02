@@ -634,7 +634,11 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				"output": []string{"text"},
 			}
 		}
-		if model.HasCapability("thinking") || model.Thinking.Valid() {
+		supportsThinking := model.HasCapability("thinking") || model.Thinking.Valid()
+		if model.Thinking.Valid() && len(model.Thinking.Values) == 1 && model.Thinking.Supports(false) {
+			supportsThinking = false
+		}
+		if supportsThinking {
 			entry["reasoning"] = true
 			if variants, defaults, _ := openCodeThinkingVariants(model); variants != nil {
 				if len(defaults) > 0 {
@@ -731,7 +735,9 @@ func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any
 }
 
 func openCodeBooleanOnEffort(thinking *api.ModelRecommendationThinking) string {
-	if thinking == nil {
+	if thinking == nil || thinking.Default == true {
+		// An explicit empty effort clears inherited off options and lets the backend
+		// use its boolean-on default without selecting a named level.
 		return ""
 	}
 	if thinking.Supports("high") {
@@ -756,7 +762,7 @@ func openCodeVariantLabel(base string, variants map[string]any) string {
 }
 
 func openCodeDefaultVariant(model LaunchModel) string {
-	if !model.Thinking.Valid() {
+	if !model.Thinking.Valid() || (len(model.Thinking.Values) == 1 && model.Thinking.Supports(false)) {
 		return ""
 	}
 

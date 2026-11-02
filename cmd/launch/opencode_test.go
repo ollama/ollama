@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -298,8 +300,8 @@ func TestOpenCodeEdit(t *testing.T) {
 			t.Fatalf("variants.none = %v, want reasoningEffort none", none)
 		}
 		on, _ := variants["thinking"].(map[string]any)
-		if on["reasoningEffort"] != "high" {
-			t.Fatalf("variants.thinking.reasoningEffort = %v, want high", on["reasoningEffort"])
+		if on["reasoningEffort"] != "" {
+			t.Fatalf("variants.thinking.reasoningEffort = %v, want empty to use boolean default", on["reasoningEffort"])
 		}
 	})
 
@@ -337,8 +339,8 @@ func TestOpenCodeEdit(t *testing.T) {
 		}
 		variants, _ := entry["variants"].(map[string]any)
 		on, _ := variants["thinking"].(map[string]any)
-		if on["reasoningEffort"] != "high" {
-			t.Fatalf("variants.thinking.reasoningEffort = %v, want high", on["reasoningEffort"])
+		if on["reasoningEffort"] != "" {
+			t.Fatalf("variants.thinking.reasoningEffort = %v, want empty to use boolean default", on["reasoningEffort"])
 		}
 		high, _ := variants["high"].(map[string]any)
 		if high["reasoningEffort"] != "high" {
@@ -1408,5 +1410,110 @@ func TestOpenCodeDefaultVariant(t *testing.T) {
 				t.Fatalf("variant = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// Exercise the selected variant through the OpenAI adapter and renderer resolution.
+func TestOpenCodeEdit_BooleanThinkingSemantics(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		values       []any
+		defaultValue bool
+	}{
+		{"mixed max", []any{false, true, "max"}, true},
+		{"nemotron medium", []any{false, true, "medium"}, true},
+		{"mixed high", []any{false, true, "high"}, true},
+		{"binary default off", []any{false, true}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			thinking := &api.ModelRecommendationThinking{Values: tt.values, Default: tt.defaultValue}
+			o := &OpenCode{}
+			if err := o.Edit([]LaunchModel{{Name: "fixture", Capabilities: []model.Capability{model.CapabilityThinking}, Thinking: thinking}}); err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Provider map[string]struct {
+					Models map[string]struct {
+						Options  map[string]any
+						Variants map[string]map[string]any
+					}
+				}
+			}
+			if err := json.Unmarshal([]byte(o.configContent), &config); err != nil {
+				t.Fatal(err)
+			}
+			entry := config.Provider["ollama"].Models["fixture"]
+			statePath, err := openCodeStatePath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state struct{ Variant map[string]string }
+			if err := json.Unmarshal(data, &state); err != nil {
+				t.Fatal(err)
+			}
+			selected := state.Variant["ollama/fixture"]
+			check := func(variant string, inherited string, want bool) {
+				t.Helper()
+				effort := inherited
+				if value, ok := entry.Options["reasoningEffort"].(string); ok {
+					effort = value
+				}
+				if value, ok := entry.Variants[variant]["reasoningEffort"].(string); ok {
+					effort = value
+				}
+				requested, err := openai.ThinkingFromReasoningEffort(effort, thinking)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resolved := renderers.ResolveThinking(requested, thinking)
+				if resolved == nil || resolved.Value != want {
+					t.Fatalf("variant %q, inherited %q, effort %q resolved to %v, want boolean %v", variant, inherited, effort, resolved, want)
+				}
+			}
+			check(selected, "", tt.defaultValue)
+			// A selected on variant must overwrite an inherited off option.
+			check("thinking", "none", true)
+			check("none", "", false)
+		})
+	}
+}
+
+func TestOpenCodeEdit_FalseOnlyThinking(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	o := &OpenCode{}
+	if err := o.Edit([]LaunchModel{{Name: "qwen3-coder", Thinking: &api.ModelRecommendationThinking{Values: []any{false}, Default: false}}}); err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Provider map[string]struct{ Models map[string]map[string]any }
+	}
+	if err := json.Unmarshal([]byte(o.configContent), &config); err != nil {
+		t.Fatal(err)
+	}
+	entry := config.Provider["ollama"].Models["qwen3-coder"]
+	for _, field := range []string{"reasoning", "variants", "options"} {
+		if value, ok := entry[field]; ok {
+			t.Errorf("non-thinking model has %s = %v", field, value)
+		}
+	}
+	statePath, err := openCodeStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct{ Variant map[string]string }
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	if selected := state.Variant["ollama/qwen3-coder"]; selected != "" {
+		t.Errorf("non-thinking model selected variant %q", selected)
 	}
 }
