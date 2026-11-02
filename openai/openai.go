@@ -33,6 +33,7 @@ type ErrorResponse struct {
 type Message struct {
 	Role       string     `json:"role"`
 	Content    any        `json:"content"`
+	Refusal    string     `json:"refusal,omitempty"`
 	Reasoning  string     `json:"reasoning,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	Name       string     `json:"name,omitempty"`
@@ -630,6 +631,10 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		content := msg.Content
 		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
 			content = ""
+		}
+		// an assistant turn that was refused carries its text in refusal, with null content
+		if content == nil && msg.Refusal != "" {
+			content = msg.Refusal
 		}
 		switch content := content.(type) {
 		case string:
