@@ -554,6 +554,14 @@ func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string
 		}
 		addPath(dir)
 	}
+	if len(gpuLibs) > 0 && envUpdates["GGML_BACKEND_PATH"] == "" && envconfig.EnableRocket(true) {
+		for _, dir := range []string{llamaDir, ml.LibOllamaPath} {
+			if backend := findLlamaServerRocketBackend(dir); backend != "" {
+				envUpdates["GGML_BACKEND_PATH"] = backend
+				break
+			}
+		}
+	}
 	if libraryPath, ok := os.LookupEnv(llamaServerLibraryPathEnv()); ok {
 		for _, dir := range filepath.SplitList(libraryPath) {
 			addPath(dir)
@@ -580,6 +588,18 @@ func findLlamaServerGPUBackend(dir string) string {
 		if isLlamaServerGPUBackend(match) {
 			return match
 		}
+	}
+	return ""
+}
+
+func findLlamaServerRocketBackend(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "libggml-rocket*.so*"))
+	slices.Sort(matches)
+	if len(matches) > 0 {
+		return matches[0]
 	}
 	return ""
 }

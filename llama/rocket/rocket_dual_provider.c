@@ -6,8 +6,7 @@
  *   2. Rockchip BSP DRM `rknpu` driver >= 0.9.6 (/dev/dri/renderD128..143)
  *
  * This allows a single libggml-rocket.so build to run on both mainline kernels
- * (6.18+) and vendor Rockchip kernels (such as Ubuntu 24.04/26.04 on Turing RK1
- * with Linux 6.1.0-1026-rockchip and RKNPU 0.9.7).
+ * (6.18+) and vendor Rockchip BSP kernels (Linux 5.10/6.1 with RKNPU >= 0.9.6).
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -270,11 +269,16 @@ int rocket_npu_probe(void)
     }
 
     if (allow_mainline) {
-        if (rkt_probe_drm_node("/dev/accel/accel0", name, sizeof(name), NULL) == 0 &&
-            strcmp(name, "rocket") == 0) {
+        int rc = rkt_probe_drm_node("/dev/accel/accel0", name, sizeof(name), NULL);
+        if (rc == 0 && strcmp(name, "rocket") == 0) {
             p = RKT_PROV_MAINLINE;
             atomic_store_explicit(&g_active_provider, p, memory_order_relaxed);
             return p;
+        }
+        if (rc == -EACCES || rc == -EPERM) {
+            ROCKET_LOGE("rocket: /dev/accel/accel0 is present but permission was denied (%s); "
+                        "add the user to the 'render' group or grant device access\n",
+                        strerror(-rc));
         }
     }
 
@@ -282,12 +286,25 @@ int rocket_npu_probe(void)
         for (int n = RKNPU_RENDER_FIRST; n <= RKNPU_RENDER_LAST; n++) {
             char path[64];
             snprintf(path, sizeof(path), "/dev/dri/renderD%d", n);
-            if (rkt_probe_drm_node(path, name, sizeof(name), &rknpu_ver) == 0 &&
-                strcmp(name, "rknpu") == 0) {
+            int rc = rkt_probe_drm_node(path, name, sizeof(name), &rknpu_ver);
+            if (rc == 0 && strcmp(name, "rknpu") == 0) {
                 if (rknpu_ver == 0 || rknpu_ver >= RKNPU_DRV_VERSION_MIN) {
                     p = RKT_PROV_RKNPU;
                     atomic_store_explicit(&g_active_provider, p, memory_order_relaxed);
                     return p;
+                }
+            }
+            if (rc == -EACCES || rc == -EPERM) {
+                char sysfs_drv[128], link_target[256];
+                snprintf(sysfs_drv, sizeof(sysfs_drv), "/sys/class/drm/renderD%d/device/driver", n);
+                ssize_t l = readlink(sysfs_drv, link_target, sizeof(link_target) - 1);
+                if (l > 0) {
+                    link_target[l] = '\0';
+                    if (strstr(link_target, "RKNPU") != NULL || strstr(link_target, "rknpu") != NULL) {
+                        ROCKET_LOGE("rocket: %s (RKNPU) is present but permission was denied (%s); "
+                                    "add the user to the 'render' group or grant device access\n",
+                                    path, strerror(-rc));
+                    }
                 }
             }
         }

@@ -6,7 +6,11 @@
 #   - the Rockchip BSP DRM `rknpu` (>= 0.9.6) submit provider (`rknpu-submit`)
 # selected automatically at runtime by `llama/rocket/rocket_dual_provider.c`.
 
-option(GGML_ROCKET "ggml: use Rockchip NPU (rocket / rknpu)" OFF)
+set(_ggml_rocket_default OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT OLLAMA_RUNNER_DIR)
+    set(_ggml_rocket_default ON)
+endif()
+option(GGML_ROCKET "ggml: use Rockchip NPU (rocket / rknpu)" ${_ggml_rocket_default})
 
 if(GGML_ROCKET)
     if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
