@@ -742,6 +742,17 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	if pi, ok := editor.(*Pi); ok {
+		primary := primaryModelFromConfig(saved)
+		var err error
+		saved, err = pi.pruneSavedModels(ctx, c.apiClient, saved)
+		if err != nil {
+			return err
+		}
+		if primary != primaryModelFromConfig(saved) && req.ModelOverride == "" {
+			req.ForceConfigure = true
+		}
+	}
 	previous := editorPreCheckedModels(saved, "")
 	models, needsConfigure := c.resolveEditorLaunchModels(ctx, saved, req)
 	if !needsConfigure && req.ModelOverride != "" && !slices.Contains(previous, req.ModelOverride) {
@@ -1355,6 +1366,12 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected,
 	skipped := make([]skippedModel, 0, len(selected))
 
 	for _, model := range selected {
+		// Retained secondary models are not being launched. Keep their settings
+		// without prompting to download or sign in to them again.
+		if len(accepted) > 0 && slices.Contains(previous, model) {
+			accepted = append(accepted, model)
+			continue
+		}
 		var err error
 		if !slices.Contains(previous, model) {
 			err = c.confirmCloudModelPayment(ctx, model)
@@ -1369,7 +1386,7 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected,
 			if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return nil, nil, err
 			}
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if errors.Is(err, errDownloadPromptCancelled) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, nil, err
 			}
 			skipped = append(skipped, skippedModel{

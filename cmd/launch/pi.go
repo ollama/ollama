@@ -3,6 +3,7 @@ package launch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
@@ -33,7 +35,96 @@ func (p *Pi) String() string { return "Pi" }
 
 var npmRegistryBaseURL = "https://registry.npmjs.org"
 
-func (p *Pi) Run(_ string, _ []LaunchModel, args []string) error {
+// pruneSavedModels removes confirmed missing models without offering a download.
+// A failed metadata request is not proof that a saved model no longer exists.
+func (p *Pi) pruneSavedModels(ctx context.Context, client *api.Client, saved *config.IntegrationConfig) (*config.IntegrationConfig, error) {
+	if saved == nil || len(saved.Models) == 0 {
+		return saved, nil
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var kept, missing []string
+	for _, name := range saved.Models {
+		_, err := client.Show(checkCtx, &api.ShowRequest{Model: name})
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			missing = append(missing, name)
+		} else {
+			kept = append(kept, name)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(missing) == 0 {
+		return saved, nil
+	}
+	if err := p.removeModels(missing); err != nil {
+		return nil, err
+	}
+	if err := config.SaveIntegration("pi", kept); err != nil {
+		return nil, err
+	}
+	updated := *saved
+	updated.Models = kept
+	return &updated, nil
+}
+
+func (p *Pi) removeModels(names []string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(home, ".pi", "agent")
+	paths := []string{filepath.Join(dir, "models.json"), filepath.Join(dir, "settings.json")}
+	configs := make([]map[string]any, len(paths))
+	for i, path := range paths {
+		configs[i], err = fileutil.ReadJSON(path)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("read Pi config %s: %w", path, err)
+		}
+	}
+	providers, _ := configs[0]["providers"].(map[string]any)
+	ollama, _ := providers["ollama"].(map[string]any)
+	models, _ := ollama["models"].([]any)
+	userModels := make(map[string]bool)
+	for _, model := range models {
+		if entry, ok := model.(map[string]any); ok && !isPiOllamaModel(entry) {
+			id, _ := entry["id"].(string)
+			userModels[id] = true
+		}
+	}
+	kept := slices.DeleteFunc(models, func(model any) bool {
+		entry, _ := model.(map[string]any)
+		id, _ := entry["id"].(string)
+		return isPiOllamaModel(entry) && slices.Contains(names, id)
+	})
+	changed := []bool{len(kept) != len(models), false}
+	if changed[0] {
+		ollama["models"] = kept
+	}
+	settings := configs[1]
+	model, _ := settings["defaultModel"].(string)
+	if settings["defaultProvider"] == "ollama" && slices.Contains(names, model) && !userModels[model] {
+		delete(settings, "defaultModel")
+		delete(settings, "defaultProvider")
+		changed[1] = true
+	}
+	for i, path := range paths {
+		if changed[i] {
+			data, err := json.MarshalIndent(configs[i], "", "  ")
+			if err != nil {
+				return err
+			}
+			if err := fileutil.WriteWithBackup(path, data, "pi"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
 	fmt.Fprintf(os.Stderr, "\n%sPreparing Pi...%s\n", ansiGray, ansiReset)
 	if err := ensureNpmInstalled(); err != nil {
 		return err
@@ -49,6 +140,9 @@ func (p *Pi) Run(_ string, _ []LaunchModel, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\n%sLaunching Pi...%s\n\n", ansiGray, ansiReset)
 
+	if model != "" {
+		args = append([]string{"--provider", "ollama", "--model", model}, args...)
+	}
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
