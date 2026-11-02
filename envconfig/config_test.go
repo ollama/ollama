@@ -241,6 +241,10 @@ func TestKeepAlive(t *testing.T) {
 		"-0":     time.Duration(0),
 		"-1":     time.Duration(math.MaxInt64),
 		"-1m":    time.Duration(math.MaxInt64),
+		// integer seconds whose nanosecond conversion overflows int64
+		"18446744074":          time.Duration(math.MaxInt64),
+		"-9223372036854775807": time.Duration(math.MaxInt64),
+		"-9223372036854775808": time.Duration(math.MaxInt64),
 		// invalid values
 		" ":   5 * time.Minute,
 		"???": 5 * time.Minute,
@@ -275,6 +279,10 @@ func TestLoadTimeout(t *testing.T) {
 		"-0":     time.Duration(math.MaxInt64),
 		"-1":     time.Duration(math.MaxInt64),
 		"-1m":    time.Duration(math.MaxInt64),
+		// integer seconds whose nanosecond conversion overflows int64
+		"18446744074":          time.Duration(math.MaxInt64),
+		"-9223372036854775807": time.Duration(math.MaxInt64),
+		"-9223372036854775808": time.Duration(math.MaxInt64),
 		// invalid values
 		" ":   defaultTimeout,
 		"???": defaultTimeout,

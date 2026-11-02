@@ -123,6 +123,22 @@ func Models() string {
 	return filepath.Join(home, ".ollama", "models")
 }
 
+// secondsToDuration converts an integer number of seconds to a Duration. The
+// nanosecond conversion saturates instead of wrapping around, so a value that
+// int64 nanoseconds cannot hold becomes the largest (or smallest) duration.
+func secondsToDuration(n int64) time.Duration {
+	const maxSeconds = int64(math.MaxInt64) / int64(time.Second)
+
+	switch {
+	case n > maxSeconds:
+		return time.Duration(math.MaxInt64)
+	case n < -maxSeconds:
+		return time.Duration(math.MinInt64)
+	}
+
+	return time.Duration(n) * time.Second
+}
+
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
 // Negative values are treated as infinite. Zero is treated as no keep alive.
 // Default is 5 minutes.
@@ -132,7 +148,7 @@ func KeepAlive() (keepAlive time.Duration) {
 		if d, err := time.ParseDuration(s); err == nil {
 			keepAlive = d
 		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			keepAlive = time.Duration(n) * time.Second
+			keepAlive = secondsToDuration(n)
 		}
 	}
 
@@ -152,7 +168,7 @@ func LoadTimeout() (loadTimeout time.Duration) {
 		if d, err := time.ParseDuration(s); err == nil {
 			loadTimeout = d
 		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			loadTimeout = time.Duration(n) * time.Second
+			loadTimeout = secondsToDuration(n)
 		}
 	}
 
