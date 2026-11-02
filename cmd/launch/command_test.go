@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -285,17 +286,18 @@ type commandRestorableRunner struct {
 
 func (r *commandRestorableRunner) SkipRestoreInstallCheck() bool { return true }
 
-func TestLaunchCmdChatGPTRouterPreflight(t *testing.T) {
+func TestLaunchCmdChatGPT(t *testing.T) {
 	for _, tt := range []struct {
-		name          string
-		integration   string
-		routerReady   bool
-		configureOnly bool
+		name        string
+		args        []string
+		routerReady bool
+		wantOpen    int
 	}{
-		{name: "unavailable launch", integration: "chatgpt"},
-		{name: "unavailable configure only", integration: "codex-app", configureOnly: true},
-		{name: "healthy launch", integration: "chatgpt", routerReady: true},
-		{name: "healthy configure only", integration: "chatgpt", routerReady: true, configureOnly: true},
+		{name: "unavailable launch", args: []string{"chatgpt", "--model", "qwen3:8b"}},
+		{name: "unavailable configure only", args: []string{"codex-app", "--model", "qwen3:8b", "--config"}},
+		{name: "healthy launch", args: []string{"chatgpt", "--model", "qwen3:8b"}, routerReady: true, wantOpen: 1},
+		{name: "healthy configure only", args: []string{"chatgpt", "--model", "qwen3:8b", "--config"}, routerReady: true},
+		{name: "restore without server", args: []string{"chatgpt", "--restore"}, wantOpen: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -336,11 +338,22 @@ func TestLaunchCmdChatGPTRouterPreflight(t *testing.T) {
 				t.Fatal(err)
 			}
 			original := map[string]string{
-				"config.toml": "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\napproval_policy = \"on-request\"\n",
+				"config.toml": "model = \"gpt-5.5\"\napproval_policy = \"on-request\"\nmodel_provider = \"openai\"\n",
 				"auth.json":   `{"OPENAI_API_KEY":"test-existing-key"}`,
 			}
 			for name, data := range original {
 				if err := os.WriteFile(filepath.Join(configDir, name), []byte(data), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restoring := slices.Contains(tt.args, "--restore")
+			if restoring {
+				server.Close()
+				withCodexAppRouterHealth(t, func() error {
+					t.Error("restore must not check ChatGPT routing")
+					return fmt.Errorf("server is stopped")
+				})
+				if err := (&CodexApp{}).Configure("qwen3:8b"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -362,33 +375,28 @@ func TestLaunchCmdChatGPTRouterPreflight(t *testing.T) {
 				heartbeatCalled = true
 				return client.Heartbeat(cmd.Context())
 			}, nil)
-			args := []string{tt.integration, "--model", "qwen3:8b"}
-			if tt.configureOnly {
-				args = append(args, "--config")
-			}
-			cmd.SetArgs(args)
+			cmd.SetArgs(tt.args)
 			stderr := captureStderr(t, func() { err = cmd.Execute() })
 
-			if !heartbeatCalled {
-				t.Fatal("expected the normal Ollama heartbeat check")
+			wantHeartbeat := !restoring
+			if heartbeatCalled != wantHeartbeat {
+				t.Fatalf("heartbeat called = %v, want %v", heartbeatCalled, wantHeartbeat)
+			}
+			if tt.routerReady || restoring {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "does not include ChatGPT routing") || !strings.Contains(err.Error(), "restart Ollama") {
+				t.Fatalf("expected missing-router recovery guidance, got %v", err)
+			}
+			if got := strings.Contains(stderr, codexAppConfigurationSuccess); got != tt.routerReady {
+				t.Fatalf("configuration success = %v, want %v; stderr=%q", got, tt.routerReady, stderr)
 			}
 			if tt.routerReady {
-				if err != nil {
-					t.Fatalf("healthy launch failed: %v", err)
-				}
 				if got := (&CodexApp{}).CurrentModel(); got != "qwen3:8b" {
 					t.Fatalf("configured model = %q, want qwen3:8b", got)
 				}
-				if !strings.Contains(stderr, codexAppConfigurationSuccess) {
-					t.Fatalf("missing configuration success message: %q", stderr)
-				}
 			} else {
-				if err == nil || !strings.Contains(err.Error(), "does not include ChatGPT routing") || !strings.Contains(err.Error(), "restart Ollama") {
-					t.Fatalf("expected missing-router recovery guidance, got %v", err)
-				}
-				if strings.Contains(stderr, codexAppConfigurationSuccess) {
-					t.Fatalf("printed success for unavailable routing: %q", stderr)
-				}
 				for name, want := range original {
 					data, err := os.ReadFile(filepath.Join(configDir, name))
 					if err != nil || string(data) != want {
@@ -399,71 +407,19 @@ func TestLaunchCmdChatGPTRouterPreflight(t *testing.T) {
 				if err != nil || len(entries) != len(original) {
 					t.Fatalf("client files changed: entries=%v err=%v", entries, err)
 				}
-				if _, err := os.Stat(filepath.Join(home, ".ollama")); !os.IsNotExist(err) {
-					t.Fatalf("created launcher or restore state before router check: %v", err)
+				if !restoring {
+					if _, err := os.Stat(filepath.Join(home, ".ollama")); !os.IsNotExist(err) {
+						t.Fatalf("created launcher or restore state before router check: %v", err)
+					}
 				}
 			}
-			wantOpen := 0
-			if tt.routerReady && !tt.configureOnly {
-				wantOpen = 1
+			if quitCalls != 0 || openCalls != tt.wantOpen {
+				t.Fatalf("process calls = quit %d, open %d; want quit 0, open %d", quitCalls, openCalls, tt.wantOpen)
 			}
-			if quitCalls != 0 || openCalls != wantOpen {
-				t.Fatalf("process calls = quit %d, open %d; want quit 0, open %d", quitCalls, openCalls, wantOpen)
-			}
-			if got := routerChecks.Load(); got != 1 {
+			if got := routerChecks.Load(); !restoring && got != 1 {
 				t.Fatalf("router health checks = %d, want 1", got)
 			}
 		})
-	}
-}
-
-func TestLaunchCmdChatGPTRestoreWithoutServer(t *testing.T) {
-	home := t.TempDir()
-	setTestHome(t, home)
-	withInteractiveSession(t, false)
-	withCodexAppPlatform(t, "darwin")
-	t.Setenv(codexAppAutoReviewModelEnv, "")
-	server := httptest.NewServer(http.NotFoundHandler())
-	server.Close()
-	t.Setenv("OLLAMA_HOST", server.URL)
-	withCodexAppRouterHealth(t, func() error {
-		t.Error("restore must not check ChatGPT routing")
-		return fmt.Errorf("server is stopped")
-	})
-
-	configPath := filepath.Join(home, ".codex", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	original := "model = \"gpt-5.5\"\nmodel_provider = \"openai\"\n"
-	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&CodexApp{}).Configure("qwen3:8b"); err != nil {
-		t.Fatal(err)
-	}
-
-	openCalls := 0
-	withCodexAppProcessHooks(t,
-		func() bool { return false },
-		func() error { t.Error("unexpected app quit"); return nil },
-		func() error { openCalls++; return nil },
-	)
-	codexAppCanOpenID = func() bool { return true }
-	cmd := LaunchCmd(func(*cobra.Command, []string) error {
-		t.Error("restore must not check the Ollama heartbeat")
-		return fmt.Errorf("server is stopped")
-	}, nil)
-	cmd.SetArgs([]string{"chatgpt", "--restore"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil || string(data) != original {
-		t.Fatalf("usual profile was not restored: data=%q err=%v", data, err)
-	}
-	if openCalls != 1 {
-		t.Fatalf("app open calls = %d, want 1", openCalls)
 	}
 }
 
