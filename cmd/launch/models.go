@@ -275,6 +275,10 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 		}
 	}
 
+	return pullMissingModelWithPolicy(ctx, client, model, policy)
+}
+
+func pullMissingModelWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy) error {
 	switch policy {
 	case missingModelAutoPull:
 		return pullMissingModel(ctx, client, model)
@@ -285,13 +289,8 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 	}
 }
 
-var errDownloadPromptCancelled = errors.New("download prompt cancelled")
-
 func confirmAndPull(ctx context.Context, client *api.Client, model string) error {
 	if ok, err := ConfirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
-		if errors.Is(err, ErrCancelled) {
-			return errors.Join(err, errDownloadPromptCancelled)
-		}
 		return err
 	} else if !ok {
 		return errCancelled

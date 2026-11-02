@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -50,93 +51,272 @@ func piHasModelArgs(args []string) bool {
 	return false
 }
 
-// pruneSavedModels removes confirmed missing models without offering a download.
-// A failed metadata request is not proof that a saved model no longer exists.
-func (p *Pi) pruneSavedModels(ctx context.Context, client *api.Client, saved *config.IntegrationConfig) (*config.IntegrationConfig, error) {
-	if saved == nil || len(saved.Models) == 0 {
-		return saved, nil
+// launchPiIntegration saves one starting model and synchronizes Pi's catalog
+// independently of that choice. Only the starting model needs readiness checks.
+func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	current := primaryModelFromConfig(saved)
+	target := req.ModelOverride
+	if target == "" && !req.ForceConfigure && !req.ConfigureOnly {
+		target = current
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	var kept, missing []string
-	for _, name := range saved.Models {
-		_, err := client.Show(checkCtx, &api.ShowRequest{Model: name})
-		var statusErr api.StatusError
-		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
-			missing = append(missing, name)
-		} else {
-			kept = append(kept, name)
+	if isCloudModelName(target) && !req.ForceConfigure && !req.ConfigureOnly {
+		if disabled, _ := cloudStatusDisabled(ctx, c.apiClient); disabled {
+			return fmt.Errorf("cloud is disabled; enable cloud to use %s", target)
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if len(missing) == 0 {
-		return saved, nil
-	}
-	if err := p.removeModels(missing); err != nil {
-		return nil, err
-	}
-	if err := config.SaveIntegration("pi", kept); err != nil {
-		return nil, err
-	}
-	updated := *saved
-	updated.Models = kept
-	return &updated, nil
-}
-
-func (p *Pi) removeModels(names []string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
+	// A failed inventory request is not an empty catalog. Leave both configs intact.
+	if _, err := c.modelInventory().Load(ctx); err != nil {
 		return err
 	}
-	dir := filepath.Join(home, ".pi", "agent")
-	paths := []string{filepath.Join(dir, "models.json"), filepath.Join(dir, "settings.json")}
-	configs := make([]map[string]any, len(paths))
-	for i, path := range paths {
-		configs[i], err = fileutil.ReadJSON(path)
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("read Pi config %s: %w", path, err)
-		}
+	if target == "" {
+		target = current
 	}
-	providers, _ := configs[0]["providers"].(map[string]any)
-	ollama, _ := providers["ollama"].(map[string]any)
-	models, _ := ollama["models"].([]any)
-	userModels := make(map[string]bool)
-	for _, model := range models {
-		if entry, ok := model.(map[string]any); ok && !isPiOllamaModel(entry) {
-			id, _ := entry["id"].(string)
-			userModels[id] = true
-		}
-	}
-	kept := slices.DeleteFunc(models, func(model any) bool {
-		entry, _ := model.(map[string]any)
-		id, _ := entry["id"].(string)
-		return isPiOllamaModel(entry) && slices.Contains(names, id)
-	})
-	changed := []bool{len(kept) != len(models), false}
-	if changed[0] {
-		ollama["models"] = kept
-	}
-	settings := configs[1]
-	model, _ := settings["defaultModel"].(string)
-	if settings["defaultProvider"] == "ollama" && slices.Contains(names, model) && !userModels[model] {
-		delete(settings, "defaultModel")
-		delete(settings, "defaultProvider")
-		changed[1] = true
-	}
-	for i, path := range paths {
-		if changed[i] {
-			data, err := json.MarshalIndent(configs[i], "", "  ")
+	pick := req.ForceConfigure || req.ConfigureOnly || target == ""
+	picked := false
+	var models []LaunchModel
+	for {
+		if pick {
+			var err error
+			target, err = c.selectSingleModelWithSelectorReady(ctx, "Select model for Pi:", target, DefaultSingleSelector, false, "Pi", "pi")
 			if err != nil {
 				return err
 			}
-			if err := fileutil.WriteWithBackup(path, data, "pi"); err != nil {
+			picked = true
+			pick = false
+		}
+		remaining := modelShowTimeout
+		model, err := c.piTargetModel(ctx, target, &remaining)
+		var status api.StatusError
+		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+			if !picked && req.ModelOverride == "" {
+				pick = true
+				continue
+			}
+			if model.Remote {
+				return err
+			}
+			if err := pullMissingModelWithPolicy(ctx, c.apiClient, target, c.policy.missingModelPolicy()); err != nil {
+				return err
+			}
+			model, err = c.piTargetModel(ctx, target, &remaining)
+		}
+		if err != nil {
+			return err
+		}
+		if !piSupportsChat(model) {
+			if !picked && req.ModelOverride == "" {
+				pick = true
+				continue
+			}
+			return fmt.Errorf("model %q does not support chat; choose a chat model", target)
+		}
+		if target != current {
+			paymentTarget := target
+			if model.RemoteModel != "" {
+				paymentTarget = model.RemoteModel
+				if !isCloudModelName(paymentTarget) {
+					paymentTarget = strings.TrimSuffix(paymentTarget, ":latest") + ":cloud"
+				}
+			}
+			if err := c.confirmCloudModelPayment(ctx, paymentTarget); err != nil {
+				if errors.Is(err, errModelPaymentDeclined) {
+					pick = true
+					continue
+				}
 				return err
 			}
 		}
+		cloudRec, localRec := c.agentCapableRecommendations(ctx)
+		err = confirmDeprecatedLaunchModel(target, "Pi", "pi", cloudRec, localRec)
+		if errors.Is(err, errDeprecatedLaunchModelDeclined) {
+			pick = true
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if model.Remote {
+			if err := ensureCloudAuth(ctx, c.apiClient, target); err != nil {
+				return err
+			}
+			if len(model.Capabilities) == 0 {
+				// Authentication may make previously unavailable metadata readable.
+				model, err = c.piTargetModel(ctx, target, &remaining)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		models, err = c.piModelCatalog(ctx, model, remaining)
+		if err != nil {
+			return err
+		}
+		break
 	}
-	return nil
+
+	configured, err := pi.writeConfig(models)
+	if err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+	if err := config.SaveIntegration("pi", []string{configured}); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	return launchAfterConfiguration("pi", pi, configured, models, req)
+}
+
+// piTargetModel retains remote routing metadata even when /show requires sign-in.
+func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration) (LaunchModel, error) {
+	inventory, err := c.modelInventory().Load(ctx)
+	if err != nil {
+		return LaunchModel{}, err
+	}
+	model, _ := findLaunchModel(inventory, name)
+	model.Name = name
+	model.Remote = model.Remote || isCloudModelName(name)
+	if model.Remote {
+		if disabled, _ := cloudStatusDisabled(ctx, c.apiClient); disabled {
+			return model, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
+		}
+	}
+	if model.ContextLength > 0 && len(model.Capabilities) > 0 {
+		return model, nil
+	}
+	showCtx, cancel := context.WithTimeout(ctx, *budget)
+	defer cancel()
+	started := time.Now()
+	show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: name})
+	*budget -= time.Since(started)
+	if err != nil {
+		if showCtx.Err() != nil {
+			return model, showCtx.Err()
+		}
+		var status api.StatusError
+		if model.Remote && !(errors.As(err, &status) && status.StatusCode == http.StatusNotFound) {
+			return model, nil
+		}
+		return model, err
+	}
+	if show.RemoteModel != "" {
+		model.RemoteModel = show.RemoteModel
+	}
+	if !model.Remote && (show.RemoteModel != "" || show.RemoteHost != "") {
+		model.Remote = true
+		if disabled, _ := cloudStatusDisabled(ctx, c.apiClient); disabled {
+			return model, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
+		}
+	}
+	if len(show.Capabilities) > 0 {
+		model.Capabilities = slices.Clone(show.Capabilities)
+	}
+	if model.ContextLength <= 0 {
+		model.ContextLength, _ = modelInfoContextLength(show.ModelInfo)
+	}
+	return model, nil
+}
+
+func piSupportsChat(model LaunchModel) bool {
+	return len(model.Capabilities) == 0 || model.HasCapability("completion") || model.HasCapability("tools")
+}
+
+func (c *launcherClient) piSelectableModels(ctx context.Context, items []ModelItem) []ModelItem {
+	inventory, _ := c.modelInventory().Load(ctx)
+	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
+	return slices.DeleteFunc(items, func(item ModelItem) bool {
+		model, _ := findLaunchModel(inventory, item.Name)
+		return !piSupportsChat(LaunchModel{Capabilities: item.Capabilities}) || (cloudDisabled && (model.Remote || isCloudModelName(item.Name)))
+	})
+}
+
+func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel, budget time.Duration) ([]LaunchModel, error) {
+	inventory, err := c.modelInventory().Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
+	if model, ok := findLaunchModel(inventory, primary.Name); ok {
+		if primary.ContextLength <= 0 {
+			primary.ContextLength = model.ContextLength
+		}
+		if len(primary.Capabilities) == 0 {
+			primary.Capabilities = model.Capabilities
+		}
+		primary.Remote = primary.Remote || model.Remote
+	}
+	primary.Remote = primary.Remote || isCloudModelName(primary.Name)
+	models := []LaunchModel{primary}
+	seen := map[string]bool{launchModelRecommendationKey(primary.Name): true}
+
+	for _, model := range inventory {
+		key := launchModelRecommendationKey(model.Name)
+		if seen[key] || isDeprecatedLaunchModel(model.Name) || (cloudDisabled && (model.Remote || isCloudModelName(model.Name))) {
+			continue
+		}
+		seen[key] = true
+		models = append(models, model)
+	}
+	for _, rec := range c.recommendations(ctx) {
+		key := launchModelRecommendationKey(rec.Name)
+		if seen[key] || cloudDisabled || !isCloudModelName(rec.Name) || isDeprecatedLaunchModel(rec.Name) {
+			continue
+		}
+		seen[key] = true
+		models = append(models, LaunchModel{Name: rec.Name, Remote: true, ContextLength: rec.Details.ContextLength, MaxOutputTokens: rec.MaxOutputTokens})
+	}
+	// /tags supplies most metadata. Bound the remaining /show work for older
+	// servers and cloud recommendations; no catalog entry triggers a download.
+	showCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	for i := range models {
+		models[i] = models[i].WithCloudLimits()
+	}
+	var wg sync.WaitGroup
+	jobs := make(chan int)
+	for range min(4, len(models)) {
+		wg.Go(func() {
+			for i := range jobs {
+				model := &models[i]
+				if model.ContextLength > 0 && len(model.Capabilities) > 0 {
+					continue
+				}
+				show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: model.Name})
+				if err != nil {
+					var status api.StatusError
+					if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+						model.Name = ""
+					}
+					continue
+				}
+				if model.ContextLength <= 0 {
+					model.ContextLength, _ = modelInfoContextLength(show.ModelInfo)
+				}
+				if len(model.Capabilities) == 0 {
+					model.Capabilities = slices.Clone(show.Capabilities)
+				}
+				model.Remote = model.Remote || show.RemoteModel != "" || show.RemoteHost != ""
+			}
+		})
+	}
+	for i := 1; i < len(models); i++ {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !piSupportsChat(models[0]) {
+		return nil, fmt.Errorf("model %q does not support chat; choose a chat model", primary.Name)
+	}
+	if cloudDisabled && models[0].Remote {
+		return nil, fmt.Errorf("cloud is disabled; enable cloud to use %s", primary.Name)
+	}
+	if models[0].Name == "" {
+		return nil, fmt.Errorf("model %q is no longer available", primary.Name)
+	}
+	models = slices.DeleteFunc(models, func(model LaunchModel) bool {
+		return model.Name == "" || !piSupportsChat(model) || (cloudDisabled && model.Remote)
+	})
+	return models, nil
 }
 
 func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
@@ -644,24 +824,38 @@ func piBaseURL() string {
 }
 
 func (p *Pi) Edit(models []LaunchModel) error {
+	_, err := p.writeConfig(models)
+	return err
+}
+
+func (p *Pi) writeConfig(models []LaunchModel) (string, error) {
 	if len(models) == 0 {
-		return nil
+		return "", nil
 	}
 
+	primary := models[0].Name
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	configPath := filepath.Join(home, ".pi", "agent", "models.json")
+	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	configs := make([]map[string]any, 2)
+	for i, path := range []string{configPath, settingsPath} {
+		data, err := fileutil.ReadJSON(path)
+		if err != nil && !os.IsNotExist(err) {
+			return "", fmt.Errorf("read Pi config %s: %w", path, err)
+		}
+		if data == nil {
+			data = make(map[string]any)
+		}
+		configs[i] = data
+	}
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return err
+		return "", err
 	}
-
-	config := make(map[string]any)
-	if data, err := os.ReadFile(configPath); err == nil {
-		_ = json.Unmarshal(data, &config)
-	}
+	config, settings := configs[0], configs[1]
 
 	providers, ok := config["providers"].(map[string]any)
 	if !ok {
@@ -687,42 +881,47 @@ func (p *Pi) Edit(models []LaunchModel) error {
 		existingModels = make([]any, 0)
 	}
 
-	// Build set of selected models to track which need to be added
-	selectedSet := make(map[string]bool, len(models))
-	for _, m := range models {
-		selectedSet[m.Name] = true
-	}
-
-	// Build new models list:
-	// 1. Keep user-managed models (no _launch marker) - untouched
-	// 2. Keep ollama-managed models (_launch marker) that are still selected,
-	//    except stale cloud entries that should be rebuilt below
-	// 3. Add new ollama-managed models
+	// Only launch-owned entries are replaced by the current catalog.
 	var newModels []any
-	for _, m := range existingModels {
-		if modelObj, ok := m.(map[string]any); ok {
-			if id, ok := modelObj["id"].(string); ok {
-				// User-managed model (no _launch marker) - always preserve
-				if !isPiOllamaModel(modelObj) {
-					newModels = append(newModels, m)
-				} else if selectedSet[id] {
-					// Rebuild stale managed cloud entries so createConfig refreshes
-					// the whole entry instead of patching it in place.
-					if !hasContextWindow(modelObj) && isCloudModelName(id) {
-						continue
+	manual := make(map[string]string)
+	managed := make(map[string]map[string]any)
+	for _, entry := range existingModels {
+		model, _ := entry.(map[string]any)
+		id, _ := model["id"].(string)
+		if !isPiOllamaModel(model) {
+			newModels = append(newModels, entry)
+			key := launchModelRecommendationKey(id)
+			if manual[key] == "" || id == models[0].Name {
+				manual[key] = id
+			}
+		} else {
+			managed[launchModelRecommendationKey(id)] = model
+		}
+	}
+	for _, model := range models {
+		key := launchModelRecommendationKey(model.Name)
+		if id := manual[key]; id != "" {
+			if key == launchModelRecommendationKey(models[0].Name) {
+				primary = id
+			}
+			continue
+		}
+		entry := createConfig(model)
+		// A failed metadata lookup must not erase previously known limits or
+		// capabilities for a model that remains in the inventory.
+		if old := managed[key]; old != nil {
+			if model.ContextLength <= 0 && hasContextWindow(old) {
+				entry["contextWindow"] = old["contextWindow"]
+			}
+			if len(model.Capabilities) == 0 {
+				for _, key := range []string{"input", "reasoning"} {
+					if value, ok := old[key]; ok {
+						entry[key] = value
 					}
-					newModels = append(newModels, m)
-					selectedSet[id] = false
 				}
 			}
 		}
-	}
-
-	// Add newly selected models that weren't already in the list
-	for _, model := range models {
-		if selectedSet[model.Name] {
-			newModels = append(newModels, createConfig(model))
-		}
+		newModels = append(newModels, entry)
 	}
 
 	ollama["models"] = newModels
@@ -731,27 +930,25 @@ func (p *Pi) Edit(models []LaunchModel) error {
 
 	configData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := fileutil.WriteWithBackup(configPath, configData, "pi"); err != nil {
-		return err
+		return "", err
 	}
 
-	// Update settings.json with default provider and model
-	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
-	settings := make(map[string]any)
-	if data, err := os.ReadFile(settingsPath); err == nil {
-		_ = json.Unmarshal(data, &settings)
-	}
+	// The first catalog entry is the separately selected starting model.
 
 	settings["defaultProvider"] = "ollama"
-	settings["defaultModel"] = models[0].Name
+	settings["defaultModel"] = primary
 
 	settingsData, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		return err
+		return "", err
 	}
-	return fileutil.WriteWithBackup(settingsPath, settingsData, "pi")
+	if err := fileutil.WriteWithBackup(settingsPath, settingsData, "pi"); err != nil {
+		return "", err
+	}
+	return primary, nil
 }
 
 func (p *Pi) Models() []string {

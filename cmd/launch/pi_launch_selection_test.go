@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/cmd/config"
-	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/spf13/cobra"
 )
 
@@ -24,26 +23,36 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 		t.Skip("uses a POSIX shell test binary")
 	}
 	for _, tc := range []struct {
-		name       string
-		saved      []string
-		args       []string
-		wantPicker int
-		wantModel  string
-		wantError  string
-		wantPiArgs []string
+		name            string
+		saved           []string
+		args            []string
+		wantPicker      int
+		wantModel       string
+		wantError       string
+		wantPiArgs      []string
+		runtimeOverride bool
+		corruptConfig   bool
 	}{
 		{name: "available saved model", saved: []string{"keep-model"}, wantModel: "keep-model"},
-		{name: "disabled cloud secondary is retained", saved: []string{"keep-model", "remote:cloud"}, wantModel: "keep-model"},
+		{name: "legacy selection migrates to one starting model", saved: []string{"keep-model", "remote:cloud"}, wantModel: "keep-model"},
 		{name: "first setup", wantPicker: 1, wantModel: "chosen"},
 		{name: "missing saved default", saved: []string{"missing", "keep-model"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "explicit configuration", saved: []string{"keep-model"}, args: []string{"--config"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "disabled saved cloud default", saved: []string{"remote:cloud", "keep-model"}, wantError: "cloud is disabled"},
 		{name: "disabled explicit cloud override", saved: []string{"keep-model"}, args: []string{"--model", "remote:cloud"}, wantError: "cloud is disabled"},
 		{name: "configure replaces disabled cloud default", saved: []string{"remote:cloud", "keep-model"}, args: []string{"--config"}, wantPicker: 1, wantModel: "chosen"},
-		{name: "forwarded qualified model", saved: []string{"remote:cloud", "keep-model"}, args: []string{"--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
-		{name: "forwarded provider and model", saved: []string{"remote:cloud", "keep-model"}, args: []string{"--", "--provider", "fixture-user", "--model", "user-choice"}, wantPiArgs: []string{"--provider", "fixture-user", "--model", "user-choice"}},
-		{name: "forwarded model replaces explicit cloud target", saved: []string{"keep-model"}, args: []string{"--model", "remote:cloud", "--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
-		{name: "model flag inside a prompt is not an override", saved: []string{"keep-model"}, args: []string{"--", "--system-prompt", "--model", "probe"}, wantPiArgs: []string{"--provider", "ollama", "--model", "keep-model", "--system-prompt", "--model", "probe"}},
+		{name: "configure replaces disabled explicit cloud target", saved: []string{"keep-model"}, args: []string{"--config", "--model", "remote:cloud"}, wantPicker: 1, wantModel: "chosen"},
+		{name: "saved embedding model requires a chat model", saved: []string{"embeddings", "keep-model"}, wantPicker: 1, wantModel: "chosen"},
+		{name: "explicit embedding model is rejected", saved: []string{"keep-model"}, args: []string{"--model", "embeddings"}, wantError: "does not support chat"},
+		{name: "legacy saved embedding model requires a chat model", saved: []string{"legacy-embedding"}, wantPicker: 1, wantModel: "chosen"},
+		{name: "disabled saved cloud alias", saved: []string{"remote-alias", "keep-model"}, wantError: "cloud is disabled"},
+		{name: "disabled explicit cloud alias", saved: []string{"keep-model"}, args: []string{"--model", "remote-alias"}, wantError: "cloud is disabled"},
+		{name: "cloud alias identified by show", saved: []string{"keep-model"}, args: []string{"--model", "hidden-alias"}, wantError: "cloud is disabled"},
+		{name: "forwarded qualified model", runtimeOverride: true, saved: []string{"remote:cloud", "keep-model"}, args: []string{"--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
+		{name: "native override ignores unused malformed launch config", runtimeOverride: true, corruptConfig: true, saved: []string{"keep-model"}, args: []string{"--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
+		{name: "forwarded provider and model", runtimeOverride: true, saved: []string{"remote:cloud", "keep-model"}, args: []string{"--", "--provider", "fixture-user", "--model", "user-choice"}, wantPiArgs: []string{"--provider", "fixture-user", "--model", "user-choice"}},
+		{name: "forwarded model replaces explicit cloud target", runtimeOverride: true, saved: []string{"keep-model"}, args: []string{"--model", "remote:cloud", "--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
+		{name: "model flag inside a prompt is not an override", wantModel: "keep-model", saved: []string{"keep-model"}, args: []string{"--", "--system-prompt", "--model", "probe"}, wantPiArgs: []string{"--provider", "ollama", "--model", "keep-model", "--system-prompt", "--model", "probe"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -52,6 +61,11 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 			withInteractiveSession(t, true)
 			if tc.saved != nil {
 				if err := config.SaveIntegration("pi", tc.saved); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.corruptConfig {
+				if err := os.WriteFile(filepath.Join(home, ".ollama", "config.json"), []byte("{invalid"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -68,9 +82,18 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 				}
 			}
 			pickerCalls := 0
-			DefaultMultiSelector = func(_ string, _ []SelectionItem, _ []string) ([]string, error) {
+			DefaultSingleSelector = func(_ string, items []SelectionItem, _ string) (string, error) {
 				pickerCalls++
-				return []string{"chosen"}, nil
+				for _, item := range items {
+					if item.Name == "embeddings" || item.Name == "remote-alias" {
+						t.Errorf("unusable model appears in Pi picker: %s", item.Name)
+					}
+				}
+				return "chosen", nil
+			}
+			DefaultMultiSelector = func(_ string, _ []SelectionItem, _ []string) ([]string, error) {
+				t.Fatal("Pi must select only its starting model")
+				return nil, ErrCancelled
 			}
 			DefaultConfirmPrompt = func(prompt string, _ ConfirmOptions) (bool, error) {
 				if prompt != "Launch Pi now?" || len(tc.args) == 0 {
@@ -85,12 +108,16 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 				case "/api/experimental/model-recommendations":
 					fmt.Fprint(w, `{"recommendations":[{"model":"chosen"}]}`)
 				case "/api/tags":
-					fmt.Fprint(w, `{"models":[{"name":"chosen"},{"name":"keep-model"}]}`)
+					fmt.Fprint(w, `{"models":[{"name":"chosen","details":{"context_length":65536},"capabilities":["completion","tools"]},{"name":"keep-model","details":{"context_length":32768},"capabilities":["completion","tools","vision"]},{"name":"embeddings","details":{"context_length":8192},"capabilities":["embedding"]},{"name":"remote-alias","remote_model":"remote","details":{"context_length":32768},"capabilities":["completion","tools"]}]}`)
 				case "/api/show":
 					var req apiShowRequest
 					_ = json.NewDecoder(r.Body).Decode(&req)
 					if req.Model == "remote:cloud" {
 						http.Error(w, `{"error":"cloud is disabled"}`, http.StatusForbidden)
+					} else if req.Model == "remote-alias" || req.Model == "hidden-alias" {
+						fmt.Fprint(w, `{"remote_model":"remote","capabilities":["completion","tools"]}`)
+					} else if req.Model == "embeddings" || req.Model == "legacy-embedding" {
+						fmt.Fprint(w, `{"capabilities":["embedding"]}`)
 					} else if req.Model == "missing" {
 						http.Error(w, `{"error":"missing"}`, http.StatusNotFound)
 					} else {
@@ -128,12 +155,26 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 			if pickerCalls != tc.wantPicker {
 				t.Fatalf("picker called %d times, want %d", pickerCalls, tc.wantPicker)
 			}
-			if tc.wantPicker == 0 {
-				saved, err := config.LoadIntegration("pi")
-				if err != nil || !slices.Equal(saved.Models, tc.saved) {
-					t.Fatalf("direct launch changed saved choices: %v, %v", saved, err)
+			wantSaved := []string{tc.wantModel}
+			if tc.runtimeOverride {
+				wantSaved = tc.saved
+			}
+			saved, err := config.LoadIntegration("pi")
+			if tc.corruptConfig {
+				data, readErr := os.ReadFile(filepath.Join(home, ".ollama", "config.json"))
+				if readErr != nil || string(data) != "{invalid" {
+					t.Fatalf("unused malformed config changed: %s, %v", data, readErr)
+				}
+			} else if err != nil || !slices.Equal(saved.Models, wantSaved) {
+				t.Fatalf("saved starting model = %v, %v; want %v", saved, err, wantSaved)
+			}
+			if !tc.runtimeOverride {
+				models := (&Pi{}).Models()
+				if !slices.Equal(models, []string{"chosen", "keep-model"}) {
+					t.Fatalf("Pi catalog = %v, want all available models", models)
 				}
 			}
+
 			data, err := os.ReadFile(argsPath)
 			want := []string{"--provider", "ollama", "--model", tc.wantModel}
 			if tc.wantPiArgs != nil {
@@ -146,123 +187,6 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 	}
 }
 
-func TestSelectReadyModelsForSave_NonPiRetainedSecondaryEscapeStillSkips(t *testing.T) {
-	withLauncherHooks(t)
-	var prompts []string
-	DefaultConfirmPrompt = func(prompt string, _ ConfirmOptions) (bool, error) {
-		prompts = append(prompts, prompt)
-		return false, ErrCancelled
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
-		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[]}`)
-		case "/api/show":
-			var req apiShowRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req.Model == "missing-secondary" {
-				http.Error(w, `{"error":"missing"}`, http.StatusNotFound)
-			} else {
-				fmt.Fprint(w, `{}`)
-			}
-		default:
-			t.Errorf("unexpected request: %s", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-	client, err := newLauncherClient(defaultLaunchPolicy(true, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	models := []string{"available-primary", "missing-secondary"}
-	accepted, skipped, err := client.selectReadyModelsForSave(t.Context(), models, models, "Droid", "droid")
-	if err != nil || !slices.Equal(accepted, models[:1]) || len(skipped) != 1 || !slices.Equal(prompts, []string{"Download missing-secondary?"}) {
-		t.Fatalf("accepted %v, skipped %v, prompts %v, error %v", accepted, skipped, prompts, err)
-	}
-}
-
-func TestLaunchIntegration_PiRemovesUnavailableSavedModels(t *testing.T) {
-	home := t.TempDir()
-	setLaunchTestHome(t, home)
-	withLauncherHooks(t)
-	withInteractiveSession(t, true)
-	previous := []string{"test:latest", "keep-model"}
-	if err := config.SaveIntegration("pi", previous); err != nil {
-		t.Fatal(err)
-	}
-	DefaultMultiSelector = func(_ string, items []SelectionItem, preChecked []string) ([]string, error) {
-		for _, item := range items {
-			if item.Name == "test:latest" {
-				t.Fatal("missing saved model unexpectedly visible in the picker")
-			}
-		}
-		// The picker adds a new default while retaining previously configured models.
-		return append([]string{"chosen"}, preChecked...), nil
-	}
-	DefaultConfirmPrompt = func(prompt string, _ ConfirmOptions) (bool, error) {
-		if prompt == "Launch Pi now?" {
-			return false, nil
-		}
-		t.Errorf("unexpected prompt for a retained model: %s", prompt)
-		return false, nil
-	}
-	var shown []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
-		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[{"model":"chosen"}]}`)
-		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"chosen"},{"name":"keep-model"}]}`)
-		case "/api/show":
-			var req apiShowRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
-			shown = append(shown, req.Model)
-			if req.Model == "chosen" || req.Model == "keep-model" {
-				fmt.Fprint(w, `{}`)
-			} else {
-				http.Error(w, `{"error":"missing"}`, http.StatusNotFound)
-			}
-		default:
-			t.Errorf("unexpected request: %s", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	for range 2 {
-		if err := LaunchIntegration(t.Context(), IntegrationLaunchRequest{
-			Name: "pi", ForceConfigure: true, ConfigureOnly: true,
-		}); err != nil {
-			t.Fatal(err)
-		}
-		previous = []string{"chosen", "keep-model"}
-		saved, err := config.LoadIntegration("pi")
-		if err != nil || !slices.Equal(saved.Models, previous) {
-			t.Fatalf("saved models = %v, %v; want %v", saved, err, previous)
-		}
-		settings, err := fileutil.ReadJSON(filepath.Join(home, ".pi", "agent", "settings.json"))
-		if err != nil || settings["defaultModel"] != "chosen" {
-			t.Fatalf("Pi settings = %v, %v", settings, err)
-		}
-	}
-	missingChecks := 0
-	for _, name := range shown {
-		if name == "test:latest" {
-			missingChecks++
-		}
-	}
-	if missingChecks != 1 {
-		t.Fatalf("missing model checked %d times across both launches; want once", missingChecks)
-	}
-}
-
 func TestLaunchIntegration_PiDownloadPromptCancellationPreservesConfig(t *testing.T) {
 	home := t.TempDir()
 	setLaunchTestHome(t, home)
@@ -271,8 +195,8 @@ func TestLaunchIntegration_PiDownloadPromptCancellationPreservesConfig(t *testin
 	if err := config.SaveIntegration("pi", []string{"previous"}); err != nil {
 		t.Fatal(err)
 	}
-	DefaultMultiSelector = func(_ string, _ []SelectionItem, _ []string) ([]string, error) {
-		return []string{"missing-new", "previous"}, nil
+	DefaultSingleSelector = func(_ string, _ []SelectionItem, _ string) (string, error) {
+		return "missing-new", nil
 	}
 	DefaultConfirmPrompt = func(prompt string, _ ConfirmOptions) (bool, error) {
 		if prompt != "Download missing-new?" {
