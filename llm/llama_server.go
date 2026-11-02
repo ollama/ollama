@@ -2135,7 +2135,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				return fmt.Errorf("error unmarshalling llama-server chat response: %v", err)
 			}
 			if lsResp.Error != nil {
-				return fmt.Errorf("llama-server chat error: %v", lsResp.Error)
+				// llama-server has already sent 200 when decoding fails, so the
+				// error is an event here; read it the way an error status is read
+				return errors.New(s.statusErrorMessage(evt))
 			}
 			if len(lsResp.Choices) == 0 {
 				continue
