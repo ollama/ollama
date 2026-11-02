@@ -1230,6 +1230,15 @@ func TestGemma4RepairCandidates(t *testing.T) {
 				`{pattern:<|"|>a: b<|"|>,mode:<|"|>Fast<|"|>}`,
 			},
 		},
+		{
+			name:     "hex_number_candidate_comes_last",
+			input:    `{flags:0x0100,n:1}`,
+			toolName: "set",
+			expected: []string{
+				`{flags:0x0100,n:1}`,
+				`{flags:<|"|>0x0100<|"|>,n:1}`,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1657,6 +1666,142 @@ func TestGemma4Parser_EscapedQuoteValueInFinishedToolCall(t *testing.T) {
 		t.Fatalf("expected no content, got %q", content)
 	}
 	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4EscapedQuoteEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRepairGemma4HexNumberValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "value_after_a_key",
+			input:    `{flags:0x000100}`,
+			expected: `{flags:<|"|>0x000100<|"|>}`,
+		},
+		{
+			name:     "values_in_objects_in_a_list",
+			input:    `{set:[{path:<|"|>A<|"|>,value:0x1F},{path:<|"|>B<|"|>,value:0XaB}]}`,
+			expected: `{set:[{path:<|"|>A<|"|>,value:<|"|>0x1F<|"|>},{path:<|"|>B<|"|>,value:<|"|>0XaB<|"|>}]}`,
+		},
+		{
+			name:     "values_as_list_items_and_with_spaces",
+			input:    `{masks:[0x01, 0x02 ],"mode" : 0x3 ,n:1}`,
+			expected: `{masks:[<|"|>0x01<|"|>, <|"|>0x02<|"|> ],"mode" : <|"|>0x3<|"|> ,n:1}`,
+		},
+		{
+			name:     "keeps_hex_numbers_in_strings",
+			input:    `{note:<|"|>0x10<|"|>,raw:"0x10"}`,
+			expected: `{note:<|"|>0x10<|"|>,raw:"0x10"}`,
+		},
+		{
+			name:     "keeps_text_that_is_not_all_of_a_hex_number",
+			input:    `{a:0x10g,b:0x,c:0x 1,d:00x1}`,
+			expected: `{a:0x10g,b:0x,c:0x 1,d:00x1}`,
+		},
+		{
+			name:     "keeps_decimal_numbers",
+			input:    `{a:100,b:0,c:[1, 2]}`,
+			expected: `{a:100,b:0,c:[1, 2]}`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{a:0x1,b:<|"|>y}`,
+			expected: `{a:0x1,b:<|"|>y}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4HexNumberValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4HexNumberValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4HexNumberEditRecordCall sets a list of paths, one to a hex number written
+// bare, beside an object written with JSON's quotes.
+const gemma4HexNumberEditRecordCall = `call:editRecord{build:true,project:<|"|>HildaTheNord<|"|>,record:<|"|>Npcs/Hilda.yaml<|"|>,remove:[<|"|>Health<|"|>,<|"|>Magicka<|"|>,<|"|>Stamina<|"|>,<|"|>GearedUpWeapons<|"|>,<|"|>Unused2<|"|>],set:[{path:<|"|>PlayerSkills.Health<|"|>,value:100},{path:<|"|>PlayerSkills.Magicka<|"|>,value:100},{path:<|"|>PlayerSkills.Stamina<|"|>,value:100},{path:<|"|>PlayerSkills.GearedUpWeapons<|"|>,value:1},{path:<|"|>PlayerSkills.Unused2<|"|>,value:0x000100},{path:<|"|>Configuration.Level<|"|>,value:{"MutagenObjectType":"PcLevelMult","LevelMult":1}}]}`
+
+var gemma4HexNumberEditRecordArgs = map[string]any{
+	"build":   true,
+	"project": "HildaTheNord",
+	"record":  "Npcs/Hilda.yaml",
+	"remove":  []any{"Health", "Magicka", "Stamina", "GearedUpWeapons", "Unused2"},
+	"set": []any{
+		map[string]any{"path": "PlayerSkills.Health", "value": 100.0},
+		map[string]any{"path": "PlayerSkills.Magicka", "value": 100.0},
+		map[string]any{"path": "PlayerSkills.Stamina", "value": 100.0},
+		map[string]any{"path": "PlayerSkills.GearedUpWeapons", "value": 1.0},
+		map[string]any{"path": "PlayerSkills.Unused2", "value": "0x000100"},
+		map[string]any{"path": "Configuration.Level", "value": map[string]any{"MutagenObjectType": "PcLevelMult", "LevelMult": 1.0}},
+	},
+}
+
+func TestParseGemma4ClosedToolCall_HexNumberValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "value_in_a_list_of_objects",
+			content: gemma4HexNumberEditRecordCall,
+			want:    gemma4HexNumberEditRecordArgs,
+		},
+		{
+			name:    "beside_a_bare_word_and_a_single_quoted_value",
+			content: `call:set{a:0x0F,b:Fast,c:'y z',n:5}`,
+			want:    map[string]any{"a": "0x0F", "b": "Fast", "c": "y z", "n": 5.0},
+		},
+		{
+			name:    "in_an_unclosed_list",
+			content: `call:set{masks:[0x01,0x02,level:5}`,
+			want:    map[string]any{"masks": []any{"0x01", "0x02"}, "level": 5.0},
+		},
+		{
+			name:    "text_that_is_not_a_hex_number",
+			content: `call:set{a:0x0G}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_HexNumberValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4HexNumberEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4HexNumberEditRecordArgs)}}}
 	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
 		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}

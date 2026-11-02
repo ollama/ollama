@@ -716,6 +716,10 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 	if escaped := repairGemma4EscapedQuoteValues(quoted); escaped != quoted {
 		addCandidate(repairGemma4BareWordValues(escaped), false)
 	}
+	// JSON has no hex numbers: one written bare is read as its text.
+	if hex := repairGemma4HexNumberValues(quoted); hex != quoted {
+		addCandidate(repairGemma4BareWordValues(hex), false)
+	}
 
 	return candidates
 }
@@ -849,6 +853,39 @@ func gemma4EscapedQuoteValue(s string, i int) (string, int, bool) {
 		return "", 0, false
 	}
 	return text, end, true
+}
+
+// repairGemma4HexNumberValues reads a hex number the model wrote bare for a value
+// as a string, its text kept as written, as in
+// call:edit{set:[{path:<|"|>Unused<|"|>,value:0x000100}]}.
+// Only an even count of delimiters is repaired, and only a number that is all of
+// a value, after an object's key and its colon or as a list's item: `0x` or `0X`
+// and one or more hex digits, and a `,`, `}` or `]` follows it after any
+// whitespace. The delimiters are written around it. Strings are copied as they
+// are. Where the strings or brackets are unclear, nothing is repaired.
+func repairGemma4HexNumberValues(s string) string {
+	return repairGemma4Values(s, gemma4HexNumberValue)
+}
+
+// gemma4HexNumberValue returns the text and the end of a hex number written bare
+// at s[i], as repairGemma4HexNumberValues reads one.
+func gemma4HexNumberValue(s string, i int) (string, int, bool) {
+	if i+2 >= len(s) || s[i] != '0' || (s[i+1] != 'x' && s[i+1] != 'X') {
+		return "", 0, false
+	}
+	end := i + 2
+	for end < len(s) && strings.IndexByte("0123456789abcdefABCDEF", s[end]) != -1 {
+		end++
+	}
+	if end == i+2 {
+		return "", 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return "", 0, false
+	}
+	return s[i:end], end, true
 }
 
 // repairGemma4Values writes the delimiters around each value that value reads
