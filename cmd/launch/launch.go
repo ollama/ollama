@@ -365,9 +365,16 @@ Examples:
 				return nil
 			}
 
-			if modelFlag != "" && isCloudModelName(modelFlag) {
+			piOverride := false
+			if canonical, _, _ := LookupIntegration(name); canonical == "pi" {
+				piOverride = piHasModelArgs(passArgs)
+			}
+			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
+						if canonical, _, _ := LookupIntegration(name); canonical == "pi" {
+							return fmt.Errorf("cloud is disabled; enable cloud to use %s", modelFlag)
+						}
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
 						modelFlag = ""
 					}
@@ -378,7 +385,8 @@ Examples:
 			forceConfigure := configFlag || (modelFlag == "" && !headlessYes)
 			if forceConfigure && !configFlag && modelFlag == "" {
 				if _, runner, err := LookupIntegration(name); err == nil {
-					if _, ok := runner.(ManagedAutodiscoveryIntegration); ok {
+					switch runner.(type) {
+					case ManagedAutodiscoveryIntegration, *Pi:
 						forceConfigure = false
 					}
 				}
@@ -743,7 +751,20 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	if pi, ok := editor.(*Pi); ok {
+		if !req.ForceConfigure && !req.ConfigureOnly && piHasModelArgs(req.ExtraArgs) {
+			// Explicit Pi overrides use Pi's own model/provider resolution.
+			return runIntegration(runner, "", nil, req.ExtraArgs)
+		}
 		primary := primaryModelFromConfig(saved)
+		target := req.ModelOverride
+		if target == "" && !req.ForceConfigure && !req.ConfigureOnly {
+			target = primary
+		}
+		if isCloudModelName(target) {
+			if disabled, _ := cloudStatusDisabled(ctx, c.apiClient); disabled {
+				return fmt.Errorf("cloud is disabled; enable cloud to use %s", target)
+			}
+		}
 		var err error
 		saved, err = pi.pruneSavedModels(ctx, c.apiClient, saved)
 		if err != nil {
@@ -755,6 +776,10 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 	previous := editorPreCheckedModels(saved, "")
 	models, needsConfigure := c.resolveEditorLaunchModels(ctx, saved, req)
+	if _, ok := editor.(*Pi); ok && !needsConfigure {
+		// A direct launch must retain secondary choices that are not being used.
+		models = editorPreCheckedModels(saved, req.ModelOverride)
+	}
 	if !needsConfigure && req.ModelOverride != "" && !slices.Contains(previous, req.ModelOverride) {
 		if err := c.confirmCloudModelPayment(ctx, req.ModelOverride); err != nil {
 			if !errors.Is(err, errModelPaymentDeclined) {
@@ -1368,7 +1393,7 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected,
 	for _, model := range selected {
 		// Retained secondary models are not being launched. Keep their settings
 		// without prompting to download or sign in to them again.
-		if len(accepted) > 0 && slices.Contains(previous, model) {
+		if commandName == "pi" && len(accepted) > 0 && slices.Contains(previous, model) {
 			accepted = append(accepted, model)
 			continue
 		}
@@ -1386,7 +1411,7 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected,
 			if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return nil, nil, err
 			}
-			if errors.Is(err, errDownloadPromptCancelled) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if (commandName == "pi" && errors.Is(err, errDownloadPromptCancelled)) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, nil, err
 			}
 			skipped = append(skipped, skippedModel{

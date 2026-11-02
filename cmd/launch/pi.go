@@ -35,6 +35,21 @@ func (p *Pi) String() string { return "Pi" }
 
 var npmRegistryBaseURL = "https://registry.npmjs.org"
 
+func piHasModelArgs(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--provider", "--model":
+			return i+1 < len(args)
+		case "--mode", "--api-key", "--system-prompt", "--append-system-prompt",
+			"--session", "--fork", "--session-dir", "--models", "--tools", "-t",
+			"--thinking", "--export", "--extension", "-e", "--skill", "--prompt-template", "--theme":
+			// These Pi options consume a value, even when it looks like a flag.
+			i++
+		}
+	}
+	return false
+}
+
 // pruneSavedModels removes confirmed missing models without offering a download.
 // A failed metadata request is not proof that a saved model no longer exists.
 func (p *Pi) pruneSavedModels(ctx context.Context, client *api.Client, saved *config.IntegrationConfig) (*config.IntegrationConfig, error) {
@@ -140,7 +155,7 @@ func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\n%sLaunching Pi...%s\n\n", ansiGray, ansiReset)
 
-	if model != "" {
+	if model != "" && !piHasModelArgs(args) {
 		args = append([]string{"--provider", "ollama", "--model", model}, args...)
 	}
 	cmd := exec.Command(bin, args...)
