@@ -507,6 +507,11 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		if err := EnsureIntegrationInstalled(name, runner); err != nil {
 			return err
 		}
+		if name == chatGPTIntegrationName {
+			if err := codexAppRouterHealth(); err != nil {
+				return err
+			}
+		}
 		return launchClient.launchManagedSingleIntegration(ctx, name, runner, managed, saved, req)
 	}
 
