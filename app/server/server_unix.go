@@ -24,6 +24,12 @@ func commandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	return exec.CommandContext(ctx, name, arg...)
 }
 
+// isAddrInUse reports whether err is the "address already in use" error
+// returned by net.Listen when the port is held by another process.
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE)
+}
+
 func terminate(proc *os.Process) error {
 	return proc.Signal(os.Interrupt)
 }
