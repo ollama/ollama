@@ -516,6 +516,74 @@ func TestClientWebSearchExperimentalErrors(t *testing.T) {
 	}
 }
 
+func TestClientStreamUnauthorizedErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		body      string
+		signinURL string
+	}{
+		{
+			name:      "JSON body retains sign in URL",
+			status:    http.StatusUnauthorized,
+			body:      `{"error":"unauthorized","signin_url":"https://ollama.com/signin/example"}`,
+			signinURL: "https://ollama.com/signin/example",
+		},
+		{
+			name:   "HTML body",
+			status: http.StatusUnauthorized,
+			body:   "<html>unauthorized</html>",
+		},
+		{
+			name:   "truncated JSON body",
+			status: http.StatusUnauthorized,
+			body:   `{"error":`,
+		},
+		{
+			name:   "empty body",
+			status: http.StatusUnauthorized,
+		},
+		{
+			name:   "rate limit remains a status error",
+			status: http.StatusTooManyRequests,
+			body:   `{"error":"rate limit exceeded"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer ts.Close()
+
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			err := client.Generate(t.Context(), &GenerateRequest{Model: "test", Prompt: "hello"}, func(GenerateResponse) error {
+				return nil
+			})
+			if tt.status == http.StatusUnauthorized {
+				var authErr AuthorizationError
+				if !errors.As(err, &authErr) {
+					t.Fatalf("error = %T (%v), want AuthorizationError", err, err)
+				}
+				if authErr.StatusCode != http.StatusUnauthorized || authErr.SigninURL != tt.signinURL {
+					t.Fatalf("authorization error = %#v", authErr)
+				}
+				return
+			}
+
+			var statusErr StatusError
+			if !errors.As(err, &statusErr) {
+				t.Fatalf("error = %T (%v), want StatusError", err, err)
+			}
+			if statusErr.StatusCode != http.StatusTooManyRequests || statusErr.ErrorMessage != "rate limit exceeded" {
+				t.Fatalf("status error = %#v", statusErr)
+			}
+		})
+	}
+}
+
 func TestClientWebFetchExperimentalUsesLocalRoute(t *testing.T) {
 	var gotPath string
 	var gotMethod string
