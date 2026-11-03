@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/app/ui/responses"
 )
@@ -176,6 +177,18 @@ func (b *BrowserSearch) Execute(ctx context.Context, args map[string]any) (any, 
 	return b.state.Data, pageText, nil
 }
 
+// truncateUTF8 returns at most maxBytes bytes of s, cut back to the nearest
+// UTF-8 rune boundary so a multi-byte character is never split in half.
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	for maxBytes > 0 && !utf8.RuneStart(s[maxBytes]) {
+		maxBytes--
+	}
+	return s[:maxBytes]
+}
+
 func (b *Browser) buildSearchResultsPageCollection(query string, results *WebSearchResponse) *responses.Page {
 	page := &responses.Page{
 		URL:       "search_results_" + query,
@@ -204,8 +217,7 @@ func (b *Browser) buildSearchResultsPageCollection(query string, results *WebSea
 			linkFormat := fmt.Sprintf("* 【%d†%s†%s】", linkIdx, result.Title, domain)
 			textBuilder.WriteString(linkFormat)
 
-			numChars := min(len(result.Content.FullText), 400)
-			snippet := strings.TrimSpace(result.Content.FullText[:numChars])
+			snippet := strings.TrimSpace(truncateUTF8(result.Content.FullText, 400))
 			textBuilder.WriteString(snippet)
 			textBuilder.WriteString("\n")
 
@@ -235,8 +247,7 @@ func (b *Browser) buildSearchResultsPage(result *WebSearchResult, linkIdx int) *
 	textBuilder.WriteString(linkFormat)
 	textBuilder.WriteString("\n")
 	textBuilder.WriteString(fmt.Sprintf("URL: %s\n", result.URL))
-	numChars := min(len(result.Content.FullText), 300)
-	textBuilder.WriteString(result.Content.FullText[:numChars])
+	textBuilder.WriteString(truncateUTF8(result.Content.FullText, 300))
 	textBuilder.WriteString("\n\n")
 
 	// Only store link and snippet if we won't be processing full text later
