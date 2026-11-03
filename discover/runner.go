@@ -29,6 +29,8 @@ var (
 )
 
 var defaultIntegratedROCmGFXTargets = map[string]struct{}{
+	// AMD Radeon 780M / Ryzen AI 300/400 series.
+	"gfx1103": {},
 	// AMD Radeon 8060S / Ryzen AI Max+ 395.
 	"gfx1151": {},
 }
