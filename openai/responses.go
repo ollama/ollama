@@ -925,6 +925,23 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 		}
 	}
 
+	var truncate *bool
+	if r.Truncation != nil {
+		switch *r.Truncation {
+		case "auto":
+			t := true
+			truncate = &t
+		case "disabled":
+			t := false
+			truncate = &t
+		default:
+			return nil, fmt.Errorf("unknown truncation strategy: %q", *r.Truncation)
+		}
+	} else {
+		t := false
+		truncate = &t
+	}
+
 	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
@@ -932,6 +949,7 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 		Tools:    tools,
 		Format:   format,
 		Think:    think,
+		Truncate: truncate,
 	}, nil
 }
 
