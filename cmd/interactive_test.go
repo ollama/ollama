@@ -64,6 +64,12 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestNormalizeFilePathPreservesUNCPathPrefix(t *testing.T) {
+	input := `\\Network\folder\photo.jpg`
+
+	assert.Equal(t, input, normalizeFilePath(input))
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
