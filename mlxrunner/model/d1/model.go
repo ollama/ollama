@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	model.Register("D1Model", NewModel)
+	model.Register("D1Model", NewModel, model.WithGenerationConfig(lfm3.DecisionGenerationConfig))
 }
 
 // The publisher caps each picture at this many pixels before its processor.

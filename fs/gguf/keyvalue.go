@@ -23,6 +23,19 @@ func (v Value) Any() any {
 	return v.value
 }
 
+// ArrayLen returns the length of an array, including one skipped while reading
+// metadata, or 0 for a value that is not an array.
+func (v Value) ArrayLen() int {
+	if skipped, ok := v.value.(skippedArray); ok {
+		return skipped.size
+	}
+	value := reflect.ValueOf(v.value)
+	if value.IsValid() && value.Kind() == reflect.Slice {
+		return value.Len()
+	}
+	return 0
+}
+
 func value[T any](v Value, kinds ...reflect.Kind) (t T) {
 	vv := reflect.ValueOf(v.value)
 	if slices.Contains(kinds, vv.Kind()) {

@@ -2703,8 +2703,25 @@ func (s *llamaServerRunner) Tokenize(ctx context.Context, content string) ([]int
 	return s.tokenize(ctx, content, false)
 }
 
+// TokenizePrompt calls llama-server's /tokenize endpoint. addSpecial tokenizes
+// as llama-server does for a completion prompt.
+func (s *llamaServerRunner) TokenizePrompt(ctx context.Context, content string, addSpecial bool) ([]int, error) {
+	return s.tokenize(ctx, content, addSpecial)
+}
+
 // Detokenize calls llama-server's /detokenize endpoint.
 func (s *llamaServerRunner) Detokenize(ctx context.Context, tokens []int) (string, error) {
+	var vocabSize int
+	if s.metadata != nil {
+		vocabSize = s.metadata.KV().KeyValue("tokenizer.ggml.tokens").ArrayLen()
+	}
+	for _, id := range tokens {
+		// llama-server reports out-of-vocabulary IDs as internal errors.
+		if id < 0 || (vocabSize > 0 && id >= vocabSize) {
+			return "", api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("token ID %d is outside the vocabulary", id)}
+		}
+	}
+
 	data, err := json.Marshal(map[string][]int{"tokens": tokens})
 	if err != nil {
 		return "", err

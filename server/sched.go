@@ -253,6 +253,28 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 	return req.successCh, req.errCh
 }
 
+// loadedRunner returns m's runner if it is loaded, without loading, reloading
+// or changing options. It waits for a load in progress. The reference is held
+// until ctx is done.
+func (s *Scheduler) loadedRunner(ctx context.Context, m *Model) llm.LlamaServer {
+	s.loadedMu.Lock()
+	runner := s.loaded[schedulerModelKey(m)]
+	s.loadedMu.Unlock()
+	if runner == nil {
+		return nil
+	}
+
+	runner.refMu.Lock()
+	defer runner.refMu.Unlock()
+	// A failed load leaves loading set; an unload clears Options.
+	if runner.loading || runner.Options == nil {
+		return nil
+	}
+	req := &LlmRequest{ctx: ctx, model: m}
+	req.useLoadedRunnerLocked(runner, s.finishedReqCh)
+	return runner.llama
+}
+
 // Returns immediately, spawns go routines for the scheduler which will shutdown when ctx is done
 func (s *Scheduler) Run(ctx context.Context) {
 	slog.Debug("starting llm scheduler")
@@ -518,6 +540,13 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest) {
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+	pending.useLoadedRunnerLocked(runner, finished)
+	pending.successCh <- runner
+}
+
+// useLoadedRunnerLocked takes a reference for pending and releases it when
+// pending.ctx is done. The caller holds runner.refMu.
+func (pending *LlmRequest) useLoadedRunnerLocked(runner *runnerRef, finished chan *LlmRequest) {
 	runner.refCount++
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
@@ -526,7 +555,6 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	if pending.sessionDuration != nil {
 		runner.sessionDuration = pending.sessionDuration.Duration
 	}
-	pending.successCh <- runner
 	go func() {
 		<-pending.ctx.Done()
 		slog.Debug("context for request finished", "runner", runner)

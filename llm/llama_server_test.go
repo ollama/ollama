@@ -1709,6 +1709,29 @@ func TestLlamaServerDetokenize(t *testing.T) {
 	if content != "hello world" {
 		t.Errorf("content = %q, want %q", content, "hello world")
 	}
+
+	// Without vocabulary metadata only negative IDs are rejected locally.
+	if _, err := runner.Detokenize(t.Context(), []int{-1}); err == nil {
+		t.Fatal("negative token ID succeeded without metadata")
+	}
+	if _, err := runner.Detokenize(t.Context(), []int{1 << 30}); err != nil {
+		t.Fatalf("unknown vocabulary size rejected ID locally: %v", err)
+	}
+
+	runner.metadata = loadTestGGUF(t, gguftest.KV{
+		"general.architecture":  "llama",
+		"tokenizer.ggml.tokens": []string{"a", "b", "c", "d"},
+	})
+	for _, id := range []int{-1, 4} {
+		_, err := runner.Detokenize(t.Context(), []int{id})
+		var status api.StatusError
+		if !errors.As(err, &status) || status.StatusCode != http.StatusBadRequest {
+			t.Fatalf("token ID %d error = %v, want 400", id, err)
+		}
+	}
+	if _, err := runner.Detokenize(t.Context(), []int{0, 3}); err != nil {
+		t.Fatalf("in-vocabulary IDs: %v", err)
+	}
 }
 
 func TestLlamaServerEmbedding(t *testing.T) {
