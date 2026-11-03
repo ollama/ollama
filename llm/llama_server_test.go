@@ -3759,12 +3759,64 @@ func TestAccumulatedToolCallsRejectsInvalidArguments(t *testing.T) {
 			name:      "weather",
 			arguments: `{"city":`,
 		},
-	})
+	}, false)
 	if err == nil {
 		t.Fatal("expected invalid tool call arguments to return an error")
 	}
 	if !strings.Contains(err.Error(), "weather") {
 		t.Fatalf("expected function name in error, got %v", err)
+	}
+}
+
+func TestLlamaServerChatToolCallCutByLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"ticket","arguments":"{\"title\":\"Slow"}}]}}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":2,"id":"call_3","type":"function","function":{"name":"ticket","arguments":""}}]}}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"length"}]}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []ChatResponse
+	opts := api.DefaultOptions()
+	err := runner.Chat(t.Context(), ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+		Options:  &opts,
+	}, func(cr ChatResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if len(responses) != 1 {
+		t.Fatalf("got %d responses, want 1", len(responses))
+	}
+	final := responses[0]
+	if final.DoneReason != DoneReasonLength {
+		t.Errorf("DoneReason = %v, want %v", final.DoneReason, DoneReasonLength)
+	}
+	if len(final.Message.ToolCalls) != 1 || final.Message.ToolCalls[0].Function.Name != "weather" {
+		t.Fatalf("ToolCalls = %+v, want only the complete weather call", final.Message.ToolCalls)
 	}
 }
 
