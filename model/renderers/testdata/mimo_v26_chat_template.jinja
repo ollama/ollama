@@ -1,0 +1,97 @@
+{%- macro render_value(value) -%}
+    {%- if value is string -%}
+        {{- value -}}
+    {%- else -%}
+        {{- value | tojson(ensure_ascii=False) -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_content(message_content) -%}
+    {%- if message_content is string -%}
+        {{- message_content -}}
+    {%- elif message_content is iterable -%}
+        {%- for part in message_content -%}
+            {%- if part is not mapping -%}
+                {{- part -}}
+            {%- elif part['type'] == 'image' or 'image' in part or 'image_url' in part -%}
+                {{- '<|vision_start|><|image_pad|><|vision_end|>' -}}
+            {%- elif part['type'] == 'audio' or part['type'] == 'input_audio' or 'audio' in part or 'audio_url' in part or 'input_audio' in part -%}
+                {{- '<|mimo_audio_start|><|audio_pad|><|mimo_audio_end|>' -}}
+            {%- elif part['type'] == 'video' or 'video' in part or 'video_url' in part -%}
+                {{- '<|vision_start|><|video_pad|><|vision_end|>' -}}
+            {%- elif 'text' in part -%}
+                {{- part['text'] -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_tools(tools) -%}
+    {{- 'You are provided with the following tools:\n\n<tools>' -}}
+    {%- for tool in tools -%}
+        {{- '\n' ~ (tool | tojson(ensure_ascii=False)) -}}
+    {%- endfor -%}
+    {{- '\n</tools>' -}}
+{%- endmacro -%}
+
+{%- macro render_tool_calls(tool_calls) -%}
+    {%- for tool_call in tool_calls -%}
+        {%- if tool_call.function is defined -%}
+            {%- set tool_call = tool_call.function -%}
+        {%- elif tool_call.custom is defined -%}
+            {%- set tool_call = tool_call.custom -%}
+        {%- endif -%}
+        {{- '<tool_call><function=' ~ tool_call.name ~ '>' -}}
+        {%- if tool_call.input is defined and tool_call.input is string -%}
+            {{- tool_call.input -}}
+        {%- elif tool_call.arguments -%}
+            {%- if tool_call.arguments is string -%}
+                {{- tool_call.arguments -}}
+            {%- else -%}
+                {%- for args_name, args_value in tool_call.arguments | items -%}
+                    {{- '<parameter=' ~ args_name ~ '>' ~ render_value(args_value) ~ '</parameter>' -}}
+                {%- endfor -%}
+            {%- endif -%}
+        {%- endif -%}
+        {{- '</function></tool_call>' -}}
+    {%- endfor -%}
+{%- endmacro -%}
+
+{%- macro render_assistant_message(message) -%}
+    {%- generation -%}
+    {%- set content = render_content(message.content) -%}
+    {%- set reasoning = message.reasoning_content if message.reasoning_content is string else '' -%}
+    {{- '<|im_start|>assistant\n<think>' ~ reasoning ~ '</think>' ~ content -}}
+    {%- if message.tool_calls is defined and message.tool_calls is iterable and message.tool_calls | length > 0 -%}
+        {{- render_tool_calls(message.tool_calls) -}}
+    {%- endif -%}
+    {{- '<|im_end|>' -}}
+    {%- endgeneration -%}
+{%- endmacro -%}
+
+{%- if tools is defined and tools is iterable and tools | length > 0 -%}
+    {{- '<|im_start|>system\n' ~ render_tools(tools) ~ '<|im_end|>' -}}
+{%- endif -%}
+
+{%- for message in messages -%}
+    {%- if message.role == 'assistant' -%}
+        {{- render_assistant_message(message) -}}
+    {%- else -%}
+        {%- set body = render_content(message.content) -%}
+        {{- '<|im_start|>' ~ message.role ~ '\n' ~ body -}}
+        {%- if message.tools is defined and message.tools is iterable and message.tools | length > 0 -%}
+            {%- if body -%}
+                {{- '\n\n' -}}
+            {%- endif -%}
+            {{- render_tools(message.tools) -}}
+        {%- endif -%}
+        {{- '<|im_end|>' -}}
+    {%- endif -%}
+{%- endfor -%}
+
+{%- if add_generation_prompt -%}
+    {{- '<|im_start|>assistant\n' -}}
+    {%- if enable_thinking is false -%}
+        {{- '<think></think>' -}}
+    {%- endif -%}
+{%- endif -%}
