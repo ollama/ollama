@@ -345,6 +345,7 @@ console.log(response.message.content);
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
+- [Orca Connect](https://docs.orcarouter.ai/integrations/orca-connect) - Outbound-only connector that serves your local Ollama models to your other devices and teammates
 
 #### Package Managers
 
