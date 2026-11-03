@@ -18,6 +18,27 @@ if(CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES ";")
     endif()
 endif()
 
+# When building on Windows with clang as the C/C++ compiler (instead of MSVC),
+# CMake cannot locate the Windows Resource Compiler (rc.exe) on its own, forcing
+# a manual -DCMAKE_RC_COMPILER pointing at a version-specific Windows SDK path.
+# Search the installed Windows SDKs and pick the newest rc.exe so the build
+# works without that manual flag. Only runs on Windows when it isn't already set.
+if(WIN32 AND NOT CMAKE_RC_COMPILER)
+    set(_winsdk_bin "$ENV{ProgramFiles\(x86\)}/Windows Kits/10/bin")
+    if(NOT EXISTS "${_winsdk_bin}")
+        set(_winsdk_bin "C:/Program Files (x86)/Windows Kits/10/bin")
+    endif()
+    file(GLOB _winsdk_versions "${_winsdk_bin}/10.*")
+    list(SORT _winsdk_versions ORDER DESCENDING)
+    foreach(_ver IN LISTS _winsdk_versions)
+        if(EXISTS "${_ver}/x64/rc.exe")
+            set(CMAKE_RC_COMPILER "${_ver}/x64/rc.exe" CACHE FILEPATH "Windows Resource Compiler" FORCE)
+            message(STATUS "Auto-detected Windows Resource Compiler: ${CMAKE_RC_COMPILER}")
+            break()
+        endif()
+    endforeach()
+endif()
+
 include(CheckLanguage)
 include(GNUInstallDirs)
 
