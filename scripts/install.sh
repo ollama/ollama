@@ -141,7 +141,7 @@ download_and_extract() {
   - RHEL/CentOS/Fedora: sudo dnf install zstd
   - Arch: sudo pacman -S zstd"
         fi
-
+        status "${url_base}/${filename}.tar.zst${VER_PARAM}"
         status "Downloading ${filename}.tar.zst"
         curl --fail --show-error --location --progress-bar \
             "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
