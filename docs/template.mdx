@@ -123,6 +123,8 @@ ChatML is a popular template format. It can be used for models such as Databrick
 
 Tools support can be added to a model by adding a `{{ .Tools }}` node to the template. This feature is useful for models trained to call external tools and can a powerful tool for retrieving real-time data or performing complex tasks.
 
+When a template renders assistant tool calls, keep the tool-call branch visible to Ollama by testing `.ToolCalls` directly, for example `{{ if .ToolCalls }}`. Avoid assigning `.ToolCalls` to another template variable before the `if` condition, because Ollama uses that condition to find the model's tool-call marker. The rendered tool call should include the function name and a JSON object for the arguments, commonly with `{{ json .Function.Arguments }}`.
+
 #### Mistral
 
 Mistral v0.3 and Mixtral 8x22B supports tool calling.
