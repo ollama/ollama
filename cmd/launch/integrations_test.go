@@ -1691,7 +1691,45 @@ func TestStartAccountStatePrefetch_SkipsWhoamiWhenCloudDisabled(t *testing.T) {
 	}
 }
 
+func TestEnsureAuth_HeadlessReturnsSignInInstructions(t *testing.T) {
+	withInteractiveSession(t, false)
+	withLauncherHooks(t)
+	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		t.Error("headless sign-in must not invoke the TUI or open a browser")
+		return "", ErrCancelled
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Error("headless sign-in must not prompt for confirmation")
+		return false, nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	for _, yes := range []bool{false, true} {
+		t.Run(fmt.Sprintf("yes=%t", yes), func(t *testing.T) {
+			restore := withLaunchConfirmPolicy(defaultLaunchPolicy(false, yes).confirmPolicy())
+			defer restore()
+			err := ensureAuth(t.Context(), client, map[string]bool{"cloud-model:cloud": true}, []string{"cloud-model:cloud"})
+			if err == nil || !strings.Contains(err.Error(), "requires sign in") || !strings.Contains(err.Error(), "ollama signin") {
+				t.Fatalf("expected sign-in instructions, got %v", err)
+			}
+		})
+	}
+}
+
 func TestEnsureAuth_PreservesCancelledSignInHook(t *testing.T) {
+	withInteractiveSession(t, true)
 	oldSignIn := DefaultSignIn
 	DefaultSignIn = func(modelName, signInURL string) (string, error) {
 		return "", ErrCancelled
@@ -1722,6 +1760,7 @@ func TestEnsureAuth_PreservesCancelledSignInHook(t *testing.T) {
 }
 
 func TestEnsureAuth_DeclinedFallbackReturnsCancelled(t *testing.T) {
+	withInteractiveSession(t, true)
 	oldConfirm := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		return false, nil

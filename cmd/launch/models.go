@@ -197,6 +197,9 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 	if err != nil && !errors.As(err, &aErr) {
 		return nil
 	}
+	if !isInteractiveSession() {
+		return fmt.Errorf("%s requires sign in; run 'ollama signin' in a terminal, then retry", modelList)
+	}
 	if err == nil || aErr.SigninURL == "" {
 		return fmt.Errorf("%s requires sign in", modelList)
 	}
