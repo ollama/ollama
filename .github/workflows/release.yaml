@@ -9,6 +9,9 @@ env:
   CGO_CFLAGS: '-O3'
   CGO_CXXFLAGS: '-O3'
 
+permissions:
+  contents: read
+
 jobs:
   setup-environment:
     runs-on: ubuntu-latest
