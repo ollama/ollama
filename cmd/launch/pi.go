@@ -530,6 +530,10 @@ func (p *Pi) Paths() []string {
 	return paths
 }
 
+func piBaseURL() string {
+	return strings.TrimRight(envconfig.Host().String(), "/") + "/v1"
+}
+
 func (p *Pi) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
@@ -557,11 +561,16 @@ func (p *Pi) Edit(models []LaunchModel) error {
 
 	ollama, ok := providers["ollama"].(map[string]any)
 	if !ok {
-		ollama = map[string]any{
-			"baseUrl": envconfig.Host().String() + "/v1",
-			"api":     "openai-completions",
-			"apiKey":  "ollama",
-		}
+		ollama = map[string]any{}
+	}
+
+	ollama["baseUrl"] = piBaseURL()
+
+	if _, exists := ollama["api"]; !exists {
+		ollama["api"] = "openai-completions"
+	}
+	if _, exists := ollama["apiKey"]; !exists {
+		ollama["apiKey"] = "ollama"
 	}
 
 	existingModels, ok := ollama["models"].([]any)
@@ -590,10 +599,8 @@ func (p *Pi) Edit(models []LaunchModel) error {
 				} else if selectedSet[id] {
 					// Rebuild stale managed cloud entries so createConfig refreshes
 					// the whole entry instead of patching it in place.
-					if !hasContextWindow(modelObj) {
-						if _, ok := lookupCloudModelLimit(id); ok {
-							continue
-						}
+					if !hasContextWindow(modelObj) && isCloudModelName(id) {
+						continue
 					}
 					newModels = append(newModels, m)
 					selectedSet[id] = false
@@ -652,6 +659,14 @@ func (p *Pi) Models() []string {
 
 	providers, _ := config["providers"].(map[string]any)
 	ollama, _ := providers["ollama"].(map[string]any)
+
+	// Returning nil on host drift forces launchEditorIntegration to call Edit.
+	if configured, _ := ollama["baseUrl"].(string); configured != "" {
+		if strings.TrimRight(configured, "/") != strings.TrimRight(piBaseURL(), "/") {
+			return nil
+		}
+	}
+
 	models, _ := ollama["models"].([]any)
 
 	var result []string

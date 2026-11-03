@@ -50,6 +50,13 @@ func (p *LagunaParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *LagunaParser) ThinkingClose() []string {
+	if p.state == lagunaParserStateThinking {
+		return []string{lagunaThinkingCloseTag}
+	}
+	return nil
+}
+
 func (p *LagunaParser) PreservedTokens() []string {
 	return []string{
 		lagunaThinkingOpenTag,
@@ -92,6 +99,17 @@ func (p *LagunaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 		p.allowLeadingThinkOpen = false
 	}
 	return tools
+}
+
+// LagunaV8Parser matches the v8 renderer, which closes any assistant history
+// turn and emits a fresh assistant generation prompt instead of continuing the
+// final assistant message in place.
+type LagunaV8Parser struct {
+	LagunaParser
+}
+
+func (p *LagunaV8Parser) Init(tools []api.Tool, _ *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	return p.LagunaParser.Init(tools, nil, thinkValue)
 }
 
 func (p *LagunaParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {

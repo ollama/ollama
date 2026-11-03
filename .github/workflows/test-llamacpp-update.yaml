@@ -57,7 +57,10 @@ jobs:
             MLX_VERSION
             MLX_C_VERSION
       - name: Build unsigned Darwin runtime
-        run: ./scripts/build_darwin.sh build package
+        run: |
+          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= -DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/darwin-arm64 "-DOLLAMA_GO_LICENSE_TARGETS=darwin/amd64;darwin/arm64"
+          cmake --build build/go-license --target ollama-go-license
+          ./scripts/build_darwin.sh build package
       - name: Log build results
         run: ls -l dist/
       - uses: actions/upload-artifact@v4
@@ -215,7 +218,6 @@ jobs:
             copy_payload cuda_jetpack6
           fi
 
-          ./scripts/deduplicate_cuda_libs.sh "${dest}"
       - name: Verify Linux build payloads
         shell: bash
         run: |
@@ -240,6 +242,7 @@ jobs:
               lib/ollama/vulkan*)       echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/mlx*)          echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-mlx.tar.in ;;
               lib/ollama/include*)      echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/*_LICENSE|lib/ollama/*_NOTICE) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_jetpack5) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm_v*)       echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-rocm.tar.in ;;
@@ -323,6 +326,22 @@ jobs:
             cuda-version: '13.0'
           - os: windows
             arch: amd64
+            preset: 'CUDA 13 ARM64'
+            build-steps: cuda13Arm64Cross
+            install: https://developer.download.nvidia.com/compute/cuda/13.4.2/local_installers/cuda_13.4.2_windows_x86_64.exe
+            cuda-components:
+              - '"cudart"'
+              - '"cudart_cross"'
+              - '"nvcc"'
+              - '"nvcc_cross"'
+              - '"cublas_cross"'
+              - '"cublas_dev"'
+              - '"crt"'
+              - '"nvvm"'
+              - '"nvptxcompiler"'
+            cuda-version: '13.4'
+          - os: windows
+            arch: amd64
             preset: 'ROCm 7'
             build-steps: rocm7
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
@@ -346,8 +365,9 @@ jobs:
       - if: matrix.preset == 'CPU'
         name: Install Windows ARM64 cross compiler
         run: |
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip" -MaximumRetryCount 3 -RetryIntervalSec 2
           Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          Remove-Item "${{ runner.temp }}\llvm-mingw-ucrt.zip"
           $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").path
           if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
             throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
@@ -365,10 +385,13 @@ jobs:
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
+          $ProgressPreference = 'SilentlyContinue'
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            curl.exe --fail --location --retry 3 --retry-all-errors --retry-delay 10 --remove-on-error --silent --show-error --output install.exe "${{ matrix.install }}"
+            if ($LASTEXITCODE -ne 0) { throw "CUDA download failed: $LASTEXITCODE" }
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
@@ -378,8 +401,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
@@ -394,8 +418,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             Start-Process -FilePath .\install.exe -ArgumentList "-c","--am","--al","in" -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
@@ -457,8 +482,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Set-ExecutionPolicy Bypass -Scope Process -Force
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip" -MaximumRetryCount 3 -RetryIntervalSec 2
           Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          Remove-Item "${{ runner.temp }}\llvm-mingw-ucrt.zip"
           $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").path
           echo "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
@@ -550,6 +576,16 @@ jobs:
             dist/windows-arm64/lib/ollama/llama-server.exe
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
+      - name: Collect Go licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= \
+              "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/windows-${arch}" \
+              "-DOLLAMA_GO_LICENSE_TARGETS=windows/${arch}"
+            cmake --build build/go-license --target ollama-go-license
           done
       - name: Build unsigned Windows installer and zips
         run: ./scripts/build_windows.ps1 deps installer zip

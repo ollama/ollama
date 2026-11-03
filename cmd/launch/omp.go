@@ -26,7 +26,7 @@ const (
 // OMP implements Runner for the OMP coding-agent integration.
 type OMP struct{}
 
-func (o *OMP) String() string { return "OMP" }
+func (o *OMP) String() string { return "Oh My Pi" }
 
 func (o *OMP) Paths() []string {
 	var paths []string

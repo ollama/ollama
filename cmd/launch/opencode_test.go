@@ -247,11 +247,20 @@ func TestBuildModelEntries(t *testing.T) {
 		}
 	})
 
-	t.Run("omits context-only limits", func(t *testing.T) {
+	t.Run("omits context-only limits for local models", func(t *testing.T) {
 		models := buildModelEntries([]LaunchModel{{Name: "qwen2.5:0.5b", ContextLength: 32768}})
 		entry, _ := models["qwen2.5:0.5b"].(map[string]any)
 		if _, ok := entry["limit"]; ok {
-			t.Fatalf("limit should be omitted when output limit is unknown, got %v", entry["limit"])
+			t.Fatalf("limit should be omitted for a local model, got %v", entry["limit"])
+		}
+	})
+
+	t.Run("fills in a default output limit for cloud models with unknown output", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{Name: "glm-5.3:cloud", Remote: true, ContextLength: 1_048_576}})
+		entry, _ := models["glm-5.3:cloud"].(map[string]any)
+		limit, _ := entry["limit"].(map[string]any)
+		if limit["context"] != 1_048_576 || limit["output"] != openCodeDefaultMaxOutputTokens {
+			t.Fatalf("limit = %v, want context 1048576 and output %d", limit, openCodeDefaultMaxOutputTokens)
 		}
 	})
 }

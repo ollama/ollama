@@ -59,7 +59,7 @@ func TestThinkingStreaming(t *testing.T) {
 					wantStateAfter: thinkingState_ThinkingDone,
 				},
 				// regression test for a bug where we were transitioning directly to
-				// ThinkingDone without clearing the buffer. This would cuase the first
+				// ThinkingDone without clearing the buffer. This would cause the first
 				// step to be outputted twice
 				{
 					input:          "def",

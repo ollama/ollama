@@ -42,14 +42,10 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-136bf7c76bac2ec09d6617885507d37829e04b41acc47687d45e512b544e893a"),
-		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
@@ -60,12 +56,10 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
-	})
+	checkManifestFiles(t, "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-136bf7c76bac2ec09d6617885507d37829e04b41acc47687d45e512b544e893a"),
+		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
@@ -76,7 +70,7 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+	checkManifestFiles(t)
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{})
 }
 
@@ -109,7 +103,7 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 		t.Errorf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+	checkManifestFiles(t)
 }
 
 func TestDeleteCloudSourceNormalizesToLegacyName(t *testing.T) {
@@ -129,14 +123,12 @@ func TestDeleteCloudSourceNormalizesToLegacyName(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
-		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "gpt-oss", "20b-cloud"),
-	})
+	checkManifestFiles(t, "gpt-oss:20b-cloud")
 
 	w = createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "gpt-oss:20b:cloud"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d (%s)", w.Code, w.Body.String())
 	}
 
-	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+	checkManifestFiles(t)
 }

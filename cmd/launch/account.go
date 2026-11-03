@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -13,16 +12,13 @@ import (
 )
 
 const (
-	// DefaultUpgradeURL is the fixed destination for subscription upgrades.
-	DefaultUpgradeURL = "https://ollama.com/upgrade"
+	modelUpgradeURL = "https://ollama.com/upgrade"
+	modelCreditsURL = "https://ollama.com/settings"
 
 	accountCheckTimeout = 3 * time.Second
 )
 
-var (
-	ErrPlanVerificationUnavailable = errors.New("Could not verify Ollama plan. Try again in a moment or use a local model.")
-	errUpgradeCancelled            = errors.New("upgrade cancelled")
-)
+var errModelPaymentDeclined = errors.New("model payment declined")
 
 type accountStateStatus int
 
@@ -226,7 +222,7 @@ func availabilityBadge(item ModelItem, state AccountState) string {
 		}
 	case accountStateSignedIn:
 		if item.RequiredPlan != "" && !PlanSatisfies(state.Plan, item.RequiredPlan) {
-			return "Upgrade required"
+			return "Use usage credits or upgrade your plan"
 		}
 	}
 	return ""
@@ -236,7 +232,10 @@ func itemHasRecommendationMetadata(item ModelItem) bool {
 	return item.Recommended || strings.TrimSpace(item.RequiredPlan) != ""
 }
 
-func (c *launcherClient) ensureCloudModelAccess(ctx context.Context, model string) error {
+func (c *launcherClient) confirmCloudModelPayment(ctx context.Context, model string) error {
+	if !isCloudModelName(model) {
+		return nil
+	}
 	item, ok := c.modelRecommendationItem(ctx, model)
 	if !ok || strings.TrimSpace(item.RequiredPlan) == "" {
 		return nil
@@ -267,17 +266,13 @@ func (c *launcherClient) ensureCloudModelAccess(ctx context.Context, model strin
 		return nil
 	}
 
-	if err := c.runUpgradeFlow(ctx, item); err != nil {
-		return err
+	restore := withLaunchConfirmPolicy(c.policy.confirmPolicy())
+	defer restore()
+	proceed, err := confirmModelPayment(model)
+	if errors.Is(err, ErrCancelled) || (err == nil && !proceed) {
+		return errModelPaymentDeclined
 	}
-	state = launchAccountState(ctx, c.apiClient)
-	if state.Status == accountStateUnknown {
-		return ErrPlanVerificationUnavailable
-	}
-	if state.Status != accountStateSignedIn || !PlanSatisfies(state.Plan, item.RequiredPlan) {
-		return errUpgradeCancelled
-	}
-	return nil
+	return err
 }
 
 func (c *launcherClient) modelRecommendationItem(ctx context.Context, model string) (ModelItem, bool) {
@@ -289,74 +284,18 @@ func (c *launcherClient) modelRecommendationItem(ctx context.Context, model stri
 	return ModelItem{}, false
 }
 
-func (c *launcherClient) runUpgradeFlow(ctx context.Context, item ModelItem) error {
-	if DefaultUpgrade != nil {
-		if _, err := DefaultUpgrade(item.Name, item.RequiredPlan); err != nil {
-			if errors.Is(err, ErrCancelled) {
-				return errUpgradeCancelled
-			}
-			return err
-		}
-		return nil
-	}
-
-	yes, err := ConfirmPrompt(fmt.Sprintf("Upgrade to use %s?", item.Name))
-	if errors.Is(err, ErrCancelled) {
-		return errUpgradeCancelled
-	}
-	if err != nil {
-		return err
-	}
-	if !yes {
-		return errUpgradeCancelled
-	}
-
-	fmt.Fprintf(os.Stderr, "\nTo upgrade, navigate to:\n    %s\n\n", DefaultUpgradeURL)
-	openNow, err := ConfirmPrompt("Open now?")
-	if errors.Is(err, ErrCancelled) {
-		return errUpgradeCancelled
-	}
-	if err != nil {
-		return err
-	}
-	if openNow {
-		OpenBrowser(DefaultUpgradeURL)
-	} else {
-		return errUpgradeCancelled
-	}
-
-	spinnerFrames := []string{"|", "/", "-", "\\"}
-	frame := 0
-	fmt.Fprintf(os.Stderr, "\033[90mwaiting for upgrade to complete... %s\033[0m", spinnerFrames[0])
-
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Fprintf(os.Stderr, "\r\033[K")
-			return ctx.Err()
-		case <-ticker.C:
-			frame++
-			fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for upgrade to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
-			if frame%10 != 0 {
-				continue
-			}
-			state := launchAccountState(ctx, c.apiClient)
-			if state.Status == accountStateUnknown {
-				fmt.Fprintf(os.Stderr, "\r\033[K")
-				return ErrPlanVerificationUnavailable
-			}
-			if state.Status == accountStateSignedIn && PlanSatisfies(state.Plan, item.RequiredPlan) {
-				fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1mplan updated\033[0m\n")
-				return nil
-			}
-		}
-	}
+// confirmModelPayment shows advisory payment guidance without checking credit availability.
+func confirmModelPayment(modelName string) (bool, error) {
+	prompt := fmt.Sprintf("%s\n\nThis model requires usage credits or a paid plan.\n\nAdd credits: %s\nUpgrade: %s\n\nContinue with %s?", modelName, modelCreditsURL, modelUpgradeURL, modelName)
+	return ConfirmPromptWithOptions(prompt, ConfirmOptions{
+		YesLabel: "Continue",
+		NoLabel:  "Choose another model",
+		Default:  ConfirmDefaultYes,
+	})
 }
 
-// PlanSatisfies reports whether currentPlan can use a model that has a requiredPlan.
+// PlanSatisfies compares the subscription hints in recommendation metadata.
+// Inference authorization also accounts for usage credits and other server policy.
 func PlanSatisfies(currentPlan, requiredPlan string) bool {
 	required := normalizePlan(requiredPlan)
 	if required == "" || required == "free" {

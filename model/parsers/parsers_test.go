@@ -24,6 +24,10 @@ func (m *mockParser) PreservedTokens() []string {
 	return nil
 }
 
+func (m *mockParser) ThinkingClose() []string {
+	return nil
+}
+
 func (m *mockParser) HasToolSupport() bool {
 	return false
 }
@@ -54,6 +58,82 @@ func TestRegisterCustomParser(t *testing.T) {
 	}
 }
 
+// TestThinkingClose checks that a parser reports the strings ending its
+// thinking exactly when its response begins inside thinking: not when the
+// request turns thinking off, when an assistant prefill continues content, or
+// when the parser suppresses thinking for tools.
+func TestThinkingClose(t *testing.T) {
+	think := func(v bool) *api.ThinkValue { return &api.ThinkValue{Value: v} }
+	contentPrefill := &api.Message{Role: "assistant", Content: "The answer"}
+	toolResponse := &api.Message{Role: "tool", Content: "42"}
+	tool := api.Tool{Type: "function", Function: api.ToolFunction{Name: "get_weather"}}
+	thinkTag := []string{"</think>"}
+
+	tests := []struct {
+		parser      string
+		think       *api.ThinkValue
+		lastMessage *api.Message
+		tools       []api.Tool
+		want        []string
+	}{
+		{parser: "passthrough", think: think(true)},
+		{parser: "qwen3", think: think(true)},
+		{parser: "qwen3-thinking", want: thinkTag},
+		{parser: "qwen3-thinking", think: think(false)},
+		{parser: "qwen3.5", want: thinkTag},
+		{parser: "qwen3.5", think: think(false)},
+		{parser: "qwen3.5", lastMessage: contentPrefill},
+		{parser: "qwen3-vl-thinking", want: thinkTag},
+		{parser: "qwen3-vl-thinking", lastMessage: contentPrefill},
+		{parser: "qwen3-vl-instruct", think: think(true)},
+		{parser: "deepseek3", think: think(true), want: thinkTag},
+		{parser: "deepseek3"},
+		{parser: "cogito", think: think(true), want: thinkTag},
+		{parser: "cogito", think: think(true), tools: []api.Tool{tool}},
+		{parser: "cohere", want: []string{"<|END_THINKING|>"}},
+		{parser: "cohere", think: think(false)},
+		{parser: "gemma4", think: think(true), want: []string{"<channel|>"}},
+		{parser: "gemma4", think: think(true), lastMessage: toolResponse, want: []string{"<channel|>"}},
+		{parser: "gemma4", think: think(true), lastMessage: contentPrefill},
+		{parser: "gemma4"},
+		{parser: "gemma4-no-thinking", think: think(true)},
+		{parser: "glm-4.7", want: thinkTag},
+		{parser: "glm-4.7", think: think(false)},
+		{parser: "glm-ocr"},
+		{parser: "lfm2-thinking", think: think(true), want: thinkTag},
+		{parser: "lfm2", think: think(true)},
+		{parser: "nemotron-3-nano", want: thinkTag},
+		{parser: "nemotron-3-nano", think: think(false)},
+		{parser: "olmo3-think", want: thinkTag},
+		{parser: "olmo3-think", lastMessage: contentPrefill},
+		{parser: "olmo3"},
+		{parser: "laguna", think: think(true), want: thinkTag},
+		{parser: "laguna"},
+		{parser: "ministral", think: think(true)},
+		{parser: "glimmer", want: []string{"<|start|>assistant to=user<|message|>", "<|start|>assistant<|message|>"}},
+		{parser: "glimmer", think: think(false)},
+		{parser: "harmony", want: []string{
+			"<|end|><|start|>assistant<|channel|>final<|message|>",
+			"<|end|><|start|>assistant<|channel|>final <|constrain|>json<|message|>",
+			"<|end|><|start|>assistant<|channel|>final<|constrain|>json<|message|>",
+			"<|end|><|start|>assistant<|channel|>final json<|message|>",
+			"<|end|><|start|>assistant<|channel|>commentary<|message|>",
+			"<|end|><|start|>assistant<|message|>",
+		}},
+		{parser: "harmony", lastMessage: contentPrefill},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.parser, func(t *testing.T) {
+			parser := ParserForName(tt.parser)
+			parser.Init(tt.tools, tt.lastMessage, tt.think)
+			if got := parser.ThinkingClose(); !slices.Equal(got, tt.want) {
+				t.Errorf("ThinkingClose() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuiltInParsersStillWork(t *testing.T) {
 	tests := []struct {
 		name string
@@ -67,6 +147,8 @@ func TestBuiltInParsersStillWork(t *testing.T) {
 		{"qwen3.5"},
 		{"ornith"},
 		{"harmony"},
+		{"nemotron-3-nano"},
+		{"nemotron-3.5-nano"},
 	}
 
 	for _, tt := range tests {

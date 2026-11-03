@@ -26,6 +26,7 @@
 #include <string>
 
 #include "ggml-backend.h" // for ggml_backend_buffer_type_t
+#include "llama.h"        // for LLAMA_API
 
 struct gguf_context;
 struct ggml_context;
@@ -45,7 +46,7 @@ namespace llama_ollama_compat {
 // so there's nowhere to write the transformed bytes. Disabling mmap
 // makes the loader pre-allocate real backend buffers, after which our
 // load_op overrides land in writable memory.
-bool translate_metadata(const llama_model_loader * ml,
+LLAMA_API bool translate_metadata(const llama_model_loader * ml,
                         gguf_context * meta,
                         ggml_context * ctx,
                         std::string & arch_name,
@@ -54,19 +55,19 @@ bool translate_metadata(const llama_model_loader * ml,
 // Called from llama_model_loader's weights_map population loop. Returns
 // true to drop a tensor from the loader — used to hide embedded vision
 // tensors from the text model's view without modifying the gguf_context.
-bool should_skip_tensor(const llama_model_loader * ml, const char * tensor_name);
+LLAMA_API bool should_skip_tensor(const llama_model_loader * ml, const char * tensor_name);
 
 // Called from clip_model_loader's constructor. Rewrites the clip-facing
 // view of the metadata (arch=clip, clip.vision.* KVs, renamed tensors)
 // so the rest of clip.cpp can load a monolithic GGUF unchanged.
-void translate_clip_metadata(gguf_context * meta, ggml_context * ctx);
+LLAMA_API void translate_clip_metadata(gguf_context * meta, ggml_context * ctx);
 
 // Called from clip.cpp's tensor-loading loop, before the normal file read.
 // If this tensor was marked for type promotion by translate_clip_metadata
 // (e.g. F16->F32), performs the conversion and writes the result into
 // `cur` (host memcpy or backend_tensor_set based on `buft`). Returns true
 // when the tensor was handled — caller should skip its normal read path.
-bool maybe_load_tensor(ggml_tensor * cur,
+LLAMA_API bool maybe_load_tensor(ggml_tensor * cur,
                        const char * source_file,
                        size_t file_offset,
                        ggml_backend_buffer_type_t buft);
@@ -75,14 +76,30 @@ bool maybe_load_tensor(ggml_tensor * cur,
 // the model file path from the per-loader registry populated by
 // translate_metadata, and derives the buffer type from cur->buffer
 // internally, which keeps the call site in the patch to one line.
-bool maybe_load_text_tensor(const llama_model_loader * ml,
+LLAMA_API bool maybe_load_text_tensor(const llama_model_loader * ml,
                             ggml_tensor * cur,
                             size_t file_offset);
+
+// Slab-serving variant for loaders that read tensor data in (offset, size)
+// byte ranges (llama_model_loader::load_data_range, used by llama-quantize
+// and other single-tensor read tools). Same registry and file-path lookup
+// as maybe_load_text_tensor, but serves one range of the op's destination
+// bytes per call: the first call for a tensor materializes the op's full
+// output, and later ranges are served from that cache. To keep quantize
+// memory at a single op tensor (the same profile as the whole-tensor read
+// this hook replaced), the cache holds one active tensor per loader.
+// Returns the requested range (copied into buf when buf is non-null) or
+// nullptr when no load op exists for this tensor.
+LLAMA_API const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
+                                          ggml_tensor * cur,
+                                          size_t offs,
+                                          size_t size,
+                                          void * buf);
 
 // Called from clip_n_mmproj_embd() before the upstream switch. Returns a
 // positive embedding size only for Ollama compatibility cases whose projector
 // metadata already follows upstream naming, but whose legacy projector type
 // is missing from that helper in the pinned llama.cpp version.
-int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim);
+LLAMA_API int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim);
 
 } // namespace llama_ollama_compat
