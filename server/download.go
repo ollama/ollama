@@ -383,14 +383,15 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 		defer resp.Body.Close()
 
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
-			// rollback progress
-			b.Completed.Add(-n)
-			return err
-		}
 
 		part.Completed.Add(n)
 		if err := b.writePart(part.Name(), part); err != nil {
+			return err
+		}
+
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			// rollback progress
+			b.Completed.Add(-n)
 			return err
 		}
 
