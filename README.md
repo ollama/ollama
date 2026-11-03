@@ -228,7 +228,7 @@ console.log(response.message.content);
 - [oxi](https://github.com/maziluiosif/oxi) - Native Rust desktop coding agent with editor, Git panel and terminal
 
 ### Libraries & SDKs
-
+- [L.A.T.E.](https://github.com/ikaushik817-art/local-ai-tool-engine) - Tool-calling engine with exact math, research with sources, memory and file search
 - [LiteLLM](https://github.com/BerriAI/litellm) - Unified API for 100+ LLM providers
 - [Semantic Kernel](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama) - Microsoft AI orchestration SDK
 - [LangChain4j](https://github.com/langchain4j/langchain4j) - Java LangChain ([example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java))
