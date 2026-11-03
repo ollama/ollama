@@ -544,6 +544,11 @@ func TestClientStreamUnauthorizedErrors(t *testing.T) {
 			status: http.StatusUnauthorized,
 		},
 		{
+			name:   "oversized body",
+			status: http.StatusUnauthorized,
+			body:   strings.Repeat("x", maxBufferSize+1),
+		},
+		{
 			name:   "rate limit remains a status error",
 			status: http.StatusTooManyRequests,
 			body:   `{"error":"rate limit exceeded"}`,
