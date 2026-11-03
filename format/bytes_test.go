@@ -14,32 +14,34 @@ func TestHumanBytes(t *testing.T) {
 		// Test bytes (B)
 		{0, "0 B"},
 		{1, "1 B"},
-		{999, "999 B"},
+		{1023, "1023 B"},
 
-		// Test kilobytes (KB)
-		{1000, "1 KB"},
-		{1500, "1.5 KB"},
-		{999999, "999 KB"},
+		// Test kilobytes (KB) - binary prefix (1024-based)
+		{1024, "1 KB"},
+		{1536, "1.5 KB"},
+		{3072, "3 KB"},
+		{4096, "4 KB"},
+		{10240, "10 KB"},
 
-		// Test megabytes (MB)
-		{1000000, "1 MB"},
-		{1500000, "1.5 MB"},
-		{999999999, "999 MB"},
+		// Test megabytes (MB) - binary prefix (1024-based)
+		{1048576, "1 MB"},
+		{1572864, "1.5 MB"},
+		{10485760, "10 MB"},
 
-		// Test gigabytes (GB)
-		{1000000000, "1 GB"},
-		{1500000000, "1.5 GB"},
-		{999999999999, "999 GB"},
+		// Test gigabytes (GB) - binary prefix (1024-based)
+		{1073741824, "1 GB"},
+		{1610612736, "1.5 GB"},
+		{10737418240, "10 GB"},
 
-		// Test terabytes (TB)
-		{1000000000000, "1 TB"},
-		{1500000000000, "1.5 TB"},
-		{1999999999999, "2.0 TB"},
+		// Test terabytes (TB) - binary prefix (1024-based)
+		{1099511627776, "1 TB"},
+		{1649267441664, "1.5 TB"},
+		{2199023255552, "2 TB"},
 
 		// Test fractional values
-		{1234, "1.2 KB"},
-		{1234567, "1.2 MB"},
-		{1234567890, "1.2 GB"},
+		{1280, "1.2 KB"},
+		{1310720, "1.2 MB"},
+		{1342177280, "1.2 GB"},
 	}
 
 	for _, tc := range tests {
