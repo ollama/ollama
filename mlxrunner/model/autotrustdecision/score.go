@@ -89,7 +89,7 @@ func (m *Model) prompt(input llm.ScoreRequest, q *llm.ScoreQuestion) (string, st
 		}
 		ids = m.choiceIDs[:len(options)]
 		bias = make([]float32, len(options))
-		copy(bias, m.head.Bias[8:24])
+		copy(bias, m.head.Bias[8:])
 	default:
 		return "", "", nil, nil, fmt.Errorf("unsupported AutoTrust decision question type %q", q.Type)
 	}

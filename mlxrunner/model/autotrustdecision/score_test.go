@@ -81,6 +81,26 @@ func TestTextCompactHeadRejectsUntrainedChoices(t *testing.T) {
 	}
 }
 
+func TestWideChoiceHeadUsesAllAvailableBiases(t *testing.T) {
+	const maxChoices = 255
+	m := &Model{choiceCodes: make([]string, maxChoices), choiceIDs: make([]int32, maxChoices)}
+	m.head.Bias = make([]float32, 264)
+	m.head.VerbalizerIDs = make([]int32, 264)
+	for i := range m.choiceCodes {
+		m.choiceCodes[i] = fmt.Sprintf("option-%d", i)
+		m.choiceIDs[i] = int32(i)
+		m.head.Bias[8+i] = float32(i + 1)
+	}
+	q := &llm.ScoreQuestion{Type: "choice", Options: make([]string, maxChoices)}
+	_, _, ids, bias, err := m.prompt(llm.ScoreRequest{}, q)
+	if err != nil || len(ids) != maxChoices || len(bias) != maxChoices {
+		t.Fatalf("wide head readout: ids = %d, biases = %d, err = %v", len(ids), len(bias), err)
+	}
+	if bias[maxChoices-1] != maxChoices {
+		t.Fatalf("last choice bias = %g, want %d", bias[maxChoices-1], maxChoices)
+	}
+}
+
 func TestFinishScoreUsesLastPositionBiasAndTemperature(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		mlx.Scoped(func() {

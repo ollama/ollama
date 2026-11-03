@@ -1,4 +1,4 @@
-// Package autotrustdecision serves AutoTrust decision slot-readout decision checkpoints.
+// Package autotrustdecision serves AutoTrust slot-readout decision checkpoints.
 package autotrustdecision
 
 import (
@@ -45,13 +45,17 @@ func init() { model.Register("AutoTrustDecision", newModel) }
 func newModel(root *model.Root) (model.Model, error) {
 	var head decisionHead
 	if err := root.Manifest.ReadConfigJSON("decision_head.json", &head); err != nil {
-		return nil, fmt.Errorf("read AutoTrust decision decision head: %w", err)
+		return nil, fmt.Errorf("read AutoTrust decision head: %w", err)
 	}
-	if head.Slots.Template != "bare-v1" || len(head.Bias) != 24 || len(head.VerbalizerIDs) != 24 ||
-		head.Slots.Ranges["noul"] != [2]int{0, 2} {
+	slots := len(head.VerbalizerIDs)
+	compact := slots == 24 && head.Slots.Template == "bare-v1"
+	wide := slots == 264 && head.Slots.Template == "bare-v1-wide256"
+	if len(head.Bias) != slots || len(head.Slots.Verbalizers) != slots ||
+		(!compact && !wide) {
 		return nil, fmt.Errorf("unsupported AutoTrust decision slot head")
 	}
-	if head.Slots.Ranges["score"] != [2]int{2, 8} || head.Slots.Ranges["choice"] != [2]int{8, 24} {
+	if head.Slots.Ranges["noul"] != [2]int{0, 2} ||
+		head.Slots.Ranges["score"] != [2]int{2, 8} || head.Slots.Ranges["choice"] != [2]int{8, slots} {
 		return nil, fmt.Errorf("unsupported AutoTrust decision slot ranges")
 	}
 	var cal calibration
@@ -69,7 +73,9 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 	m := &Model{Model: backbone.(*qwen3_5.Model), head: head, temperature: cal.PerKind}
-	if m.Config.ModelType != "qwen3_5" && m.Config.ModelType != "qwen3_5_text" {
+	switch m.Config.ModelType {
+	case "qwen3_5", "qwen3_5_text", "qwen3_5_moe", "qwen3_5_moe_text":
+	default:
 		return nil, fmt.Errorf("unsupported AutoTrust decision backbone %q", m.Config.ModelType)
 	}
 	for _, id := range head.VerbalizerIDs {
@@ -88,7 +94,10 @@ func newModel(root *model.Root) (model.Model, error) {
 		}
 	}
 	m.choiceCodes, m.choiceIDs = choiceLabels(m.Tokenizer())
-	if len(m.choiceIDs) < 255 || !slices.Equal(m.choiceIDs[:16], head.VerbalizerIDs[8:24]) {
+	// The compact head trains 16 choice biases; later labels use zero bias.
+	// The wide head trains 256, but the System One API accepts at most 255.
+	headChoices := min(slots-8, 255)
+	if len(m.choiceIDs) < 255 || !slices.Equal(m.choiceIDs[:headChoices], head.VerbalizerIDs[8:8+headChoices]) {
 		return nil, fmt.Errorf("AutoTrust decision tokenizer choice labels do not match the trained head")
 	}
 	return m, nil
