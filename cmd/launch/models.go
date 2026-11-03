@@ -275,6 +275,10 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 		}
 	}
 
+	return pullMissingModelWithPolicy(ctx, client, model, policy)
+}
+
+func pullMissingModelWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy) error {
 	switch policy {
 	case missingModelAutoPull:
 		return pullMissingModel(ctx, client, model)

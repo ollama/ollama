@@ -240,6 +240,7 @@ func (c *launcherClient) confirmCloudModelPayment(ctx context.Context, model str
 	if !ok || strings.TrimSpace(item.RequiredPlan) == "" {
 		return nil
 	}
+	model = item.Name
 
 	state := launchAccountState(ctx, c.apiClient)
 	if state.Status != accountStateUnknown {
@@ -276,9 +277,18 @@ func (c *launcherClient) confirmCloudModelPayment(ctx context.Context, model str
 }
 
 func (c *launcherClient) modelRecommendationItem(ctx context.Context, model string) (ModelItem, bool) {
-	for _, item := range c.recommendations(ctx) {
+	items := c.recommendations(ctx)
+	for _, item := range items {
 		if item.Name == model {
 			return item, true
+		}
+	}
+	if isCloudModelName(model) {
+		key := launchModelRecommendationKey(model)
+		for _, item := range items {
+			if isCloudModelName(item.Name) && launchModelRecommendationKey(item.Name) == key {
+				return item, true
+			}
 		}
 	}
 	return ModelItem{}, false

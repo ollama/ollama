@@ -13,6 +13,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/internal/modelref"
 	modelpkg "github.com/ollama/ollama/types/model"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -365,9 +366,14 @@ Examples:
 				return nil
 			}
 
-			if modelFlag != "" && isCloudModelName(modelFlag) {
+			canonical, _, _ := LookupIntegration(name)
+			piOverride := canonical == "pi" && piHasModelArgs(passArgs)
+			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
+						if canonical == "pi" {
+							return fmt.Errorf("cloud is disabled; enable cloud to use %s", modelFlag)
+						}
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
 						modelFlag = ""
 					}
@@ -378,7 +384,8 @@ Examples:
 			forceConfigure := configFlag || (modelFlag == "" && !headlessYes)
 			if forceConfigure && !configFlag && modelFlag == "" {
 				if _, runner, err := LookupIntegration(name); err == nil {
-					if _, ok := runner.(ManagedAutodiscoveryIntegration); ok {
+					switch runner.(type) {
+					case ManagedAutodiscoveryIntegration, *Pi:
 						forceConfigure = false
 					}
 				}
@@ -399,7 +406,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
+	cmd.Flags().StringVarP(&modelFlag, "model", "m", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
 	cmd.Flags().BoolVar(&restoreFlag, "restore", false, "Restore an integration to its default profile")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
@@ -487,6 +494,12 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 			return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
 		}
 	}
+	if pi, ok := runner.(*Pi); ok && !req.ForceConfigure && !req.ConfigureOnly && piHasModelArgs(req.ExtraArgs) {
+		if err := EnsureIntegrationInstalled(name, runner); err != nil {
+			return err
+		}
+		return runIntegration(pi, "", nil, req.ExtraArgs)
+	}
 
 	launchClient, saved, err := prepareIntegrationLaunch(name, policy)
 	if err != nil {
@@ -561,7 +574,10 @@ func prepareIntegrationLaunch(name string, policy LaunchPolicy) (*launcherClient
 	if err != nil {
 		return nil, nil, err
 	}
-	saved, _ := loadStoredIntegrationConfig(name)
+	saved, err := loadStoredIntegrationConfig(name)
+	if name == "pi" && err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
 	return launchClient, saved, nil
 }
 
@@ -634,6 +650,11 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 	hasModels := loadErr == nil && len(cfg.Models) > 0
 	if !hasModels {
 		return "", false, nil
+	}
+	if name == "pi" {
+		budget := modelShowTimeout
+		model, err := c.piTargetModel(ctx, cfg.Models[0], &budget)
+		return cfg.Models[0], err == nil && piSupportsChat(model), nil
 	}
 
 	if isEditor {
@@ -747,6 +768,9 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	if pi, ok := editor.(*Pi); ok {
+		return c.launchPiIntegration(ctx, pi, saved, req)
+	}
 	previous := editorPreCheckedModels(saved, "")
 	models, needsConfigure := c.resolveEditorLaunchModels(ctx, saved, req)
 	if !needsConfigure && req.ModelOverride != "" && !slices.Contains(previous, req.ModelOverride) {
@@ -1092,6 +1116,12 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 	if err != nil {
 		return "", err
 	}
+	if commandName == "pi" {
+		items = c.piSelectableModels(ctx, items)
+		if len(items) == 0 {
+			return "", errors.New("no chat models available, run 'ollama pull <model>' first")
+		}
+	}
 
 	previous := current
 	for {
@@ -1291,18 +1321,8 @@ func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []stri
 
 	cloudModels := make(map[string]bool, len(models))
 	for _, model := range models {
-		if prompt := deprecatedLaunchModelPrompt(model, label, commandName, cloudRec, localRec); prompt != "" {
-			ok, err := ConfirmPromptWithOptions(prompt, ConfirmOptions{
-				YesLabel: "Launch anyway",
-				NoLabel:  "Pick another model",
-				Default:  ConfirmDefaultNo,
-			})
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return errDeprecatedLaunchModelDeclined
-			}
+		if err := confirmDeprecatedLaunchModel(model, label, commandName, cloudRec, localRec); err != nil {
+			return err
 		}
 		isCloudModel := isCloudModelName(model)
 		if isCloudModel {
@@ -1313,6 +1333,23 @@ func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []stri
 		}
 	}
 	return ensureAuth(ctx, c.apiClient, cloudModels, models)
+}
+
+func confirmDeprecatedLaunchModel(model, label, commandName, cloudRec, localRec string) error {
+	if prompt := deprecatedLaunchModelPrompt(model, label, commandName, cloudRec, localRec); prompt != "" {
+		ok, err := ConfirmPromptWithOptions(prompt, ConfirmOptions{
+			YesLabel: "Launch anyway",
+			NoLabel:  "Pick another model",
+			Default:  ConfirmDefaultNo,
+		})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errDeprecatedLaunchModelDeclined
+		}
+	}
+	return nil
 }
 
 func (c *launcherClient) agentCapableRecommendations(ctx context.Context) (cloud, local string) {
@@ -1540,7 +1577,19 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 }
 
 func launchModelRecommendationKey(name string) string {
-	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), ":latest"))
+	ref, err := modelref.ParseRef(name)
+	if err != nil {
+		return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), ":latest"))
+	}
+	key := strings.ToLower(strings.TrimSuffix(ref.Base, ":latest"))
+	switch ref.Source {
+	case modelref.ModelSourceCloud:
+		return key + ":cloud"
+	case modelref.ModelSourceLocal:
+		return key + ":local"
+	default:
+		return key
+	}
 }
 
 func runIntegration(runner Runner, modelName string, models []LaunchModel, args []string) error {
