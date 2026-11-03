@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestBareDecisionPrompt(t *testing.T) {
-	m := &Model{choiceCodes: []string{"A", "B", "C"}, choiceIDs: []int32{10, 11, 12}}
+	m := &Model{Model: &qwen3_5.Model{}, choiceCodes: []string{"A", "B", "C"}, choiceIDs: []int32{10, 11, 12}}
 	m.head.Bias = make([]float32, 24)
 	m.head.VerbalizerIDs = make([]int32, 24)
 	got, prefix, ids, bias, err := m.prompt(llm.ScoreRequest{State: "Customer was charged twice."}, &llm.ScoreQuestion{
@@ -42,10 +43,15 @@ func TestImageCountLimit(t *testing.T) {
 	}
 }
 
-func TestChoiceCapacityUsesExistingAPILimit(t *testing.T) {
+func TestVisionCompactHeadUsesExistingAPILimit(t *testing.T) {
 	const maxChoices = 255
-	m := &Model{choiceCodes: make([]string, maxChoices), choiceIDs: make([]int32, maxChoices)}
+	m := &Model{
+		Model:       &qwen3_5.Model{Vision: &qwen3_5.VisionConfig{}},
+		choiceCodes: make([]string, maxChoices),
+		choiceIDs:   make([]int32, maxChoices),
+	}
 	m.head.Bias = make([]float32, 24)
+	m.head.VerbalizerIDs = make([]int32, 24)
 	for i := range m.choiceCodes {
 		m.choiceCodes[i] = fmt.Sprintf("option-%d", i)
 		m.choiceIDs[i] = int32(i)
@@ -58,6 +64,20 @@ func TestChoiceCapacityUsesExistingAPILimit(t *testing.T) {
 	q.Options = append(q.Options, "extra")
 	if _, _, _, _, err := m.prompt(llm.ScoreRequest{}, q); err == nil {
 		t.Fatal("accepted 256 options")
+	}
+}
+
+func TestTextCompactHeadRejectsUntrainedChoices(t *testing.T) {
+	m := &Model{Model: &qwen3_5.Model{}, choiceCodes: make([]string, 255), choiceIDs: make([]int32, 255)}
+	m.head.Bias = make([]float32, 24)
+	m.head.VerbalizerIDs = make([]int32, 24)
+	q := &llm.ScoreQuestion{Type: "choice", Options: make([]string, 16)}
+	if _, _, _, _, err := m.prompt(llm.ScoreRequest{}, q); err != nil {
+		t.Fatalf("16 options: %v", err)
+	}
+	q.Options = append(q.Options, "extra")
+	if _, _, _, _, err := m.prompt(llm.ScoreRequest{}, q); err == nil || !strings.Contains(err.Error(), "2–16 options") {
+		t.Fatalf("17 options: got %v, want 2–16 limit", err)
 	}
 }
 
