@@ -215,7 +215,7 @@ configure_systemd() {
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
-After=network-online.target
+After=network-online.target graphical.target
 
 [Service]
 ExecStart=$BINDIR/ollama serve
