@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ollama/ollama/auth"
@@ -472,13 +473,33 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*Embedd
 
 // CreateBlob creates a blob from a file on the server. digest is the
 // expected SHA256 digest of the file, and r represents the file.
+// ErrInvalidDigest is returned by [Client.HeadBlob] and [Client.CreateBlob]
+// when the digest is not a single safe path segment (empty, ".", "..", or
+// containing a slash). [url.URL.JoinPath] cleans path segments, so such a
+// digest would silently rewrite the request to a different API route instead
+// of failing here.
+var ErrInvalidDigest = errors.New("invalid digest")
+
+func validateBlobDigest(digest string) error {
+	if digest == "" || digest == "." || digest == ".." || strings.ContainsAny(digest, "/\\") {
+		return fmt.Errorf("%w: %q", ErrInvalidDigest, digest)
+	}
+	return nil
+}
+
 func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
+	if err := validateBlobDigest(digest); err != nil {
+		return err
+	}
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
 }
 
 // HeadBlob checks if a blob exists on the server. It returns false for a 404
 // and an error for any unexpected response.
 func (c *Client) HeadBlob(ctx context.Context, digest string) (bool, error) {
+	if err := validateBlobDigest(digest); err != nil {
+		return false, err
+	}
 	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
 		var statusErr StatusError
 		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
