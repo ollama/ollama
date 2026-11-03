@@ -33,6 +33,13 @@ func TestCloudAnthropicWebSearchCompression(t *testing.T) {
 						fmt.Fprint(w, `{}`)
 					case "/api/web_search":
 						searchCalls.Add(1)
+						var req api.WebSearchRequest
+						if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+							t.Error(err)
+						}
+						if req.Query != "Ollama" {
+							t.Errorf("search query = %q, want Ollama", req.Query)
+						}
 						fmt.Fprint(w, `{"results":[{"title":"Test result","url":"https://example.com","content":"A local fixture."}]}`)
 					case "/api/chat":
 						chatCalls.Add(1)
@@ -52,6 +59,11 @@ func TestCloudAnthropicWebSearchCompression(t *testing.T) {
 							if streaming {
 								// Coalesced records followed by a final record without a newline.
 								payload = "{\"message\":{\"role\":\"assistant\"},\"done\":false}\n" + payload
+							}
+						} else {
+							last := req.Messages[len(req.Messages)-1]
+							if last.Role != "tool" || !strings.Contains(last.Content, "https://example.com") || !strings.Contains(last.Content, "A local fixture.") {
+								t.Errorf("follow-up request is missing the search result: %+v", last)
 							}
 						}
 						w.Header().Set("Content-Type", "application/x-ndjson")
