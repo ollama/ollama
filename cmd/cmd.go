@@ -1083,6 +1083,16 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	jsonFormat, _ := cmd.Flags().GetBool("json")
 	if jsonFormat {
+		// Keep JSON output consistent with the positional model-name filter.
+		if len(args) > 0 {
+			filtered := models.Models[:0]
+			for _, m := range models.Models {
+				if strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
+					filtered = append(filtered, m)
+				}
+			}
+			models.Models = filtered
+		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(models)
@@ -1130,6 +1140,16 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 
 	jsonFormat, _ := cmd.Flags().GetBool("json")
 	if jsonFormat {
+		// Keep JSON output consistent with the positional model-name filter.
+		if len(args) > 0 {
+			filtered := models.Models[:0]
+			for _, m := range models.Models {
+				if strings.HasPrefix(m.Name, args[0]) {
+					filtered = append(filtered, m)
+				}
+			}
+			models.Models = filtered
+		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(models)
