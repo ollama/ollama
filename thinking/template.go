@@ -11,7 +11,9 @@ import (
 // templates that strip prior tagged reasoning; templates using a separate
 // reasoning_content field are not treated as tagged-thinking templates.
 func TemplateSupportsThinking(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
+	// Single source of truth for the tag pairs, so capability detection and
+	// the parser fallback can never disagree on what counts as a pair.
+	if opening, closing := TemplateTags(chatTemplate); opening != "" && closing != "" {
 		return true
 	}
 
@@ -19,6 +21,20 @@ func TemplateSupportsThinking(chatTemplate string) bool {
 		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
 		!strings.Contains(chatTemplate, "reasoning_content") &&
 		!strings.Contains(chatTemplate, "<SPECIAL_12>")
+}
+
+// TemplateTags returns the literal thinking tag pair a raw (e.g. jinja) model
+// chat template declares. It is the fallback for templates InferTags cannot
+// read because they are not Go templates. Returns empty strings when the
+// template declares no thinking tags.
+func TemplateTags(chatTemplate string) (opening, closing string) {
+	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
+		return "<think>", "</think>"
+	}
+	if strings.Contains(chatTemplate, "[THINK]") && strings.Contains(chatTemplate, "[/THINK]") {
+		return "[THINK]", "[/THINK]"
+	}
+	return "", ""
 }
 
 func templateVisit(n parse.Node, enterFn func(parse.Node) bool, exitFn func(parse.Node)) {

@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -572,6 +573,118 @@ func TestFindJSONEnd(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMinistralParser_InitHonorsThinkValue(t *testing.T) {
+	contentPrefill := &api.Message{Role: "assistant", Content: "The answer"}
+	thinkClose := []string{"[/THINK]"}
+
+	tests := []struct {
+		desc        string
+		parserName  string
+		think       *api.ThinkValue
+		lastMessage *api.Message
+		wantClose   []string
+	}{
+		{desc: "thinking variant defaults to thinking", parserName: "ministral-thinking", wantClose: thinkClose},
+		{desc: "thinking variant with think true", parserName: "ministral-thinking", think: &api.ThinkValue{Value: true}, wantClose: thinkClose},
+		{desc: "thinking variant with think false stays in content", parserName: "ministral-thinking", think: &api.ThinkValue{Value: false}},
+		{desc: "thinking variant with content prefill stays in content", parserName: "ministral-thinking", lastMessage: contentPrefill},
+		{desc: "plain variant never starts in thinking", parserName: "ministral", think: &api.ThinkValue{Value: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			parser := ParserForName(tt.parserName)
+			if parser == nil {
+				t.Fatalf("ParserForName(%q) = nil", tt.parserName)
+			}
+			parser.Init(nil, tt.lastMessage, tt.think)
+			if got := parser.ThinkingClose(); !slices.Equal(got, tt.wantClose) {
+				t.Errorf("ThinkingClose() = %v, want %v", got, tt.wantClose)
+			}
+		})
+	}
+}
+
+func TestMinistralParserStripsLeadingThinkTag(t *testing.T) {
+	// Ministral reasoning prompts do not prefill [THINK], so the model emits
+	// an explicit opening tag at the start of its response. It must be
+	// stripped instead of landing at the head of the thinking field.
+	t.Run("explicit leading tag in one chunk", func(t *testing.T) {
+		parser := ParserForName("ministral-thinking")
+		if parser == nil {
+			t.Fatal("ParserForName(ministral-thinking) = nil")
+		}
+		parser.Init(nil, nil, nil)
+
+		content, thinking, _, err := parser.Add("[THINK]monologue[/THINK]answer", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "monologue" {
+			t.Errorf("thinking = %q, want %q", thinking, "monologue")
+		}
+		if content != "answer" {
+			t.Errorf("content = %q, want %q", content, "answer")
+		}
+	})
+
+	t.Run("partial leading tag held back across chunks", func(t *testing.T) {
+		parser := ParserForName("ministral-thinking")
+		parser.Init(nil, nil, nil)
+
+		content, thinking, _, err := parser.Add("[THI", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if content != "" || thinking != "" {
+			t.Errorf("partial [THINK] prefix leaked: content %q, thinking %q", content, thinking)
+		}
+
+		content, thinking, _, err = parser.Add("NK]monologue[/THINK]answer", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "monologue" {
+			t.Errorf("thinking = %q, want %q", thinking, "monologue")
+		}
+		if content != "answer" {
+			t.Errorf("content = %q, want %q", content, "answer")
+		}
+	})
+
+	t.Run("no leading tag is unchanged", func(t *testing.T) {
+		parser := ParserForName("ministral-thinking")
+		parser.Init(nil, nil, nil)
+
+		content, thinking, _, err := parser.Add("monologue[/THINK]answer", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "monologue" {
+			t.Errorf("thinking = %q, want %q", thinking, "monologue")
+		}
+		if content != "answer" {
+			t.Errorf("content = %q, want %q", content, "answer")
+		}
+	})
+
+	t.Run("only one leading tag is stripped", func(t *testing.T) {
+		parser := ParserForName("ministral-thinking")
+		parser.Init(nil, nil, nil)
+
+		content, thinking, _, err := parser.Add("[THINK]a[THINK]b[/THINK]c", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "a[THINK]b" {
+			t.Errorf("thinking = %q, want %q", thinking, "a[THINK]b")
+		}
+		if content != "c" {
+			t.Errorf("content = %q, want %q", content, "c")
+		}
+	})
 }
 
 func TestMinistralParser_HasToolSupport(t *testing.T) {
