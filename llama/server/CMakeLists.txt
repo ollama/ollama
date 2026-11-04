@@ -177,6 +177,8 @@ set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 set(LLAMA_SUBPROCESS ON CACHE BOOL "" FORCE)
+# Earlier builds cached video support OFF when subprocesses were disabled.
+set(MTMD_VIDEO ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     llama_cpp
@@ -319,11 +321,6 @@ endif()
 
 set(OLLAMA_LIB_DIR "lib/ollama" CACHE STRING "Install destination for Ollama runtime payloads")
 set(_base_dest "${OLLAMA_LIB_DIR}")
-
-if(NOT OLLAMA_RUNNER_DIR)
-    include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/ffmpeg.cmake)
-    add_dependencies(llama-server ollama-ffmpeg)
-endif()
 
 function(ollama_append_newest_windows_runtime_family output)
     set(_runtime_dirs)

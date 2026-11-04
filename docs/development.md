@@ -6,7 +6,6 @@ Install prerequisites:
 - [CMake](https://cmake.org/download/) 3.24 or newer
 - C/C++ compiler: Clang on macOS, Visual Studio 2022 C++ tools on Windows, or GCC/Clang on Linux
 - [Ninja](https://github.com/ninja-build/ninja/releases) in `PATH` is recommended, especially on Windows
-- GNU Make and a POSIX shell for the bundled video decoder tools (on Windows, install MSYS2 and its `make` package)
 
 For pure Go iteration against an existing native payload, run Ollama from the repository root:
 

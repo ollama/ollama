@@ -413,8 +413,6 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendJinjaArgs(params, launch.config)
 
 	params = appendMMProjArgs(params, launch)
-	// Decoder tools ship beside the runner; never discover them on the user's PATH.
-	params = append(params, "--video-ffmpeg-dir", filepath.Dir(exe))
 	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)

@@ -329,8 +329,8 @@ export async function getModelCapabilities(
     const capabilities: string[] = Array.isArray(showResponse.capabilities)
       ? [...showResponse.capabilities]
       : [];
-    // Only the local GGUF runner ships video decoding. Vision alone also
-    // includes MLX and mllama, whose image paths cannot consume videos.
+    // Only the local GGUF runner supports video. Vision also includes MLX
+    // and mllama, whose image paths cannot consume videos.
     if (
       !remote.remote_host &&
       !remote.remote_model &&

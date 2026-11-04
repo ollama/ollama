@@ -66,12 +66,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: msys2/setup-msys2@v2
-        if: runner.os == 'Windows'
-        with:
-          location: C:\
-          msystem: MSYS
-          install: make
       - name: Verify patches apply cleanly
         shell: bash
         run: |
@@ -186,7 +180,6 @@ jobs:
           "$RUNNER_TEMP/ollama-local/bin/ollama" --version
           "$RUNNER_TEMP/ollama-local/lib/ollama/llama-server" --version
           test -x "$RUNNER_TEMP/ollama-local/lib/ollama/llama-quantize"
-          cmake -DTOOL_DIR="$RUNNER_TEMP/ollama-local/lib/ollama" -P cmake/test-video.cmake
   windows:
     needs: [changes]
     if: needs.changes.outputs.changed == 'True'
@@ -254,12 +247,6 @@ jobs:
             cuda-version: '13.0'
     runs-on: windows
     steps:
-      - uses: msys2/setup-msys2@v2
-        if: matrix.preset == 'CPU'
-        with:
-          location: C:\
-          msystem: MSYS
-          install: make
       - run: |
           choco install -y --no-progress ccache ninja
           if (Get-Command ccache -ErrorAction SilentlyContinue) {
@@ -392,8 +379,6 @@ jobs:
           if (!(Test-Path "$installPrefix\lib\ollama\llama-quantize.exe")) {
             throw "missing installed llama-quantize.exe"
           }
-          cmake "-DTOOL_DIR=$installPrefix/lib/ollama" -P cmake/test-video.cmake
-          if ($LASTEXITCODE -ne 0) { throw "Bundled video decode failed" }
   go_mod_tidy:
     runs-on: ubuntu-latest
     steps:

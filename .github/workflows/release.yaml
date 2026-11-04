@@ -193,12 +193,6 @@ jobs:
           minimum-size: 16GB
           maximum-size: 200GB
           disk-root: "D:"
-      - uses: msys2/setup-msys2@v2
-        if: startsWith(matrix.preset, 'CPU')
-        with:
-          location: C:\
-          msystem: MSYS
-          install: make
       - name: Install system dependencies
         run: |
           choco install -y --no-progress ccache ninja
@@ -705,7 +699,7 @@ jobs:
             case "$COMPONENT" in
               bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/llama-server*|lib/ollama/llama-quantize*|lib/ollama/ffmpeg*|lib/ollama/ffprobe*|lib/ollama/FFMPEG_*)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/llama-server*|lib/ollama/llama-quantize*)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;

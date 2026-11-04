@@ -83,7 +83,6 @@ ENV VULKAN_SDK=/usr/local
 #
 
 FROM cpu-deps AS llama-server-cpu
-COPY scripts/configure_ffmpeg.sh scripts/configure_ffmpeg.sh
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat

@@ -90,10 +90,14 @@ Local multimodal GGUF models with video support, such as `qwen3-vl` and
 and preserves their temporal order. Start with a short clip and allow enough
 context for the sampled frames. MLX models do not support this input.
 
-The bundled decoder supports H.264, HEVC, and VP9 in MP4/MOV, WebM/Matroska,
-and AVI containers. Container extensions alone do not determine the codec.
-No system FFmpeg installation is required. In the desktop app, attach a video
-file as you would an image.
+Install FFmpeg on the machine running Ollama. Both `ffmpeg` and `ffprobe`
+must be available on the Ollama server process's `PATH`; restart the app or
+service after installing them or changing its `PATH`. Ollama does not bundle
+these tools. Supported containers and codecs depend on that FFmpeg installation.
+On Windows, use the `ffmpeg.exe` and `ffprobe.exe` binaries.
+
+In the desktop app, attach a video file as you would an image. If decoding fails,
+check the Ollama server logs for missing-tool or codec errors.
 
 ```python
 import base64
