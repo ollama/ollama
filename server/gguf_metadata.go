@@ -90,7 +90,7 @@ func (m ggufMetadata) Keys() []string {
 }
 
 func (m ggufMetadata) lookup(key string) (any, bool) {
-	if !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "tokenizer.") {
+	if !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "gguf4.") {
 		arch, _ := m.KV["general.architecture"].(string)
 		key = arch + "." + key
 	}
