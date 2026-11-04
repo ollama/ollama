@@ -188,6 +188,23 @@ func TestParser(t *testing.T) {
 			},
 		},
 		{
+			name:    "tool call with args alias",
+			inputs:  []string{`<tool_call>{"name": "get_conditions", "args": {"location": "San Francisco"}}</tool_call>`},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_conditions",
+						Arguments: testArgs(map[string]any{
+							"location": "San Francisco",
+						}),
+					},
+				},
+			},
+		},
+		{
 			name:    "empty args",
 			inputs:  []string{`<tool_call>{"name": "get_conditions", "arguments": {}}</tool_call>`},
 			content: "",
