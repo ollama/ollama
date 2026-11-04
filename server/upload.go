@@ -41,7 +41,7 @@ type blobUpload struct {
 
 	file *os.File
 
-	done       bool
+	done       chan struct{}
 	err        error
 	references atomic.Int32
 }
@@ -87,7 +87,6 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 	// ref: https://distribution.github.io/distribution/spec/api/#cross-repository-blob-mount
 	if resp.StatusCode == http.StatusCreated {
 		b.Completed.Store(b.Total)
-		b.done = true
 		return nil
 	}
 
@@ -127,7 +126,14 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 // Run uploads blob parts to the upstream. If the upstream supports redirection, parts will be uploaded
 // in parallel as defined by Prepare. Otherwise, parts will be uploaded serially. Run sets b.err on error.
 func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
+	defer close(b.done)
 	defer blobUploadManager.Delete(b.Digest)
+
+	// Blob was already mounted on the registry (StatusCreated in Prepare)
+	if b.Completed.Load() == b.Total {
+		return
+	}
+
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
 	p, err := manifest.BlobsPath(b.Digest)
@@ -212,7 +218,6 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	}
 
 	b.err = err
-	b.done = true
 }
 
 func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *url.URL, part *blobUploadPart, opts *registryOptions) error {
@@ -321,8 +326,11 @@ func (b *blobUpload) Wait(ctx context.Context, fn func(api.ProgressResponse)) er
 	defer b.release()
 
 	ticker := time.NewTicker(60 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
+		case <-b.done:
+			return b.err
 		case <-ticker.C:
 		case <-ctx.Done():
 			return ctx.Err()
@@ -334,10 +342,6 @@ func (b *blobUpload) Wait(ctx context.Context, fn func(api.ProgressResponse)) er
 			Total:     b.Total,
 			Completed: b.Completed.Load(),
 		})
-
-		if b.done || b.err != nil {
-			return b.err
-		}
 	}
 }
 
@@ -387,7 +391,7 @@ func uploadBlob(ctx context.Context, n model.Name, layer manifest.Layer, opts *r
 		return nil
 	}
 
-	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
+	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer, done: make(chan struct{})})
 	upload := data.(*blobUpload)
 	if !ok {
 		requestURL := n.BaseURL()
