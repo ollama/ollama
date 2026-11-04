@@ -320,6 +320,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [DiscourseCopilot](https://github.com/kccarlos/DiscourseCopilot) - Chrome extension to summarize and search Discourse forums with local models
 
 ### Observability & Monitoring
 
