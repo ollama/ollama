@@ -158,4 +158,12 @@ func TestCopilotEnvVars(t *testing.T) {
 			t.Errorf("COPILOT_PROVIDER_BASE_URL = %q, want custom host", got["COPILOT_PROVIDER_BASE_URL"])
 		}
 	})
+
+	t.Run("uses connectable host for unspecified bind address", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+		got := envMap(c.envVars("test"))
+		if got["COPILOT_PROVIDER_BASE_URL"] != "http://127.0.0.1:11434/v1" {
+			t.Errorf("COPILOT_PROVIDER_BASE_URL = %q, want connectable loopback URL", got["COPILOT_PROVIDER_BASE_URL"])
+		}
+	})
 }

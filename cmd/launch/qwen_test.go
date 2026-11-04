@@ -406,6 +406,16 @@ func TestQwenLaunchEnv(t *testing.T) {
 	}
 }
 
+func TestQwenLaunchEnvUsesConnectableHostForUnspecifiedBind(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+	t.Setenv("OPENAI_BASE_URL", "")
+
+	env := qwenLaunchEnv("llama3.2")
+	if !slices.Contains(env, "OPENAI_BASE_URL=http://127.0.0.1:11434/v1") {
+		t.Fatalf("expected connectable loopback OPENAI_BASE_URL, got %v", env)
+	}
+}
+
 func TestQwenLaunchEnvOverridesExistingOpenAIEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "real-key")
 	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")

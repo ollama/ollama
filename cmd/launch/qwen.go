@@ -404,7 +404,7 @@ func (q *Qwen) readConfig() (map[string]any, error) {
 }
 
 func qwenBaseURL() string {
-	return strings.TrimRight(envconfig.Host().String(), "/") + "/v1"
+	return strings.TrimRight(envconfig.ConnectableHost().String(), "/") + "/v1"
 }
 
 func qwenProvider(model string) map[string]any {

@@ -1048,6 +1048,24 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
+	t.Run("uses connectable host for unspecified bind address", func(t *testing.T) {
+		cleanup()
+		t.Setenv("OLLAMA_HOST", strings.Replace(srv.URL, "127.0.0.1", "0.0.0.0", 1))
+
+		if err := pi.Edit(launchModelsFromNames([]string{"llama3.2"})); err != nil {
+			t.Fatalf("Edit() error = %v", err)
+		}
+
+		cfg := readConfig()
+		providers := cfg["providers"].(map[string]any)
+		ollama := providers["ollama"].(map[string]any)
+
+		expectedBaseURL := strings.TrimRight(srv.URL, "/") + "/v1"
+		if ollama["baseUrl"] != expectedBaseURL {
+			t.Errorf("baseUrl = %v, want %v", ollama["baseUrl"], expectedBaseURL)
+		}
+	})
+
 	t.Run("rebuilds stale existing managed cloud model", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)

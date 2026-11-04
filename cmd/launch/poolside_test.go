@@ -72,6 +72,39 @@ func TestPoolsideRunSetsOllamaEnv(t *testing.T) {
 	}
 }
 
+func TestPoolsideRunUsesConnectableHostForUnspecifiedBind(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binary")
+	}
+
+	tmpDir := t.TempDir()
+	logPath := filepath.Join(tmpDir, "pool.log")
+	poolPath := filepath.Join(tmpDir, "pool")
+	script := "#!/bin/sh\n" +
+		"printf 'base=%s\\n' \"$POOLSIDE_STANDALONE_BASE_URL\" > \"" + logPath + "\"\n"
+	if err := os.WriteFile(poolPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake pool binary: %v", err)
+	}
+
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+
+	p := &Poolside{}
+	if err := p.Run("qwen3.5", nil, nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read pool log: %v", err)
+	}
+
+	got := string(data)
+	if !strings.Contains(got, "base=http://127.0.0.1:11434/v1") {
+		t.Fatalf("expected connectable Poolside base URL in log, got:\n%s", got)
+	}
+}
+
 func TestPoolsideRunWindowsUnsupported(t *testing.T) {
 	prev := poolsideGOOS
 	poolsideGOOS = "windows"

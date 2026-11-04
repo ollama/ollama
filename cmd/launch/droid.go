@@ -126,7 +126,7 @@ func updateDroidSettings(settingsMap map[string]any, settings droidSettings, mod
 		newModels = append(newModels, modelEntry{
 			Model:           model.Name,
 			DisplayName:     model.Name,
-			BaseURL:         envconfig.Host().String() + "/v1",
+			BaseURL:         envconfig.ConnectableHost().String() + "/v1",
 			APIKey:          "ollama",
 			Provider:        "generic-chat-completion-api",
 			MaxOutputTokens: maxOutput,

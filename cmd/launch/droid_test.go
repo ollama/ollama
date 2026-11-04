@@ -231,6 +231,22 @@ func TestDroidEdit(t *testing.T) {
 		}
 	})
 
+	t.Run("uses connectable host for unspecified bind address", func(t *testing.T) {
+		cleanup()
+		t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+		d.Edit(testLaunchModels("test-model"))
+
+		settings := readSettings()
+		models := getCustomModels(settings)
+
+		if len(models) != 1 {
+			t.Fatal("expected 1 model")
+		}
+		if models[0]["baseUrl"] != "http://127.0.0.1:11434/v1" {
+			t.Errorf("unexpected baseUrl: %s", models[0]["baseUrl"])
+		}
+	})
+
 	t.Run("fixes invalid reasoningEffort", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(settingsDir, 0o755)
