@@ -44,6 +44,9 @@ type CompleteWriter struct {
 	stream        bool
 	streamOptions *openai.StreamOptions
 	id            string
+	// createdAt pins the shared timestamp for every chunk in the stream,
+	// captured from the first response.
+	createdAt time.Time
 	BaseWriter
 }
 
@@ -193,10 +196,20 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 
 	// completion chunk
 	if w.stream {
-		c := openai.ToCompleteChunk(w.id, generateResponse)
-		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
-			c.Usage = &openai.Usage{}
+		// OpenAI stamps one created value on every chunk in a stream; pin the
+		// timestamp from the first response (the server stamps each response).
+		if generateResponse.CreatedAt.IsZero() {
+			generateResponse.CreatedAt = time.Now().UTC()
 		}
+		if w.createdAt.IsZero() {
+			w.createdAt = generateResponse.CreatedAt
+		}
+		generateResponse.CreatedAt = w.createdAt
+
+		// With stream_options.include_usage, usage is reported once, on the
+		// usage-only chunk written after the final choice; OpenAI sends no
+		// usage on any other chunk.
+		c := openai.ToCompleteChunk(w.id, generateResponse)
 		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
