@@ -520,6 +520,8 @@ func llamaServerLibraryPathEnv() string {
 		return "PATH"
 	case "darwin":
 		return "DYLD_LIBRARY_PATH"
+	case "aix":
+		return "LIBPATH"
 	default:
 		return "LD_LIBRARY_PATH"
 	}
