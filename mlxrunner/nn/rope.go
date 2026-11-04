@@ -17,6 +17,12 @@ type RopeParameters struct {
 	BetaFast                      float32 `json:"beta_fast"`
 	BetaSlow                      float32 `json:"beta_slow"`
 	AttentionFactor               float32 `json:"attention_factor"`
+	Mscale                        float32 `json:"mscale"`
+	MscaleAllDim                  float32 `json:"mscale_all_dim"`
+	// AttnFactor is the YaRN attn_factor that SGLang, and vLLM before 0.30,
+	// read. Some checkpoints set it to cancel the mscale, keeping only the
+	// frequency scaling.
+	AttnFactor float32 `json:"attn_factor"`
 }
 
 // TypeName returns rope_type when present, falling back to type.
@@ -39,11 +45,18 @@ func BuildYarnRopeFreqs(dim int, base float32, rp *RopeParameters) (*mlx.Array, 
 	if factor <= 0 {
 		factor = 1
 	}
+	// As in transformers: an explicit attention_factor wins, then the
+	// mscale/mscale_all_dim ratio when both are set. As in SGLang, attn_factor
+	// scales the computed value; transformers ignores it.
 	attentionFactor := rp.AttentionFactor
-	if attentionFactor == 0 && factor > 1 {
-		attentionFactor = float32(0.1*math.Log(float64(factor)) + 1.0)
-	} else if attentionFactor == 0 {
-		attentionFactor = 1
+	if attentionFactor == 0 {
+		attentionFactor = yarnMscale(factor, 1)
+		if rp.Mscale != 0 && rp.MscaleAllDim != 0 {
+			attentionFactor = yarnMscale(factor, rp.Mscale) / yarnMscale(factor, rp.MscaleAllDim)
+		}
+		if rp.AttnFactor != 0 {
+			attentionFactor *= rp.AttnFactor
+		}
 	}
 	if factor <= 1 {
 		return nil, attentionFactor
@@ -76,6 +89,14 @@ func BuildYarnRopeFreqs(dim int, base float32, rp *RopeParameters) (*mlx.Array, 
 	arr := mlx.FromValues(freqs, half)
 	mlx.Eval(arr)
 	return arr, attentionFactor
+}
+
+// yarnMscale is YaRN's attention scaling for a context extended by factor.
+func yarnMscale(factor, mscale float32) float32 {
+	if factor <= 1 {
+		return 1
+	}
+	return float32(0.1*float64(mscale)*math.Log(float64(factor)) + 1.0)
 }
 
 func yarnCorrectionRange(betaFast, betaSlow float32, dim int, base float32, maxPosition int32) (float64, float64) {
