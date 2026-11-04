@@ -23,6 +23,7 @@ import {
   CogIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  WindowIcon,
   Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
@@ -344,6 +345,12 @@ export default function Settings() {
             () => setRestartMessage(false),
             savedConfirmationDuration,
           );
+        }
+
+        // Apply the always-on-top preference to the native window right away
+        // so the toggle takes effect without reopening the app.
+        if (field === "AlwaysOnTop" && typeof value === "boolean") {
+          window.setAlwaysOnTop?.(value);
         }
 
         updateSettingsMutation.mutate(updatedSettings, {
@@ -676,6 +683,33 @@ export default function Settings() {
                   </div>
                 </div>
               </Field>
+
+              {/* Always on top */}
+              {isWindows && (
+                <Field>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start space-x-3 flex-1">
+                      <WindowIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                      <div>
+                        <Label>Always on top</Label>
+                        <Description>
+                          {settings.AlwaysOnTop
+                            ? "The window stays above other apps while you work."
+                            : "The window behaves like a normal window."}
+                        </Description>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <Switch
+                        checked={settings.AlwaysOnTop}
+                        onChange={(checked) =>
+                          handleChange("AlwaysOnTop", checked)
+                        }
+                      />
+                    </div>
+                  </div>
+                </Field>
+              )}
 
               {/* Expose Ollama */}
               <Field>
