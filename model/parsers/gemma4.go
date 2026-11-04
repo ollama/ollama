@@ -666,8 +666,87 @@ func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.T
 			return args, nil
 		}
 	}
+	if args, ok := gemma4BarePhraseArgs(argsStr, gemma4ToolProperties(toolName, tools)); ok {
+		return args, nil
+	}
 
 	return api.ToolCallFunctionArguments{}, errors.New("repair failed to produce valid JSON arguments")
+}
+
+// gemma4BarePhraseArgs reads the arguments once more with each bare phrase the
+// model wrote for a value read as a string, as in
+// call:editRecord{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade}]}.
+// It is tried after every repair candidate fails, on top of their value repairs.
+// Words with spaces between them may be text meant to go on past a comma, as in
+// call:edit{set:[{path:<|"|>Note<|"|>,value:Hello there, how: are you}]}, which
+// reads with a key `how`. So they are read only for a known tool, and only where
+// each key read is one its schema names, wherever the schema names an object's
+// keys: the parameters, an object's properties, a list's items'.
+func gemma4BarePhraseArgs(argsStr string, props *api.ToolPropertiesMap) (api.ToolCallFunctionArguments, bool) {
+	if props == nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	values := repairGemma4HexNumberValues(repairGemma4EscapedQuoteValues(repairGemma4SingleQuotedValues(argsStr)))
+	phrases := repairGemma4BarePhraseValues(values)
+	if phrases == values {
+		return api.ToolCallFunctionArguments{}, false
+	}
+
+	var args api.ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(gemma4ArgsToJSON(phrases)), &args); err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	schema, err := json.Marshal(props)
+	if err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	var properties map[string]any
+	if err := json.Unmarshal(schema, &properties); err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	if !gemma4KeysInSchema(args.ToMap(), map[string]any{"properties": properties}) {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	return args, true
+}
+
+// gemma4KeysInSchema reports whether each key of value is one schema names,
+// wherever schema names an object's keys: an object's under its properties, a
+// list's items' under its items, one of its anyOf's.
+func gemma4KeysInSchema(value any, schema map[string]any) bool {
+	if anyOf, ok := schema["anyOf"].([]any); ok && len(anyOf) > 0 {
+		for _, alternative := range anyOf {
+			if alternative, ok := alternative.(map[string]any); ok && gemma4KeysInSchema(value, alternative) {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch value := value.(type) {
+	case map[string]any:
+		properties, ok := schema["properties"].(map[string]any)
+		if !ok || len(properties) == 0 {
+			return true
+		}
+		for key, field := range value {
+			property, ok := properties[key].(map[string]any)
+			if !ok || !gemma4KeysInSchema(field, property) {
+				return false
+			}
+		}
+	case []any:
+		items, ok := schema["items"].(map[string]any)
+		if !ok {
+			return true
+		}
+		for _, item := range value {
+			if !gemma4KeysInSchema(item, items) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func gemma4ToolProperties(toolName string, tools []api.Tool) *api.ToolPropertiesMap {
@@ -996,6 +1075,75 @@ func gemma4BareWordValueEnd(s string, i int) (int, bool) {
 		}
 	}
 	return end, true
+}
+
+// repairGemma4BarePhraseValues reads bare words the model wrote for a value, with
+// spaces between them, as a string, as in
+// call:editRecord{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade}]}.
+// It reads what repairGemma4BareWordValues reads, and words after the first with
+// spaces or tabs between them, each of letters, digits, `_` and `.`, from a letter,
+// a digit or `_`, all of the value: a `,`, `}` or `]` follows the last after any
+// whitespace. A literal is left as it is only as a word alone. The delimiters are
+// written around the words and the spaces between them. Only an even count of
+// delimiters is repaired; strings are copied as they are, and where the strings or
+// brackets are unclear, nothing is repaired.
+func repairGemma4BarePhraseValues(s string) string {
+	return repairGemma4Values(s, func(s string, i int) (string, int, bool) {
+		end, ok := gemma4BarePhraseValueEnd(s, i)
+		if !ok {
+			return "", 0, false
+		}
+		return s[i:end], end, true
+	})
+}
+
+// gemma4BarePhraseValueEnd returns the end of bare words that are all of a value
+// at s[i], as repairGemma4BarePhraseValues reads them.
+func gemma4BarePhraseValueEnd(s string, i int) (int, bool) {
+	if end, ok := gemma4BareWordValueEnd(s, i); ok {
+		return end, true
+	}
+
+	end := gemma4WordEnd(s, i, false)
+	if end == i {
+		return 0, false
+	}
+	words := 1
+	for {
+		gap := end
+		for gap < len(s) && (s[gap] == ' ' || s[gap] == '\t') {
+			gap++
+		}
+		next := gemma4WordEnd(s, gap, true)
+		if gap == end || next == gap {
+			break
+		}
+		end = next
+		words++
+	}
+	if words == 1 {
+		return 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return 0, false
+	}
+	return end, true
+}
+
+// gemma4WordEnd returns the end of a word at s[i]: letters, digits, `_` and `.`,
+// from a letter or `_`, or from a digit too where digitFirst is set.
+func gemma4WordEnd(s string, i int, digitFirst bool) int {
+	end := i
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if !(r == '_' || unicode.IsLetter(r) || (end > i && r == '.') || ((end > i || digitFirst) && unicode.IsDigit(r))) {
+			break
+		}
+		end += size
+	}
+	return end
 }
 
 // repairGemma4MissingObjectClose adds a final object close after another repair

@@ -1529,6 +1529,217 @@ func TestGemma4Parser_BareWordValueInFinishedToolCall(t *testing.T) {
 	}
 }
 
+func TestRepairGemma4BarePhraseValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "phrase_after_a_key",
+			input:    `{name:Iron Sword}`,
+			expected: `{name:<|"|>Iron Sword<|"|>}`,
+		},
+		{
+			name:     "phrase_and_word_in_a_list_of_objects",
+			input:    `{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade},{path:<|"|>ObjectEffect<|"|>,value:FlameBladeBurn}]}`,
+			expected: `{set:[{path:<|"|>Name.Value<|"|>,value:<|"|>Flame Blade<|"|>},{path:<|"|>ObjectEffect<|"|>,value:<|"|>FlameBladeBurn<|"|>}]}`,
+		},
+		{
+			name:     "phrases_as_list_items",
+			input:    `{names:[Iron Sword, Steel Sword ],n:[1,2]}`,
+			expected: `{names:[<|"|>Iron Sword<|"|>, <|"|>Steel Sword<|"|> ],n:[1,2]}`,
+		},
+		{
+			name:     "words_after_the_first_from_a_digit",
+			input:    `{name:Flame Blade 2,n:3}`,
+			expected: `{name:<|"|>Flame Blade 2<|"|>,n:3}`,
+		},
+		{
+			name:     "spaces_and_tabs_between_words_kept",
+			input:    "{name:Iron  \tSword ,n:1}",
+			expected: "{name:<|\"|>Iron  \tSword<|\"|> ,n:1}",
+		},
+		{
+			name:     "literal_read_in_a_phrase_only",
+			input:    `{a:None,b:None of these,c:true}`,
+			expected: `{a:None,b:<|"|>None of these<|"|>,c:true}`,
+		},
+		{
+			name:     "keeps_phrases_that_are_not_all_of_the_value",
+			input:    `{a:Iron Sword: x,b:a b/c,c:x y-z,d:Iron Sword<|"|>x<|"|>}`,
+			expected: `{a:Iron Sword: x,b:a b/c,c:x y-z,d:Iron Sword<|"|>x<|"|>}`,
+		},
+		{
+			name:     "keeps_words_on_two_lines",
+			input:    "{name:Iron\nSword}",
+			expected: "{name:Iron\nSword}",
+		},
+		{
+			name:     "keeps_a_phrase_from_a_number",
+			input:    `{a:5 swords}`,
+			expected: `{a:5 swords}`,
+		},
+		{
+			name:     "keeps_words_in_strings",
+			input:    `{note:<|"|>name:Iron Sword}<|"|>,raw:"name:Iron Sword]"}`,
+			expected: `{note:<|"|>name:Iron Sword}<|"|>,raw:"name:Iron Sword]"}`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{name:Iron Sword,a:<|"|>x}`,
+			expected: `{name:Iron Sword,a:<|"|>x}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4BarePhraseValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4BarePhraseValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4BarePhraseEditRecordCall sets a name to two words and an enchantment to
+// one, both bare.
+const gemma4BarePhraseEditRecordCall = `call:editRecord{project:<|"|>FlameBlade<|"|>,record:<|"|>Weapons/FlameBlade.yaml<|"|>,set:[{path:<|"|>BasicStats.Damage<|"|>,value:12},{path:<|"|>BasicStats.Weight<|"|>,value:10},{path:<|"|>Name.Value<|"|>,value:Flame Blade},{path:<|"|>ObjectEffect<|"|>,value:FlameBladeBurn},{path:<|"|>EnchantmentAmount<|"|>,value:500}]}`
+
+var gemma4BarePhraseEditRecordArgs = map[string]any{
+	"project": "FlameBlade",
+	"record":  "Weapons/FlameBlade.yaml",
+	"set": []any{
+		map[string]any{"path": "BasicStats.Damage", "value": 12.0},
+		map[string]any{"path": "BasicStats.Weight", "value": 10.0},
+		map[string]any{"path": "Name.Value", "value": "Flame Blade"},
+		map[string]any{"path": "ObjectEffect", "value": "FlameBladeBurn"},
+		map[string]any{"path": "EnchantmentAmount", "value": 500.0},
+	},
+}
+
+// gemma4TestEditRecordTool has editRecord's parameters as their types, its list
+// of changes naming each change's keys.
+func gemma4TestEditRecordTool() api.Tool {
+	props := api.NewToolPropertiesMap()
+	props.Set("project", api.ToolProperty{Type: api.PropertyType{"string"}})
+	props.Set("record", api.ToolProperty{Type: api.PropertyType{"string"}})
+	props.Set("set", api.ToolProperty{
+		Type: api.PropertyType{"array"},
+		Items: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":  map[string]any{"type": "string"},
+				"value": map[string]any{},
+			},
+		},
+	})
+
+	return api.Tool{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:       "editRecord",
+			Parameters: api.ToolFunctionParameters{Type: "object", Properties: props},
+		},
+	}
+}
+
+func TestParseGemma4ClosedToolCall_BarePhraseValues(t *testing.T) {
+	editRecord := []api.Tool{gemma4TestEditRecordTool()}
+	tests := []struct {
+		name    string
+		content string
+		tools   []api.Tool
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "phrase_in_a_list_of_objects",
+			content: gemma4BarePhraseEditRecordCall,
+			tools:   editRecord,
+			want:    gemma4BarePhraseEditRecordArgs,
+		},
+		{
+			name:    "phrase_in_an_unclosed_list",
+			content: `call:editRecord{project:<|"|>FlameBlade<|"|>,set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade}}`,
+			tools:   editRecord,
+			want:    map[string]any{"project": "FlameBlade", "set": []any{map[string]any{"path": "Name.Value", "value": "Flame Blade"}}},
+		},
+		{
+			name:    "phrase_beside_an_escaped_quote_and_a_hex_number",
+			content: `call:editRecord{project:\"FlameBlade\",set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade},{path:<|"|>Flags<|"|>,value:0x0100}]}`,
+			tools:   editRecord,
+			want: map[string]any{"project": "FlameBlade", "set": []any{
+				map[string]any{"path": "Name.Value", "value": "Flame Blade"},
+				map[string]any{"path": "Flags", "value": "0x0100"},
+			}},
+		},
+		{
+			name:    "phrase_beside_an_object_of_fields",
+			content: `call:editRecord{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade},{path:<|"|>Level<|"|>,value:{MutagenObjectType:PcLevelMult,LevelMult:1}}]}`,
+			tools:   editRecord,
+			want: map[string]any{"set": []any{
+				map[string]any{"path": "Name.Value", "value": "Flame Blade"},
+				map[string]any{"path": "Level", "value": map[string]any{"MutagenObjectType": "PcLevelMult", "LevelMult": 1.0}},
+			}},
+		},
+		{
+			name:    "phrase_for_an_unknown_tool",
+			content: gemma4BarePhraseEditRecordCall,
+		},
+		{
+			name:    "phrase_running_on_past_a_comma",
+			content: `call:editRecord{set:[{path:<|"|>Note<|"|>,value:Hello there, how: are you}]}`,
+			tools:   editRecord,
+		},
+		{
+			name:    "phrase_beside_a_parameter_the_tool_lacks",
+			content: `call:editRecord{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade}],how:are you}`,
+			tools:   editRecord,
+		},
+		{
+			name:    "phrase_before_a_colon",
+			content: `call:editRecord{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade: new}]}`,
+			tools:   editRecord,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tt.tools)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_BarePhraseValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init([]api.Tool{gemma4TestEditRecordTool()}, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4BarePhraseEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4BarePhraseEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestRepairGemma4EscapedQuoteValues(t *testing.T) {
 	tests := []struct {
 		name     string
