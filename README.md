@@ -219,6 +219,7 @@ console.log(response.message.content);
 - [Ollama Copilot](https://github.com/bernardo-bruning/ollama-copilot) - Use Ollama as GitHub Copilot
 - [Obsidian Local GPT](https://github.com/pfrankov/obsidian-local-gpt) - Local AI for Obsidian
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama) - LLM tool for Emacs
+- [Freebird AI](https://marketplace.visualstudio.com/items?itemName=TenLabs.freebird-ai) - AI chat, inline edits and AI commits for VS Code. Free BYOK & local Ollama, 20 free cloud edits/day
 - [orbiton](https://github.com/xyproto/orbiton) - Config-free text editor with Ollama tab completion
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) - Sublime Text 4 AI assistant
 - [VT Code](https://github.com/vinhnx/vtcode) - Rust-based terminal coding agent with Tree-sitter
