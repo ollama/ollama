@@ -232,6 +232,25 @@ func TestGenerationDefaultMappingsAreOptions(t *testing.T) {
 	}
 }
 
+func TestGenerationDefaultsNullPreservesOptions(t *testing.T) {
+	// A generation_config.json may leave sampling parameters unset as null,
+	// as in XGenerationLab/XiYanSQL-QwenCoder-7B-2504.
+	defaults, err := model.ParseHFGenerationDefaults([]byte(`{"temperature": null, "top_p": null, "top_k": null}`))
+	require.NoError(t, err)
+
+	opts := DefaultOptions()
+	want := opts
+	require.NoError(t, opts.FromMap(defaults))
+	assert.Equal(t, want, opts)
+
+	defaults, err = model.ParseHFGenerationDefaults([]byte(`{"repetition_penalty": null, "repeat_penalty": 1.1, "repeat_last_n": null, "penalty_last_n": 128}`))
+	require.NoError(t, err)
+	require.NoError(t, opts.FromMap(defaults))
+	want.RepeatPenalty = 1.1
+	want.RepeatLastN = 128
+	assert.Equal(t, want, opts)
+}
+
 func TestUseMmapFormatParams(t *testing.T) {
 	tr := true
 	fa := false
