@@ -36,8 +36,10 @@ func TestHost(t *testing.T) {
 		"extra single quotes": {"'1.2.3.4'", "http://1.2.3.4:11434"},
 		"http":                {"http://1.2.3.4", "http://1.2.3.4:80"},
 		"http port":           {"http://1.2.3.4:4321", "http://1.2.3.4:4321"},
+		"uppercase http":      {"HTTP://1.2.3.4", "http://1.2.3.4:80"},
 		"https":               {"https://1.2.3.4", "https://1.2.3.4:443"},
 		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
+		"mixed case https":    {"HtTpS://1.2.3.4", "https://1.2.3.4:443"},
 		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
 		"ollama.com":          {"ollama.com", "https://ollama.com:443"},
 	}
