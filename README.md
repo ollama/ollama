@@ -338,6 +338,7 @@ console.log(response.message.content);
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) - AI-powered SQL client
 
 ### Infrastructure & Deployment
+- [tokencut](https://github.com/attnstack/tokencut) - Compression proxy that shrinks prompts before they reach Ollama (JSON-aware, keeps SSE streaming unbuffered)
 
 #### Cloud
 
