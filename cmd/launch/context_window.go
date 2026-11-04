@@ -51,7 +51,8 @@ func SameModelRef(a, b string) bool {
 	if errA != nil || errB != nil {
 		return false
 	}
-	if !strings.EqualFold(pa.Base, pb.Base) {
+	// A source suffix can hide the default tag until after parsing.
+	if !strings.EqualFold(comparableModelRef(pa.Base), comparableModelRef(pb.Base)) {
 		return false
 	}
 	return pa.Source == pb.Source ||
