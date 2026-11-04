@@ -17,7 +17,11 @@ describe("SidebarLayout", () => {
     );
 
     expect(html).toContain("pl-36");
-    expect(html).toContain("transition-[padding-left]");
-    expect(html).toContain("duration-300");
+
+    // Transition classes are deferred until after mount to prevent the sidebar
+    // from animating open on initial load (see issue #12954).
+    expect(html).not.toContain("transition-[padding-left]");
+    expect(html).not.toContain("transition-[width]");
+    expect(html).not.toContain("transition-all");
   });
 });
