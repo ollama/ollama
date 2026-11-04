@@ -1532,7 +1532,7 @@ Returns a 200 OK if successful, 404 Not Found if the model to be deleted doesn't
 POST /api/pull
 ```
 
-Download a model from the ollama library. Cancelled pulls are resumed from where they left off, and multiple calls will share the same download progress.
+Download a model from the ollama library. Canceled pulls are resumed from where they left off, and multiple calls will share the same download progress.
 
 ### Parameters
 
