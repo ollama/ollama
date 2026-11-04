@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"time"
 
@@ -21,6 +22,32 @@ import (
 
 func prefillChunkSize() int {
 	return 2 << 10
+}
+
+const (
+	// prefillWorkBudget bounds n*(position+n), a proxy for the attention work
+	// in one prefill chunk. It equals the budget of a full chunk at a context
+	// offset of prefillFullChunkContext, so prompts shorter than that keep
+	// full-size chunks.
+	prefillFullChunkContext = 8 << 10
+	prefillWorkBudget       = (2 << 10) * (prefillFullChunkContext + 2<<10)
+	prefillMinChunk         = 256
+)
+
+// prefillChunkAt returns the chunk size to use when the cache already holds
+// position tokens. Attention cost per chunk grows with position, and a single
+// Metal command buffer that runs too long is killed by the GPU watchdog
+// (kIOGPUCommandBufferCallbackErrorImpactingInteractivity), so deep into a long
+// prompt the chunk shrinks to keep each command buffer's work roughly constant.
+func prefillChunkAt(position int) int {
+	full := prefillChunkSize()
+	if position <= prefillFullChunkContext {
+		return full
+	}
+	// Positive root of n^2 + position*n = prefillWorkBudget.
+	p := float64(position)
+	n := int((-p + math.Sqrt(p*p+4*prefillWorkBudget)) / 2)
+	return max(prefillMinChunk, min(full, n))
 }
 
 // Prepare tokenizes the prompt and validates it against the model's
@@ -158,7 +185,6 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	inputs := session.inputs
 	tokens := session.remaining
 	caches := session.caches
-	prefillChunk := prefillChunkSize()
 
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
@@ -199,7 +225,7 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 			return nil, 0, 0, err
 		}
 
-		n := min(prefillChunk, total-processed-1)
+		n := min(prefillChunkAt(position), total-processed-1)
 		n = media.extendChunk(position, n)
 
 		mlx.Scoped(func() {
