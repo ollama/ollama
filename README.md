@@ -355,3 +355,4 @@ console.log(response.message.content);
 - [Gentoo](https://github.com/gentoo/gentoo/tree/master/sci-ml/ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
+- [Harbor](https://github.com/kauanmezavila/harbor) - Universal package and deployment system for GitHub
