@@ -41,6 +41,63 @@ func TestGGMLBackendDevPropsLayout(t *testing.T) {
 	}
 }
 
+func TestParseLlamaServerDevicesFallsBackToNativeProbe(t *testing.T) {
+	nativeDevices := []nativeProbeDevice{{
+		Library:             "CUDA",
+		Index:               0,
+		IndexMatchesBackend: true,
+		Name:                "CUDA0",
+		Description:         "NVIDIA GeForce RTX 4050 Laptop GPU",
+		DeviceID:            "0000:01:00.0",
+		TotalMemory:         6 * 1024 * 1024 * 1024,
+		FreeMemory:          5 * 1024 * 1024 * 1024,
+		ComputeMajor:        8,
+		ComputeMinor:        9,
+		CUDADriverMajor:     12,
+		CUDADriverMinor:     8,
+		NVIDIADriverMajor:   616,
+	}}
+
+	devices := parseLlamaServerDevicesWithNative(
+		"system_info: n_threads = 4 | CUDA : ARCHS = 750,800,860,890 |\n",
+		"",
+		[]string{"/lib/ollama", "/lib/ollama/cuda_v12"},
+		nativeDevices,
+	)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+	got := devices[0]
+	if got.Library != "CUDA" || got.Name != "CUDA0" || got.Description != "NVIDIA GeForce RTX 4050 Laptop GPU" {
+		t.Fatalf("unexpected fallback device: %#v", got)
+	}
+	if got.TotalMemory != nativeDevices[0].TotalMemory || got.FreeMemory != nativeDevices[0].FreeMemory {
+		t.Fatalf("memory = %d/%d, want %d/%d", got.TotalMemory, got.FreeMemory, nativeDevices[0].TotalMemory, nativeDevices[0].FreeMemory)
+	}
+	if got.Compute() != "8.9" || got.Driver() != "12.8" || got.NVIDIADriverMajor != 616 {
+		t.Fatalf("fallback metadata = compute %q driver %q NVIDIA %d", got.Compute(), got.Driver(), got.NVIDIADriverMajor)
+	}
+
+	devices = parseLlamaServerDevicesWithNative(
+		"Available devices:\n  CUDA0: NVIDIA GeForce RTX 4050 Laptop GPU (6144 MiB, 4096 MiB free)\n",
+		"",
+		[]string{"/lib/ollama", "/lib/ollama/cuda_v12"},
+		nativeDevices,
+	)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices with llama-server output, want 1", len(devices))
+	}
+	if got := devices[0].FreeMemory; got != 4096*1024*1024 {
+		t.Fatalf("llama-server free memory = %d, want %d", got, 4096*1024*1024)
+	}
+
+	nativeDevices[0].FreeMemory = 0
+	devices = parseLlamaServerDevicesWithNative("", "", []string{"/lib/ollama", "/lib/ollama/cuda_v12"}, nativeDevices)
+	if len(devices) != 0 {
+		t.Fatalf("got %d devices from native probe without free memory, want 0", len(devices))
+	}
+}
+
 func TestParseLlamaServerDevicesUsesNativeCUDAComputeCapability(t *testing.T) {
 	output := `system_info: n_threads = 4 | CUDA : ARCHS = 750,800 |
 Available devices:

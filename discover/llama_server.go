@@ -364,7 +364,76 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 		deviceIndex++
 	}
 
+	if len(devices) == 0 {
+		devices = nativeProbeFallbackDevices(nativeDevices, libDirs, gfxByIndex, rocmGFXOverride, ccByIndex, cudaArchSet, cudaRuntimeMajor, cudaRuntimeMinor, hasCUDARuntime)
+	}
+
 	return refineLlamaServerDevices(devices, libDirs)
+}
+
+// nativeProbeFallbackDevices uses a native-probe result only when llama-server
+// returned no parseable device lines. A nonzero free-memory value is required:
+// it is reported by the GGML backend probe and confirms that the backend could
+// enumerate a usable device, rather than only that a system driver exists.
+func nativeProbeFallbackDevices(nativeDevices []nativeProbeDevice, libDirs []string, gfxByIndex map[int]string, rocmGFXOverride string, ccByIndex map[int]cudaComputeCapability, cudaArchSet map[string]bool, cudaRuntimeMajor, cudaRuntimeMinor int, hasCUDARuntime bool) []ml.DeviceInfo {
+	devices := make([]ml.DeviceInfo, 0, len(nativeDevices))
+	for _, nativeDevice := range nativeDevices {
+		if !nativeDevice.IndexMatchesBackend || nativeDevice.TotalMemory == 0 || nativeDevice.FreeMemory == 0 {
+			continue
+		}
+
+		library := normalizeNativeProbeLibrary(nativeDevice.Library)
+		description := nativeDevice.Description
+		if description == "" {
+			description = nativeDevice.Name
+		}
+		if description == "" {
+			continue
+		}
+
+		computeMajor, computeMinor := computeVersion(library, nativeDevice.Index, gfxByIndex, ccByIndex)
+		if library == "CUDA" {
+			if cc, ok := ccByIndex[nativeDevice.Index]; ok && len(cudaArchSet) > 0 && !cudaArchSet[cc.arch] {
+				slog.Info("skipping CUDA device from native discovery — compute capability not in compiled architectures",
+					"device", description, "cc", cc.arch, "archs", cudaArchSet,
+					"libDirs", libDirs)
+				continue
+			}
+		}
+
+		name := nativeDevice.Name
+		if name == "" {
+			name = fmt.Sprintf("%s%d", library, nativeDevice.Index)
+		}
+		device := ml.DeviceInfo{
+			DeviceID: ml.DeviceID{
+				ID:      strconv.Itoa(nativeDevice.Index),
+				Library: library,
+			},
+			Name:              name,
+			Description:       description,
+			PCIID:             nativeDevice.DeviceID,
+			TotalMemory:       nativeDevice.TotalMemory,
+			FreeMemory:        nativeDevice.FreeMemory,
+			ComputeMajor:      computeMajor,
+			ComputeMinor:      computeMinor,
+			DriverMajor:       nativeDevice.CUDADriverMajor,
+			DriverMinor:       nativeDevice.CUDADriverMinor,
+			NVIDIADriverMajor: nativeDevice.NVIDIADriverMajor,
+			LibraryPath:       libDirs,
+			Integrated:        nativeDevice.Integrated,
+		}
+		setROCmGFXTarget(&device, nativeDevice.GFXTarget)
+		setROCmGFXTarget(&device, rocmGFXOverride)
+		if library == "CUDA" && device.DriverMajor == 0 && hasCUDARuntime {
+			device.DriverMajor = cudaRuntimeMajor
+			device.DriverMinor = cudaRuntimeMinor
+		}
+
+		devices = append(devices, device)
+	}
+
+	return devices
 }
 
 func nativeProbeMatchesLlamaServerDevice(library, description string, totalBytes uint64, nativeDevice nativeProbeDevice) bool {
