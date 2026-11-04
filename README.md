@@ -320,6 +320,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [ORDNA](https://zuentec.de/en/ordna.html?utm_source=ollama) - Windows app that recognizes, names and files documents locally with Ollama 
 
 ### Observability & Monitoring
 
