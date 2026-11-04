@@ -275,6 +275,85 @@ func TestEmbeddingHandlersUseRunnerSelection(t *testing.T) {
 	}
 }
 
+func TestEmbedRequiresEmbeddingCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	// A completion-only GGUF (no pooling_type): its runner launches without
+	// --embedding, so embed requests must be rejected before scheduling
+	// instead of surfacing the runner's internal error.
+	writeShowManifestVariant(t, "completion-ggml", manifest.RunnerGGML, manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat: manifest.FormatGGUF,
+	}, map[string]any{
+		"general.architecture": "llama",
+	})
+
+	loadCalled := make(chan string, 1)
+	mock := &mockRunner{}
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadCalled <- req.model.Name
+				req.successCh <- &runnerRef{llama: mock}
+				return false
+			},
+		},
+	}
+	go s.sched.Run(t.Context())
+
+	tests := []struct {
+		name    string
+		handler func(*Server) func(*gin.Context)
+		body    any
+	}{
+		{
+			name:    "embed",
+			handler: func(s *Server) func(*gin.Context) { return s.EmbedHandler },
+			body: api.EmbedRequest{
+				Model: "completion-ggml",
+				Input: "hi",
+			},
+		},
+		{
+			name:    "embeddings",
+			handler: func(s *Server) func(*gin.Context) { return s.EmbeddingsHandler },
+			body: api.EmbeddingRequest{
+				Model:  "completion-ggml",
+				Prompt: "hi",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := createRequest(t, tt.handler(s), tt.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+
+			want := `{"error":"registry.ollama.ai/library/completion-ggml:latest does not support embedding"}`
+			if diff := cmp.Diff(w.Body.String(), want); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+
+			select {
+			case name := <-loadCalled:
+				t.Fatalf("runner was scheduled for model %q without embedding capability", name)
+			case <-time.After(250 * time.Millisecond):
+			}
+		})
+	}
+}
+
 func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV, tmpl string, info map[string]any) {
 	t.Helper()
 
