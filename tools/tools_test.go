@@ -895,7 +895,14 @@ func TestContent(t *testing.T) {
 			name:    "tag",
 			tag:     "<tool_call>",
 			content: []byte("<tool_call>{\"name\": \"get_temperature\""),
-			want:    "",
+			want:    "<tool_call>{\"name\": \"get_temperature\"",
+			n:       0,
+		},
+		{
+			name:    "unregistered tool call",
+			tag:     "<tool_call>",
+			content: []byte(`<tool_call>{"name": "lookup_order", "arguments": {"order_id": "48213"}}</tool_call>`),
+			want:    `<tool_call>{"name": "lookup_order", "arguments": {"order_id": "48213"}}</tool_call>`,
 			n:       0,
 		},
 		{
