@@ -136,7 +136,22 @@ download_and_extract() {
     if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
         # zst file exists - check if we have zstd tool
         if ! available zstd; then
-            error "This version requires zstd for extraction. Please install zstd and try again:
+            status "Installing zstd (required to extract ${filename}.tar.zst)..."
+            if available apt-get; then
+                $SUDO apt-get update -qq && $SUDO apt-get install -y -qq zstd
+            elif available dnf; then
+                $SUDO dnf install -y zstd
+            elif available yum; then
+                $SUDO yum install -y zstd
+            elif available pacman; then
+                $SUDO pacman -S --noconfirm zstd
+            elif available apk; then
+                $SUDO apk add --no-cache zstd
+            fi
+        fi
+
+        if ! available zstd; then
+            error "This version requires zstd for extraction. Automatic installation failed, please install zstd and try again:
   - Debian/Ubuntu: sudo apt-get install zstd
   - RHEL/CentOS/Fedora: sudo dnf install zstd
   - Arch: sudo pacman -S zstd"
