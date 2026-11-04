@@ -169,6 +169,49 @@ func TestOrigins(t *testing.T) {
 			"vscode-webview://*",
 			"vscode-file://*",
 		}},
+		// whitespace around an entry is ignored
+		{"http://totally.safe, http://definitely.legit", []string{
+			"http://totally.safe",
+			"http://definitely.legit",
+			"http://localhost",
+			"https://localhost",
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+			"http://0.0.0.0",
+			"https://0.0.0.0",
+			"http://0.0.0.0:*",
+			"https://0.0.0.0:*",
+			"app://*",
+			"file://*",
+			"tauri://*",
+			"vscode-webview://*",
+			"vscode-file://*",
+		}},
+		// empty entries are ignored
+		{"http://totally.safe,", []string{
+			"http://totally.safe",
+			"http://localhost",
+			"https://localhost",
+			"http://localhost:*",
+			"https://localhost:*",
+			"http://127.0.0.1",
+			"https://127.0.0.1",
+			"http://127.0.0.1:*",
+			"https://127.0.0.1:*",
+			"http://0.0.0.0",
+			"https://0.0.0.0",
+			"http://0.0.0.0:*",
+			"https://0.0.0.0:*",
+			"app://*",
+			"file://*",
+			"tauri://*",
+			"vscode-webview://*",
+			"vscode-file://*",
+		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
@@ -176,6 +219,28 @@ func TestOrigins(t *testing.T) {
 
 			if diff := cmp.Diff(AllowedOrigins(), tt.expect); diff != "" {
 				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
+			}
+		})
+	}
+}
+
+func TestRemotes(t *testing.T) {
+	cases := map[string][]string{
+		"":                         {"ollama.com"},
+		"   ":                      {"ollama.com"},
+		"ollama.com":               {"ollama.com"},
+		"ollama.com,other.com":     {"ollama.com", "other.com"},
+		"ollama.com, other.com":    {"ollama.com", "other.com"},
+		" ollama.com , other.com ": {"ollama.com", "other.com"},
+		"ollama.com,":              {"ollama.com"},
+	}
+
+	for value, expect := range cases {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("OLLAMA_REMOTES", value)
+
+			if diff := cmp.Diff(Remotes(), expect); diff != "" {
+				t.Errorf("%s: mismatch (-want +got):\n%s", value, diff)
 			}
 		})
 	}
