@@ -356,7 +356,7 @@ func (a *VisionAttention) Forward(x *mlx.Array, cosX, sinX, cosY, sinY *mlx.Arra
 	val = mlx.Transpose(val, 0, 2, 1, 3)
 
 	// Fully bidirectional, and scale 1.0: the Q/K norms control magnitude.
-	out := mlx.FastScaledDotProductAttention(q, k, val, 1.0, "", nil)
+	out := mlx.FastScaledDotProductAttention(q, k, val, 1.0, mlx.FastSDPANoWindow, "", nil)
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), 1, n, heads*headDim)
 	return a.OProj.Forward(out)
 }

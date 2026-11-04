@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/api"
@@ -854,11 +855,8 @@ func TestChatMiddleware(t *testing.T) {
 						Content: "Hello",
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -977,11 +975,8 @@ func TestChatMiddleware(t *testing.T) {
 						},
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -1016,11 +1011,8 @@ func TestChatMiddleware(t *testing.T) {
 						},
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -1056,11 +1048,8 @@ func TestChatMiddleware(t *testing.T) {
 						},
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -1095,11 +1084,8 @@ func TestChatMiddleware(t *testing.T) {
 						},
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -1135,11 +1121,8 @@ func TestChatMiddleware(t *testing.T) {
 						},
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -1181,11 +1164,8 @@ func TestChatMiddleware(t *testing.T) {
 						ToolCallID: "id_abc",
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -1226,11 +1206,8 @@ func TestChatMiddleware(t *testing.T) {
 						ToolName: "get_current_weather",
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
+				Options: map[string]any{},
+				Stream:  &False,
 			},
 		},
 		{
@@ -1294,11 +1271,8 @@ func TestChatMiddleware(t *testing.T) {
 						},
 					},
 				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &True,
+				Options: map[string]any{},
+				Stream:  &True,
 			},
 		},
 		{
@@ -1378,11 +1352,8 @@ func TestCompletionsMiddleware(t *testing.T) {
 				Model:  "test-model",
 				Prompt: "Hello",
 				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
+					"temperature": 0.8,
+					"stop":        []any{"\n", "stop"},
 				},
 				Suffix: "suffix",
 				Stream: &False,
@@ -1402,11 +1373,8 @@ func TestCompletionsMiddleware(t *testing.T) {
 				Model:  "test-model",
 				Prompt: "Hello",
 				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
+					"temperature": 0.8,
+					"stop":        []any{"\n", "stop"},
 				},
 				Suffix: "suffix",
 				Stream: &True,
@@ -1427,11 +1395,8 @@ func TestCompletionsMiddleware(t *testing.T) {
 				Model:  "test-model",
 				Prompt: "Hello",
 				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
+					"temperature": 0.8,
+					"stop":        []any{"\n", "stop"},
 				},
 				Suffix: "suffix",
 				Stream: &True,
@@ -1489,6 +1454,69 @@ func TestCompletionsMiddleware(t *testing.T) {
 
 			capturedRequest = nil
 		})
+	}
+}
+
+func TestSamplerOptionsPassThrough(t *testing.T) {
+	endpoints := []struct {
+		name       string
+		middleware gin.HandlerFunc
+		base       string
+		penalties  bool
+	}{
+		{"chat", ChatMiddleware(), `"model":"m","messages":[{"role":"user","content":"hi"}]`, true},
+		{"completions", CompletionsMiddleware(), `"model":"m","prompt":"hi"`, true},
+		{"responses", ResponsesMiddleware(), `"model":"m","input":"hi"`, false},
+	}
+
+	cases := []struct {
+		name      string
+		body      string
+		penalties bool
+		want      map[string]any
+	}{
+		{name: "omitted", want: map[string]any{}},
+		{name: "explicit", body: `,"temperature":0.3,"top_p":0.7`, want: map[string]any{"temperature": 0.3, "top_p": 0.7}},
+		{name: "explicit zero", body: `,"temperature":0,"top_p":0`, want: map[string]any{"temperature": 0.0, "top_p": 0.0}},
+		{name: "explicit zero penalties", body: `,"frequency_penalty":0,"presence_penalty":0`, penalties: true, want: map[string]any{"frequency_penalty": 0.0, "presence_penalty": 0.0}},
+	}
+
+	for _, ep := range endpoints {
+		for _, tc := range cases {
+			if tc.penalties && !ep.penalties {
+				continue
+			}
+			t.Run(ep.name+"/"+tc.name, func(t *testing.T) {
+				var captured struct {
+					Options map[string]any `json:"options"`
+				}
+
+				gin.SetMode(gin.TestMode)
+				router := gin.New()
+				router.Use(ep.middleware, captureRequestMiddleware(&captured))
+				router.Handle(http.MethodPost, "/", func(c *gin.Context) {
+					c.Status(http.StatusOK)
+				})
+
+				req, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader("{"+ep.base+tc.body+"}"))
+				req.Header.Set("Content-Type", "application/json")
+				resp := httptest.NewRecorder()
+				router.ServeHTTP(resp, req)
+				if resp.Code != http.StatusOK {
+					t.Fatalf("status %d: %s", resp.Code, resp.Body.String())
+				}
+
+				got := map[string]any{}
+				for _, key := range []string{"temperature", "top_p", "frequency_penalty", "presence_penalty"} {
+					if v, ok := captured.Options[key]; ok {
+						got[key] = v
+					}
+				}
+				if diff := cmp.Diff(tc.want, got, cmpopts.EquateApprox(0, 1e-6)); diff != "" {
+					t.Errorf("sampler options mismatch (-want +got):\n%s", diff)
+				}
+			})
+		}
 	}
 }
 

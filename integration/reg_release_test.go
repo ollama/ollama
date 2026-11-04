@@ -76,6 +76,7 @@ func init() {
 		integrationTestCase("api-generate", smol, runAPIGenerate),
 		integrationTestCase("api-chat", smol, runAPIChat),
 		integrationModelTestCase("system-one-vision", defaultTestModel("clef-flash:9b"), runAPISystemOneVision),
+		integrationModelTestCase("system-one-audio", defaultTestModel("d1-omni-2b:latest"), runAPISystemOneAudio),
 		integrationTestCase("api-list-models", "", runAPIListModels),
 		integrationTestCase("api-show-model", "llama3.2", runAPIShowModel),
 		integrationTestCase("generate-logprobs", smol, runAPIGenerateLogprobs),

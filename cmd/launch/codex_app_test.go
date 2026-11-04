@@ -568,6 +568,159 @@ func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
 	}
 }
 
+func codexAppRestoreFixture(t *testing.T) (*CodexApp, string) {
+	t.Helper()
+	home := t.TempDir()
+	setTestHome(t, home)
+	withCodexAppPlatform(t, "darwin")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	old := codexAppProfileIsRunning
+	codexAppProfileIsRunning = func() bool { return false }
+	t.Cleanup(func() { codexAppProfileIsRunning = old })
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { t.Fatal("unexpected process quit"); return nil },
+		func() error { t.Fatal("unexpected app launch"); return nil },
+	)
+	return &CodexApp{}, filepath.Join(home, ".codex", "config.toml")
+}
+
+func TestCodexAppDesktopCleanupFailureCanRetry(t *testing.T) {
+	app, configPath := codexAppRestoreFixture(t)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		must(err)
+		return string(data)
+	}
+	original := "model = \"native-fixture\"\nmodel_provider = \"openai\"\n\n[mcp_servers.fixture]\ncommand = \"fixture-before\"\n"
+	must(os.MkdirAll(filepath.Dir(configPath), 0o700))
+	must(os.WriteFile(configPath, []byte(original), 0o600))
+	must(app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")))
+	restoreState := read(codexAppRestoreStatePath())
+	must(os.WriteFile(configPath, []byte(strings.ReplaceAll(read(configPath), "fixture-before", "fixture-after")), 0o600))
+	catalog := codexAppModelCatalogPathForConfig(configPath)
+	must(os.Remove(catalog))
+	must(os.Mkdir(catalog, 0o700))
+	blocker := filepath.Join(catalog, "fixture-obstruction")
+	must(os.WriteFile(blocker, []byte("fixture"), 0o600))
+
+	if err := app.RestoreFromDesktop(false); err == nil {
+		t.Fatal("expected cleanup failure")
+	}
+	if app.OllamaConfigured() || !app.RestorePending() || read(codexAppRestoreStatePath()) != restoreState {
+		t.Fatal("partial disconnect lost or replaced its recovery state")
+	}
+	must(os.WriteFile(configPath, []byte(strings.ReplaceAll(read(configPath), "native-fixture", "native-after-failure")), 0o600))
+	must(os.Remove(blocker))
+	must(app.RestoreFromDesktop(false))
+	if app.RestorePending() {
+		t.Fatal("cleanup remained pending after retry")
+	}
+	want, err := codexParseConfigText(strings.NewReplacer("fixture-before", "fixture-after", "native-fixture", "native-after-failure").Replace(original))
+	must(err)
+	got, err := codexParseConfigText(read(configPath))
+	must(err)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("retry changed user settings (-want +got):\n%s", diff)
+	}
+}
+
+func TestCodexAppDesktopCleanupWithoutRestoreStateCanRetry(t *testing.T) {
+	for _, missingConfig := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing_config=%v", missingConfig), func(t *testing.T) {
+			app, configPath := codexAppRestoreFixture(t)
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			read := func(path string) string {
+				t.Helper()
+				data, err := os.ReadFile(path)
+				must(err)
+				return string(data)
+			}
+			must(app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")))
+			must(os.WriteFile(configPath, []byte(codexAppSetReasoningEfforts(read(configPath), []string{"medium"})), 0o600))
+			for _, path := range []string{codexAppRestoreStatePath(), codexAppModelCatalogPathForConfig(configPath), codexAppRoutingCatalogPathForConfig(configPath)} {
+				must(os.Remove(path))
+			}
+			if missingConfig {
+				must(os.Remove(configPath))
+			}
+			authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
+			must(os.Remove(authPath))
+			must(os.Mkdir(authPath, 0o700))
+			blocker := filepath.Join(authPath, "fixture-obstruction")
+			must(os.WriteFile(blocker, []byte("fixture"), 0o600))
+			history := filepath.Join(filepath.Dir(configPath), "sessions", "fixture.jsonl")
+			must(os.MkdirAll(filepath.Dir(history), 0o700))
+			must(os.WriteFile(history, []byte("fixture history"), 0o600))
+
+			if err := app.RestoreFromDesktop(false); err == nil {
+				t.Fatal("expected auth cleanup failure")
+			}
+			if app.OllamaConfigured() || !app.RestorePending() {
+				t.Fatal("retry disappeared without catalogs or an original restore record")
+			}
+			edited := "model = \"native-after-failure\"\n"
+			if !missingConfig {
+				parsed, err := codexParseConfig(read(configPath))
+				must(err)
+				if efforts, ok := codexAppConfigReasoningEfforts(parsed); !ok || !slices.Equal(efforts, []string{"medium"}) {
+					t.Fatal("legacy restore changed desktop settings")
+				}
+				must(os.WriteFile(configPath, []byte(edited), 0o600))
+			}
+			must(os.Remove(blocker))
+			must(os.Remove(authPath))
+			must(os.WriteFile(authPath, []byte(`{"fixture":"replacement user auth"}`), 0o600))
+			must(app.RestoreFromDesktop(false))
+			if app.RestorePending() {
+				t.Fatal("cleanup remained pending after retry")
+			}
+			if missingConfig {
+				if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+					t.Fatal("retry recreated missing config")
+				}
+			} else if read(configPath) != edited {
+				t.Fatal("retry overwrote user edits")
+			}
+			if read(authPath) != `{"fixture":"replacement user auth"}` || read(history) != "fixture history" {
+				t.Fatal("retry changed user auth or history")
+			}
+		})
+	}
+}
+
+func TestCodexAppRestorePendingKeepsReferencedCatalog(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	catalogPath := codexAppModelCatalogPathForConfig(configPath)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, []byte(`{"models":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	text := fmt.Sprintf("model = \"native-fixture\"\nmodel_catalog_json = %q\n", catalogPath)
+	if err := os.WriteFile(configPath, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if (&CodexApp{}).RestorePending() {
+		t.Fatal("a catalog still referenced by the user's config must not be treated as abandoned cleanup")
+	}
+}
+
 func TestCodexAppDesktopUpdatesStoppedProfileWithoutOpening(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)

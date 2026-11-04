@@ -643,3 +643,53 @@ printf '%s\n' "$CLAUDE_CODE_MAX_CONTEXT_TOKENS" "$CLAUDE_CODE_AUTO_COMPACT_WINDO
 		})
 	}
 }
+
+func TestClaudeModelOutputTokens(t *testing.T) {
+	const outputKey = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+	for _, tt := range []struct {
+		name     string
+		model    LaunchModel
+		override string
+		set      bool
+		want     string
+	}{
+		{name: "client ceiling", model: LaunchModel{Name: "large:cloud", ContextLength: 1_048_576, MaxOutputTokens: 393_216}, want: "128000"},
+		{name: "model ceiling overrides fallback", model: LaunchModel{Name: "qwen3.5:cloud", ContextLength: 262_144, MaxOutputTokens: 16_384}, want: "16384"},
+		{name: "remote alias", model: LaunchModel{Name: "custom-cloud", Remote: true, ContextLength: 262_144, MaxOutputTokens: 64_000}, want: "64000"},
+		{name: "fallback limit", model: LaunchModel{Name: "qwen3.5:cloud"}, want: "32768"},
+		{name: "unknown limit", model: LaunchModel{Name: "unknown:cloud", ContextLength: 262_144}},
+		{name: "local model", model: LaunchModel{Name: "local", ContextLength: 262_144, MaxOutputTokens: 65_536}},
+		{name: "explicit override", model: LaunchModel{Name: "large:cloud", ContextLength: 1_048_576, MaxOutputTokens: 393_216}, override: "64000", set: true},
+		{name: "explicit empty override", model: LaunchModel{Name: "large:cloud", ContextLength: 1_048_576, MaxOutputTokens: 393_216}, set: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(outputKey, tt.override)
+			if !tt.set {
+				if err := os.Unsetenv(outputKey); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			env := (&Claude{}).modelEnvVars(tt.model.Name, []LaunchModel{tt.model})
+			var got string
+			var count int
+			for _, entry := range env {
+				key, value, _ := strings.Cut(entry, "=")
+				if key == outputKey {
+					got = value
+					count++
+				}
+				if key == "CLAUDE_CODE_EFFORT_LEVEL" || key == "MAX_THINKING_TOKENS" {
+					t.Errorf("unexpected thinking override: %s", entry)
+				}
+			}
+			wantCount := 0
+			if tt.want != "" {
+				wantCount = 1
+			}
+			if got != tt.want || count != wantCount {
+				t.Errorf("%s = %q (%d entries), want %q (%d entries)", outputKey, got, count, tt.want, wantCount)
+			}
+		})
+	}
+}

@@ -92,19 +92,12 @@ func ScaledDotProductAttention(b *batch.Batch, q *mlx.Array, scale float32, opts
 	}
 
 	if cached, ok := b.Memo.Get(inputs); ok {
-		d := cached.(sdpaDispatch)
-		if cfg.sinks == nil {
-			return mlx.FastScaledDotProductAttention(q, k, v, scale, d.mode, d.arr)
-		}
-		return mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, d.mode, d.arr, cfg.sinks)
+		return cached.(sdpaDispatch).run(q, k, v, scale, cfg.sinks)
 	}
 
 	d := inputs.resolve()
 	b.Memo.Put(inputs, d)
-	if cfg.sinks == nil {
-		return mlx.FastScaledDotProductAttention(q, k, v, scale, d.mode, d.arr)
-	}
-	return mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, d.mode, d.arr, cfg.sinks)
+	return d.run(q, k, v, scale, cfg.sinks)
 }
 
 // sdpaDispatch is the resolved kernel call for a given SDPA key —
@@ -114,6 +107,23 @@ func ScaledDotProductAttention(b *batch.Batch, q *mlx.Array, scale float32, opts
 type sdpaDispatch struct {
 	mode string
 	arr  *mlx.Array
+	// window is the kernel-enforced sliding-window size; zero means full
+	// context, translated to the kernel's window_size convention at run.
+	window int
+}
+
+// run dispatches the resolved kernel call with optional attention sinks.
+// The C binding requires -1 for "no window" while the dispatch's zero value
+// means the same, so translate here.
+func (d sdpaDispatch) run(q, k, v *mlx.Array, scale float32, sinks *mlx.Array) *mlx.Array {
+	window := d.window
+	if window == 0 {
+		window = mlx.FastSDPANoWindow
+	}
+	if sinks == nil {
+		return mlx.FastScaledDotProductAttention(q, k, v, scale, window, d.mode, d.arr)
+	}
+	return mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, window, d.mode, d.arr, sinks)
 }
 
 // dispatchInputs bundles every value resolve reads and doubles as
@@ -182,6 +192,17 @@ func (inputs dispatchInputs) resolve() sdpaDispatch {
 	mask := inputs.mask.Intersect(QPaddingMask(inputs.batch, inputs.dtype))
 
 	if inputs.applier != nil {
+		// Native sliding-window dispatch: when the composed mask is pure
+		// causal, the kernel enforces the cache's sliding restriction
+		// itself — no materialized [B,1,L,K] tensor. The L>1 guard keeps
+		// decode on the ring-storage fast path, where the window is
+		// already enforced by storage and a kernel window would only
+		// force the slow general kernel. Any other contribution
+		// (relaxations, padding, tensors) keeps the array path.
+		if w := inputs.applier.NativeWindow(); w > 0 && mask.IsCausal() &&
+			inputs.batch.InputIDs.Dim(1) > 1 {
+			return sdpaDispatch{mode: "causal", window: w}
+		}
 		mask = inputs.applier.ApplyMask(mask)
 	} else if inputs.kLens != "" {
 		mask = mask.Intersect(KPaddingMask(inputs.batch, inputs.K, inputs.kLens.Int32s(), inputs.dtype))
@@ -218,6 +239,15 @@ func (inputs dispatchInputs) resolve() sdpaDispatch {
 // contribution".
 type MaskApplier interface {
 	ApplyMask(logical AttentionMask) AttentionMask
+
+	// NativeWindow reports the sliding-window size the SDPA kernel can
+	// enforce itself — via its window_size parameter — in place of this
+	// applier's mask contribution, or a value <= 0 when the applier's
+	// storage restriction has no native equivalent for this call shape.
+	// SDPA only honors the hint when every other composed contribution
+	// is pure causal at L>1: with relaxations, padding, tensors, or a
+	// single-token query, ApplyMask's materialized path stands.
+	NativeWindow() int
 }
 
 // KVHistory is the per-forward view a KV cache hands to SDPA:

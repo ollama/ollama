@@ -30,6 +30,7 @@ extern "C" {
 
 int mlx_clear_cache(void);
 int mlx_get_active_memory(size_t* res);
+int mlx_get_array_buffer_size(size_t* res, const mlx_vector_array arrays);
 int mlx_get_cache_memory(size_t* res);
 int mlx_get_memory_limit(size_t* res);
 int mlx_get_peak_memory(size_t* res);

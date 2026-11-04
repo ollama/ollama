@@ -99,6 +99,12 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: false}
 	case "lfm2-thinking":
 		return &LFM2Parser{hasThinkingSupport: true}
+	case "lfm3":
+		return &LFM3Parser{}
+	case "lfm3-omni":
+		return &Qwen3CoderParser{}
+	case "lfm3-audio":
+		return &LFM3AudioParser{}
 	case "laguna":
 		return &LagunaParser{}
 	case "poolside-v1":

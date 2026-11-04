@@ -1,0 +1,27 @@
+diff --git a/ggml/src/ggml-metal/kernels/unary.metal b/ggml/src/ggml-metal/kernels/unary.metal
+index 8c2c18ebd..873b59e08 100644
+--- a/ggml/src/ggml-metal/kernels/unary.metal
++++ b/ggml/src/ggml-metal/kernels/unary.metal
+@@ -4,19 +4,19 @@ constant short FC_unary_op [[function_constant(FC_UNARY + 0)]];
+ constant bool  FC_unary_cnt[[function_constant(FC_UNARY + 1)]];
+ 
+ template <typename T, typename U>
+-inline constexpr T ggml_metal_unary_cast(U x) {
++inline T ggml_metal_unary_cast(U x) {
+     return (T) x;
+ }
+ 
+ #if defined(GGML_METAL_HAS_BF16)
+ // MSL has no C-style cast from float vectors to bfloat vectors
+ template <>
+-inline constexpr bfloat4 ggml_metal_unary_cast<bfloat4, float4>(float4 x) {
++inline bfloat4 ggml_metal_unary_cast<bfloat4, float4>(float4 x) {
+     return bfloat4(bfloat(x[0]), bfloat(x[1]), bfloat(x[2]), bfloat(x[3]));
+ }
+ 
+ template <>
+-inline constexpr bfloat4 ggml_metal_unary_cast<bfloat4, float>(float x) {
++inline bfloat4 ggml_metal_unary_cast<bfloat4, float>(float x) {
+     return bfloat4(bfloat(x), bfloat(x), bfloat(x), bfloat(x));
+ }
+ #endif

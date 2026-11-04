@@ -473,7 +473,9 @@ func (c *RotatingKVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) 
 // caller's logical mask. ringIdx is the write cursor at Update time: at L=1
 // decode the ring is not position-ordered (logical col j lives at slot
 // (ringIdx+j) mod K), so tensor masks must be gathered into ring layout. At L>1
-// prefill concat has linearized storage, so the gather is identity.
+// prefill concat has linearized storage, so the gather is identity and — when
+// the rest of the mask is pure causal — SDPA can hand the window to the
+// kernel instead (NativeWindow), skipping mask materialization entirely.
 type rotatingApplier struct {
 	b       *batch.Batch
 	K       int
@@ -481,6 +483,19 @@ type rotatingApplier struct {
 	window  int
 	ringIdx int
 	dtype   mlx.DType
+}
+
+// NativeWindow reports the cache's window when the L>1 concat has linearized
+// storage into position order: the kernel's window_size then enforces the
+// causal sliding-window lower bound exactly, since a query row r sits at
+// tensor column (K-L)+r — the same constant shift on both axes. At L=1 the
+// ring is not position-ordered and storage already bounds the window, so a
+// kernel window has nothing to add (and would only force the slow kernel).
+func (r rotatingApplier) NativeWindow() int {
+	if r.L > 1 {
+		return r.window
+	}
+	return 0
 }
 
 func (r rotatingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {

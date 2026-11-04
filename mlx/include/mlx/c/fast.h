@@ -208,6 +208,7 @@ int mlx_fast_scaled_dot_product_attention(
     const mlx_array keys,
     const mlx_array values,
     float scale,
+    int window_size,
     const char* mask_mode,
     const mlx_array mask_arr /* may be null */,
     const mlx_array sinks /* may be null */,

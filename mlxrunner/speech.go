@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/model/audio"
 )
 
 // speechHandler streams 24 kHz 16-bit PCM as the model generates it.
@@ -151,8 +151,7 @@ func (q *audioQueue) next() ([][]byte, bool) {
 func pcm16(samples []float32) []byte {
 	b := make([]byte, 2*len(samples))
 	for i, s := range samples {
-		v := math.Round(float64(max(-1, min(1, s))) * math.MaxInt16)
-		binary.LittleEndian.PutUint16(b[2*i:], uint16(int16(v)))
+		binary.LittleEndian.PutUint16(b[2*i:], uint16(audio.PCM16(s)))
 	}
 	return b
 }

@@ -386,7 +386,7 @@ func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Arra
 		k = applyVisionRoPE(k, cos, sin)
 
 		// Fully bidirectional over the single image.
-		out := mlx.FastScaledDotProductAttention(q, k, val, scale, "", nil)
+		out := mlx.FastScaledDotProductAttention(q, k, val, scale, mlx.FastSDPANoWindow, "", nil)
 		out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), 1, n, v.HiddenSize)
 		h = mlx.Add(h, blk.Proj.Forward(out))
 

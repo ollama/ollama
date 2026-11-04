@@ -757,11 +757,15 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 	}{
 		{
 			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantMessages: []api.Message{{Role: "user"}},
+			wantMessages: []api.Message{{Role: "user", Content: "\n\n[This image is unavailable. Attach the image again, or continue without the image.]\n\n"}},
+			wantPrompt:   []string{"[This image is unavailable. Attach the image again, or continue without the image.]"},
+			wantOmitted:  []string{"file-fixture"},
 		},
 		{
 			name: "file ID beside text", item: `{"role":"user","content":[{"type":"input_text","text":"Read this image"},{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantMessages: []api.Message{{Role: "user", Content: "Read this image"}},
+			wantMessages: []api.Message{{Role: "user", Content: "Read this image\n\n[This image is unavailable. Attach the image again, or continue without the image.]\n\n"}},
+			wantPrompt:   []string{"Read this image", "[This image is unavailable. Attach the image again, or continue without the image.]"},
+			wantOmitted:  []string{"file-fixture"},
 		},
 		{
 			name: "file reference", item: `{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`,
@@ -833,7 +837,7 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 		},
 		{
 			name: "agent image", item: `{"type":"agent_message","content":[{"type":"input_image","image_url":"data:image/png;base64,Zml4dHVyZQ=="}]}`,
-			wantMessages: []api.Message{{Role: "user"}},
+			wantMessages: []api.Message{{Role: "user", Images: []api.ImageData{[]byte("fixture")}}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

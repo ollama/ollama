@@ -2,6 +2,8 @@ package mlxrunner
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"slices"
 	"testing"
 
@@ -346,6 +348,103 @@ func TestDecodeBlockDraft(t *testing.T) {
 		}
 		if toks := draftTokensOf(caches); slices.Contains(toks, 6) {
 			t.Fatalf("draft cache retains block rows: %v", toks)
+		}
+	})
+}
+
+// This test model's learned score favors token 0 rather than the unary winner.
+// The real sampler callback must supply both the choice and its probability.
+type selectedBlockDraft struct{ *fakeBlockDraft }
+
+func (d *selectedBlockDraft) Select(_ *mlx.Array, logits *mlx.Array, _ *mlx.Array, choose func(ids, scores *mlx.Array) (tokens, probs *mlx.Array)) (tokens, ids, probs *mlx.Array) {
+	n := logits.Dim(1)
+	unary := logits.Argmax(-1, false).AsType(mlx.DTypeInt32).Reshape(n, 1)
+	ids = unary.Concatenate(1, mlx.Zeros(mlx.DTypeInt32, n, 1))
+	scores := mlx.BroadcastTo(mlx.FromValues([]float32{0, 2}, 1, 2), int32(n), 2)
+	tokens, probs = choose(ids, scores)
+	return tokens.Reshape(1, n), ids.Reshape(1, n, 2), probs.Reshape(1, n, 2)
+}
+
+func TestBlockSelectorProposalAndRejection(t *testing.T) {
+	for _, temperature := range []float32{0, 1} {
+		mlxtest.RunSubtest(t, fmt.Sprintf("temperature %g", temperature), func(t *mlxtest.T) {
+			r, draft, session, caches := newBlockTestSession(t, map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 0: 2}, 4)
+			defer session.close()
+			r.spec.draft = &selectedBlockDraft{draft}
+			r.Sampler.Remove(pipelineSlot)
+			r.Sampler.Add(pipelineSlot, sampler.Options{Temperature: temperature, UseSeed: true, Seed: 42}, nil)
+			session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
+			candidates := session.propose(mlx.FromValues([]int32{1}, 1), 3)
+			mlx.Eval(candidates.Arrays()...)
+			if candidates.dist.IDs == nil || !slices.Equal(candidates.dist.IDs.Ints(), []int32{2, 0, 3, 0, 4, 0}) {
+				t.Fatalf("selector support = %v", candidates.dist.IDs)
+			}
+			want := float32(0)
+			if temperature > 0 {
+				want = float32(1 / (1 + math.Exp(2)))
+			}
+			// Broadcast inputs can leave zero-stride output rows; materialize for the host assertion.
+			probs := mlx.Contiguous(candidates.dist.Probs, false)
+			mlx.Eval(probs)
+			for i, q := range probs.Floats() {
+				expected := want
+				if i%2 == 1 {
+					expected = 1 - want
+				}
+				if math.Abs(float64(q-expected)) > 1e-6 {
+					t.Fatalf("proposal probability %d = %g want %g", i, q, expected)
+				}
+			}
+			if temperature == 0 && !slices.Equal(candidates.tokens.Ints(), []int32{0, 0, 0}) {
+				t.Fatalf("selected tokens = %v want [0 0 0]", candidates.tokens.Ints())
+			}
+			// At temperature 1 a dense target verifies the sparse proposal. Token 2
+			// is both the only acceptable draft and the residual, so any draw emits it first.
+			position := 0
+			spec := testSpeculationSession(r, caches[:1])
+			results, accepted, _, err := spec.accept(&position, sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}, candidates, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := resultIDs(results)
+			if len(ids) == 0 || ids[0] != 2 || (temperature == 0 && (accepted != 0 || len(ids) != 1)) {
+				t.Fatalf("accepted %d results %v; want target token 2 first", accepted, ids)
+			}
+		})
+	}
+}
+
+// A selector draft opens at the fixed DFlash2 depth and keeps it whatever a
+// round accepts, without training the depth controller; a plain block draft
+// still takes the controller's depth.
+func TestSelectorDraftKeepsFixedDepth(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		r, draft, session, _ := newBlockTestSession(t, map[int32]int32{1: 2}, 8)
+		session.close()
+		req := Request{Tokens: []int32{1, 2, 3}}
+
+		plain := r.spec.open(req, nil)
+		if plain.fixedDepth || plain.limit != r.spec.depth.scheduled {
+			t.Fatalf("block draft: fixedDepth %v limit %d, want the controller's %d", plain.fixedDepth, plain.limit, r.spec.depth.scheduled)
+		}
+		plain.close()
+
+		r.spec.draft = &selectedBlockDraft{draft}
+		s := r.spec.open(req, nil)
+		defer s.close()
+		if !s.fixedDepth || s.limit != dflash2Depth {
+			t.Fatalf("selector draft: fixedDepth %v limit %d, want %d", s.fixedDepth, s.limit, dflash2Depth)
+		}
+		scheduled := r.spec.depth.scheduled
+		for _, accepted := range []int{0, 3, dflash2Depth} {
+			s.beginRound()
+			s.endRound(dflash2Depth, accepted, dflash2Depth)
+			if s.limit != dflash2Depth {
+				t.Fatalf("limit %d after accepting %d, want %d", s.limit, accepted, dflash2Depth)
+			}
+		}
+		if slices.ContainsFunc(r.spec.depth.acc.seen, func(n int) bool { return n != 0 }) || r.spec.depth.scheduled != scheduled {
+			t.Fatalf("fixed-depth rounds trained the depth controller: seen %v, scheduled %d -> %d", r.spec.depth.acc.seen, scheduled, r.spec.depth.scheduled)
 		}
 	})
 }

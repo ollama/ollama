@@ -454,7 +454,8 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 			{"type": "function_call_output", "call_id": "call_spawn", "output": "{\"task_name\":\"/root/worker\"}"},
 			{"type": "agent_message", "id": "amsg_1", "author": "/root", "recipient": "/root/worker", "content": [
 				{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n"},
-				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."}
+				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."},
+				{"type": "input_image", "file_id": "file_stale", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 			]}
 		]
 	}`), &req)
@@ -471,10 +472,14 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 	}
 
 	agentMsg := chat.Messages[3]
-	want := "Agent message from \"/root\" to \"/root/worker\":\n" +
-		"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
-		"Analyze the parser module and report issues."
-	if agentMsg.Role != "user" || agentMsg.Content != want {
+	want := api.Message{
+		Role: "user",
+		Content: "Agent message from \"/root\" to \"/root/worker\":\n" +
+			"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
+			"Analyze the parser module and report issues.",
+		Images: []api.ImageData{[]byte("fixture")},
+	}
+	if !reflect.DeepEqual(agentMsg, want) {
 		t.Fatalf("agent message = %#v", agentMsg)
 	}
 }
@@ -3336,5 +3341,44 @@ func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
 	}
 	if len(chat.Messages) != 1 || chat.Messages[0].Content != "prefix opaque to us" {
 		t.Fatalf("messages = %#v", chat.Messages)
+	}
+}
+
+func TestResponsesReportRequestedSampling(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	tests := []struct {
+		name              string
+		temperature, topP *float64
+		want              map[string]any
+	}{
+		// The model's defaults applied; the response must not claim others.
+		{"omitted", nil, nil, map[string]any{"temperature": nil, "top_p": nil}},
+		{"explicit", value(0.3), value(0.7), map[string]any{"temperature": 0.3, "top_p": 0.7}},
+		{"explicit zero", value(0), value(0), map[string]any{"temperature": 0.0, "top_p": 0.0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := ResponsesRequest{Model: "m", Temperature: tt.temperature, TopP: tt.topP}
+			chat := api.ChatResponse{Message: api.Message{Content: "hi"}, Done: true}
+			created := NewResponsesStreamConverter("resp_1", "item_1", "m", request).Process(chat)[0]
+			for builder, response := range map[string]any{
+				"ToResponse": ToResponse("m", "resp_1", "item_1", chat, request),
+				"stream":     created.Data.(map[string]any)["response"],
+			} {
+				data, err := json.Marshal(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]any
+				if err := json.Unmarshal(data, &fields); err != nil {
+					t.Fatal(err)
+				}
+				for key, want := range tt.want {
+					if got, ok := fields[key]; !ok || got != want {
+						t.Errorf("%s %s = %v (present %v), want %v", builder, key, got, ok, want)
+					}
+				}
+			}
+		})
 	}
 }

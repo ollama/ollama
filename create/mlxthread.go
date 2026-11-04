@@ -17,6 +17,11 @@ var (
 				return err
 			}
 			if mlx.GPUIsAvailable() {
+				if mlx.CUDAIsAvailable() {
+					if err := mlx.CheckCUDADeviceSupport(); err != nil {
+						return err
+					}
+				}
 				mlx.SetDefaultDeviceGPU()
 			}
 			return nil
