@@ -235,12 +235,6 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	}
 	defer release()
 
-	baseURL, _ := url.Parse(d.baseURL)
-	u, err := d.resolve(ctx, fmt.Sprintf("%s/v2/%s/blobs/%s", d.baseURL, d.repository, blob.Digest))
-	if err != nil {
-		return 0, err
-	}
-
 	// Check for existing partial .tmp file for resume
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
@@ -262,23 +256,25 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	req.Header.Set("User-Agent", d.userAgent)
-	// Add auth only for same-host (not CDN)
-	if u.Host == baseURL.Host {
-		if t := d.authToken(); t != "" {
-			req.Header.Set("Authorization", "Bearer "+t)
-		}
-	}
-	if existingSize > 0 {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
-	}
-
-	resp, err := d.client.Do(req)
+	u, resp, err := d.resolve(ctx, fmt.Sprintf("%s/v2/%s/blobs/%s", d.baseURL, d.repository, blob.Digest), existingSize)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+	if resp == nil {
+		// resolve stopped at a cross-host redirect. Fetch it without forwarding
+		// the registry's credentials.
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		req.Header.Set("User-Agent", d.userAgent)
+		if existingSize > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
+		}
+		resp, err = d.client.Do(req)
+		if err != nil {
+			return 0, err
+		}
+	}
+	// save reads successful bodies to EOF. Close promptly if saving fails.
+	defer resp.Body.Close()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -413,14 +409,18 @@ func (d *downloader) copy(ctx context.Context, cancel context.CancelCauseFunc, d
 	}
 }
 
-// resolve follows redirects to find the final download URL.
+// resolve returns a successful response for the caller to consume and close, or
+// a cross-host redirect URL to fetch without registry credentials.
 // Uses GET (not HEAD) because registries may return 200 for HEAD without
 // redirecting to CDN, while GET triggers the actual CDN redirect.
-func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, error) {
+func (d *downloader) resolve(ctx context.Context, rawURL string, offset int64) (*url.URL, *http.Response, error) {
 	u, _ := url.Parse(rawURL)
 	for range 10 {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("User-Agent", d.userAgent)
+		if offset > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+		}
 		prev := d.authToken()
 		if prev != "" {
 			req.Header.Set("Authorization", "Bearer "+prev)
@@ -428,40 +428,41 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 
 		resp, err := d.client.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		// Drain body before close to enable HTTP connection reuse
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
+			return nil, resp, nil
+		}
+		// Drain control responses before close to enable HTTP connection reuse
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
 		switch resp.StatusCode {
-		case http.StatusOK:
-			return u, nil
 		case http.StatusUnauthorized:
 			if d.getToken == nil {
-				return nil, fmt.Errorf("unauthorized")
+				return nil, nil, fmt.Errorf("unauthorized")
 			}
 			ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
 			if err := d.refreshToken(ctx, ch, prev); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		case http.StatusTemporaryRedirect, http.StatusFound, http.StatusMovedPermanently:
 			loc, _ := resp.Location()
 			if err := ValidateRedirectScheme(loc, d.baseURL); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if loc.Host != u.Host {
 				if err := ValidateRedirectTarget(ctx, loc, d.baseURL, d.allowPrivate); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
-				return loc, nil
+				return loc, nil, nil
 			}
 			u = loc
 		default:
-			return nil, fmt.Errorf("status %d", resp.StatusCode)
+			return nil, nil, fmt.Errorf("status %d", resp.StatusCode)
 		}
 	}
-	return nil, fmt.Errorf("too many redirects")
+	return nil, nil, fmt.Errorf("too many redirects")
 }
 
 type speedTracker struct {
