@@ -538,16 +538,25 @@ func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 		t.Errorf("expected final content {\"v\": 3}, got %s", string(content))
 	}
 
-	// Verify at least one backup exists
+	// Verify each rapid write produced its own backup file. With a
+	// second-resolution timestamp, writes landing in the same second
+	// overwrite the same backup, so distinct names prove collision safety.
 	entries, _ := os.ReadDir(BackupDir())
-	var backupCount int
+	var backups []string
 	for _, e := range entries {
 		if len(e.Name()) > len("rapid.json.") && e.Name()[:len("rapid.json.")] == "rapid.json." {
-			backupCount++
+			backups = append(backups, e.Name())
 		}
 	}
-	if backupCount == 0 {
-		t.Error("expected at least one backup file from rapid writes")
+	if len(backups) < 3 {
+		t.Errorf("expected at least 3 distinct backup files from rapid writes, got %d: %v", len(backups), backups)
+	}
+	seen := make(map[string]bool)
+	for _, b := range backups {
+		if seen[b] {
+			t.Errorf("duplicate backup filename %q — timestamp collision", b)
+		}
+		seen[b] = true
 	}
 }
 
