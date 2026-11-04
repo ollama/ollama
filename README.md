@@ -345,6 +345,7 @@ console.log(response.message.content);
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
+- [self-host](https://github.com/ajnart/self-host) - Installs and sets up self-hosted apps like Ollama and Open WebUI: admin accounts, API keys and the apps connected to each other
 
 #### Package Managers
 
