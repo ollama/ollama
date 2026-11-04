@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1351,6 +1352,139 @@ func TestCodexDesktopPassesNativeModelToOpenAIAPIWithAPIKey(t *testing.T) {
 	}
 	if gotAuthorization != "Bearer sk-test" || gotOrganization != "org-test" {
 		t.Fatalf("OpenAI API headers were not preserved: authorization=%q organization=%q", gotAuthorization, gotOrganization)
+	}
+}
+
+func TestCodexDesktopForwardsMultipartLiveRequestUnmodified(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("multipart live request should not reach Ollama")
+	}))
+	defer ollama.Close()
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("API-key live request should not reach the ChatGPT subscription endpoint")
+	}))
+	defer chatGPT.Close()
+
+	var (
+		gotPath        string
+		gotContentType string
+		gotBody        []byte
+		upstreamHits   int
+	)
+	openAI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		gotPath = r.URL.Path
+		gotContentType = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, "live-ok")
+	}))
+	defer openAI.Close()
+
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
+		OllamaURL:          ollama.URL,
+		ChatGPTURL:         chatGPT.URL + "/backend-api/codex",
+		OpenAIURL:          openAI.URL + "/v1",
+		RoutingCatalogPath: writeCatalog(t, "glm-5.2:cloud"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var body bytes.Buffer
+	mp := multipart.NewWriter(&body)
+	if err := mp.WriteField("prompt", "transcribe this clip"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := mp.CreateFormFile("audio", "clip.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("RIFF....fake-wav")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mp.Close(); err != nil {
+		t.Fatal(err)
+	}
+	payload := body.Bytes()
+	contentType := mp.FormDataContentType()
+
+	req := httptest.NewRequest(http.MethodPost, "http://localhost"+CodexDesktopPathPrefix+"/v1/live", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.ContentLength = int64(len(payload))
+	req.RemoteAddr = "127.0.0.1:12345"
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202: %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.String() != "live-ok" {
+		t.Fatalf("client body = %q", recorder.Body.String())
+	}
+	if upstreamHits != 1 {
+		t.Fatalf("upstream hits = %d, want 1", upstreamHits)
+	}
+	if gotPath != "/v1/live" {
+		t.Fatalf("OpenAI path = %q", gotPath)
+	}
+	if gotContentType != contentType {
+		t.Fatalf("Content-Type = %q, want %q", gotContentType, contentType)
+	}
+	if !bytes.Equal(gotBody, payload) {
+		t.Fatalf("upstream body = %q, want original multipart %q", gotBody, payload)
+	}
+}
+
+func TestCodexDesktopNormalizesJSONLiveRequestForNativeModel(t *testing.T) {
+	ollama := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("native JSON live request should not reach Ollama")
+	}))
+	defer ollama.Close()
+	chatGPT := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("API-key live request should not reach the ChatGPT subscription endpoint")
+	}))
+	defer chatGPT.Close()
+
+	var gotBody []byte
+	openAI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openAI.Close()
+
+	handler, err := NewCodexDesktop(CodexDesktopConfig{
+		OllamaURL:          ollama.URL,
+		ChatGPTURL:         chatGPT.URL + "/backend-api/codex",
+		OpenAIURL:          openAI.URL + "/v1",
+		RoutingCatalogPath: writeCatalog(t, "glm-5.3-flash:cloud"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload := []byte(`{"model":"gpt-5.6-sol","input":[{"type":"reasoning","id":"rs_713083","encrypted_content":"local thinking"},{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}]}`)
+	req := httptest.NewRequest(http.MethodPost, "http://localhost"+CodexDesktopPathPrefix+"/v1/live", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk-test")
+	req.RemoteAddr = "127.0.0.1:12345"
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+
+	var forwarded struct {
+		Input []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
+		t.Fatal(err)
+	}
+	if len(forwarded.Input) != 1 || forwarded.Input[0]["type"] != "message" {
+		t.Fatalf("forwarded input = %#v, want Ollama reasoning stripped", forwarded.Input)
 	}
 }
 
