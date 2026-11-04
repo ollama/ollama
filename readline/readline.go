@@ -42,7 +42,10 @@ type Instance struct {
 	History     *History
 	Pasting     bool
 	Prefill     string
+	VimMode     bool
 	pastedLines []string
+	vimNormal   bool
+	vimPendingD bool
 }
 
 func New(prompt Prompt) (*Instance, error) {
@@ -110,6 +113,9 @@ func (i *Instance) Readline() (string, error) {
 			}
 		}
 	}
+
+	i.vimNormal = false
+	i.vimPendingD = false
 
 	var esc bool
 	var escex bool
@@ -215,6 +221,81 @@ func (i *Instance) Readline() (string, error) {
 			continue
 		}
 
+		if i.VimMode && r == CharEsc && i.Terminal.reader.Buffered() == 0 {
+			i.vimNormal = true
+			i.vimPendingD = false
+			continue
+		}
+
+		if i.VimMode && i.vimNormal {
+			if i.vimPendingD {
+				i.vimPendingD = false
+				switch r {
+				case 'd':
+					buf.MoveToStart()
+					buf.DeleteRemaining()
+				case 'w':
+					buf.DeleteWordForward()
+				}
+				continue
+			}
+
+			handled := true
+			switch r {
+			case 'h':
+				buf.MoveLeft()
+			case 'l':
+				buf.MoveRight()
+			case '0':
+				buf.MoveToStart()
+			case '$':
+				buf.MoveToEnd()
+			case 'w':
+				buf.MoveRightWord()
+			case 'b':
+				buf.MoveLeftWord()
+			case 'x':
+				buf.Delete()
+			case 'd':
+				i.vimPendingD = true
+			case '?':
+				return i.clearInput(buf), ErrVimHelp
+			case 'i':
+				i.vimNormal = false
+			case 'a':
+				buf.MoveRight()
+				i.vimNormal = false
+			case 'I':
+				buf.MoveToStart()
+				i.vimNormal = false
+			case 'A':
+				buf.MoveToEnd()
+				i.vimNormal = false
+			case 'o':
+				buf.MoveToEnd()
+				i.pastedLines = append(i.pastedLines, buf.String())
+				buf.Buf.Clear()
+				buf.Pos = 0
+				buf.DisplayPos = 0
+				buf.LineHasSpace.Clear()
+				fmt.Println()
+				fmt.Print(i.Prompt.AltPrompt)
+				i.Prompt.UseAlt = true
+				i.vimNormal = false
+			default:
+				handled = false
+			}
+
+			if handled {
+				continue
+			}
+
+			// swallow any other printable character; normal mode doesn't insert text
+			if r >= CharSpace {
+				continue
+			}
+		}
+
 		switch r {
 		case CharNull:
 			continue
@@ -274,28 +355,7 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharBell:
-			output := buf.String()
-			numPastedLines := len(i.pastedLines)
-			if numPastedLines > 0 {
-				output = strings.Join(i.pastedLines, "\n") + "\n" + output
-				i.pastedLines = nil
-			}
-
-			// Move cursor to the last display line of the current buffer
-			currLine := buf.DisplayPos / buf.LineWidth
-			lastLine := buf.DisplaySize() / buf.LineWidth
-			if lastLine > currLine {
-				fmt.Print(CursorDownN(lastLine - currLine))
-			}
-
-			// Clear all lines from bottom to top: buffer wrapped lines + pasted lines
-			for range lastLine + numPastedLines {
-				fmt.Print(CursorBOL + ClearToEOL + CursorUp)
-			}
-			fmt.Print(CursorBOL + ClearToEOL)
-
-			i.Prompt.UseAlt = false
-			return output, ErrEditPrompt
+			return i.clearInput(buf), ErrEditPrompt
 		case CharCtrlZ:
 			fd := os.Stdin.Fd()
 			return handleCharCtrlZ(fd, i.Terminal.termios)
@@ -338,6 +398,33 @@ func (i *Instance) Readline() (string, error) {
 			}
 		}
 	}
+}
+
+// clearInput clears the currently displayed input (including any pasted
+// multiline lines) from the terminal and returns the full buffered text.
+func (i *Instance) clearInput(buf *Buffer) string {
+	output := buf.String()
+	numPastedLines := len(i.pastedLines)
+	if numPastedLines > 0 {
+		output = strings.Join(i.pastedLines, "\n") + "\n" + output
+		i.pastedLines = nil
+	}
+
+	// Move cursor to the last display line of the current buffer
+	currLine := buf.DisplayPos / buf.LineWidth
+	lastLine := buf.DisplaySize() / buf.LineWidth
+	if lastLine > currLine {
+		fmt.Print(CursorDownN(lastLine - currLine))
+	}
+
+	// Clear all lines from bottom to top: buffer wrapped lines + pasted lines
+	for range lastLine + numPastedLines {
+		fmt.Print(CursorBOL + ClearToEOL + CursorUp)
+	}
+	fmt.Print(CursorBOL + ClearToEOL)
+
+	i.Prompt.UseAlt = false
+	return output
 }
 
 func (i *Instance) HistoryEnable() {
