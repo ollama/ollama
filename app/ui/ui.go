@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,6 +51,10 @@ var OllamaDotCom = func() string {
 	}
 	return "https://ollama.com"
 }()
+
+var newInferenceClient = func() *api.Client {
+	return api.NewClient(envconfig.Host(), userAgentHTTPClient(0))
+}
 
 type statusRecorder struct {
 	http.ResponseWriter
@@ -95,6 +100,8 @@ const (
 	EventToolCall   Event = "tool_call"
 	EventDownload   Event = "download"
 )
+
+var chatKeepAliveInterval = 15 * time.Second
 
 type Server struct {
 	Logger       *slog.Logger
@@ -429,7 +436,7 @@ func (s *Server) httpClient() *http.Client {
 // inferenceClient uses almost the same HTTP client, but without a timeout so
 // long requests aren't truncated
 func (s *Server) inferenceClient() *api.Client {
-	return api.NewClient(envconfig.Host(), userAgentHTTPClient(0))
+	return newInferenceClient()
 }
 
 func userAgentHTTPClient(timeout time.Duration) *http.Client {
@@ -712,6 +719,24 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		return errors.New("streaming not supported")
 	}
 
+	encoder := json.NewEncoder(w)
+	var streamMu sync.Mutex
+	var lastStreamWrite atomic.Int64
+	lastStreamWrite.Store(time.Now().UnixNano())
+
+	writeEvent := func(v any) error {
+		streamMu.Lock()
+		defer streamMu.Unlock()
+
+		if err := encoder.Encode(v); err != nil {
+			return err
+		}
+
+		flusher.Flush()
+		lastStreamWrite.Store(time.Now().UnixNano())
+		return nil
+	}
+
 	if r.Method != "POST" {
 		return not.Found
 	}
@@ -747,11 +772,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 	if createdChat {
 		// send message to the client that the chat has been created
-		json.NewEncoder(w).Encode(responses.ChatEvent{
+		if err := writeEvent(responses.ChatEvent{
 			EventName: "chat_created",
 			ChatID:    &cid,
-		})
-		flusher.Flush()
+		}); err != nil {
+			return err
+		}
 	}
 
 	// Check if this is from a specific message index (e.g. for editing)
@@ -826,6 +852,41 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	keepaliveCtx, cancelKeepalive := context.WithCancel(ctx)
+
+	keepaliveDone := make(chan struct{})
+	go func() {
+		defer close(keepaliveDone)
+
+		ticker := time.NewTicker(chatKeepAliveInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-keepaliveCtx.Done():
+				return
+			case <-ticker.C:
+				lastWrite := time.Unix(0, lastStreamWrite.Load())
+				if time.Since(lastWrite) < chatKeepAliveInterval {
+					continue
+				}
+
+				if err := writeEvent(responses.ChatEvent{
+					EventName: string(EventLoading),
+				}); err != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	// Wait for any in-flight heartbeat before emitting a terminal event.
+	stopKeepalive := func() {
+		cancelKeepalive()
+		<-keepaliveDone
+	}
+	defer stopKeepalive()
+
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
 
@@ -863,23 +924,22 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 					Done:      false,
 				}
 
-				if err := json.NewEncoder(w).Encode(progressEvent); err != nil {
+				if err := writeEvent(progressEvent); err != nil {
 					return err
 				}
-				flusher.Flush()
 			}
 			return nil
 		})
 		if err != nil {
 			s.log().Error("model download error", "error", err, "model", req.Model)
 			errorEvent := s.getError(err)
-			json.NewEncoder(w).Encode(errorEvent)
-			flusher.Flush()
+			stopKeepalive()
+			writeEvent(errorEvent)
 			cancelLoading()
 			return fmt.Errorf("failed to download model: %w", err)
 		}
 
-		if err := json.NewEncoder(w).Encode(responses.DownloadEvent{
+		if err := writeEvent(responses.DownloadEvent{
 			EventName: string(EventDownload),
 			Completed: largestTotal,
 			Total:     largestTotal,
@@ -888,12 +948,14 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 			cancelLoading()
 			return err
 		}
-		flusher.Flush()
 
 		// If forceUpdate, we're done after updating the model
 		if req.ForceUpdate {
-			json.NewEncoder(w).Encode(responses.ChatEvent{EventName: "done"})
-			flusher.Flush()
+			stopKeepalive()
+			if err := writeEvent(responses.ChatEvent{EventName: "done"}); err != nil {
+				cancelLoading()
+				return err
+			}
 			cancelLoading()
 			return nil
 		}
@@ -907,8 +969,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 	if err != nil || details == nil {
 		errorEvent := s.getError(err)
-		json.NewEncoder(w).Encode(errorEvent)
-		flusher.Flush()
+		stopKeepalive()
+		writeEvent(errorEvent)
 		s.log().Error("failed to show model details", "error", err, "model", req.Model)
 		return nil
 	}
@@ -1040,8 +1102,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 				thinkingTimeEnd = &now
 			}
 
-			json.NewEncoder(w).Encode(chatEventFromApiChatResponse(res, thinkingTimeStart, thinkingTimeEnd))
-			flusher.Flush()
+			if err := writeEvent(chatEventFromApiChatResponse(res, thinkingTimeStart, thinkingTimeEnd)); err != nil {
+				return err
+			}
 
 			switch event {
 			case EventToolCall:
@@ -1124,21 +1187,23 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 						// Emit tool error event
 						toolResult := true
-						json.NewEncoder(w).Encode(responses.ChatEvent{
+						if err := writeEvent(responses.ChatEvent{
 							EventName: "tool",
 							Content:   &errContent,
 							ToolName:  &toolCall.Function.Name,
-						})
-						flusher.Flush()
+						}); err != nil {
+							return err
+						}
 
-						json.NewEncoder(w).Encode(responses.ChatEvent{
+						if err := writeEvent(responses.ChatEvent{
 							EventName:      "tool_result",
 							Content:        &errContent,
 							ToolName:       &toolCall.Function.Name,
 							ToolResult:     &toolResult,
 							ToolResultData: nil, // No result data for errors
-						})
-						flusher.Flush()
+						}); err != nil {
+							return err
+						}
 						continue
 					}
 
@@ -1185,12 +1250,13 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 					// Emit tool message event (matching agent pattern)
 					toolResult := true
-					json.NewEncoder(w).Encode(responses.ChatEvent{
+					if err := writeEvent(responses.ChatEvent{
 						EventName: "tool",
 						Content:   &content,
 						ToolName:  &toolCall.Function.Name,
-					})
-					flusher.Flush()
+					}); err != nil {
+						return err
+					}
 
 					var toolState any = nil
 					if browser != nil {
@@ -1198,15 +1264,16 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 					}
 					// Stream tool result to frontend
 
-					json.NewEncoder(w).Encode(responses.ChatEvent{
+					if err := writeEvent(responses.ChatEvent{
 						EventName:      "tool_result",
 						Content:        &content,
 						ToolName:       &toolCall.Function.Name,
 						ToolResult:     &toolResult,
 						ToolResultData: result,
 						ToolState:      toolState,
-					})
-					flusher.Flush()
+					}); err != nil {
+						return err
+					}
 				}
 
 			case EventChat:
@@ -1291,8 +1358,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			s.log().Error("chat stream error", "error", err)
 			errorEvent := s.getError(err)
-			json.NewEncoder(w).Encode(errorEvent)
-			flusher.Flush()
+			stopKeepalive()
+			writeEvent(errorEvent)
 			return nil
 		}
 
@@ -1318,8 +1385,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	json.NewEncoder(w).Encode(responses.ChatEvent{EventName: "done"})
-	flusher.Flush()
+	stopKeepalive()
+	if err := writeEvent(responses.ChatEvent{EventName: "done"}); err != nil {
+		return err
+	}
 
 	if len(chat.Messages) > 0 {
 		chat.Messages[len(chat.Messages)-1].Stream = false
@@ -1488,8 +1557,13 @@ func chatEventFromApiChatResponse(res api.ChatResponse, thinkingTimeStart *time.
 		thinking = &res.Message.Thinking
 	}
 
+	eventName := "chat"
+	if res.Message.Content == "" && res.Message.Thinking != "" {
+		eventName = "thinking"
+	}
+
 	return responses.ChatEvent{
-		EventName:         "chat",
+		EventName:         eventName,
 		Content:           content,
 		Thinking:          thinking,
 		ThinkingTimeStart: thinkingTimeStart,
