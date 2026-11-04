@@ -269,6 +269,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [ShibaClaw](https://github.com/RikyZ90/ShibaClaw) - Self-hosted personal AI agent with WebUI, memory, MCP tools, sub-agents and scheduled automations, with local Ollama support ([docs](https://github.com/RikyZ90/ShibaClaw/blob/main/docs/integrations/OLLAMA.md))
 
 ### RAG & Knowledge Bases
 
