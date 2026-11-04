@@ -281,6 +281,7 @@ console.log(response.message.content);
 - [Archyve](https://github.com/nickthecook/archyve) - RAG-enabling document library
 - [Casibase](https://casibase.org) - AI knowledge base with RAG and SSO
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) - Native client with RAG and multi-agent automation
+- [LLM Wiki v2](https://github.com/crow-hq/llm-wiki-v2) - Files your documents into a Markdown wiki that answers with citations
 
 ### Bots & Messaging
 
