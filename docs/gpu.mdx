@@ -45,6 +45,48 @@ Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
 You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
 ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
+### Splitting a model across GPUs
+
+By default Ollama decides how much of a model each device gets. It ranks devices
+by class, so when a model does not fit it will spill the remainder to CPU rather
+than place it on a device it judges unhelpful — an integrated GPU, for instance,
+is enumerated but may be given no tensors at all.
+
+`tensor_split` overrides that with an explicit proportion per device:
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3.2",
+  "prompt": "Why is the sky blue?",
+  "options": { "tensor_split": "0.3,0.7" }
+}'
+```
+
+The values are proportions rather than percentages — they are normalized, so
+`3,7` and `0.3,0.7` are equivalent — and they apply to the devices in the order
+Ollama enumerates them. Set `OLLAMA_TENSOR_SPLIT` to give every model loaded by
+the server a default; a per-request `tensor_split` overrides it. In a Modelfile:
+
+```
+PARAMETER tensor_split 0.3,0.7
+```
+
+A split may span backends. Normally Ollama picks one backend's devices and
+ignores the rest, which would leave a CUDA card and a Vulkan-only iGPU unable to
+share a model; setting `tensor_split` keeps every device Ollama discovered, so
+the proportions can address, say, a CUDA discrete GPU and a Vulkan integrated one
+at the same time. Devices that the same physical card exposes twice are still
+deduplicated during discovery, so each card appears once.
+
+Splitting is not automatically faster. Generation is bandwidth-bound, so an
+integrated GPU sharing system memory with the CPU offers little bandwidth the
+CPU does not already have. Fully offloading a model that would otherwise spill to
+CPU can raise generation throughput while *lowering* prompt processing, since the
+CPU layers it replaces were compute-strong. Measure before adopting it.
+
+`tensor_split` is ignored when `main_gpu` is set, since that pins the model to a
+single device.
+
 ### Linux Suspend Resume
 
 On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
