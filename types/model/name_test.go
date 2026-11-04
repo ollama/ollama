@@ -177,6 +177,10 @@ var testCases = map[string]bool{ // name -> valid
 	"00@":    false,
 	"@":      false,
 
+	// empty scheme prefix is malformed (found by FuzzName)
+	"://0/0/0:0":                  false,
+	"://host/namespace/model:tag": false,
+
 	// not starting with alphanum
 	"-hh/nn/mm:tt": false,
 	"hh/-nn/mm:tt": false,
@@ -324,7 +328,10 @@ func FuzzName(f *testing.F) {
 					t.Errorf("part too long: %q", part)
 				}
 			}
-			if n.String() != s {
+			// String omits the transport scheme by design (like
+			// DisplayShortest), so exact round-trip only holds for
+			// names without one.
+			if n.ProtocolScheme == "" && n.String() != s {
 				t.Errorf("String() = %q; want %q", n.String(), s)
 			}
 		}
