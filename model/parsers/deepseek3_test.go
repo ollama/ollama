@@ -721,3 +721,116 @@ func TestDeepSeekParser_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestDeepSeek3ParserFinalizesCompleteToolCallOnDone(t *testing.T) {
+	parser := &DeepSeek3Parser{}
+	parser.Init(nil, nil, nil)
+
+	// the model emitted a complete call but the stream ended before the
+	// closing delimiters arrived
+	input := deepseekToolCallsBeginTag + deepseekToolCallBeginTag +
+		"get_weather" + deepseekToolSepTag + "{\"city\":\"San Francisco\"}"
+
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != "" {
+		t.Errorf("expected no content, got %q", content)
+	}
+	if thinking != "" {
+		t.Errorf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestDeepSeek3ParserRejectsIncompleteToolCallOnDone(t *testing.T) {
+	parser := &DeepSeek3Parser{}
+	parser.Init(nil, nil, nil)
+
+	// truncated mid arguments, so there is nothing safe to recover
+	input := deepseekToolCallsBeginTag + deepseekToolCallBeginTag +
+		"get_weather" + deepseekToolSepTag + "{\"city\":\"San Fran"
+
+	_, _, calls, err := parser.Add(input, true)
+	if err == nil {
+		t.Fatal("expected an error for a truncated tool call, got none")
+	}
+	if len(calls) != 0 {
+		t.Errorf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestDeepSeek3ParserDoesNotFinalizeMidStream(t *testing.T) {
+	parser := &DeepSeek3Parser{}
+	parser.Init(nil, nil, nil)
+
+	// same complete call, but the stream is not done, so the parser should keep
+	// buffering and wait for the closing delimiter
+	input := deepseekToolCallsBeginTag + deepseekToolCallBeginTag +
+		"get_weather" + deepseekToolSepTag + "{\"city\":\"San Francisco\"}"
+
+	_, _, calls, err := parser.Add(input, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls before done, got %d", len(calls))
+	}
+
+	// the closing delimiter arrives and the call is emitted exactly once
+	_, _, calls, err = parser.Add(deepseekToolCallEndTag, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+}
+
+func TestDeepSeek3ParserKeepsCompletedToolCallWithTrailingJunkOnDone(t *testing.T) {
+	parser := &DeepSeek3Parser{}
+	parser.Init(nil, nil, nil)
+
+	// a complete call, then stray text instead of the outer end delimiter. eat
+	// has already emitted the call, so this guards the finalize path against
+	// firing a second time and turning leftover text into an error
+	input := deepseekToolCallsBeginTag + deepseekToolCallBeginTag +
+		"get_weather" + deepseekToolSepTag + "{\"city\":\"San Francisco\"}" +
+		deepseekToolCallEndTag + "trailing"
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+}
+
+func TestDeepSeek3ParserFinalizesToolCallWithPartialEndTagOnDone(t *testing.T) {
+	parser := &DeepSeek3Parser{}
+	parser.Init(nil, nil, nil)
+
+	// the stream died partway through emitting the closing delimiter, so the
+	// fragment has to be trimmed before the arguments will parse as JSON
+	partial := deepseekToolCallEndTag[:len(deepseekToolCallEndTag)/2]
+	input := deepseekToolCallsBeginTag + deepseekToolCallBeginTag +
+		"get_weather" + deepseekToolSepTag + "{\"city\":\"San Francisco\"}" + partial
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
