@@ -29,6 +29,22 @@ func TestValidateMLXDraftIgnoresTextConfigFallback(t *testing.T) {
 	}
 }
 
+func TestValidateMLXModelFallsBackToModelType(t *testing.T) {
+	// Checkpoints that write only model_type to config.json resolve through a
+	// registered model_type alias (gemma4_unified) instead of being rejected.
+	err := validateMLXSource(sourceModelConfig{ModelType: "gemma4_unified"}, false, MLXValidationOptions{Force: true})
+	if err != nil {
+		t.Fatalf("validateMLXSource() error = %v", err)
+	}
+}
+
+func TestValidateMLXDraftFallsBackToModelType(t *testing.T) {
+	err := validateMLXSource(sourceModelConfig{ModelType: "gemma4_assistant"}, true, MLXValidationOptions{Force: true})
+	if err != nil {
+		t.Fatalf("validateMLXSource() error = %v", err)
+	}
+}
+
 func TestValidateMLXModelForceWarnsAndContinues(t *testing.T) {
 	var warnings []string
 	err := validateMLXSource(sourceModelConfig{Architectures: []string{"UnsupportedForCausalLM"}}, false, MLXValidationOptions{
