@@ -574,6 +574,49 @@ SYSTEM """''"'""'""'"'''''""'""'"""
 		{
 			`
 FROM foo
+SYSTEM 'hello'
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: "hello"},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM ''
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: ""},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM '''
+This is a multiline system with "double" quotes.
+'''
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "system", Args: "\nThis is a multiline system with \"double\" quotes.\n"},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+SYSTEM '
+`,
+			nil,
+			io.ErrUnexpectedEOF,
+		},
+		{
+			`
+FROM foo
 TEMPLATE """
 {{ .Prompt }}
 """`,

@@ -687,17 +687,17 @@ func quote(s string) string {
 }
 
 func unquote(s string) (string, bool) {
-	// TODO: single quotes
-	if len(s) >= 3 && s[:3] == `"""` {
-		if len(s) >= 6 && s[len(s)-3:] == `"""` {
+	if len(s) >= 3 && (s[:3] == `"""` || s[:3] == `'''`) {
+		q := s[:3]
+		if len(s) >= 6 && s[len(s)-3:] == q {
 			return s[3 : len(s)-3], true
 		}
 
 		return "", false
 	}
 
-	if len(s) >= 1 && s[0] == '"' {
-		if len(s) >= 2 && s[len(s)-1] == '"' {
+	if len(s) >= 1 && (s[0] == '"' || s[0] == '\'') {
+		if len(s) >= 2 && s[len(s)-1] == s[0] {
 			return s[1 : len(s)-1], true
 		}
 
