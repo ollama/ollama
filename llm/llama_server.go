@@ -147,16 +147,21 @@ func llamaServerRepeatLastN(repeatLastN, numCtx int) int {
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
-	port               int
-	cmd                *exec.Cmd
-	done               chan struct{}
-	doneErr            error
-	client             *http.Client
+	port    int
+	cmd     *exec.Cmd
+	done    chan struct{}
+	doneErr error
+	client  *http.Client
+	// memoryMu guards memory estimates, layer counts, per-device maps, and
+	// memoryParsingWriter state after the subprocess starts.
 	memoryMu           sync.RWMutex
-	memTotal           uint64 // actual total buffer size parsed from llama-server logs (bytes)
-	memGPU             uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
+	memTotal           uint64 // logged buffers plus any projector estimate (bytes)
+	memGPU             uint64 // logged GPU buffers plus any GPU projector estimate (bytes)
 	memModelFileBacked uint64 // model weight bytes whose buffers mirror the on-disk file (mmap views + direct device copies); excludes repacked copies like CPU_REPACK
 	memCPUMappedModel  uint64 // model weight bytes in mmap-backed CPU buffers (e.g. CPU_Mapped), parsed from llama-server logs
+	memCPUProjector    uint64 // projector estimate when its loader uses the CPU backend
+	memCPUDraft        uint64 // draft model and context buffers allocated on the CPU
+	memCPUTargetExtras uint64 // target LoRA and DSV4 state buffers allocated on the CPU
 	gpuLayers          uint64 // model layers loaded on GPU, parsed from llama-server logs
 	gpuLayerOverflow   int    // number of GPU-selected layers partially overflowed to CPU
 	status             *StatusWriter
@@ -1173,11 +1178,17 @@ func (s *llamaServerRunner) shouldRetryMMProjCPUOffload(err error) bool {
 func (s *llamaServerRunner) resetLoadAccounting() {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
+	if s.output != nil {
+		s.output.resetLocked()
+	}
 
 	s.memTotal = 0
 	s.memGPU = 0
 	s.memModelFileBacked = 0
 	s.memCPUMappedModel = 0
+	s.memCPUProjector = 0
+	s.memCPUDraft = 0
+	s.memCPUTargetExtras = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
 	for k := range s.vramByDevice {
@@ -2807,13 +2818,17 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 }
 
 // MemorySize returns total and GPU memory usage parsed from llama-server's
-// post-load log output. Full model-layer offload is reported as 100% GPU.
+// post-load log output. Full text-layer offload can still leave CPU draft,
+// projector, adapter, or state buffers.
 func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	s.memoryMu.RLock()
 	memTotal := s.memTotal
 	memGPU := s.memGPU
 	memModelFileBacked := s.memModelFileBacked
 	memCPUMappedModel := s.memCPUMappedModel
+	memCPUProjector := s.memCPUProjector
+	memCPUDraft := s.memCPUDraft
+	memCPUTargetExtras := s.memCPUTargetExtras
 	totalLayers := s.totalLayers
 	gpuLayers := s.gpuLayers
 	gpuLayerOverflow := s.gpuLayerOverflow
@@ -2835,7 +2850,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 			}
 		}
 		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
-			total = vram
+			// Full target offload does not cover other live CPU components.
+			total = vram + memCPUProjector + memCPUDraft + memCPUTargetExtras
 		}
 		return total, vram
 	}
@@ -2882,12 +2898,20 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
 type memoryParsingWriter struct {
-	inner   io.Writer
-	runner  *llamaServerRunner
-	buffers map[memoryBufferKey]memoryBuffer
+	inner           io.Writer
+	runner          *llamaServerRunner
+	buffers         map[memoryBufferKey]memoryBuffer
+	line            []byte
+	discardLine     bool
+	projectorDevice string
+
+	// currentModel attributes buffer lines to the target or speculative
+	// draft being loaded; the projector estimate is keyed separately.
+	currentModel string
 }
 
 type memoryBufferKey struct {
+	model     string // owning model: target, draft, projector
 	component string
 	backend   string
 	kind      string
@@ -2896,6 +2920,31 @@ type memoryBufferKey struct {
 type memoryBuffer struct {
 	bytes uint64
 }
+
+// Model attribution for buffers parsed from the subprocess stream.
+const (
+	memoryModelTarget    = "target"
+	memoryModelDraft     = "draft"
+	memoryModelProjector = "projector"
+
+	// memoryBackendProjector marks the projector's estimate, which names
+	// no device; the loader's backend lines determine GPU attribution.
+	memoryBackendProjector = "(projector)"
+	// Bound memory retained from a malformed or unterminated native log line.
+	// Ordinary llama-server diagnostics are much shorter than 64 KiB.
+	maxMemoryLogLine = 64 << 10
+)
+
+// mmprojMemoryRegex matches the projector's worst-case memory estimate:
+//
+//	srv  load_model: [mtmd] estimated worst-case memory usage of mmproj is 1700.98 MiB (took 36.34 ms)
+var mmprojMemoryRegex = regexp.MustCompile(`^srv\s+load_model:\s+\[mtmd\] estimated worst-case memory usage of mmproj is ([\d.]+)\s*MiB`)
+
+var mmprojBackendRegex = regexp.MustCompile(`^clip_ctx: CLIP using (\S+) backend`)
+
+// llama-server can log request text after startup. Only loader events may
+// change which model owns subsequent buffer lines.
+var serverLoadModelEventRegex = regexp.MustCompile(`^srv\s+load_model:\s+(.+)$`)
 
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
 //
@@ -2906,11 +2955,13 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
-var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+// DSV4 state and LoRA are separate live allocations; the projector estimate
+// already includes CLIP compute buffers.
+var bufferSizeRegex = regexp.MustCompile(`^(llama_[A-Za-z0-9_]+|llm_load_tensors|load_tensors|sched_reserve|alloc_compute_meta|reserve_compute_meta):\s+(\S+)\s+(model|KV|compute|output|RS|LoRA|DSV4 \S+ state)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
 var (
-	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
-	fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+	offloadedLayersRegex      = regexp.MustCompile(`^(?:llm_)?load_tensors: offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
+	fitOverflowingLayersRegex = regexp.MustCompile(`^common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
 )
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
@@ -2945,56 +2996,208 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			w.runner.noteLoadActivity(time.Now())
 		}
 
-		func() {
-			w.runner.memoryMu.Lock()
-			defer w.runner.memoryMu.Unlock()
-
-			if match := deviceFreeRegex.FindSubmatch(b); match != nil {
-				devName := string(match[1])
-				if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
-					w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
-				}
-			}
-			for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
-				loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
-				total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
-				if loadedErr == nil && totalErr == nil {
-					w.runner.gpuLayers = loaded
-					w.runner.totalLayers = total
-				}
-			}
-			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
-				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
-				if err == nil && overflowing > 0 {
-					w.runner.gpuLayerOverflow += int(overflowing)
-				}
-			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
-				backendName := string(match[2])
-				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
-					if w.buffers == nil {
-						w.buffers = make(map[memoryBufferKey]memoryBuffer)
-					}
-					w.buffers[memoryBufferKey{
-						component: string(match[1]),
-						backend:   backendName,
-						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
-					w.updateRunnerMemoryLocked()
-				}
-			}
-		}()
+		w.runner.memoryMu.Lock()
+		w.parseChunkLocked(b)
+		w.runner.memoryMu.Unlock()
 	}
 	return w.inner.Write(b)
 }
 
+// parseChunkLocked keeps incomplete lines across writes. os/exec forwards
+// arbitrary chunks, including ones that split model attribution markers.
+func (w *memoryParsingWriter) parseChunkLocked(b []byte) {
+	for len(b) > 0 {
+		i := bytes.IndexByte(b, '\n')
+		if i < 0 {
+			if !w.discardLine && len(w.line)+len(b) <= maxMemoryLogLine {
+				w.line = append(w.line, b...)
+			} else {
+				w.line = w.line[:0]
+				w.discardLine = true
+			}
+			return
+		}
+		if !w.discardLine && len(w.line)+i <= maxMemoryLogLine {
+			w.line = append(w.line, b[:i]...)
+			w.parseLineLocked(w.line)
+		}
+		w.line = w.line[:0]
+		w.discardLine = false
+		b = b[i+1:]
+	}
+}
+
+// resetLocked discards allocations from a failed subprocess before an offload
+// retry starts another subprocess with the same writer.
+func (w *memoryParsingWriter) resetLocked() {
+	w.buffers = nil
+	w.line = w.line[:0]
+	w.discardLine = false
+	w.currentModel = ""
+	w.projectorDevice = ""
+}
+
+// discardDraftLocked removes allocations released when speculative setup fails.
+// Caller holds runner.memoryMu.
+func (w *memoryParsingWriter) discardDraftLocked() {
+	for key := range w.buffers {
+		if key.model == memoryModelDraft {
+			delete(w.buffers, key)
+		}
+	}
+	w.currentModel = memoryModelTarget
+	w.updateRunnerMemoryLocked()
+}
+
+// parseLineLocked parses a single llama-server log line for memory tracking.
+// Caller holds runner.memoryMu.
+func (w *memoryParsingWriter) parseLineLocked(line []byte) {
+	if event := serverLoadModelEventRegex.FindSubmatch(line); event != nil {
+		if bytes.HasPrefix(event[1], []byte("failed to initialize speculative decoding context")) ||
+			bytes.HasPrefix(event[1], []byte("speculative decoding not supported by this context")) {
+			w.discardDraftLocked()
+			return
+		}
+		if bytes.HasPrefix(event[1], []byte("speculative decoding context initialized")) {
+			w.currentModel = memoryModelTarget
+			return
+		}
+	}
+	if bytes.HasPrefix(line, []byte("common_speculative_init_result: loading draft model")) ||
+		bytes.HasPrefix(line, []byte("common_speculative_init_result: creating MTP draft context")) {
+		w.currentModel = memoryModelDraft
+		return
+	}
+	if bytes.HasPrefix(line, []byte("sched_reserve: reserving")) {
+		for key := range w.buffers {
+			if key.model == w.model() && key.component == "sched_reserve" {
+				delete(w.buffers, key)
+			}
+		}
+		w.updateRunnerMemoryLocked()
+		return
+	}
+	if bytes.HasPrefix(line, []byte("load_tensors: loading model tensors")) {
+		// A new tensor-load pass supersedes the current model's previous
+		// buffers (e.g. a fit probe); other models' buffers are kept.
+		for key := range w.buffers {
+			if key.model == w.model() {
+				delete(w.buffers, key)
+			}
+		}
+		w.updateRunnerMemoryLocked()
+		return
+	}
+
+	if match := deviceFreeRegex.FindSubmatch(line); match != nil {
+		devName := string(match[1])
+		if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
+			if _, ok := w.runner.systemFreeAtLoad[devName]; !ok {
+				w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
+			}
+		}
+	}
+	if match := mmprojBackendRegex.FindSubmatch(line); match != nil {
+		if backend := string(match[1]); isGPUBuffer(backend) {
+			w.projectorDevice = deviceName(backend)
+			w.updateRunnerMemoryLocked()
+		}
+	}
+	if match := offloadedLayersRegex.FindSubmatch(line); match != nil {
+		// Only the target's counts drive offload status; the draft
+		// prints its own (e.g. "offloaded 6/6").
+		if w.model() == memoryModelTarget {
+			loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
+			total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
+			if loadedErr == nil && totalErr == nil {
+				w.runner.gpuLayers = loaded
+				w.runner.totalLayers = total
+			}
+		}
+	}
+	if match := fitOverflowingLayersRegex.FindSubmatch(line); match != nil {
+		overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
+		if w.model() == memoryModelTarget && err == nil && overflowing > 0 {
+			w.runner.gpuLayerOverflow += int(overflowing)
+		}
+	}
+	if match := mmprojMemoryRegex.FindSubmatch(line); match != nil {
+		if mib, err := strconv.ParseFloat(string(match[1]), 64); err == nil {
+			w.setBufferLocked(memoryBufferKey{
+				model:     memoryModelProjector,
+				component: "mtmd",
+				backend:   memoryBackendProjector,
+				kind:      "model",
+			}, uint64(mib*1024*1024), false)
+		}
+	}
+	if match := bufferSizeRegex.FindSubmatch(line); match != nil {
+		if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+			component := string(match[1])
+			if component == "reserve_compute_meta" {
+				// The mtmd estimate already includes its compute buffers.
+				if _, ok := w.buffers[memoryBufferKey{model: memoryModelProjector, component: "mtmd", backend: memoryBackendProjector, kind: "model"}]; ok {
+					return
+				}
+			}
+			model := w.model()
+			if component == "reserve_compute_meta" {
+				model = memoryModelProjector
+			}
+			// Model and KV lines can name several live same-key buffers.
+			// Each scheduler reservation replaces the preceding reservation.
+			accumulate := component != "sched_reserve"
+			w.setBufferLocked(memoryBufferKey{
+				model:     model,
+				component: component,
+				backend:   string(match[2]),
+				kind:      string(match[3]),
+			}, uint64(mib*1024*1024), accumulate)
+		}
+	}
+}
+
+// model returns the model currently being loaded in the subprocess stream.
+func (w *memoryParsingWriter) model() string {
+	if w.currentModel == "" {
+		return memoryModelTarget
+	}
+	return w.currentModel
+}
+
+func (w *memoryParsingWriter) setBufferLocked(key memoryBufferKey, bytes uint64, accumulate bool) {
+	if w.buffers == nil {
+		w.buffers = make(map[memoryBufferKey]memoryBuffer)
+	}
+	if accumulate {
+		bytes += w.buffers[key].bytes
+	}
+	w.buffers[key] = memoryBuffer{bytes: bytes}
+	w.updateRunnerMemoryLocked()
+}
+
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu, modelFileBacked, cpuMappedModel uint64
-	byDevice := make(map[string]uint64)
+	var total, gpu, modelFileBacked, cpuMappedModel, projector, cpuDraft, cpuTargetExtras uint64
+	byDevice := w.runner.vramByDevice
+	if byDevice == nil {
+		byDevice = make(map[string]uint64)
+	}
+	clear(byDevice)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
-		if key.kind == "model" {
+		if key.backend == memoryBackendProjector {
+			projector += buffer.bytes
+			continue
+		}
+		if key.model == memoryModelDraft && !isGPUBuffer(key.backend) && !strings.HasSuffix(key.backend, "_Host") {
+			cpuDraft += buffer.bytes
+		}
+		if key.model == memoryModelTarget && !isGPUBuffer(key.backend) && !strings.HasSuffix(key.backend, "_Host") &&
+			(key.kind == "LoRA" || strings.HasPrefix(key.kind, "DSV4 ")) {
+			cpuTargetExtras += buffer.bytes
+		}
+		if key.kind == "model" && key.model == memoryModelTarget {
 			onGPU := isGPUBuffer(key.backend)
 			mmapBacked := strings.HasSuffix(key.backend, "_Mapped")
 			// Device copies and mmap views mirror the on-disk weights, so their
@@ -3014,10 +3217,27 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 		}
 	}
 
+	if projector > 0 && w.projectorDevice != "" {
+		// The estimate includes projector weights and compute memory.
+		// Attribute it only after the loader reports a GPU backend; CPU
+		// projector offload must not inflate GPU usage. If modalities use
+		// different backends, charge the full estimate to the observed GPU
+		// as a conservative bound: the estimate has no per-device breakdown.
+		gpu += projector
+		byDevice[w.projectorDevice] += projector
+	}
+
 	w.runner.memTotal = total
 	w.runner.memGPU = gpu
 	w.runner.memModelFileBacked = modelFileBacked
 	w.runner.memCPUMappedModel = cpuMappedModel
+	w.runner.memCPUDraft = cpuDraft
+	w.runner.memCPUTargetExtras = cpuTargetExtras
+	if w.projectorDevice == "" {
+		w.runner.memCPUProjector = projector
+	} else {
+		w.runner.memCPUProjector = 0
+	}
 	w.runner.vramByDevice = byDevice
 }
 
