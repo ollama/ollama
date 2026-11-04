@@ -253,6 +253,7 @@ console.log(response.message.content);
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md) - AI pipeline framework
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama) - Google AI framework
 - [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp) - C++ SDK
+- [Ollama-C for C](https://github.com/Topogamer0/Ollama-C) - C99 port of ollama-python, with streaming, tools and Windows, macOS and Linux support
 - [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) - Julia LLM toolkit ([example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama))
 - [Ollama for R - rollama](https://github.com/JBGruber/rollama) - R SDK
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama) - AI gateway
