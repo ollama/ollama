@@ -1,0 +1,99 @@
+---
+title: Gradum
+---
+
+[Gradum](https://plugins.jetbrains.com/plugin/34788-gradum) is an open-source AI coding agent for IntelliJ IDEA built around Ollama from day one: it was the first provider Gradum ever supported and remains the primary target. Skills are plain Kotlin source files, every destructive command waits for approval, and the agent talks to the native Ollama API with full tool-calling support, entirely on your machine.
+
+Ollama is not an adapter for Gradum. It is the native tongue.
+
+## Get started
+
+1. Install Gradum from the JetBrains Marketplace:
+
+```shell
+Settings > Plugins > Marketplace > search "Gradum" > Install in your IDE
+```
+
+Direct link: [plugins.jetbrains.com/plugin/34788-gradum](https://plugins.jetbrains.com/plugin/34788-gradum)
+
+2. Pull a tool-capable model:
+
+```shell
+ollama pull qwen3.5:9b
+```
+
+3. Open the Gradum tool window and pick a model. Gradum discovers your installed models automatically; `http://localhost:11434` is the default and usually needs no change.
+
+## Capabilities
+
+<div className="capability-list capability-list-full">
+  <div className="capability-list-grid">
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="comment" /></div>
+      <div>
+        <div className="capability-list-heading">Chat</div>
+        <div className="capability-list-copy">Ask questions with project context</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="terminal" /></div>
+      <div>
+        <div className="capability-list-heading">Command line</div>
+        <div className="capability-list-copy">Run commands with policy-based approval</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="code" /></div>
+      <div>
+        <div className="capability-list-heading">File edits</div>
+        <div className="capability-list-copy">Edit files with per-session git snapshots and one-click revert</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-text" /></div>
+      <div>
+        <div className="capability-list-heading">Native tool calling</div>
+        <div className="capability-list-copy">Full Ollama <code>tool_calls</code> support, including models without native function calling</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="shield" /></div>
+      <div>
+        <div className="capability-list-heading">Offline by default</div>
+        <div className="capability-list-copy">Runs entirely on your machine; cloud providers are opt-in, never required</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="users" /></div>
+      <div>
+        <div className="capability-list-heading">ACP + MCP</div>
+        <div className="capability-list-copy">Attach from any ACP-capable IDE and connect MCP servers</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+## Models
+
+Choose a model with enough context for your repository.
+
+<CardGroup cols={2}>
+  <Card title="Local models" icon="hard-drive" href="https://ollama.com/search?c=tools">
+    Tool-capable models run fully offline. Gradum scales every request to your model's context window.
+  </Card>
+
+  <Card title="Cloud models" icon="cloud" href="https://ollama.com/search?c=cloud">
+    Ollama cloud models work through the same provider.
+  </Card>
+</CardGroup>
+
+<Note>Gradum reads the model list from Ollama's `/api/tags` endpoint and passes Ollama options such as `num_ctx`, `num_predict`, and `keep_alive` through on every request. Source code: [github.com/lg841226/Gradum](https://github.com/lg841226/Gradum).</Note>
+
+## Remote Ollama
+
+Point Gradum at any Ollama host by setting the endpoint to `http://<host>:11434`. No API key, no extra setup - a GPU box on your LAN behaves exactly like localhost.
