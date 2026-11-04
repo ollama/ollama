@@ -1,0 +1,64 @@
+---
+title: OpenAmer
+---
+
+OpenAmer is a personal AI agent that learns across sessions. Skills, memories, and workflows persist between conversations, so the agent gets more useful over time instead of starting from scratch.
+
+## Quick start
+
+```bash
+ollama launch openamer
+```
+
+Ollama handles everything automatically:
+
+1. **Install** — If OpenAmer isn't installed, Ollama prompts to install it via pip
+2. **Model** — Pick a model from the selector (local or cloud)
+3. **Provider** — Ollama configures OpenAmer to use your Ollama host as the model provider and writes the settings under `~/.ollama/launch/openamer/`
+4. **Launch** — Runs `openamer` with your selected model
+
+Your normal OpenAmer config, memories, skills, and credentials remain available and untouched.
+
+## Configure without launching
+
+To change the model without starting the agent:
+
+```bash
+ollama launch openamer --config
+```
+
+To use a specific model directly:
+
+```bash
+ollama launch openamer --model qwen3.5
+```
+
+## Recommended models
+
+**Cloud models**:
+
+- `qwen3.5:cloud` — Reasoning, coding, and agentic tool use with vision
+- `glm-5.1:cloud` — Reasoning and code generation
+- `kimi-k2.5:cloud` — Multimodal reasoning with long context
+
+**Local models:**
+
+- `gemma4` — Reasoning and code generation locally (~16 GB VRAM)
+- `qwen3.5` — Reasoning, coding, and visual understanding locally (~11 GB VRAM)
+- `llama3.2` — Lightweight everyday assistant
+
+More models at [ollama.com/search](https://ollama.com/search?c=cloud).
+
+## Installing OpenAmer manually
+
+```bash
+pip install --user openamer-agent
+```
+
+Or with the installer script (Linux/macOS):
+
+```bash
+curl -fsSL https://openamer.dev/scripts/install.sh | bash
+```
+
+OpenAmer source and documentation: [github.com/openamer/openamer](https://github.com/openamer/openamer)
