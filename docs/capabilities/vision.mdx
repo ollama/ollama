@@ -7,7 +7,7 @@ Vision models accept images alongside text so the model can describe, classify, 
 ## Quick start
 
 ```shell
-ollama run gemma3 ./image.png whats in this image?
+ollama run gemma4 ./image.png what is in this image?
 ```
 
 
@@ -28,7 +28,7 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
     curl -X POST http://localhost:11434/api/chat \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "gemma3",
+        "model": "gemma4",
         "messages": [{
         "role": "user",
         "content": "What is in this image?",
@@ -52,7 +52,7 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
     # img = Path(path).read_bytes()
 
     response = chat(
-      model='gemma3',
+      model='gemma4',
       messages=[
         {
           'role': 'user',
@@ -71,7 +71,7 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
 
     const imagePath = '/absolute/path/to/image.jpg'
     const response = await ollama.chat({
-      model: 'gemma3',
+      model: 'gemma4',
       messages: [
         { role: 'user', content: 'What is in this image?', images: [imagePath] }
       ],
@@ -82,3 +82,43 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
     ```
   </Tab>
 </Tabs>
+
+## Video input
+
+Local multimodal GGUF models with video support, such as `qwen3-vl` and
+`qwen2.5vl`, accept base64-encoded files in `videos`. The runner samples frames
+and preserves their temporal order. Start with a short clip and allow enough
+context for the sampled frames. MLX models do not support this input.
+
+The bundled decoder supports H.264, HEVC, and VP9 in MP4/MOV, WebM/Matroska,
+and AVI containers. Container extensions alone do not determine the codec.
+No system FFmpeg installation is required. In the desktop app, attach a video
+file as you would an image.
+
+```python
+import base64
+import json
+import urllib.request
+
+with open("clip.mp4", "rb") as clip:
+    video = base64.b64encode(clip.read()).decode("ascii")
+
+request = urllib.request.Request(
+    "http://localhost:11434/api/chat",
+    data=json.dumps({
+        "model": "qwen3-vl:2b",
+        "messages": [{"role": "user", "content": "Describe what changes in this clip.", "videos": [video]}],
+        "stream": False,
+    }).encode(),
+    headers={"Content-Type": "application/json"},
+)
+with urllib.request.urlopen(request) as response:
+    print(json.load(response)["message"]["content"])
+```
+
+`/api/generate` accepts the same `videos` array alongside `prompt`.
+`/v1/chat/completions` accepts a content part with
+`{"type": "video_url", "video_url": {"url": "data:video/mp4;base64,..."}}`.
+Video URLs must be inline base64 data URLs; download remote videos before sending
+them to Ollama. Images and videos can be combined in the same message; images
+precede videos when both arrays are supplied.

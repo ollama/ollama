@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/auth"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Error types matching Anthropic API
@@ -78,6 +79,11 @@ type MessagesRequest struct {
 	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
 	Metadata      *Metadata       `json:"metadata,omitempty"`
+	OutputConfig  *OutputConfig   `json:"output_config,omitempty"`
+}
+
+type OutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 // MessageParam represents a message in the request
@@ -161,7 +167,7 @@ type WebSearchToolResultError struct {
 
 // ImageSource represents the source of an image
 type ImageSource struct {
-	Type      string `json:"type"` // "base64" or "url"
+	Type      string `json:"type"` // "base64"
 	MediaType string `json:"media_type,omitempty"`
 	Data      string `json:"data,omitempty"`
 	URL       string `json:"url,omitempty"`
@@ -212,8 +218,31 @@ type MessagesResponse struct {
 
 // Usage contains token usage information
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
+}
+
+// UsageFromMetrics separates total prompt tokens into uncached and cache-read counts.
+func UsageFromMetrics(metrics api.Metrics) Usage {
+	total := max(0, metrics.PromptEvalCount)
+	var cached *int
+	if metrics.PromptEvalCachedCount != nil {
+		count := min(max(0, *metrics.PromptEvalCachedCount), total)
+		cached = &count
+	}
+	return Usage{
+		InputTokens:          total - intValue(cached),
+		CacheReadInputTokens: cached,
+		OutputTokens:         metrics.EvalCount,
+	}
+}
+
+func intValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // Streaming event types
@@ -268,8 +297,9 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
 }
 
 // MessageStopEvent signals the end of the message
@@ -288,8 +318,9 @@ type StreamErrorEvent struct {
 	Error Error  `json:"error"`
 }
 
-// FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest
-func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
+// FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	logutil.Trace("anthropic: converting request", "req", TraceMessagesRequest(r))
 
 	var messages []api.Message
@@ -376,6 +407,26 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
 	}
+	if r.Thinking != nil && r.Thinking.Type == "disabled" {
+		think = &api.ThinkValue{Value: false}
+	}
+	if think == nil && r.OutputConfig != nil {
+		effort := r.OutputConfig.Effort
+		if len(thinking) > 0 && thinking[0].Valid() {
+			if effort != "" {
+				think = &api.ThinkValue{Value: effort}
+			}
+		} else {
+			effort = strings.ToLower(strings.TrimSpace(effort))
+			if effort == "xhigh" {
+				effort = "high"
+			}
+			legacyThink := &api.ThinkValue{Value: effort}
+			if api.ValidateLegacyThinking(legacyThink) == nil {
+				think = legacyThink
+			}
+		}
+	}
 
 	stream := r.Stream
 	convertedRequest := &api.ChatRequest{
@@ -425,17 +476,12 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				return nil, errors.New("invalid image source")
 			}
 
-			if block.Source.Type == "base64" {
-				decoded, err := base64.StdEncoding.DecodeString(block.Source.Data)
-				if err != nil {
-					logutil.Trace("anthropic: invalid base64 image data", "role", role, "error", err)
-					return nil, fmt.Errorf("invalid base64 image data: %w", err)
-				}
-				images = append(images, decoded)
-			} else {
-				logutil.Trace("anthropic: unsupported image source type", "role", role, "source_type", block.Source.Type)
-				return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", block.Source.Type)
+			decoded, err := resolveImageSource(block.Source)
+			if err != nil {
+				logutil.Trace("anthropic: unsupported image source", "role", role, "source_type", block.Source.Type, "error", err)
+				return nil, err
 			}
+			images = append(images, decoded)
 
 		case "tool_use":
 			toolUseBlocks++
@@ -457,26 +503,16 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 		case "tool_result":
 			toolResultBlocks++
-			var resultContent string
-
-			switch c := block.Content.(type) {
-			case string:
-				resultContent = c
-			case []any:
-				for _, cb := range c {
-					if cbMap, ok := cb.(map[string]any); ok {
-						if cbMap["type"] == "text" {
-							if text, ok := cbMap["text"].(string); ok {
-								resultContent += text
-							}
-						}
-					}
-				}
+			resultContent, resultImages, err := convertToolResultContent(block.Content)
+			if err != nil {
+				logutil.Trace("anthropic: invalid tool_result content", "role", role, "error", err)
+				return nil, err
 			}
 
 			toolResults = append(toolResults, api.Message{
 				Role:       "tool",
 				Content:    resultContent,
+				Images:     resultImages,
 				ToolCallID: block.ToolUseID,
 			})
 
@@ -508,6 +544,10 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		}
 	}
 
+	if role == "user" && len(toolResults) > 0 {
+		messages = append(messages, toolResults...)
+	}
+
 	if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 || thinking != "" {
 		m := api.Message{
 			Role:      role,
@@ -519,8 +559,10 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		messages = append(messages, m)
 	}
 
-	// Add tool results as separate messages
-	messages = append(messages, toolResults...)
+	// Add tool results as separate messages.
+	if role != "user" || len(toolResults) == 0 {
+		messages = append(messages, toolResults...)
+	}
 	logutil.Trace("anthropic: converted block message",
 		"role", role,
 		"blocks", len(msg.Content),
@@ -675,10 +717,7 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		Model:      r.Model,
 		Content:    content,
 		StopReason: stopReason,
-		Usage: Usage{
-			InputTokens:  r.Metrics.PromptEvalCount,
-			OutputTokens: r.Metrics.EvalCount,
-		},
+		Usage:      UsageFromMetrics(r.Metrics),
 	}
 }
 
@@ -708,6 +747,7 @@ type StreamConverter struct {
 	firstWrite           bool
 	contentIndex         int
 	inputTokens          int
+	cacheReadTokens      *int
 	outputTokens         int
 	estimatedInputTokens int // Estimated tokens from request (used when actual metrics are 0)
 	thinkingStarted      bool
@@ -739,8 +779,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	if c.firstWrite {
 		c.firstWrite = false
 		// Use actual metrics if available, otherwise use estimate
-		c.inputTokens = r.Metrics.PromptEvalCount
-		if c.inputTokens == 0 && c.estimatedInputTokens > 0 {
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		if c.inputTokens == 0 && intValue(c.cacheReadTokens) == 0 && c.estimatedInputTokens > 0 {
 			c.inputTokens = c.estimatedInputTokens
 		}
 
@@ -755,8 +797,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Model:   c.Model,
 					Content: []ContentBlock{},
 					Usage: Usage{
-						InputTokens:  c.inputTokens,
-						OutputTokens: 0,
+						InputTokens:          c.inputTokens,
+						CacheReadInputTokens: c.cacheReadTokens,
+						OutputTokens:         0,
 					},
 				},
 			},
@@ -764,6 +807,18 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	}
 
 	if r.Message.Thinking != "" && !c.thinkingDone {
+		if c.textStarted {
+			events = append(events, StreamEvent{
+				Event: "content_block_stop",
+				Data: ContentBlockStopEvent{
+					Type:  "content_block_stop",
+					Index: c.contentIndex,
+				},
+			})
+			c.contentIndex++
+			c.textStarted = false
+		}
+
 		if !c.thinkingStarted {
 			c.thinkingStarted = true
 			events = append(events, StreamEvent{
@@ -925,8 +980,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			})
 		}
 
-		c.inputTokens = r.Metrics.PromptEvalCount
-		c.outputTokens = r.Metrics.EvalCount
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		c.outputTokens = usage.OutputTokens
 		stopReason := mapStopReason(r.DoneReason, len(c.toolCallsSent) > 0)
 
 		events = append(events, StreamEvent{
@@ -937,8 +994,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					StopReason: stopReason,
 				},
 				Usage: DeltaUsage{
-					InputTokens:  c.inputTokens,
-					OutputTokens: c.outputTokens,
+					InputTokens:          c.inputTokens,
+					CacheReadInputTokens: c.cacheReadTokens,
+					OutputTokens:         c.outputTokens,
 				},
 			},
 		})
@@ -969,6 +1027,71 @@ func GenerateMessageID() string {
 	return generateID("msg")
 }
 
+func resolveImageSource(source *ImageSource) (api.ImageData, error) {
+	if source.Type != "base64" {
+		return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", source.Type)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(source.Data)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64 image data: %w", err)
+	}
+
+	return decoded, nil
+}
+
+func convertToolResultContent(content any) (string, []api.ImageData, error) {
+	switch c := content.(type) {
+	case nil:
+		return "", nil, nil
+	case string:
+		return c, nil, nil
+	case []any:
+		var text strings.Builder
+		var images []api.ImageData
+
+		for _, cb := range c {
+			cbMap, ok := cb.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			switch cbMap["type"] {
+			case "text":
+				if t, ok := cbMap["text"].(string); ok {
+					text.WriteString(t)
+				}
+			case "image":
+				rawSource, ok := cbMap["source"].(map[string]any)
+				if !ok {
+					return "", nil, errors.New("invalid tool_result image source")
+				}
+
+				var source ImageSource
+				if rawType, ok := rawSource["type"].(string); ok {
+					source.Type = rawType
+				}
+				if rawMediaType, ok := rawSource["media_type"].(string); ok {
+					source.MediaType = rawMediaType
+				}
+				if rawData, ok := rawSource["data"].(string); ok {
+					source.Data = rawData
+				}
+
+				img, err := resolveImageSource(&source)
+				if err != nil {
+					return "", nil, err
+				}
+				images = append(images, img)
+			}
+		}
+
+		return text.String(), images, nil
+	default:
+		return "", nil, nil
+	}
+}
+
 // ptr returns a pointer to the given string value
 func ptr(s string) *string {
 	return &s
@@ -985,7 +1108,7 @@ type CountTokensRequest struct {
 
 // EstimateInputTokens estimates input tokens from a MessagesRequest (reuses CountTokensRequest logic)
 func EstimateInputTokens(req MessagesRequest) int {
-	return estimateTokens(CountTokensRequest{
+	return EstimateCountTokens(CountTokensRequest{
 		Model:    req.Model,
 		Messages: req.Messages,
 		System:   req.System,
@@ -999,10 +1122,10 @@ type CountTokensResponse struct {
 	InputTokens int `json:"input_tokens"`
 }
 
-// estimateTokens returns a rough estimate of tokens (len/4).
+// EstimateCountTokens returns a rough estimate of tokens (len/4).
 // TODO: Replace with actual tokenization via Tokenize API for accuracy.
 // Current len/4 heuristic is a rough approximation (~4 chars/token average).
-func estimateTokens(req CountTokensRequest) int {
+func EstimateCountTokens(req CountTokensRequest) int {
 	var totalLen int
 
 	// Count system prompt

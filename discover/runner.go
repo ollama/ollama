@@ -4,9 +4,7 @@ package discover
 
 import (
 	"context"
-	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -27,9 +25,13 @@ var (
 	deviceMu     sync.Mutex
 	devices      []ml.DeviceInfo
 	libDirs      map[string]struct{}
-	exe          string
 	bootstrapped bool
 )
+
+var defaultIntegratedROCmGFXTargets = map[string]struct{}{
+	// AMD Radeon 8060S / Ryzen AI Max+ 395.
+	"gfx1151": {},
+}
 
 func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
 	deviceMu.Lock()
@@ -43,15 +45,6 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 	if !bootstrapped {
 		msg = "GPU bootstrap discovery took"
 		libDirs = make(map[string]struct{})
-		var err error
-		exe, err = os.Executable()
-		if err != nil {
-			slog.Error("unable to lookup executable path", "error", err)
-			return nil
-		}
-		if eval, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = eval
-		}
 		files, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "*", "*ggml-*"))
 		if err != nil {
 			slog.Debug("unable to lookup runner library directories", "error", err)
@@ -66,12 +59,22 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 		slog.Info("discovering available GPUs...")
 		detectIncompatibleLibraries()
+		detectOldAMDDriverWindows()
 
 		// Warn if any user-overrides are set which could lead to incorrect GPU discovery
 		overrideWarnings()
 
 		requested := envconfig.LLMLibrary()
 		jetpack := cudaJetpack()
+
+		// If the detected JetPack runner isn't installed, clear the override so
+		// normal discovery can select a standard CUDA build (e.g. cuda_v13,
+		// which supports Orin on JetPack 7).
+		if jetpack != "" {
+			if _, ok := libDirs[filepath.Join(ml.LibOllamaPath, "cuda_"+jetpack)]; !ok {
+				jetpack = ""
+			}
+		}
 
 		// For our initial discovery pass, we gather all the known GPUs through
 		// all the libraries that were detected. This pass may include GPUs that
@@ -102,8 +105,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				} else if jetpack == "" && strings.Contains(filepath.Base(dir), "cuda_jetpack") {
 					slog.Debug("jetpack not detected (set JETSON_JETPACK or OLLAMA_LLM_LIBRARY to override), skipping", "libDir", dir)
 					continue
-				} else if !envconfig.EnableVulkan() && strings.Contains(filepath.Base(dir), "vulkan") {
-					slog.Info("experimental Vulkan support disabled.  To enable, set OLLAMA_VULKAN=1")
+				} else if !envconfig.EnableVulkan(true) && strings.Contains(filepath.Base(dir), "vulkan") {
 					continue
 				}
 				dirs = []string{ml.LibOllamaPath, dir}
@@ -112,11 +114,16 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			}
 
 			ctx1stPass, cancel := context.WithTimeout(ctx, bootstrapTimeout)
-			defer cancel()
-
 			// For this pass, we retain duplicates in case any are incompatible with some libraries
-			devices = append(devices, bootstrapDevices(ctx1stPass, dirs, nil)...)
+			discovered := bootstrapDevicesWithMetalRetry(ctx1stPass, ctx, bootstrapTimeout, dirs, nil)
+			if filepath.Base(dirs[len(dirs)-1]) == "cuda_v12" {
+				discovered = filterOldCUDADriver(ctx, discovered)
+			}
+			devices = append(devices, discovered...)
+			cancel()
 		}
+
+		devices = filterIntegratedGPUs(devices)
 
 		// In the second pass, we more deeply initialize the GPUs to weed out devices that
 		// aren't supported by a given library.  We run this phase in parallel to speed up discovery.
@@ -147,9 +154,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				extraEnvs := ml.GetVisibleDevicesEnv(devices[i:i+1], true)
+				extraEnvs := ml.GetDevicesEnv(devices[i : i+1])
 				devices[i].AddInitValidation(extraEnvs)
-				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
+				if len(bootstrapDevicesWithMetalRetry(ctx2ndPass, ctx, 30*time.Second, devices[i].LibraryPath, extraEnvs)) == 0 {
 					slog.Debug("filtering device which didn't fully initialize",
 						"id", devices[i].ID,
 						"libdir", devices[i].LibraryPath[len(devices[i].LibraryPath)-1],
@@ -194,6 +201,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 					devices[i].FilterID = devices[i].ID
 					devices[i].ID = strconv.Itoa(postFilteredID[devices[i].Library])
 				}
+				remapFilterIDForUserVisibleDevices(&devices[i])
 				postFilteredID[devices[i].Library]++
 			}
 		}
@@ -329,18 +337,18 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 			// Bootstrapping may take longer in some cases (AMD windows), but we
 			// would rather use stale free data to get the model running sooner
-			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 			defer cancel()
 
-			// Apply any dev filters to avoid re-discovering unsupported devices, and get IDs correct
-			// We avoid CUDA filters here to keep ROCm from failing to discover GPUs in a mixed environment
-			devFilter := ml.GetVisibleDevicesEnv(devices, false)
+			// Apply any device filters to avoid re-discovering unsupported devices
+			// and keep remapped IDs aligned.
+			devFilter := ml.GetDevicesEnv(devices)
 
 			for dir := range libDirs {
-				updatedDevices := bootstrapDevices(ctx, []string{ml.LibOllamaPath, dir}, devFilter)
+				updatedDevices := bootstrapDevicesWithMetalRetry(rctx, ctx, 3*time.Second, []string{ml.LibOllamaPath, dir}, devFilter)
 				for _, u := range updatedDevices {
 					for i := range devices {
-						if u.DeviceID == devices[i].DeviceID && u.PCIID == devices[i].PCIID {
+						if sameRefreshDevice(u, devices[i]) {
 							updated[i] = true
 							devices[i].FreeMemory = u.FreeMemory
 							break
@@ -359,6 +367,72 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 	}
 
 	return append([]ml.DeviceInfo{}, devices...)
+}
+
+func sameRefreshDevice(updated, existing ml.DeviceInfo) bool {
+	if updated.Library != existing.Library {
+		return false
+	}
+	if updated.PCIID != "" && existing.PCIID != "" {
+		return strings.EqualFold(updated.PCIID, existing.PCIID)
+	}
+	return updated.DeviceID == existing.DeviceID
+}
+
+func filterIntegratedGPUs(devices []ml.DeviceInfo) []ml.DeviceInfo {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return devices
+	}
+
+	allow, explicit := integratedGPUAdmission()
+	filtered := devices[:0]
+	for _, device := range devices {
+		if !device.Integrated {
+			filtered = append(filtered, device)
+			continue
+		}
+
+		if explicit {
+			if allow {
+				filtered = append(filtered, device)
+				continue
+			}
+		} else if integratedGPUAllowedByDefault(device) {
+			filtered = append(filtered, device)
+			continue
+		}
+
+		slog.Info("dropping integrated GPU; to enable, set OLLAMA_IGPU_ENABLE=1",
+			"id", device.ID,
+			"library", device.Library,
+			"compute", device.Compute(),
+			"name", device.Name,
+			"description", device.Description,
+			"pci_id", device.PCIID)
+	}
+
+	return filtered
+}
+
+func integratedGPUAdmission() (allow, explicit bool) {
+	enabledWithTrueDefault := envconfig.EnableIntegratedGPU(true)
+	enabledWithFalseDefault := envconfig.EnableIntegratedGPU(false)
+	if enabledWithTrueDefault == enabledWithFalseDefault {
+		return enabledWithTrueDefault, true
+	}
+	return false, false
+}
+
+func integratedGPUAllowedByDefault(device ml.DeviceInfo) bool {
+	switch device.Library {
+	case "CUDA":
+		return true
+	case "ROCm":
+		_, ok := defaultIntegratedROCmGFXTargets[device.GFXTarget]
+		return ok
+	default:
+		return false
+	}
 }
 
 func filterOverlapByLibrary(supported map[string]map[string]map[string]int, needsDelete []bool) {
@@ -411,62 +485,225 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 	}
 }
 
-type bootstrapRunner struct {
-	port int
-	cmd  *exec.Cmd
-}
+func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Context, timeout time.Duration, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
+	extraEnvs = normalizeDiscoveryEnv(ollamaLibDirs, extraEnvs)
 
-func (r *bootstrapRunner) GetPort() int {
-	return r.port
-}
-
-func (r *bootstrapRunner) HasExited() bool {
-	if r.cmd != nil && r.cmd.ProcessState != nil {
-		return true
-	}
-	return false
-}
-
-func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
-	var out io.Writer
-	if envconfig.LogLevel() == logutil.LevelTrace {
-		out = os.Stderr
-	}
-	start := time.Now()
-	defer func() {
-		slog.Debug("bootstrap discovery took", "duration", time.Since(start), "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
-	}()
-
-	logutil.Trace("starting runner for device discovery", "libDirs", ollamaLibDirs, "extraEnvs", extraEnvs)
-	cmd, port, err := llm.StartRunner(
-		true, // ollama engine
-		"",   // no model
-		ollamaLibDirs,
-		out,
-		extraEnvs,
-	)
-	if err != nil {
-		slog.Debug("failed to start runner to discovery GPUs", "error", err)
-		return nil
+	runDiscovery := func(ctx context.Context, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
+		start := time.Now()
+		defer func() {
+			slog.Debug("bootstrap discovery took", "duration", time.Since(start), "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs)
+		}()
+		return bootstrapDevicesWithStatusWatchdog(ctx, ollamaLibDirs, extraEnvs)
 	}
 
-	go func() {
-		cmd.Wait() // exit status ignored
-	}()
+	devices, status, err := runDiscovery(firstAttemptCtx, extraEnvs)
+	if err == nil {
+		recordPersistentRunnerEnv(devices, extraEnvs)
+		return devices
+	}
 
-	defer cmd.Process.Kill()
-	devices, err := ml.GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, cmd: cmd})
-	if err != nil {
-		if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() >= 0 {
-			// Expected during bootstrapping while we filter out unsupported AMD GPUs
-			logutil.Trace("runner exited", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "code", cmd.ProcessState.ExitCode())
-		} else {
-			slog.Info("failure during GPU discovery", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", err)
+	if llm.ShouldRetryWithMetalTensorDisabled(err, status) && (extraEnvs == nil || extraEnvs["GGML_METAL_TENSOR_DISABLE"] != "1") {
+		retryEnvs := map[string]string{}
+		for k, v := range extraEnvs {
+			retryEnvs[k] = v
+		}
+		retryEnvs["GGML_METAL_TENSOR_DISABLE"] = "1"
+		slog.Warn("retrying llama-server GPU discovery with Metal tensor API disabled", "error", err, "detail", lastDiscoveryStatusError(status))
+
+		retryCtx, cancel := context.WithTimeout(retryParentCtx, timeout)
+		defer cancel()
+		devices, status, err = runDiscovery(retryCtx, retryEnvs)
+		if err == nil {
+			recordPersistentRunnerEnv(devices, retryEnvs)
+			return devices
 		}
 	}
-	logutil.Trace("runner enumerated devices", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "devices", devices)
 
+	slog.Info("failure during llama-server GPU discovery", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", err, "detail", lastDiscoveryStatusError(status))
 	return devices
+}
+
+func normalizeDiscoveryEnv(ollamaLibDirs []string, extraEnvs map[string]string) map[string]string {
+	return normalizeDiscoveryEnvForGOOS(runtime.GOOS, ollamaLibDirs, extraEnvs)
+}
+
+func normalizeDiscoveryEnvForGOOS(goos string, ollamaLibDirs []string, extraEnvs map[string]string) map[string]string {
+	if goos != "linux" || len(ollamaLibDirs) == 0 || !isROCmLibraryDir(filepath.Base(ollamaLibDirs[len(ollamaLibDirs)-1])) {
+		return extraEnvs
+	}
+
+	if extraEnvs["ROCR_VISIBLE_DEVICES"] != "" || envconfig.RocrVisibleDevices() != "" {
+		return extraEnvs
+	}
+
+	source, tokens := rocmNumericVisibleDeviceSource(extraEnvs)
+	if len(tokens) == 0 {
+		return extraEnvs
+	}
+
+	env := make(map[string]string, len(extraEnvs)+1)
+	for k, v := range extraEnvs {
+		env[k] = v
+	}
+	env["ROCR_VISIBLE_DEVICES"] = strings.Join(tokens, ",")
+	env[source] = visibleDeviceOrdinals(len(tokens))
+	slog.Debug("normalizing AMD visible devices for ROCm discovery", "from_env", source, "ROCR_VISIBLE_DEVICES", env["ROCR_VISIBLE_DEVICES"], "visible_ordinals", env[source])
+	return env
+}
+
+func isROCmLibraryDir(name string) bool {
+	return strings.HasPrefix(name, "rocm")
+}
+
+type bootstrapDevicesResult struct {
+	devices []ml.DeviceInfo
+	status  *llm.StatusWriter
+	err     error
+}
+
+func bootstrapDevicesWithStatusWatchdog(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
+	return runBootstrapDevicesWithStatusWatchdog(ctx, ollamaLibDirs, extraEnvs, llamaServerBootstrapDevicesWithStatus)
+}
+
+func runBootstrapDevicesWithStatusWatchdog(
+	ctx context.Context,
+	ollamaLibDirs []string,
+	extraEnvs map[string]string,
+	discover func(context.Context, []string, map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, error),
+) ([]ml.DeviceInfo, *llm.StatusWriter, error) {
+	resultCh := make(chan bootstrapDevicesResult, 1)
+	go func() {
+		devices, status, err := discover(ctx, ollamaLibDirs, extraEnvs)
+		resultCh <- bootstrapDevicesResult{devices: devices, status: status, err: err}
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result.devices, result.status, result.err
+	case <-ctx.Done():
+		slog.Warn("llama-server GPU discovery watchdog timed out", "OLLAMA_LIBRARY_PATH", ollamaLibDirs, "extra_envs", extraEnvs, "error", ctx.Err())
+		return nil, nil, ctx.Err()
+	}
+}
+
+func remapFilterIDForUserVisibleDevices(device *ml.DeviceInfo) {
+	tokens := visibleDeviceFilterTokens(runtime.GOOS, device.Library)
+	if len(tokens) == 0 {
+		return
+	}
+
+	id := device.FilterID
+	if id == "" {
+		id = device.ID
+	}
+	index, err := strconv.Atoi(id)
+	if err != nil || index < 0 || index >= len(tokens) {
+		return
+	}
+
+	device.FilterID = tokens[index]
+}
+
+func visibleDeviceFilterTokens(goos, library string) []string {
+	switch library {
+	case "CUDA":
+		return splitVisibleDeviceList(envconfig.CudaVisibleDevices())
+	case "ROCm":
+		if goos == "linux" {
+			if tokens := splitVisibleDeviceList(envconfig.RocrVisibleDevices()); len(tokens) > 0 {
+				return tokens
+			}
+			if _, tokens := rocmNumericVisibleDeviceSource(nil); len(tokens) > 0 {
+				return tokens
+			}
+			return nil
+		}
+		for _, value := range []string{envconfig.HipVisibleDevices(), envconfig.GpuDeviceOrdinal(), envconfig.CudaVisibleDevices()} {
+			if tokens := splitNumericVisibleDeviceList(value); len(tokens) > 0 {
+				return tokens
+			}
+		}
+	case "Vulkan":
+		return splitVisibleDeviceList(envconfig.VkVisibleDevices())
+	}
+
+	return nil
+}
+
+func rocmNumericVisibleDeviceSource(extraEnvs map[string]string) (string, []string) {
+	for _, name := range []string{"HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL", "CUDA_VISIBLE_DEVICES"} {
+		value := extraEnvs[name]
+		if value == "" {
+			switch name {
+			case "HIP_VISIBLE_DEVICES":
+				value = envconfig.HipVisibleDevices()
+			case "GPU_DEVICE_ORDINAL":
+				value = envconfig.GpuDeviceOrdinal()
+			case "CUDA_VISIBLE_DEVICES":
+				value = envconfig.CudaVisibleDevices()
+			}
+		}
+		if tokens := splitNumericVisibleDeviceList(value); len(tokens) > 0 {
+			return name, tokens
+		}
+	}
+	return "", nil
+}
+
+func splitVisibleDeviceList(value string) []string {
+	fields := strings.Split(value, ",")
+	tokens := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			tokens = append(tokens, field)
+		}
+	}
+	return tokens
+}
+
+func splitNumericVisibleDeviceList(value string) []string {
+	tokens := splitVisibleDeviceList(value)
+	if len(tokens) == 0 {
+		return nil
+	}
+	for _, token := range tokens {
+		index, err := strconv.Atoi(token)
+		if err != nil || index < 0 {
+			return nil
+		}
+	}
+	return tokens
+}
+
+func visibleDeviceOrdinals(count int) string {
+	ordinals := make([]string, count)
+	for i := range ordinals {
+		ordinals[i] = strconv.Itoa(i)
+	}
+	return strings.Join(ordinals, ",")
+}
+
+func lastDiscoveryStatusError(status *llm.StatusWriter) string {
+	if status == nil {
+		return ""
+	}
+	return status.LastError()
+}
+
+func recordPersistentRunnerEnv(devices []ml.DeviceInfo, extraEnvs map[string]string) {
+	if extraEnvs["GGML_METAL_TENSOR_DISABLE"] != "1" {
+		return
+	}
+	for i := range devices {
+		if devices[i].Library != "Metal" {
+			continue
+		}
+		if devices[i].RunnerEnvOverrides == nil {
+			devices[i].RunnerEnvOverrides = map[string]string{}
+		}
+		devices[i].RunnerEnvOverrides["GGML_METAL_TENSOR_DISABLE"] = "1"
+	}
 }
 
 func overrideWarnings() {

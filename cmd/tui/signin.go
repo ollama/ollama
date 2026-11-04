@@ -40,7 +40,7 @@ func (m signInModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wasSet := m.width > 0
 		m.width = msg.Width
 		if wasSet {
-			return m, tea.EnterAltScreen
+			return m, tea.ClearScreen
 		}
 		return m, nil
 
@@ -115,7 +115,9 @@ func checkSignIn() tea.Msg {
 	if err != nil {
 		return signInCheckMsg{signedIn: false}
 	}
-	user, err := client.Whoami(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	user, err := client.Whoami(ctx)
 	if err == nil && user != nil && user.Name != "" {
 		return signInCheckMsg{signedIn: true, userName: user.Name}
 	}

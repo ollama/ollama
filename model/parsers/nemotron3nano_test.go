@@ -82,6 +82,20 @@ func TestNemotron3NanoParser(t *testing.T) {
 			expectedThinking: "My thoughts...",
 			expectedContent:  "Content here.",
 		},
+		{
+			name:             "leading open think tag is ignored",
+			input:            "<think>\nLet me think about this...</think>\nHere is my answer.",
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "Let me think about this...",
+			expectedContent:  "Here is my answer.",
+		},
+		{
+			name:             "empty explicit think block is ignored",
+			input:            "<think></think>\nHere is my answer.",
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "",
+			expectedContent:  "Here is my answer.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -191,6 +205,34 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:             "leading open think tag split across chunks",
+			chunks:           []string{"<th", "ink>", "\nThink first", "</think>", "\nDone."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "Think first",
+			expectedContent:  "Done.",
+		},
+		{
+			name:             "partial tool call tag fakeout while thinking preserves whitespace",
+			chunks:           []string{"reasoning ending with ", "<tool_call", " fakeout", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "reasoning ending with <tool_call fakeout",
+			expectedContent:  "Done.",
+		},
+		{
+			name:             "partial think close tag fakeout preserves whitespace",
+			chunks:           []string{"reasoning ending with ", "</think", " fakeout", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "reasoning ending with </think fakeout",
+			expectedContent:  "Done.",
+		},
+		{
+			name:             "leading partial think tag fakeout is thinking",
+			chunks:           []string{"<th", "oughts are literal", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "<thoughts are literal",
+			expectedContent:  "Done.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -234,6 +276,99 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 	}
 }
 
+func TestNemotron3NanoParser_DoneFlushesBufferedText(t *testing.T) {
+	tests := []struct {
+		name             string
+		thinkingEnabled  bool
+		chunks           []string
+		expectedContent  string
+		expectedThinking string
+	}{
+		{
+			name:             "partial think close",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning ", "</thi"},
+			expectedThinking: "reasoning </thi",
+		},
+		{
+			name:             "partial tool opener",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning ", "<tool_"},
+			expectedThinking: "reasoning <tool_",
+		},
+		{
+			name:             "partial leading think opener",
+			thinkingEnabled:  true,
+			chunks:           []string{"<th"},
+			expectedThinking: "<th",
+		},
+		{
+			name:             "thinking trailing whitespace",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning "},
+			expectedThinking: "reasoning ",
+		},
+		{
+			name:            "content trailing whitespace",
+			thinkingEnabled: false,
+			chunks:          []string{"answer "},
+			expectedContent: "answer ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Nemotron3NanoParser{}
+			p.Init(nil, nil, &api.ThinkValue{Value: tt.thinkingEnabled})
+
+			var content, thinking string
+			for _, chunk := range tt.chunks {
+				gotContent, gotThinking, _, err := p.Add(chunk, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				content += gotContent
+				thinking += gotThinking
+			}
+			gotContent, gotThinking, _, err := p.Add("", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content += gotContent
+			thinking += gotThinking
+
+			if diff := cmp.Diff(content, tt.expectedContent); diff != "" {
+				t.Errorf("content mismatch (-got +want):\n%s", diff)
+			}
+			if diff := cmp.Diff(thinking, tt.expectedThinking); diff != "" {
+				t.Errorf("thinking mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNemotron3NanoParser_DoneFlushesUnterminatedToolCall(t *testing.T) {
+	p := &Nemotron3NanoParser{}
+	p.Init(nil, nil, &api.ThinkValue{Value: true})
+	content, thinking, calls, err := p.Add("reasoning<tool_call><function=test>", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalContent, finalThinking, finalCalls, err := p.Add("", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := content+finalContent, "<tool_call><function=test>"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+	if got, want := thinking+finalThinking, "reasoning"; got != want {
+		t.Fatalf("thinking = %q, want %q", got, want)
+	}
+	if got := append(calls, finalCalls...); len(got) != 0 {
+		t.Fatalf("calls = %v, want none", got)
+	}
+}
+
 func TestNemotron3NanoParser_HasToolSupport(t *testing.T) {
 	p := &Nemotron3NanoParser{}
 	if !p.HasToolSupport() {
@@ -265,11 +400,11 @@ func TestNemotron3NanoParser_Init(t *testing.T) {
 		}
 	})
 
-	t.Run("starts in content state when nil thinkValue", func(t *testing.T) {
+	t.Run("starts in thinking state when nil thinkValue", func(t *testing.T) {
 		p := &Nemotron3NanoParser{}
 		p.Init(nil, nil, nil)
-		if p.state != Nemotron3NanoCollectingContent {
-			t.Errorf("expected state Nemotron3NanoCollectingContent, got %v", p.state)
+		if p.state != Nemotron3NanoCollectingThinking {
+			t.Errorf("expected state Nemotron3NanoCollectingThinking, got %v", p.state)
 		}
 	})
 
@@ -279,6 +414,29 @@ func TestNemotron3NanoParser_Init(t *testing.T) {
 		p.Init(nil, prefill, &api.ThinkValue{Value: true})
 		if p.state != Nemotron3NanoCollectingContent {
 			t.Errorf("expected state Nemotron3NanoCollectingContent, got %v", p.state)
+		}
+	})
+
+	t.Run("reinit clears buffered state", func(t *testing.T) {
+		p := &Nemotron3NanoParser{}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+		if _, _, _, err := p.Add("thinking in progress", false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		p.Init(nil, nil, &api.ThinkValue{Value: false})
+		content, thinking, calls, err := p.Add("content only", true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if content != "content only" {
+			t.Fatalf("expected content after reinit, got %q", content)
+		}
+		if thinking != "" {
+			t.Fatalf("expected no thinking after reinit, got %q", thinking)
+		}
+		if len(calls) != 0 {
+			t.Fatalf("expected no tool calls after reinit, got %v", calls)
 		}
 	})
 }

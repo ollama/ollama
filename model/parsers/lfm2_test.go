@@ -25,14 +25,36 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "thinking_content",
-			input:            "I need to think about this...</think>The answer is 42.",
+			input:            "<think>I need to think about this...</think>The answer is 42.",
 			expectedThinking: "I need to think about this...",
 			expectedContent:  "The answer is 42.",
 			hasThinking:      true,
 		},
 		{
+			name:            "direct_answer_with_thinking_enabled",
+			input:           "The answer is 42.",
+			expectedContent: "The answer is 42.",
+			hasThinking:     true,
+		},
+		{
+			name:            "direct_answer_with_tool_call",
+			input:           "I'll check the weather.<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|>",
+			expectedContent: "I'll check the weather.",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "Paris",
+						}),
+					},
+				},
+			},
+			hasThinking: true,
+		},
+		{
 			name:             "thinking_with_newlines",
-			input:            "Let me think:\n- Point 1\n- Point 2</think>\n\nHere's my answer.",
+			input:            "<think>Let me think:\n- Point 1\n- Point 2</think>\n\nHere's my answer.",
 			expectedThinking: "Let me think:\n- Point 1\n- Point 2",
 			expectedContent:  "Here's my answer.",
 			hasThinking:      true,
@@ -98,7 +120,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "thinking_with_tool_call",
-			input:            "Let me check the weather...</think>I'll get that for you.<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|>",
+			input:            "<think>Let me check the weather...</think>I'll get that for you.<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|>",
 			expectedThinking: "Let me check the weather...",
 			expectedContent:  "I'll get that for you.",
 			expectedCalls: []api.ToolCall{
@@ -121,7 +143,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "only_thinking",
-			input:            "Just thinking content</think>",
+			input:            "<think>Just thinking content</think>",
 			expectedThinking: "Just thinking content",
 			expectedContent:  "",
 			hasThinking:      true,
@@ -140,7 +162,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "thinking_with_unicode",
-			input:            "我在思考这个问题...</think>答案是42。",
+			input:            "<think>我在思考这个问题...</think>答案是42。",
 			expectedThinking: "我在思考这个问题...",
 			expectedContent:  "答案是42。",
 			hasThinking:      true,
@@ -164,7 +186,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "thinking_with_special_chars",
-			input:            "Let me calculate: 2+2=4 & 3*3=9...</think>The results are correct!",
+			input:            "<think>Let me calculate: 2+2=4 & 3*3=9...</think>The results are correct!",
 			expectedThinking: "Let me calculate: 2+2=4 & 3*3=9...",
 			expectedContent:  "The results are correct!",
 			hasThinking:      true,
@@ -228,7 +250,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "thinking_then_python_tool_call",
-			input:            "I should check the status...</think>Let me look that up.<|tool_call_start|>[get_status(id=\"123\")]<|tool_call_end|>",
+			input:            "<think>I should check the status...</think>Let me look that up.<|tool_call_start|>[get_status(id=\"123\")]<|tool_call_end|>",
 			expectedThinking: "I should check the status...",
 			expectedContent:  "Let me look that up.",
 			expectedCalls: []api.ToolCall{
@@ -291,7 +313,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "thinking_directly_to_tool_call",
-			input:            "Let me run this command...</think><|tool_call_start|>[bash(command='ls')]<|tool_call_end|>",
+			input:            "<think>Let me run this command...</think><|tool_call_start|>[bash(command='ls')]<|tool_call_end|>",
 			expectedThinking: "Let me run this command...",
 			expectedContent:  "",
 			expectedCalls: []api.ToolCall{
@@ -350,10 +372,16 @@ func TestLFM2Parser_Streaming(t *testing.T) {
 		},
 		{
 			name:             "streaming_thinking",
-			chunks:           []string{"I need to ", "think about this", "...</think>", "The answer is 42."},
+			chunks:           []string{"<think>", "I need to ", "think about this", "...</think>", "The answer is 42."},
 			expectedThinking: "I need to think about this...",
 			expectedContent:  "The answer is 42.",
 			hasThinking:      true,
+		},
+		{
+			name:            "streaming_direct_answer",
+			chunks:          []string{"The answer ", "is ", "42."},
+			expectedContent: "The answer is 42.",
+			hasThinking:     true,
 		},
 		{
 			name:            "streaming_tool_call",
@@ -373,7 +401,7 @@ func TestLFM2Parser_Streaming(t *testing.T) {
 		},
 		{
 			name:             "streaming_thinking_with_partial_tag",
-			chunks:           []string{"Thinking about this", "...</", "think>", "Done thinking."},
+			chunks:           []string{"<think>", "Thinking about this", "...</", "think>", "Done thinking."},
 			expectedThinking: "Thinking about this...",
 			expectedContent:  "Done thinking.",
 			hasThinking:      true,
@@ -400,6 +428,22 @@ func TestLFM2Parser_Streaming(t *testing.T) {
 				},
 			},
 			hasThinking: false,
+		},
+		{
+			// Opening <think> tag split across chunks must still be recognized.
+			name:             "streaming_thinking_split_open_tag",
+			chunks:           []string{"<th", "ink>", "reasoning", "</think>", "answer"},
+			expectedThinking: "reasoning",
+			expectedContent:  "answer",
+			hasThinking:      true,
+		},
+		{
+			// A direct answer starting with '<' is ambiguous until enough arrives
+			// to rule out an opening <think> tag.
+			name:            "streaming_direct_answer_starting_with_angle",
+			chunks:          []string{"<", "html> is a tag"},
+			expectedContent: "<html> is a tag",
+			hasThinking:     true,
 		},
 		{
 			// Test that leading whitespace after <think> is trimmed even when in separate chunks
@@ -506,9 +550,9 @@ func TestLFM2Parser_Init(t *testing.T) {
 		t.Errorf("Init() returned tools mismatch (-want +got):\n%s", diff)
 	}
 
-	// Test initial state is set to thinking when enabled
-	if parser.state != LFM2CollectingThinking {
-		t.Errorf("Expected initial state to be LFM2CollectingThinking, got %v", parser.state)
+	// Test initial state looks for a leading <think> tag when thinking is enabled
+	if parser.state != LFM2LookingForThinking {
+		t.Errorf("Expected initial state to be LFM2LookingForThinking, got %v", parser.state)
 	}
 }
 
@@ -1071,17 +1115,23 @@ func TestLFM2Parser_EdgeCases(t *testing.T) {
 	}{
 		{
 			name:             "multiple_think_close_tags",
-			input:            "First thought</think>Second thought</think>Final content",
+			input:            "<think>First thought</think>Second thought</think>Final content",
 			expectedThinking: "First thought",
 			expectedContent:  "Second thought</think>Final content",
 			hasThinking:      true,
 		},
 		{
-			name:             "empty_thinking_content",
-			input:            "</think>Just content",
+			name:             "empty_thinking_block",
+			input:            "<think></think>Just content",
 			expectedThinking: "",
 			expectedContent:  "Just content",
 			hasThinking:      true,
+		},
+		{
+			name:            "direct_answer_with_leading_whitespace",
+			input:           "  \n  Hello there",
+			expectedContent: "Hello there",
+			hasThinking:     true,
 		},
 		{
 			name:            "thinking_disabled_with_think_tags",

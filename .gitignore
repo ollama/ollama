@@ -1,4 +1,3 @@
-# General
 .DS_Store
 .vscode
 .env
@@ -12,14 +11,8 @@ build
 .idea
 test_data
 *.crt
-
-# Golang and Ollama
 __debug_bin*
 llama/build
 llama/vendor
 /ollama
-
-# FFmpeg build artifacts
-third_party/ffmpeg/build/
-third_party/ffmpeg/install/
 integration/testdata/models/

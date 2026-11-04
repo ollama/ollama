@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type DeepSeek3Variant int
@@ -16,6 +17,10 @@ const (
 type DeepSeek3Renderer struct {
 	IsThinking bool
 	Variant    DeepSeek3Variant
+}
+
+func (r *DeepSeek3Renderer) LeadingBOS() string {
+	return "<｜begin▁of▁sentence｜>"
 }
 
 func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
@@ -154,4 +159,12 @@ func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thi
 	}
 
 	return sb.String(), nil
+}
+
+func (r *DeepSeek3Renderer) Thinking() *model.Thinking {
+	values := []any{false}
+	if r.IsThinking {
+		values = append(values, true)
+	}
+	return &model.Thinking{Values: values, Default: false}
 }

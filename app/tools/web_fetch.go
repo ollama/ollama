@@ -67,10 +67,16 @@ func (w *WebFetch) Execute(ctx context.Context, args map[string]any) (any, strin
 	if !ok || strings.TrimSpace(urlStr) == "" {
 		return nil, "", fmt.Errorf("url must be a non-empty string")
 	}
+	if !allowedDirectURL(ctx, urlStr) {
+		return nil, "", fmt.Errorf("web fetch is only allowed for URLs provided by the user")
+	}
 
 	result, err := performWebFetch(ctx, urlStr)
 	if err != nil {
 		return nil, "", err
+	}
+	for _, link := range result.Links {
+		addAllowedDirectURL(ctx, link)
 	}
 
 	return result, "", nil

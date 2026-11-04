@@ -14,7 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
@@ -61,7 +61,7 @@ func getTestTools() []api.Tool {
 func createHarmonyTestModel(t *testing.T) (string, string) {
 	t.Helper()
 
-	return createBinFile(t, ggml.KV{
+	return createBinFile(t, gguftest.KV{
 		"general.architecture":          "gptoss",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -71,7 +71,7 @@ func createHarmonyTestModel(t *testing.T) (string, string) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},

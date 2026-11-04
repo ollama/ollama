@@ -6,24 +6,36 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Gemma4Renderer renders prompts using Gemma 4's chat format with
 // <|turn>/<turn|> markers, <|"|> string delimiters, and <|tool>/
 // <|tool_call>/<|tool_response> tags for function calling.
 type Gemma4Renderer struct {
-	useImgTags bool
+	useImgTags          bool
+	emptyBlockOnNothink bool
+	// Render assistant content before its tool calls instead of after the
+	// tool responses.
+	contentBeforeToolCalls bool
+	// Ask for speech translation in the model card's transcribe-then-translate
+	// format, which the large models follow and the small ones don't.
+	transcribeThenTranslate bool
 }
 
 const (
 	g4Q = `<|"|>` // Gemma 4 string delimiter
 )
 
+func (r *Gemma4Renderer) LeadingBOS() string {
+	return "<bos>"
+}
+
 func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 	imageOffset := 0
 
-	// BOS token — Gemma 4 models have add_bos_token=false in their tokenizer
+	// BOS token: Gemma 4 models have add_bos_token=false in their tokenizer
 	// config, so the tokenizer does not auto-prepend BOS. We must emit it
 	// explicitly in the rendered prompt, matching the HF chat template.
 	sb.WriteString("<bos>")
@@ -62,6 +74,7 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	}
 
 	var prevMessageType string
+	var prevNonToolRole string
 
 	// Consecutive tool messages are folded into the preceding assistant turn,
 	// and adjacent assistant messages continue in the same model turn.
@@ -70,22 +83,27 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			continue
 		}
 
-		messageHadContent := r.messageHasContent(message)
 		prevMessageType = ""
 		role := message.Role
 		if role == "assistant" {
 			role = "model"
 		}
 
-		continueSameModelTurn := role == "model" && r.previousNonToolRole(loopMessages, i) == "assistant"
+		continueSameModelTurn := role == "model" && prevNonToolRole == "assistant"
 		if !continueSameModelTurn {
 			sb.WriteString("<|turn>" + role + "\n")
 		}
 
-		if message.Role == "assistant" && message.Thinking != "" && i > lastUserIdx && len(message.ToolCalls) > 0 {
+		if message.Role == "assistant" && message.Thinking != "" && i > lastUserIdx {
 			sb.WriteString("<|channel>thought\n")
 			sb.WriteString(message.Thinking)
 			sb.WriteString("\n<channel|>")
+		}
+
+		contentFirst := r.contentBeforeToolCalls && role == "model" && len(message.ToolCalls) > 0
+		messageHadContent := false
+		if contentFirst {
+			messageHadContent = r.renderMessageContent(&sb, message, role, &imageOffset)
 		}
 
 		if len(message.ToolCalls) > 0 {
@@ -98,32 +116,36 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		toolResponsesEmitted := false
 		if len(message.ToolCalls) > 0 {
 			for k := i + 1; k < len(loopMessages) && loopMessages[k].Role == "tool"; k++ {
-				sb.WriteString(r.formatToolResponseBlock(r.toolResponseName(loopMessages[k], message.ToolCalls), loopMessages[k].Content))
+				response := r.renderToolResponseContent(loopMessages[k], &imageOffset)
+				sb.WriteString(r.formatToolResponseBlock(r.toolResponseName(loopMessages[k], message.ToolCalls), response))
 				toolResponsesEmitted = true
 				prevMessageType = "tool_response"
 			}
 		}
 
-		switch role {
-		case "model":
-			if message.Content != "" || len(message.Images) > 0 {
-				message.Content = stripThinking(message.Content)
-				r.renderContent(&sb, message, &imageOffset, false)
-			}
-		default:
-			r.renderContent(&sb, message, &imageOffset, true)
+		if !contentFirst {
+			messageHadContent = r.renderMessageContent(&sb, message, role, &imageOffset)
 		}
 
+		nextNonToolRole := r.nextNonToolRole(loopMessages, i)
+		continuesIntoNext := role == "model" && nextNonToolRole == "assistant" && (len(message.ToolCalls) == 0 || toolResponsesEmitted)
 		if prevMessageType == "tool_call" && !toolResponsesEmitted {
 			sb.WriteString("<|tool_response>")
-		} else if !(toolResponsesEmitted && !messageHadContent) {
+		} else if !continuesIntoNext && !(toolResponsesEmitted && !messageHadContent && nextNonToolRole == "") {
 			sb.WriteString("<turn|>\n")
 		}
+
+		prevNonToolRole = message.Role
 	}
 
 	// Generation prompt.
 	if prevMessageType != "tool_response" && prevMessageType != "tool_call" {
 		sb.WriteString("<|turn>model\n")
+		if r.emptyBlockOnNothink && !hasThink {
+			sb.WriteString("<|channel>thought\n<channel|>")
+		}
+	} else if prevMessageType == "tool_response" && hasThink {
+		sb.WriteString("<|channel>thought\n")
 	}
 
 	return sb.String(), nil
@@ -149,25 +171,44 @@ func stripThinking(text string) string {
 	return strings.TrimSpace(result.String())
 }
 
+// renderMessageContent writes a message's content and reports whether it had any.
+func (r *Gemma4Renderer) renderMessageContent(sb *strings.Builder, message api.Message, role string, imageOffset *int) bool {
+	if role == "model" {
+		if message.Content == "" && len(message.Images) == 0 {
+			return false
+		}
+		message.Content = stripThinking(message.Content)
+		r.renderContent(sb, message, imageOffset, false)
+		return r.messageHasContent(message)
+	}
+
+	r.renderContent(sb, message, imageOffset, true)
+	message.Content = strings.TrimSpace(message.Content)
+	return r.messageHasContent(message)
+}
+
 // renderContent writes a message's content, interleaving [img-N] tags for images.
 // When trim is true, leading/trailing whitespace is stripped (matching the Jinja2
 // template's | trim filter applied to non-model content).
 func (r *Gemma4Renderer) renderContent(sb *strings.Builder, msg api.Message, imageOffset *int, trim bool) {
-	if len(msg.Images) > 0 && r.useImgTags {
-		for range msg.Images {
-			sb.WriteString(fmt.Sprintf("[img-%d]", *imageOffset))
-			*imageOffset++
-		}
-	}
 	content := msg.Content
 	if trim {
 		content = strings.TrimSpace(content)
 	}
+	if len(msg.Images) > 0 && r.useImgTags {
+		content, *imageOffset = renderContentWithImageTags(content, len(msg.Images), *imageOffset)
+	}
 	sb.WriteString(content)
 }
 
-func (r *Gemma4Renderer) previousNonToolRole(messages []api.Message, idx int) string {
-	for i := idx - 1; i >= 0; i-- {
+func (r *Gemma4Renderer) renderToolResponseContent(msg api.Message, imageOffset *int) string {
+	var sb strings.Builder
+	r.renderContent(&sb, msg, imageOffset, false)
+	return sb.String()
+}
+
+func (r *Gemma4Renderer) nextNonToolRole(messages []api.Message, idx int) string {
+	for i := idx + 1; i < len(messages); i++ {
 		if messages[i].Role != "tool" {
 			return messages[i].Role
 		}
@@ -176,7 +217,7 @@ func (r *Gemma4Renderer) previousNonToolRole(messages []api.Message, idx int) st
 }
 
 func (r *Gemma4Renderer) messageHasContent(message api.Message) bool {
-	return message.Content != "" || len(message.Images) > 0
+	return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0
 }
 
 func (r *Gemma4Renderer) toolResponseName(message api.Message, toolCalls []api.ToolCall) string {
@@ -684,6 +725,8 @@ func (r *Gemma4Renderer) formatToolResponseBlock(toolName, response string) stri
 
 func (r *Gemma4Renderer) formatArgValue(value any) string {
 	switch v := value.(type) {
+	case nil:
+		return "null"
 	case string:
 		return g4Q + v + g4Q
 	case bool:
@@ -732,6 +775,8 @@ func (r *Gemma4Renderer) formatMapValue(m map[string]any) string {
 
 func (r *Gemma4Renderer) formatSchemaValue(value any) string {
 	switch v := value.(type) {
+	case nil:
+		return "null"
 	case string:
 		return g4Q + v + g4Q
 	case bool:
@@ -808,4 +853,8 @@ func (r *Gemma4Renderer) formatArrayValue(arr []any) string {
 	}
 	sb.WriteString("]")
 	return sb.String()
+}
+
+func (r *Gemma4Renderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, true}, Default: false}
 }

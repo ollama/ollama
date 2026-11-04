@@ -1,0 +1,535 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/decision"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
+	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/types/model"
+)
+
+type systemOneTestRunner struct {
+	mockRunner
+	request llm.ScoreRequest
+	err     error
+	calls   int
+	native  bool
+	state   json.RawMessage
+}
+
+func (r *systemOneTestRunner) SystemOne(ctx context.Context, state, questions json.RawMessage, images []api.ImageData) (json.RawMessage, json.RawMessage, error) {
+	r.calls++
+	r.native = true
+	r.state = state
+	r.request = llm.ScoreRequest{Images: images}
+	var ids map[string]json.RawMessage
+	if err := json.Unmarshal(questions, &ids); err != nil {
+		return nil, nil, err
+	}
+	answers := map[string]any{}
+	for id := range ids {
+		answers[id] = map[string]any{"type": "noul", "noul": 0.9}
+	}
+	data, _ := json.Marshal(answers)
+	return data, json.RawMessage(`{"input_tokens":123,"output_tokens":0}`), r.err
+}
+
+func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+	r.calls++
+	r.request = input
+	if len(input.Fields) > 0 {
+		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
+	}
+	logits := [][]float32{{0, 2}}
+	outputTokens := 2
+	if len(input.Rows) > 0 {
+		logits = make([][]float32, len(input.Rows))
+		for i, row := range input.Rows {
+			options := len(row.Candidates)
+			if options == 0 && row.Question != nil {
+				options = len(row.Question.Options)
+				outputTokens = 0
+			}
+			logits[i] = make([]float32, options)
+			logits[i][options-1] = 2
+		}
+	}
+	return llm.ScoreResponse{Logits: logits, InputTokens: 123, OutputTokens: outputTokens}, r.err
+}
+
+func TestDecisionModelRejectsCompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// No scheduler: capability rejection must happen before a runner is loaded.
+	s := &Server{}
+	for _, cfg := range []struct {
+		name         string
+		capabilities []string
+	}{
+		{"decision-only", []string{"decision"}},
+		{"decision-vision", []string{"decision", "vision"}},
+	} {
+		createSafetensorsTestModel(t, cfg.name, model.ConfigV2{
+			ModelFormat: "safetensors", Capabilities: cfg.capabilities,
+		}, nil)
+		for _, tc := range []struct {
+			name    string
+			handler gin.HandlerFunc
+			body    any
+		}{
+			{"generate", s.GenerateHandler, api.GenerateRequest{Model: cfg.name, Prompt: "hello"}},
+			{"chat", s.ChatHandler, api.ChatRequest{Model: cfg.name, Messages: []api.Message{{Role: "user", Content: "hello"}}}},
+		} {
+			t.Run(cfg.name+"/"+tc.name, func(t *testing.T) {
+				w := createRequest(t, tc.handler, tc.body)
+				want := fmt.Sprintf("does not support %s", tc.name)
+				if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
+					t.Fatalf("status=%d body=%s, want 400 containing %q", w.Code, w.Body, want)
+				}
+			})
+		}
+	}
+}
+
+func TestSystemOneHandlerRunnerSelection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, variant := range []struct{ runner, format string }{
+		{manifest.RunnerLlamaCPP, manifest.FormatGGUF},
+		{manifest.RunnerMLX, manifest.FormatSafetensors},
+	} {
+		writeShowManifestVariant(t, "decision-"+variant.runner, variant.runner, variant.format, model.ConfigV2{
+			ModelFormat: variant.format, Renderer: "clef", Capabilities: []string{"decision"},
+		}, map[string]any{"general.architecture": "clef", "clef.decision.type": "clef"})
+	}
+	writeManifestListFixture(t, "decision-list",
+		manifestListFixtureChild{name: "decision-llamacpp", runner: manifest.RunnerLlamaCPP, format: manifest.FormatGGUF},
+		manifestListFixtureChild{name: "decision-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
+	)
+	defaultModel, err := GetModel("decision-list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ runner, want string }{
+		{"", defaultModel.Runner},
+		{"llamacpp", manifest.RunnerLlamaCPP},
+		{"mlx", manifest.RunnerMLX},
+		{" llama.cpp ", manifest.RunnerLlamaCPP},
+	} {
+		t.Run(tt.runner, func(t *testing.T) {
+			runner := &systemOneTestRunner{}
+			s := newServerWithMockRunner(t, &runner.mockRunner)
+			selectedRunner := make(chan string, 1)
+			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				selectedRunner <- req.model.Runner
+				req.successCh <- &runnerRef{llama: runner}
+				return false
+			}
+			w := createRequest(t, s.SystemOneHandler, map[string]any{
+				"model": "decision-list", "runner": tt.runner, "state": "refund please",
+				"questions": map[string]any{"refund": map[string]any{"type": "noul", "instructions": "Refund requested?"}},
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body)
+			}
+			select {
+			case got := <-selectedRunner:
+				if got != tt.want {
+					t.Fatalf("scheduled runner=%q, want %q", got, tt.want)
+				}
+			default:
+				t.Fatal("no runner was scheduled")
+			}
+		})
+	}
+}
+
+func TestSystemOneHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion", "decision"}}
+	params, err := manifest.NewLayer(strings.NewReader(`{"num_ctx":8192}`), "application/vnd.ollama.image.params")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createSafetensorsTestModel(t, "safetensors-decision", config, []manifest.Layer{params})
+	config.Capabilities = []string{"decision"}
+	createSafetensorsTestModel(t, "safetensors-decision-only", config, []manifest.Layer{params})
+	config.Renderer = "tev1"
+	createSafetensorsTestModel(t, "safetensors-tev1", config, []manifest.Layer{params})
+	config.Renderer = "strands"
+	createSafetensorsTestModel(t, "safetensors-strands", config, []manifest.Layer{params})
+	config.Renderer = "clef"
+	createSafetensorsTestModel(t, "safetensors-clef-text", config, []manifest.Layer{params})
+	config.Capabilities = []string{"decision", "vision"}
+	createSafetensorsTestModel(t, "safetensors-clef", config, []manifest.Layer{params})
+	config.Capabilities = []string{"decision", "vision", "audio"}
+	createSafetensorsTestModel(t, "safetensors-clef-audio", config, []manifest.Layer{params})
+	config.Renderer = "kev"
+	config.Capabilities = []string{"decision"}
+	createSafetensorsTestModel(t, "safetensors-kev", config, []manifest.Layer{params})
+	config.Renderer = "qwen3.5"
+	config.Capabilities = []string{"completion"}
+	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
+	config.Capabilities = []string{"completion", "decision"}
+	system, err := manifest.NewLayer(strings.NewReader("Model-specific scoring instructions."), "application/vnd.ollama.image.system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createSafetensorsTestModel(t, "decision-test", config, []manifest.Layer{params, system})
+	config.Renderer = "pplx"
+	config.Capabilities = []string{"decision"}
+	createSafetensorsTestModel(t, "safetensors-pplx", config, []manifest.Layer{params, system})
+	createSafetensorsTestModel(t, "safetensors-pplx-no-system", config, []manifest.Layer{params})
+	config.Renderer = "qwen3.5"
+	config.Capabilities = []string{"completion", "decision"}
+	goTemplate, err := manifest.NewLayer(strings.NewReader("custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:"), "application/vnd.ollama.image.template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Renderer = ""
+	createSafetensorsTestModel(t, "go-template", config, []manifest.Layer{params, system, goTemplate})
+	for _, gguf := range []struct{ name, architecture, decisionType, renderer string }{
+		{"renamed-clef", "clef", "clef", ""},
+		{"old-clef", "qwen35", "clef", ""},
+		{"laya-native", "modern-bert", "laya", ""},
+		{"renamed-d3", "qwen35", "vllm-d3", ""},
+		{"gguf-tev1", "qwen35", "", "tev1"},
+	} {
+		kv := gguftest.KV{"general.architecture": gguf.architecture}
+		caps := []string{"decision"}
+		if gguf.decisionType != "" {
+			kv[gguf.architecture+".decision.type"] = gguf.decisionType
+		}
+		if gguf.decisionType == "clef" {
+			caps = append(caps, "vision")
+		}
+		_, digest := createBinFile(t, kv, nil)
+		configLayer, err := createConfigLayer(model.ConfigV2{ModelFormat: "gguf", ModelFamily: gguf.architecture, Renderer: gguf.renderer, Capabilities: caps})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifest(model.ParseName(gguf.name), *configLayer, []manifest.Layer{{MediaType: "application/vnd.ollama.image.model", Digest: digest}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const prefix = `{"model":"decision-test","state":"`
+	const suffix = `","questions":{"refund":{"type":"noul","instructions":"Refund requested?","criteria":{}}}}`
+	stateLimit := (64 << 10) - len(prefix) - len(suffix)
+	image := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("image"), 16<<10))
+	const imagePrefix = `{"model":"safetensors-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}},"images":["`
+	largeText := strings.Replace(prefix+strings.Repeat("x", stateLimit+1)+suffix, "decision-test", "safetensors-clef", 1)
+	nativeQuestions := func(n int) string {
+		questions := []string{`"refund":{"type":"noul","instructions":"q"}`}
+		for i := 1; i < n; i++ {
+			questions = append(questions, fmt.Sprintf(`"q%d":{"type":"noul","instructions":"q"}`, i))
+		}
+		return `{"model":"laya-native","state":"x","questions":{` + strings.Join(questions, ",") + `}}`
+	}
+	type testCase struct {
+		name   string
+		body   string
+		err    error
+		status int
+		calls  int
+		expire bool
+	}
+	tests := []testCase{
+		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"unknown runner", `{"model":"decision-test","runner":"invalid","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"Clef image above text body limit", `{"model":"renamed-clef","state":"x","images":["` + base64.StdEncoding.EncodeToString(make([]byte, 70<<10)) + `"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"over image body limit", `{"model":"renamed-clef","images":["` + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
+		{"images require a supported encoding", `{"model":"decision-test","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"Clef videos unsupported", `{"model":"renamed-clef","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul"}}}`, nil, 400, 0, false},
+		{"candidate videos unsupported", `{"model":"decision-test","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"Clef null state and default instructions", `{"model":"safetensors-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
+		{"Clef joint head", `{"model":"safetensors-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"llama.cpp decision model", `{"model":"laya-native","state":{"total":1250.0},"questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false},
+		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false},
+		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("out of memory"), 500, 1, true},
+		{"invalid schema", `{"model":"decision-test","state":"x","questions":{}}`, nil, 400, 0, false},
+		{"invalid Clef schema", `{"model":"safetensors-clef","state":"x","questions":{}}`, nil, 400, 0, false},
+		{"old-format decision GGUF", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"old-format Clef GGUF", `{"model":"old-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"llama.cpp 65 questions", nativeQuestions(65), nil, 400, 0, false},
+		{"vllm-d3 empty state", `{"model":"renamed-d3","state":"","questions":{"refund":{"type":"choice","instructions":"Which reply is shorter?","criteria":{"Yes.":null,"Yes, I can help with that.":null}}}}`, nil, 200, 1, false},
+		{"vllm-d3 whitespace state", `{"model":"renamed-d3","state":" ","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"safetensors empty state", `{"model":"decision-test","state":"","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"llama.cpp empty state", `{"model":"laya-native","state":" ","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"omitted model", `{"state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
+		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"safetensors success", `{"model":"safetensors-decision","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"safetensors decision only", `{"model":"safetensors-decision-only","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Perplexity native scorer receives system", `{"model":"safetensors-pplx","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Perplexity requires model system", `{"model":"safetensors-pplx-no-system","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"Strands pointer head", `{"model":"safetensors-strands","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Clef decision only text", `{"model":"safetensors-clef-text","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Clef decision only image", strings.Replace(imagePrefix, "safetensors-clef", "safetensors-clef-text", 1) + `aW1hZ2U="]}`, nil, 400, 0, false},
+		{"Clef image above text limit", imagePrefix + image + `"]}`, nil, 200, 1, false},
+		{"audio without audio capability", imagePrefix + `UklGRnh4eHhXQVZF"]}`, nil, 400, 0, false},
+		{"audio with audio capability", strings.Replace(imagePrefix, "safetensors-clef", "safetensors-clef-audio", 1) + `aW1hZ2U=","UklGRnh4eHhXQVZF"]}`, nil, 200, 1, false},
+		{"other model image", `{"model":"decision-test","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}},"images":["aW1hZ2U="]}`, nil, 400, 0, false},
+		{"invalid image base64", imagePrefix + `!not-base64"]}`, nil, 400, 0, false},
+		{"image data URL", imagePrefix + `data:image/png;base64,aW1hZ2U="]}`, nil, 400, 0, false},
+		{"Tev1 safetensors", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Tev1 too many score levels", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"score","instructions":"q","criteria":["x"` + strings.Repeat(`,"x"`, 24) + `]}}}`, nil, 400, 0, false},
+		{"Tev1 empty description", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"choice","instructions":"q","criteria":{"a":"","b":"B"}}}}`, nil, 400, 0, false},
+		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"bad JSON", `{`, nil, 400, 0, false},
+		{"at text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
+		{"over text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
+		{"oversized missing model returns not found", strings.Replace(prefix+strings.Repeat("x", stateLimit+32)+suffix, "decision-test", "missing", 1), nil, 404, 0, false},
+		{"Kev above default text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Kev above extended text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
+		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},
+		{"over transport limit", imagePrefix + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
+	}
+	for _, model := range []string{"decision-test", "laya-native", "renamed-d3"} {
+		for _, levels := range []int{1, 2, 10, 11} {
+			status, calls := http.StatusBadRequest, 0
+			if levels >= 2 && levels <= 10 {
+				status, calls = http.StatusOK, 1
+			}
+			criteria := `["x"` + strings.Repeat(`,"x"`, levels-1) + `]`
+			body := fmt.Sprintf(`{"model":%q,"state":"x","questions":{"refund":{"type":"noul","instructions":"q"},"urgency":{"type":"score","instructions":"q","criteria":%s}}}`, model, criteria)
+			tests = append(tests, testCase{fmt.Sprintf("score limits/%s/%d", model, levels), body, nil, status, calls, false})
+		}
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &systemOneTestRunner{err: tt.err}
+			ref := &runnerRef{llama: runner, refCount: 1, sessionDuration: time.Hour}
+			s := newServerWithMockRunner(t, &runner.mockRunner)
+			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				runner.contextLength = req.opts.NumCtx
+				ref.model.Store(req.model)
+				ref.modelKey = schedulerModelKey(req.model)
+				s.sched.loadedMu.Lock()
+				s.sched.loaded[ref.modelKey] = ref
+				s.sched.loadedMu.Unlock()
+				req.successCh <- ref
+				return false
+			}
+			router := gin.New()
+			router.POST("/v1/systemone", s.SystemOneHandler)
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/systemone", strings.NewReader(tt.body))
+			req.ContentLength = -1
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+			if w.Code != tt.status || runner.calls != tt.calls {
+				t.Fatalf("status=%d calls=%d body=%s", w.Code, runner.calls, w.Body)
+			}
+			if tt.calls == 0 && tt.err == nil && ref.model.Load() != nil {
+				t.Fatal("loaded a runner for a rejected request")
+			}
+			if strings.HasPrefix(tt.name, "score limits/") && tt.status == http.StatusBadRequest &&
+				!strings.Contains(w.Body.String(), "score criteria must be an array of 2–10 levels") {
+				t.Fatalf("expected shared score validation error: %s", w.Body)
+			}
+			if strings.HasPrefix(tt.name, "old-format ") {
+				var sent decision.Request
+				if err := json.Unmarshal([]byte(tt.body), &sent); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(w.Body.String(), "ollama pull "+sent.Model) {
+					t.Fatalf("old decision GGUFs must ask for a re-download: %s", w.Body)
+				}
+			}
+			if tt.name == "Clef decision only image" && !strings.Contains(w.Body.String(), "vision") {
+				t.Fatalf("expected missing vision capability: %s", w.Body)
+			}
+			if tt.name == "audio without audio capability" && !strings.Contains(w.Body.String(), "audio") {
+				t.Fatalf("expected missing audio capability: %s", w.Body)
+			}
+			if tt.calls > 0 {
+				want := time.Hour
+				if tt.expire {
+					want = 0
+				}
+				ref.refMu.Lock()
+				duration := ref.sessionDuration
+				ref.refMu.Unlock()
+				if duration != want {
+					t.Fatalf("runner keep-alive=%v, want %v", duration, want)
+				}
+			}
+			if tt.name == "Clef image above text body limit" && (len(runner.request.Images) != 1 || len(runner.request.Images[0]) != 70<<10) {
+				t.Fatal("images were not passed to scoring")
+			}
+			if tt.status == 200 {
+				var sent decision.Request
+				if err := json.Unmarshal([]byte(tt.body), &sent); err != nil {
+					t.Fatal(err)
+				}
+				if len(runner.request.Images) != len(sent.Images) {
+					t.Fatalf("runner received %d images, want %d", len(runner.request.Images), len(sent.Images))
+				}
+				for i := range sent.Images {
+					if !bytes.Equal(runner.request.Images[i], sent.Images[i]) {
+						t.Fatalf("image %d changed during request compilation", i)
+					}
+				}
+				var response struct {
+					Answers map[string]struct {
+						Noul float64 `json:"noul"`
+					} `json:"answers"`
+					Usage decision.Usage `json:"usage"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				outputTokens := 2
+				if len(runner.request.Fields) > 0 || runner.native || ref.model.Load().Config.Renderer == "kev" || ref.model.Load().Config.Renderer == "pplx" {
+					outputTokens = 0
+				}
+				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
+					t.Fatalf("incorrect scoring response: %s", w.Body)
+				}
+				if runner.native {
+					if strings.HasPrefix(tt.name, "vllm-d3 ") {
+						if !bytes.Equal(runner.state, sent.State) {
+							t.Fatalf("state changed before native scoring: got %s, want %s", runner.state, sent.State)
+						}
+					}
+					if tt.name == "llama.cpp decision model" && (string(runner.state) != `{"total":1250.0}` || !strings.Contains(w.Body.String(), `"model":"laya-native"`)) {
+						t.Fatalf("request did not pass through: state %s, response %s", runner.state, w.Body)
+					}
+					return
+				}
+				if ref.model.Load().Config.Renderer == "strands" && (len(runner.request.PointerRows) != 1 || len(runner.request.Rows) != 0 || !strings.HasSuffix(runner.request.PointerRows[0].Prompt, "<answer>")) {
+					t.Fatalf("Strands did not receive pointer inputs: %+v", runner.request)
+				}
+				if ref.model.Load().Config.Renderer == "pplx" && (runner.request.System != "Model-specific scoring instructions." || len(runner.request.Rows) != 1 || runner.request.Rows[0].Question == nil) {
+					t.Fatalf("Perplexity scorer lost its system prompt or native question: %+v", runner.request)
+				}
+				var prompt string
+				if len(runner.request.Rows) > 0 {
+					prompt = runner.request.Rows[0].Prompt
+				}
+				if ref.model.Load().Config.Renderer == "tev1" && (!strings.Contains(prompt, `"state": "x", "question": "q", "options":`) || strings.Contains(prompt, "Requested field:")) {
+					t.Fatalf("Tev1 did not receive its per-question prompt: %q", prompt)
+				}
+				if len(runner.request.Fields) > 0 {
+					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || len(runner.request.Segments) < 3 {
+						t.Fatal("Clef scoring must preserve the segmented schema")
+					}
+				} else if len(runner.request.PointerRows) > 0 {
+					if len(runner.request.Rows) != 0 {
+						t.Fatal("pointer head must bypass chat templates")
+					}
+				} else if ref.model.Load().HasGoTemplate {
+					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
+						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
+					}
+				} else if ref.model.Load().Config.Renderer == "pplx" {
+					if prompt != "" {
+						t.Fatalf("Perplexity scorer received a generic rendered prompt: %q", prompt)
+					}
+				} else if ref.model.Load().Config.Renderer == "kev" {
+					if prompt != "" || len(runner.request.State) != 70<<10 || runner.request.Rows[0].Question == nil {
+						t.Fatalf("Kev scorer received a rendered prompt or lost the state/question")
+					}
+				} else {
+					wantPrefix := "<|im_start|>user\n"
+					if ref.model.Load().System != "" {
+						wantPrefix = "<|im_start|>system\nModel-specific scoring instructions.<|im_end|>\n<|im_start|>user\n"
+					}
+					if !strings.HasPrefix(prompt, wantPrefix) || !strings.HasSuffix(prompt, "<think>\n\n</think>\n\n") {
+						t.Fatalf("scorer did not receive the model's rendered prompt: %q", prompt)
+					}
+				}
+				if runner.request.MaxTokens != 8192 {
+					t.Fatalf("scoring context = %d, want model num_ctx 8192", runner.request.MaxTokens)
+				}
+			}
+		})
+	}
+}
+
+func TestSystemOneHandlerCloudPassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	upstreamBody := `{"model":"clef-flash","answers":{"refund":{"type":"noul","noul":0.9}},"usage":{"input_tokens":42,"output_tokens":0}}`
+	var capturedPath, capturedBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		capturedPath = r.URL.Path
+		capturedBody = string(payload)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(upstreamBody))
+	}))
+	defer upstream.Close()
+
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	resp, err := local.Client().Post(local.URL+"/v1/systemone", "application/json", strings.NewReader(
+		`{"model":"clef-flash:cloud","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+	}
+
+	if capturedPath != "/v1/systemone" {
+		t.Fatalf("expected upstream path /v1/systemone, got %q", capturedPath)
+	}
+	if !strings.Contains(capturedBody, `"model":"clef-flash"`) {
+		t.Fatalf("expected normalized model in upstream body, got %q", capturedBody)
+	}
+	if strings.Contains(capturedBody, `:cloud`) {
+		t.Fatalf("expected no cloud suffix in upstream body, got %q", capturedBody)
+	}
+
+	var decisionResp struct {
+		Model   string         `json:"model"`
+		Answers map[string]any `json:"answers"`
+		Usage   decision.Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &decisionResp); err != nil {
+		t.Fatalf("failed to parse response: %v (%s)", err, string(body))
+	}
+	if decisionResp.Model != "clef-flash" || decisionResp.Usage.InputTokens != 42 || decisionResp.Usage.OutputTokens != 0 {
+		t.Fatalf("unexpected response: %s", string(body))
+	}
+	if len(decisionResp.Answers) != 1 {
+		t.Fatalf("expected one answer, got %s", string(body))
+	}
+}

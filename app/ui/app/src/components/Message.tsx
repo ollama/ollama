@@ -273,7 +273,7 @@ function ToolRoleContent({
     );
   }
   return (
-    // collapsable tool result with raw json
+    // collapsible tool result with raw json
     <div className="space-y-2">
       {content && !rawToolResult && (
         <pre className="text-xs whitespace-pre-wrap overflow-x-auto bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 p-2 rounded-md max-h-40">

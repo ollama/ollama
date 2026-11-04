@@ -3,9 +3,9 @@ package renderers
 // TestGemma4RendererMatchesReference verifies our renderer matches the checked-in
 // Gemma 4 reference template.
 //
-// Current upstream Gemma 4 chat templates differ by model size, so the checked-in
-// reference intentionally uses the shared baseline without an empty generation-time
-// thought channel until renderer selection is split by size.
+// Current upstream Gemma 4 chat templates differ by model size. The checked-in
+// reference cases below use the small (e2b/e4b-style) baseline, with large
+// (26b/31b-style) checks covered separately in this file.
 //
 // To regenerate expected values, save the E2B template to
 // gemma4_e2b_chat_template.jinja2 and run:
@@ -33,6 +33,9 @@ import (
 const (
 	gemma4E2BTemplate = "testdata/gemma4_e2b_chat_template.jinja2"
 	gemma431BTemplate = "testdata/gemma4_31b_chat_template.jinja2"
+	// Copied byte-for-byte from the publisher's chat_template.jinja.
+	// SHA-256: 35b7d0641b6fb4ee41c3bc623e85bdb7d583c40f6ae9f24514ae58a9d57119f3.
+	gemma4NemotronTemplate = "testdata/gemma4_nemotron_chat_template.jinja2"
 )
 
 // The upstream Gemma 4 chat templates are committed by size under testdata/.
@@ -740,6 +743,18 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			expected: "<bos><|turn>system\n<|think|>\nYou are helpful." + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
+			name: "developer_tools_thinking_trimmed",
+			messages: []api.Message{
+				{Role: "developer", Content: "  Prefer terse answers.\nUse tools when needed.  "},
+				{Role: "user", Content: "Hi"},
+			},
+			tools: bashAndReadRefTools(),
+			think: thinkTrue(),
+			expected: "<bos><|turn>system\n<|think|>\nPrefer terse answers.\nUse tools when needed." +
+				bashDeclRef + readDeclRef + "<turn|>\n" +
+				"<|turn>user\nHi<turn|>\n<|turn>model\n",
+		},
+		{
 			name:     "thinking_explicitly_disabled",
 			messages: []api.Message{{Role: "user", Content: "Hi"}},
 			think:    thinkFalse(),
@@ -846,6 +861,40 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			skipJinja2: true,
 		},
 		{
+			// Multiple tool calls in one assistant round, with explicit thinking,
+			// tool_call_id resolution, out-of-order tool responses, and a final
+			// assistant continuation in the same model turn.
+			name: "multiple_tool_calls_with_thinking_ids_and_continuation",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a coding assistant."},
+				{Role: "user", Content: "List files, then read config."},
+				{Role: "assistant", Thinking: "Need the directory listing before reading the config.", ToolCalls: []api.ToolCall{
+					{
+						ID:       "call_bash",
+						Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls -la"})},
+					},
+					{
+						ID:       "call_read",
+						Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "config.json"})},
+					},
+				}},
+				{Role: "tool", ToolCallID: "call_read", Content: `{"debug": true}`},
+				{Role: "tool", ToolCallID: "call_bash", Content: "config.json\nmain.go"},
+				{Role: "assistant", Content: "Config loaded."},
+			},
+			tools: bashAndReadRefTools(),
+			think: thinkTrue(),
+			expected: "<bos><|turn>system\n<|think|>\nYou are a coding assistant." + bashDeclRef + readDeclRef + "<turn|>\n" +
+				"<|turn>user\nList files, then read config.<turn|>\n" +
+				"<|turn>model\n<|channel>thought\nNeed the directory listing before reading the config.\n<channel|>" +
+				"<|tool_call>call:bash{command:" + q + "ls -la" + q + "}<tool_call|>" +
+				"<|tool_call>call:read{path:" + q + "config.json" + q + "}<tool_call|>" +
+				"<|tool_response>response:read{value:" + q + `{"debug": true}` + q + "}<tool_response|>" +
+				"<|tool_response>response:bash{value:" + q + "config.json\nmain.go" + q + "}<tool_response|>" +
+				"Config loaded.<turn|>\n" +
+				"<|turn>model\n",
+		},
+		{
 			// Thinking content in assistant history should be stripped
 			name: "strip_thinking_history",
 			messages: []api.Message{
@@ -860,7 +909,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		// === Additional edge cases ported from original tests ===
 		{
-			// Assistant content with tool call — template emits tool_calls before content
+			// Assistant content with tool call: template emits tool_calls before content
 			name: "assistant_content_with_tool_call",
 			messages: []api.Message{
 				{Role: "user", Content: "Weather?"},
@@ -942,7 +991,21 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>user\nWeather?<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Tokyo" + q + "}<tool_call|>" +
 				"<|tool_response>response:get_weather{value:" + q + `{"temperature": 15, "weather": "sunny"}` + q + "}<tool_response|>" +
+				"<turn|>\n" +
 				"<|turn>user\nThanks!<turn|>\n" +
+				"<|turn>model\n",
+		},
+		{
+			name: "adjacent_assistants_continue_same_model_turn",
+			messages: []api.Message{
+				{Role: "user", Content: "Start"},
+				{Role: "assistant", Content: "One."},
+				{Role: "assistant", Content: "Two."},
+				{Role: "user", Content: "More"},
+			},
+			expected: "<bos><|turn>user\nStart<turn|>\n" +
+				"<|turn>model\nOne.Two.<turn|>\n" +
+				"<|turn>user\nMore<turn|>\n" +
 				"<|turn>model\n",
 		},
 		// === Ordering and whitespace edge cases ===
@@ -1081,7 +1144,7 @@ Hi<turn|>
 				"<|turn>model\n",
 		},
 		{
-			// Property with no description — just type
+			// Property with no description: just type
 			name:     "property_no_description",
 			messages: []api.Message{{Role: "user", Content: "Count"}},
 			tools:    countTool(),
@@ -1338,7 +1401,7 @@ Hi<turn|>
 				"<|turn>user\nList files<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
 				"<|tool_response>response:bash{value:" + q + "file1.txt" + q + "}<tool_response|>" +
-				"<turn|>\nHere are the files.<turn|>\n" +
+				"Here are the files.<turn|>\n" +
 				"<|turn>user\nThanks<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -1361,7 +1424,7 @@ Hi<turn|>
 
 		// === Round 5: coding agent patterns ===
 		{
-			// Chained tool calls — assistant calls tool, gets result, calls another
+			// Chained tool calls: assistant calls tool, gets result, calls another
 			// tool, gets result, then the model responds. No user messages in between.
 			name: "chained_tool_calls",
 			messages: []api.Message{
@@ -1440,6 +1503,58 @@ Hi<turn|>
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + q + "}<tool_call|>" +
 				"<|tool_response>response:bash{value:" + q + "error" + q + "}<tool_response|>",
 		},
+		{
+			name: "null_tool_arguments",
+			messages: []api.Message{
+				{Role: "user", Content: "Set optional"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "set_optional", Arguments: testArgs(map[string]any{
+						"nested": map[string]any{"value": nil},
+						"value":  nil,
+					})},
+				}}},
+			},
+			expected: "<bos><|turn>user\nSet optional<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:set_optional{nested:{value:null},value:null}<tool_call|><|tool_response>",
+		},
+		{
+			name: "historical_tool_call_thinking_omitted_before_later_user",
+			messages: []api.Message{
+				{Role: "user", Content: "List files"},
+				{Role: "assistant", Thinking: "Need the file list before answering.", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+				}}},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt"},
+				{Role: "user", Content: "Now answer"},
+			},
+			tools: bashSmallTool(),
+			think: thinkTrue(),
+			expected: "<bos><|turn>system\n<|think|>\n" + bashSmallDeclRef + "<turn|>\n" +
+				"<|turn>user\nList files<turn|>\n" +
+				"<|turn>model\n" +
+				"<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt" + q + "}<tool_response|>" +
+				"<turn|>\n" +
+				"<|turn>user\nNow answer<turn|>\n" +
+				"<|turn>model\n",
+		},
+		{
+			name: "terminal_tool_response_adds_thinking_cue_when_thinking_enabled",
+			messages: []api.Message{
+				{Role: "user", Content: "List files"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+				}}},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt"},
+			},
+			tools: bashSmallTool(),
+			think: thinkTrue(),
+			expected: "<bos><|turn>system\n<|think|>\n" + bashSmallDeclRef + "<turn|>\n" +
+				"<|turn>user\nList files<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt" + q + "}<tool_response|>" +
+				"<|channel>thought\n",
+		},
 	}
 
 	verifyJinja2 := os.Getenv("VERIFY_JINJA2") != ""
@@ -1469,7 +1584,110 @@ Hi<turn|>
 					"hardcoded expected value doesn't match Jinja2 template output")
 				assert.Equal(t, jinja2Output, got,
 					"renderer output doesn't match Jinja2 template output")
+
+				nemotron := &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true}
+				nemotronGot, err := nemotron.Render(tt.messages, tt.tools, tt.think)
+				assert.NoError(t, err)
+				assert.Equal(t, renderWithJinja2Template(t, gemma4NemotronTemplate, tt.messages, tt.tools, tt.think), nemotronGot,
+					"nemotron renderer output doesn't match Jinja2 template output")
 			}
+		})
+	}
+}
+
+func TestGemma4RendererVariantsMatchExpectedGenerationPrompt(t *testing.T) {
+	messages := []api.Message{{Role: "user", Content: "Hello"}}
+
+	tests := []struct {
+		name         string
+		rendererName string
+		expected     string
+	}{
+		{
+			name:         "legacy_alias",
+			rendererName: "gemma4",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "small",
+			rendererName: "gemma4-small",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "large",
+			rendererName: "gemma4-large",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+		},
+		{
+			name:         "nemotron",
+			rendererName: "gemma4-nemotron",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := RenderWithRenderer(tt.rendererName, messages, nil, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing.T) {
+	got, err := RenderWithRenderer("gemma4-large", []api.Message{{Role: "user", Content: "Hello"}}, nil, thinkTrue())
+	assert.NoError(t, err)
+	assert.Equal(t, "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n", got)
+	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
+}
+
+func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
+	q := `<|"|>`
+	messages := []api.Message{
+		{Role: "user", Content: "Use the tool"},
+		{Role: "assistant", Content: "First."},
+		{Role: "assistant", Content: "Checking.", ToolCalls: []api.ToolCall{{
+			Function: api.ToolCallFunction{
+				Name:      "bash",
+				Arguments: testArgs(map[string]any{"command": nil}),
+			},
+		}}},
+		{Role: "tool", ToolName: "bash", Content: "done"},
+		{Role: "assistant", Content: "Done."},
+		{Role: "user", Content: "Next"},
+	}
+
+	base := "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
+		"<|turn>user\nUse the tool<turn|>\n" +
+		"<|turn>model\nFirst." +
+		"<|tool_call>call:bash{command:null}<tool_call|>" +
+		"<|tool_response>response:bash{value:" + q + "done" + q + "}<tool_response|>" +
+		"Checking.Done.<turn|>\n" +
+		"<|turn>user\nNext<turn|>\n<|turn>model\n"
+
+	tests := []struct {
+		name     string
+		renderer *Gemma4Renderer
+		want     string
+	}{
+		{name: "small", renderer: &Gemma4Renderer{}, want: base},
+		{name: "31b", renderer: &Gemma4Renderer{emptyBlockOnNothink: true}, want: base + "<|channel>thought\n<channel|>"},
+		{name: "nemotron", renderer: &Gemma4Renderer{contentBeforeToolCalls: true}, want: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
+			"<|turn>user\nUse the tool<turn|>\n" +
+			"<|turn>model\nFirst.Checking." +
+			"<|tool_call>call:bash{command:null}<tool_call|>" +
+			"<|tool_response>response:bash{value:" + q + "done" + q + "}<tool_response|>" +
+			"Done.<turn|>\n" +
+			"<|turn>user\nNext<turn|>\n<|turn>model\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.renderer.Render(messages, bashSmallTool(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+			assert.NotContains(t, got, "First.<turn|>\n<|tool_call>")
+			assert.NotContains(t, got, "Checking.<turn|>\nDone.")
 		})
 	}
 }
@@ -1616,15 +1834,40 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
-			got, err := renderer.Render(tt.messages, tt.tools, tt.think)
-			assert.NoError(t, err)
+	variants := []struct {
+		name        string
+		renderer    *Gemma4Renderer
+		templateRel string
+	}{
+		{
+			name:        "small",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags},
+			templateRel: gemma4E2BTemplate,
+		},
+		{
+			name:        "large",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true},
+			templateRel: gemma431BTemplate,
+		},
+		{
+			name:        "nemotron",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true},
+			templateRel: gemma4NemotronTemplate,
+		},
+	}
 
-			jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, tt.think)
-			assert.Equal(t, jinja2Output, got,
-				"renderer output doesn't match Jinja2 template output")
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					got, err := variant.renderer.Render(tt.messages, tt.tools, tt.think)
+					assert.NoError(t, err)
+
+					jinja2Output := renderWithJinja2Template(t, variant.templateRel, tt.messages, tt.tools, tt.think)
+					assert.Equal(t, jinja2Output, got,
+						"renderer output doesn't match Jinja2 template output")
+				})
+			}
 		})
 	}
 }

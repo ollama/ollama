@@ -4,7 +4,6 @@ import { useModels } from "./useModels";
 import { useChat } from "./useChats";
 import { useSettings } from "./useSettings.ts";
 import { Model } from "@/gotypes";
-import { FEATURED_MODELS } from "@/utils/mergeModels";
 import { getTotalVRAM } from "@/utils/vram.ts";
 import { getInferenceCompute } from "@/api";
 import { useCloudStatus } from "./useCloudStatus";
@@ -92,9 +91,7 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
       (settings.selectedModel &&
         new Model({
           model: settings.selectedModel,
-          cloud: FEATURED_MODELS.some(
-            (f) => f.endsWith("cloud") && f === settings.selectedModel,
-          ),
+          cloud: settings.selectedModel.endsWith("cloud"),
           ollama_host: false,
         })) ||
       null

@@ -14,11 +14,10 @@
 * [API Reference](https://docs.ollama.com/api)
 * [Modelfile Reference](https://docs.ollama.com/modelfile)
 * [OpenAI Compatibility](https://docs.ollama.com/api/openai-compatibility)
-* [Video Support](./video-support.md)
 * [Anthropic Compatibility](./api/anthropic-compatibility.mdx)
 
 ### Resources
 
 * [Troubleshooting Guide](https://docs.ollama.com/troubleshooting)
-* [FAQ](https://docs.ollama.com/faq#faq)
+* [FAQ](https://docs.ollama.com/faq)
 * [Development guide](./development.md)
