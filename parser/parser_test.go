@@ -1349,3 +1349,30 @@ func TestFilesForModel(t *testing.T) {
 		})
 	}
 }
+
+func TestModelfileStringRoundTrip(t *testing.T) {
+	// Each input parses successfully; String() must produce a Modelfile that
+	// re-parses to the same commands. These are regression cases for FROM
+	// arguments that previously did not round-trip.
+	cases := []string{
+		"FROM \" \"\n",      // leading/trailing space
+		"FROM \"\t\"\n",     // tab
+		"FROM \"\"0\"\n",    // leading double quote
+		"FROM \"a\"b\"\n",   // interior double quote
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			mf, err := ParseFile(strings.NewReader(in))
+			if err != nil {
+				t.Fatalf("ParseFile(%q): %v", in, err)
+			}
+			mf2, err := ParseFile(strings.NewReader(mf.String()))
+			if err != nil {
+				t.Fatalf("re-parse of String() %q: %v", mf.String(), err)
+			}
+			if diff := cmp.Diff(mf.Commands, mf2.Commands); diff != "" {
+				t.Fatalf("round-trip mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

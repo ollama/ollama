@@ -442,7 +442,7 @@ func (c Command) String() string {
 	var sb strings.Builder
 	switch c.Name {
 	case "model":
-		fmt.Fprintf(&sb, "FROM %s", c.Args)
+		fmt.Fprintf(&sb, "FROM %s", quote(c.Args))
 	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "draft", "capability":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
@@ -675,8 +675,13 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 }
 
 func quote(s string) string {
-	if strings.Contains(s, "\n") || strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ") {
-		if strings.Contains(s, "\"") {
+	// A value must be quoted when leaving it bare would not round-trip through
+	// ParseFile, which trims surrounding whitespace from the value and ends it
+	// at a newline. A leading double quote would also start a quoted string. A
+	// value that itself contains a double quote is wrapped in triple quotes so
+	// those quotes stay literal.
+	if s != strings.TrimSpace(s) || strings.ContainsAny(s, "\n\r") || strings.Contains(s, `"`) {
+		if strings.Contains(s, `"`) {
 			return `"""` + s + `"""`
 		}
 
