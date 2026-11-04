@@ -185,62 +185,60 @@ func TestFromChatRequest_ToolMessageArrayContentWithImages(t *testing.T) {
 	const image2 = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==`
 	imgData, _ := base64.StdEncoding.DecodeString(image)
 	img2Data, _ := base64.StdEncoding.DecodeString(image2)
+	imagePart := func(b64 string) string {
+		return `{"type":"image_url","image_url":{"url":"` + prefix + b64 + `"}}`
+	}
 
-	req := ChatCompletionRequest{
-		Model: "test-model",
-		Messages: []Message{
-			{Role: "user", Content: "What's in the screenshot?"},
-			{
-				Role: "assistant",
-				ToolCalls: []ToolCall{{
-					ID:   "call_1",
-					Type: "function",
-					Function: struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					}{Name: "screenshot", Arguments: "{}"},
-				}},
-			},
-			{
-				Role:       "tool",
-				ToolCallID: "call_1",
-				Content: []any{
-					map[string]any{"type": "text", "text": "Before: "},
-					map[string]any{
-						"type":      "image_url",
-						"image_url": map[string]any{"url": prefix + image},
-					},
-					map[string]any{"type": "text", "text": " After: "},
-					map[string]any{
-						"type":      "image_url",
-						"image_url": map[string]any{"url": prefix + image2},
-					},
-				},
-			},
+	cases := []struct {
+		name        string
+		content     string
+		wantContent string
+		wantImages  []api.ImageData
+	}{
+		{
+			name:        "text and image",
+			content:     `[{"type":"text","text":"72F and sunny, photo:"},` + imagePart(image) + `]`,
+			wantContent: "72F and sunny, photo:",
+			wantImages:  []api.ImageData{imgData},
+		},
+		{
+			name:       "image only",
+			content:    `[` + imagePart(image) + `]`,
+			wantImages: []api.ImageData{imgData},
+		},
+		{
+			name:        "multiple images",
+			content:     `[{"type":"text","text":"Before: "},` + imagePart(image) + `,{"type":"text","text":" After: "},` + imagePart(image2) + `]`,
+			wantContent: "Before:  After: ",
+			wantImages:  []api.ImageData{imgData, img2Data},
 		},
 	}
 
-	result, err := FromChatRequest(req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var req ChatCompletionRequest
+			if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+				{"role":"user","content":"What's in the screenshot?"},
+				{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"screenshot","arguments":"{}"}}]},
+				{"role":"tool","tool_call_id":"call_1","content":`+tc.content+`}
+			]}`), &req); err != nil {
+				t.Fatal(err)
+			}
 
-	// parts with images stay split in order, each answering the same call
-	if len(result.Messages) != 6 {
-		t.Fatalf("expected 6 messages, got %d", len(result.Messages))
-	}
-	wantContent := []string{"Before: ", "", " After: ", ""}
-	wantImages := [][]byte{nil, imgData, nil, img2Data}
-	for i, msg := range result.Messages[2:] {
-		if msg.Role != "tool" || msg.ToolCallID != "call_1" || msg.ToolName != "screenshot" {
-			t.Errorf("part %d: expected tool message for call_1/screenshot, got role=%q id=%q name=%q", i, msg.Role, msg.ToolCallID, msg.ToolName)
-		}
-		if msg.Content != wantContent[i] {
-			t.Errorf("part %d: expected content %q, got %q", i, wantContent[i], msg.Content)
-		}
-		if wantImages[i] == nil && len(msg.Images) != 0 || wantImages[i] != nil && (len(msg.Images) != 1 || string(msg.Images[0]) != string(wantImages[i])) {
-			t.Errorf("part %d: unexpected images, got %d", i, len(msg.Images))
-		}
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// one tool message per result, so the call id is not repeated
+			if len(result.Messages) != 3 {
+				t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+			}
+			want := api.Message{Role: "tool", Content: tc.wantContent, Images: tc.wantImages, ToolName: "screenshot", ToolCallID: "call_1"}
+			if diff := cmp.Diff(want, result.Messages[2]); diff != "" {
+				t.Errorf("tool message mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
