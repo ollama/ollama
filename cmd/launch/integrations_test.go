@@ -1922,7 +1922,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "atomcode", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
 			wantPrefix = slices.DeleteFunc(wantPrefix, func(name string) bool { return name == "chatgpt" })
 		}
