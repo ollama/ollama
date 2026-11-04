@@ -173,6 +173,10 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-decision-only", config, []manifest.Layer{params})
 	config.Renderer = "tev1"
 	createSafetensorsTestModel(t, "safetensors-tev1", config, []manifest.Layer{params})
+	config.Renderer = "d3"
+	createSafetensorsTestModel(t, "safetensors-d3", config, []manifest.Layer{params})
+	config.Renderer = "autotrust-decision"
+	createSafetensorsTestModel(t, "safetensors-autotrust-decision", config, []manifest.Layer{params})
 	config.Renderer = "strands"
 	createSafetensorsTestModel(t, "safetensors-strands", config, []manifest.Layer{params})
 	config.Renderer = "clef"
@@ -280,6 +284,9 @@ func TestSystemOneHandler(t *testing.T) {
 		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
 		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"safetensors success", `{"model":"safetensors-decision","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"D3 safetensors", `{"model":"safetensors-d3","state":"x","questions":{"pick":{"type":"choice","instructions":"q","criteria":{"a":null,"b":null}}}}`, nil, 200, 1, false},
+		{"AutoTrust decision safetensors", `{"model":"safetensors-autotrust-decision","state":"x","questions":{"pick":{"type":"choice","instructions":"q","criteria":{"a":null,"b":null}}}}`, nil, 200, 1, false},
+		{"AutoTrust decision needs six score levels", `{"model":"safetensors-autotrust-decision","state":"x","questions":{"rating":{"type":"score","instructions":"q","criteria":[0,1,2,3,4]}}}`, nil, 400, 0, false},
 		{"safetensors decision only", `{"model":"safetensors-decision-only","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"Perplexity native scorer receives system", `{"model":"safetensors-pplx","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"Perplexity requires model system", `{"model":"safetensors-pplx-no-system","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
@@ -393,18 +400,22 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				var response struct {
 					Answers map[string]struct {
-						Noul float64 `json:"noul"`
+						Noul   float64 `json:"noul"`
+						Choice string  `json:"choice"`
 					} `json:"answers"`
 					Usage decision.Usage `json:"usage"`
 				}
 				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 					t.Fatal(err)
 				}
+				choiceCase := tt.name == "D3 safetensors" || tt.name == "AutoTrust decision safetensors"
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 || runner.native || ref.model.Load().Config.Renderer == "kev" || ref.model.Load().Config.Renderer == "pplx" {
+				if len(runner.request.Fields) > 0 || runner.native || ref.model.Load().Config.Renderer == "kev" || ref.model.Load().Config.Renderer == "pplx" || choiceCase {
 					outputTokens = 0
 				}
-				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
+				if response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens ||
+					(choiceCase && response.Answers["pick"].Choice != "b") ||
+					(!choiceCase && response.Answers["refund"].Noul < 0.88) {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
 				if runner.native {
@@ -423,6 +434,10 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				if ref.model.Load().Config.Renderer == "pplx" && (runner.request.System != "Model-specific scoring instructions." || len(runner.request.Rows) != 1 || runner.request.Rows[0].Question == nil) {
 					t.Fatalf("Perplexity scorer lost its system prompt or native question: %+v", runner.request)
+				}
+				if (ref.model.Load().Config.Renderer == "d3" || ref.model.Load().Config.Renderer == "autotrust-decision") &&
+					(len(runner.request.Rows) != 1 || runner.request.Rows[0].Question == nil) {
+					t.Fatalf("native scorer lost its question: %+v", runner.request)
 				}
 				var prompt string
 				if len(runner.request.Rows) > 0 {
@@ -443,9 +458,9 @@ func TestSystemOneHandler(t *testing.T) {
 					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
 						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
 					}
-				} else if ref.model.Load().Config.Renderer == "pplx" {
+				} else if ref.model.Load().Config.Renderer == "pplx" || ref.model.Load().Config.Renderer == "d3" || ref.model.Load().Config.Renderer == "autotrust-decision" {
 					if prompt != "" {
-						t.Fatalf("Perplexity scorer received a generic rendered prompt: %q", prompt)
+						t.Fatalf("native scorer received a generic rendered prompt: %q", prompt)
 					}
 				} else if ref.model.Load().Config.Renderer == "kev" {
 					if prompt != "" || len(runner.request.State) != 70<<10 || runner.request.Rows[0].Question == nil {
