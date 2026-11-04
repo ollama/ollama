@@ -74,16 +74,6 @@ func (olmo3ParserEventToolCalls) isOlmo3ParserEvent() {}
 func (p *Olmo3Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
 
-	if done {
-		// Drain any remaining content
-		bufStr := p.buffer.String()
-		p.buffer.Reset()
-		if p.state == olmo3StateContent && len(bufStr) > 0 {
-			return bufStr, "", nil, nil
-		}
-		return "", "", nil, nil
-	}
-
 	events := p.parseEvents()
 
 	var contentSb strings.Builder
@@ -100,6 +90,17 @@ func (p *Olmo3Parser) Add(s string, done bool) (content string, thinking string,
 	for i := range allCalls {
 		allCalls[i].Function.Index = p.callIndex
 		p.callIndex++
+	}
+
+	if done {
+		// Drain any remaining content. parseEvents withholds only the trailing
+		// bytes that could still grow into a partial tag, so this releases them
+		// once no more input is coming. Unterminated tool call markup is
+		// dropped rather than surfaced as content, as before.
+		if bufStr := p.buffer.String(); p.state == olmo3StateContent && len(bufStr) > 0 {
+			contentSb.WriteString(bufStr)
+		}
+		p.buffer.Reset()
 	}
 
 	return contentSb.String(), "", allCalls, nil
