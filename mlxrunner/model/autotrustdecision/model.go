@@ -58,6 +58,14 @@ func newModel(root *model.Root) (model.Model, error) {
 		head.Slots.Ranges["score"] != [2]int{2, 8} || head.Slots.Ranges["choice"] != [2]int{8, slots} {
 		return nil, fmt.Errorf("unsupported AutoTrust decision slot ranges")
 	}
+	data, err := root.Manifest.ReadConfig("config.json")
+	if err != nil {
+		return nil, fmt.Errorf("read AutoTrust decision config: %w", err)
+	}
+	cfg, err := parseConfig(data, head)
+	if err != nil {
+		return nil, err
+	}
 	var cal calibration
 	if err := root.Manifest.ReadConfigJSON("calibration.json", &cal); err != nil {
 		return nil, fmt.Errorf("read AutoTrust decision calibration: %w", err)
@@ -94,12 +102,14 @@ func newModel(root *model.Root) (model.Model, error) {
 		}
 	}
 	m.choiceCodes, m.choiceIDs = choiceLabels(m.Tokenizer())
-	// The compact head trains 16 choice biases; later labels use zero bias.
-	// The wide head trains 256, but the System One API accepts at most 255.
+	// The System One API accepts at most 255 of the wide head's 256 labels.
 	headChoices := min(slots-8, 255)
 	if len(m.choiceIDs) < 255 || !slices.Equal(m.choiceIDs[:headChoices], head.VerbalizerIDs[8:8+headChoices]) {
 		return nil, fmt.Errorf("AutoTrust decision tokenizer choice labels do not match the trained head")
 	}
+	maxChoices := min(cfg.MaxChoices, len(m.choiceIDs))
+	m.choiceCodes = m.choiceCodes[:maxChoices]
+	m.choiceIDs = m.choiceIDs[:maxChoices]
 	return m, nil
 }
 

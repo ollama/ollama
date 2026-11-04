@@ -75,11 +75,6 @@ func (m *Model) prompt(input llm.ScoreRequest, q *llm.ScoreQuestion) (string, st
 		bias = m.head.Bias[2:8]
 	case "choice":
 		maxChoices := len(m.choiceIDs)
-		// The published 9B text checkpoint supports its 16 trained labels.
-		// The 27B VL checkpoint documents wide-label inference with a compact head.
-		if len(m.head.VerbalizerIDs) == 24 && m.Vision == nil {
-			maxChoices = min(maxChoices, 16)
-		}
 		if len(q.Options) < 2 || len(q.Options) > maxChoices {
 			return "", "", nil, nil, fmt.Errorf("AutoTrust decision choice requires 2–%d options", maxChoices)
 		}

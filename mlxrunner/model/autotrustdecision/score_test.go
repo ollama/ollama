@@ -43,10 +43,10 @@ func TestImageCountLimit(t *testing.T) {
 	}
 }
 
-func TestVisionCompactHeadUsesExistingAPILimit(t *testing.T) {
+func TestCompactHeadSupportsConfiguredWideLabels(t *testing.T) {
 	const maxChoices = 255
 	m := &Model{
-		Model:       &qwen3_5.Model{Vision: &qwen3_5.VisionConfig{}},
+		Model:       &qwen3_5.Model{},
 		choiceCodes: make([]string, maxChoices),
 		choiceIDs:   make([]int32, maxChoices),
 	}
@@ -67,8 +67,8 @@ func TestVisionCompactHeadUsesExistingAPILimit(t *testing.T) {
 	}
 }
 
-func TestTextCompactHeadRejectsUntrainedChoices(t *testing.T) {
-	m := &Model{Model: &qwen3_5.Model{}, choiceCodes: make([]string, 255), choiceIDs: make([]int32, 255)}
+func TestCompactHeadUsesResolvedChoiceLimit(t *testing.T) {
+	m := &Model{Model: &qwen3_5.Model{Vision: &qwen3_5.VisionConfig{}}, choiceCodes: make([]string, 16), choiceIDs: make([]int32, 16)}
 	m.head.Bias = make([]float32, 24)
 	m.head.VerbalizerIDs = make([]int32, 24)
 	q := &llm.ScoreQuestion{Type: "choice", Options: make([]string, 16)}
