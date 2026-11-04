@@ -188,7 +188,7 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 		if i > 0 {
 			prepared, err = m.PrepareMedia(row.segments)
 			if err != nil {
-				return result, err
+				return result, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("question %d: %v", i, err)}
 			}
 		}
 		if len(prepared.Tokens) != row.tokenCount {
