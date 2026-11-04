@@ -538,16 +538,37 @@ func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 		t.Errorf("expected final content {\"v\": 3}, got %s", string(content))
 	}
 
-	// Verify at least one backup exists
+	// Every content-changing write must produce a distinct backup, so the
+	// original state survives the rapid writes instead of being overwritten.
 	entries, _ := os.ReadDir(BackupDir())
+	backupNames := make(map[string]bool)
 	var backupCount int
 	for _, e := range entries {
 		if len(e.Name()) > len("rapid.json.") && e.Name()[:len("rapid.json.")] == "rapid.json." {
+			backupNames[e.Name()] = true
 			backupCount++
 		}
 	}
-	if backupCount == 0 {
-		t.Error("expected at least one backup file from rapid writes")
+	if backupCount < 3 {
+		t.Errorf("expected 3 distinct backups from 3 rapid writes, got %d", backupCount)
+	}
+	if len(backupNames) != backupCount {
+		t.Error("expected all backups to have distinct names")
+	}
+
+	// The original content must survive in exactly one backup.
+	origFound := false
+	for name := range backupNames {
+		content, err := os.ReadFile(filepath.Join(BackupDir(), name))
+		if err != nil {
+			t.Fatalf("read backup %s: %v", name, err)
+		}
+		if string(content) == `{"v": 0}` {
+			origFound = true
+		}
+	}
+	if !origFound {
+		t.Error("expected original content {\"v\": 0} to be preserved in a backup")
 	}
 }
 
