@@ -201,10 +201,12 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Alpagua](https://alpagua.com/) - Open source AI chat with tools and mcp client for Linux, MacOS, Windows
 
 #### Mobile
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
+- [Alpagua](https://alpagua.com/) - Open source AI chat with tools and mcp client for iOS and Android
 
 > SwiftChat, Enchanted, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
 
