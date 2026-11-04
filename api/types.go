@@ -1146,6 +1146,12 @@ func (opts *Options) FromMap(m map[string]any) error {
 				case float64:
 					// when JSON unmarshals numbers, it uses float64, not int
 					field.SetInt(int64(t))
+				case json.Number:
+					i, err := t.Int64()
+					if err != nil {
+						return fmt.Errorf("option %q must be of type integer: %w", key, err)
+					}
+					field.SetInt(i)
 				default:
 					return fmt.Errorf("option %q must be of type integer", key)
 				}
