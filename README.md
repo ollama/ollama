@@ -345,6 +345,7 @@ console.log(response.message.content);
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
+- [Quantized.uk](https://quantized.uk/tools/vram-calc/) - VRAM calculator showing which models and quants fit your GPU, with an Ollama command generator
 
 #### Package Managers
 
