@@ -52,6 +52,13 @@ your NVIDIA GPU, and fallback to running on the CPU. You can workaround this
 driver bug by reloading the NVIDIA UVM driver with `sudo rmmod nvidia_uvm &&
 sudo modprobe nvidia_uvm`
 
+### Integrated GPUs on WSL2
+
+Under WSL2, an integrated NVIDIA GPU uses its dedicated memory and Windows
+shared GPU memory. Shared GPU memory comes out of the same Windows memory as
+the WSL VM, so Ollama leaves as much of it unused as the VM holds, plus 4 GiB.
+To use dedicated memory only, set `OLLAMA_WSL_SHARED_GPU_MEMORY=0`.
+
 ## AMD Radeon
 
 Ollama supports the following AMD GPUs via the ROCm library:
