@@ -28,12 +28,12 @@ func TestList(t *testing.T) {
 	expectNames := []string{
 		"mistral:7b-instruct-q4_0",
 		"zephyr:7b-beta-q5_K_M",
-		"apple/OpenELM:latest",
+		"apple/OpenELM",
 		"boreas:2b-code-v1.5-q6_K",
 		"notus:7b-v1-IQ2_S",
 		// TODO: host:port currently fails on windows (#4107)
 		// "localhost:5000/library/eurus:700b-v0.5-iq3_XXS",
-		"mynamespace/apeliotes:latest",
+		"mynamespace/apeliotes",
 		"myhost/mynamespace/lips:code",
 	}
 
@@ -169,7 +169,7 @@ func TestOpenAIListMatchesTagsModels(t *testing.T) {
 		}
 	}
 
-	if got, want := models.Data[0].Id, "newer-model:latest"; got != want {
+	if got, want := models.Data[0].Id, "newer-model"; got != want {
 		t.Fatalf("first /v1/models id = %q, want %q", got, want)
 	}
 }
@@ -309,12 +309,12 @@ func TestListShowsPreferredManifestListChild(t *testing.T) {
 
 	var listed []api.ListModelResponse
 	for i := range resp.Models {
-		if resp.Models[i].Name == "test-list:latest" {
+		if resp.Models[i].Name == "test-list" {
 			listed = append(listed, resp.Models[i])
 		}
 	}
 	if len(listed) != 1 {
-		t.Fatalf("test-list:latest rows = %d, want 1: %+v", len(listed), listed)
+		t.Fatalf("test-list rows = %d, want 1: %+v", len(listed), listed)
 	}
 	if listed[0].Digest != selected.SelectedDigest() {
 		t.Fatalf("listed digest = %s, want selected digest %s", listed[0].Digest, selected.SelectedDigest())
