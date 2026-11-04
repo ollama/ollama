@@ -7,7 +7,7 @@ describe("SidebarLayout", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the macOS title offset in step with the sidebar transition", () => {
+  it("renders sidebar open by default on macOS", () => {
     vi.stubGlobal("window", { OLLAMA_PLATFORM: "darwin" });
 
     const html = renderToStaticMarkup(
@@ -16,8 +16,21 @@ describe("SidebarLayout", () => {
       </SidebarLayout>,
     );
 
-    expect(html).toContain("pl-36");
+    expect(html).toContain("pl-6");
     expect(html).toContain("transition-[padding-left]");
     expect(html).toContain("duration-300");
+  });
+
+  it("does not animate the sidebar on the initial render", () => {
+    vi.stubGlobal("window", { OLLAMA_PLATFORM: "darwin" });
+
+    const html = renderToStaticMarkup(
+      <SidebarLayout title="Apps" sidebar={<nav />}>
+        <div />
+      </SidebarLayout>,
+    );
+
+    expect(html).not.toContain("transition-[width]");
+    expect(html).not.toContain("transition-[left]");
   });
 });
