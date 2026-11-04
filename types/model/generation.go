@@ -121,26 +121,38 @@ func ParseGGUFGenerationDefaults(intValue func(string) (int64, bool), floatValue
 	return defaults
 }
 
+// intGenerationDefault and floatGenerationDefault decode through a pointer:
+// json.Unmarshal accepts null into a plain number without an error and leaves
+// it at zero, which would turn "temperature": null into a default of 0.
+
 func intGenerationDefault(data json.RawMessage) (int64, bool) {
-	var value int64
+	var value *int64
 	if err := json.Unmarshal(data, &value); err == nil {
-		return value, true
+		return derefGenerationDefault(value)
 	}
 
-	var f float64
-	if err := json.Unmarshal(data, &f); err != nil {
+	var f *float64
+	if err := json.Unmarshal(data, &f); err != nil || f == nil {
 		return 0, false
 	}
 
 	// Match api.Options.FromMap; rounding may be better for near-integers.
-	return int64(f), true
+	return int64(*f), true
 }
 
 func floatGenerationDefault(data json.RawMessage) (float64, bool) {
-	var value float64
+	var value *float64
 	if err := json.Unmarshal(data, &value); err != nil {
 		return 0, false
 	}
 
-	return value, true
+	return derefGenerationDefault(value)
+}
+
+func derefGenerationDefault[T int64 | float64](value *T) (T, bool) {
+	if value == nil {
+		return 0, false
+	}
+
+	return *value, true
 }
