@@ -344,6 +344,7 @@ console.log(response.message.content);
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
+- [gpu.nz](https://gpu.nz/en/templates/ollama) - Rent a GPU by the minute with Ollama and Open WebUI preinstalled
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
 
 #### Package Managers
