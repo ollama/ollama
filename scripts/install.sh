@@ -194,22 +194,75 @@ trap install_success EXIT
 
 # Everything from this point onwards is optional.
 
-configure_systemd() {
+configure_ollama_user() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
-        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+        if available useradd && $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama; then
+            :
+        elif available adduser; then
+            # BusyBox-based distributions (for example Alpine) use adduser
+            # instead of the shadow useradd implementation.
+            if available addgroup && (! available getent || ! getent group ollama >/dev/null 2>&1); then
+                $SUDO addgroup -S ollama 2>/dev/null || $SUDO addgroup ollama
+            fi
+            $SUDO adduser -S -D -h /usr/share/ollama -s /sbin/nologin -G ollama ollama
+        else
+            error "Unable to create the ollama service user: useradd and adduser are unavailable."
+        fi
     fi
-    if getent group render >/dev/null 2>&1; then
+}
+
+configure_ollama_home() {
+    status "Preparing ollama home directory..."
+    $SUDO install -o ollama -g ollama -m750 -d /usr/share/ollama
+}
+
+group_exists() {
+    if available getent; then
+        getent group "$1" >/dev/null 2>&1
+    else
+        grep -q "^$1:" /etc/group
+    fi
+}
+
+add_ollama_group_member() {
+    local USER="$1"
+    local GROUP="$2"
+
+    if ! group_exists "$GROUP"; then
+        return
+    fi
+
+    if available usermod; then
+        if ! $SUDO usermod -a -G "$GROUP" "$USER"; then
+            warning "Unable to add $USER to the $GROUP group."
+        fi
+    elif available addgroup; then
+        # BusyBox provides addgroup USER GROUP instead of usermod -a -G.
+        if ! $SUDO addgroup "$USER" "$GROUP"; then
+            warning "Unable to add $USER to the $GROUP group."
+        fi
+    fi
+}
+
+configure_ollama_groups() {
+    if group_exists render; then
         status "Adding ollama user to render group..."
-        $SUDO usermod -a -G render ollama
+        add_ollama_group_member ollama render
     fi
-    if getent group video >/dev/null 2>&1; then
+    if group_exists video; then
         status "Adding ollama user to video group..."
-        $SUDO usermod -a -G video ollama
+        add_ollama_group_member ollama video
     fi
 
     status "Adding current user to ollama group..."
-    $SUDO usermod -a -G ollama $(whoami)
+    add_ollama_group_member "$(whoami)" ollama
+}
+
+configure_systemd() {
+    configure_ollama_user
+    configure_ollama_home
+    configure_ollama_groups
 
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
@@ -223,6 +276,7 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
+Environment="HOME=/usr/share/ollama"
 Environment="PATH=$PATH"
 
 [Install]
@@ -247,8 +301,44 @@ EOF
     esac
 }
 
+configure_openrc() {
+    configure_ollama_user
+    configure_ollama_home
+    configure_ollama_groups
+
+    status "Creating ollama OpenRC service..."
+    cat <<EOF | $SUDO tee /etc/init.d/ollama >/dev/null
+#!/sbin/openrc-run
+
+name="ollama"
+description="Ollama model service"
+export HOME="/usr/share/ollama"
+command="$BINDIR/ollama"
+command_args="serve"
+command_user="ollama:ollama"
+pidfile="/run/\${RC_SVCNAME}.pid"
+retry="TERM/30/KILL/5"
+supervisor=supervise-daemon
+respawn_delay=3
+respawn_max=0
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+    $SUDO chmod 755 /etc/init.d/ollama
+    status "Enabling and starting ollama OpenRC service..."
+    $SUDO rc-update add ollama default
+    if ! $SUDO rc-service ollama restart; then
+        warning "OpenRC is not running; start the service later with 'rc-service ollama start'."
+    fi
+}
+
 if available systemctl; then
     configure_systemd
+elif available rc-update && available rc-service && available openrc-run; then
+    configure_openrc
 fi
 
 # WSL2 only supports GPUs via nvidia passthrough
