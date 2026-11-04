@@ -126,7 +126,23 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
-# Function to download and extract with fallback from zst to tgz
+# Current releases only publish .tar.zst archives; .tgz is served solely for
+# older releases predating that format (verified: every current
+# ollama-linux-*.tgz variant 404s, all zst equivalents 200). So zstd is not
+# optional for a Linux install today, and the check belongs here, before
+# anything is downloaded or any directory created - not inside
+# download_and_extract(), where the tool is only actually needed for the
+# .tar.zst branch and reporting it late leaves a misleading empty
+# /usr/local/lib/ollama behind.
+if ! available zstd; then
+    error "This version requires zstd for extraction. Please install zstd and try again:
+  - Debian/Ubuntu: sudo apt-get install zstd
+  - RHEL/CentOS/Fedora: sudo dnf install zstd
+  - Arch: sudo pacman -S zstd"
+fi
+
+# Function to download and extract, with a .tgz fallback for older releases
+# that predate .tar.zst.
 download_and_extract() {
     local url_base="$1"
     local dest_dir="$2"
@@ -134,14 +150,6 @@ download_and_extract() {
 
     # Check if .tar.zst is available
     if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
-        # zst file exists - check if we have zstd tool
-        if ! available zstd; then
-            error "This version requires zstd for extraction. Please install zstd and try again:
-  - Debian/Ubuntu: sudo apt-get install zstd
-  - RHEL/CentOS/Fedora: sudo dnf install zstd
-  - Arch: sudo pacman -S zstd"
-        fi
-
         status "Downloading ${filename}.tar.zst"
         curl --fail --show-error --location --progress-bar \
             "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
