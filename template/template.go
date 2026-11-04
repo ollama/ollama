@@ -69,10 +69,49 @@ func (t named) Reader() io.Reader {
 	return bytes.NewReader(t.Bytes)
 }
 
+// strongMarkers maps template family names to literal delimiter substrings
+// that unambiguously identify that family when present in a source template.
+// Checked before falling back to fuzzy (Levenshtein) matching. Real bug found
+// 2026-08-31: whole-string character-level edit distance is unreliable for
+// longer/more complex templates (e.g. ones with tool-calling support) --
+// boilerplate noise (control-flow keywords, JSON scaffolding) can easily
+// outweigh the handful of characters that actually identify the family.
+// Confirmed directly: a real 3B model's chatml-with-tools template (2427
+// chars) scored *worse* by Levenshtein distance against chatml's own
+// reference entries than against gemma3-instruct and alpaca -- neither of
+// which share chatml's role-based delimiter structure at all.
+var strongMarkers = []struct {
+	name    string
+	markers []string
+}{
+	{"chatml", []string{"<|im_start|>", "<|im_end|>"}},
+	{"llama3-instruct", []string{"<|start_header_id|>", "<|eot_id|>"}},
+	{"phi-3", []string{"<|end|>", "<|assistant|>"}},
+	{"zephyr", []string{"<|system|>", "<|user|>", "<|assistant|>"}},
+	{"command-r", []string{"<|START_OF_TURN_TOKEN|>"}},
+}
+
 func Named(s string) (*named, error) {
 	templates, err := templatesOnce()
 	if err != nil {
 		return nil, err
+	}
+
+	for _, m := range strongMarkers {
+		allPresent := true
+		for _, marker := range m.markers {
+			if !strings.Contains(s, marker) {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			for _, t := range templates {
+				if t.Name == m.name {
+					return t, nil
+				}
+			}
+		}
 	}
 
 	var template *named
