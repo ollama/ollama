@@ -279,13 +279,23 @@ func ToTimings(m api.Metrics) *Timings {
 		return nil
 	}
 
+	// PromptEvalDuration only covers the prompt tokens that were actually
+	// evaluated; cached tokens are counted in PromptEvalCount but skipped during
+	// prefill. Rate the evaluated tokens so the reported throughput matches the
+	// elapsed time, as Metrics.Summary does. PromptN keeps the full prompt count
+	// so it still reconciles with usage.prompt_tokens.
+	evaluated := m.PromptEvalCount
+	if m.PromptEvalCachedCount != nil {
+		evaluated = max(0, evaluated-*m.PromptEvalCachedCount)
+	}
+
 	promptMS := float64(m.PromptEvalDuration.Milliseconds())
 	predictedMS := float64(m.EvalDuration.Milliseconds())
 	return &Timings{
 		PromptN:             m.PromptEvalCount,
 		PromptMS:            promptMS,
-		PromptPerTokenMS:    safeDiv(promptMS, float64(m.PromptEvalCount)),
-		PromptPerSecond:     safeDiv(float64(m.PromptEvalCount)*1000, promptMS),
+		PromptPerTokenMS:    safeDiv(promptMS, float64(evaluated)),
+		PromptPerSecond:     safeDiv(float64(evaluated)*1000, promptMS),
 		PredictedN:          m.EvalCount,
 		PredictedMS:         predictedMS,
 		PredictedPerTokenMS: safeDiv(predictedMS, float64(m.EvalCount)),
