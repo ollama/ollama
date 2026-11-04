@@ -19,10 +19,12 @@ func TestGenerateWithVideo(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	stream := false
-	for _, mode := range []string{"rendered", "native", "template", "role template", "suffix", "raw", "empty prompt"} {
+	for _, mode := range []string{"rendered", "native", "native implicit", "template", "role template", "suffix", "raw", "raw implicit", "empty prompt"} {
 		t.Run(mode, func(t *testing.T) {
 			mock := &mockRunner{CompletionResponse: llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop}}
+			nativeTemplateCalled := false
 			mock.TemplateFn = func(_ context.Context, request llm.ChatRequest) (string, error) {
+				nativeTemplateCalled = true
 				if len(request.Messages[0].Videos) != 0 || len(request.Messages[0].Images) != 0 {
 					t.Fatal("native template duplicated binary media")
 				}
@@ -30,16 +32,22 @@ func TestGenerateWithVideo(t *testing.T) {
 			}
 			s := newServerWithMockRunner(t, mock)
 			kv := gguftest.KV{"llama.vision.block_count": uint32(1)}
-			if mode == "native" {
+			if strings.HasPrefix(mode, "native") {
 				kv["tokenizer.chat_template"] = "{{ messages[0]['content'] }}"
 			}
 			name := "video-" + strings.ReplaceAll(mode, " ", "-")
 			baseTemplate := "{{ .Prompt }}"
+			if strings.HasPrefix(mode, "native") {
+				baseTemplate = ""
+			}
 			if mode == "suffix" {
 				baseTemplate = "{{ if .Suffix }}{{ .Prompt }}SUFFIX{{ .Suffix }}{{ else }}{{ .Prompt }}{{ end }}"
 			}
 			createMinimalGGUFModel(t, s, name, kv, baseTemplate, nil)
 			request := api.GenerateRequest{Model: name, Prompt: "describe [img] then [img]", Images: []api.ImageData{[]byte("image")}, Videos: []api.VideoData{[]byte("video")}, Stream: &stream}
+			if mode == "native implicit" || mode == "raw implicit" {
+				request.Prompt = "describe"
+			}
 			if mode == "template" {
 				request.Template = "{{ .Prompt }}"
 			}
@@ -50,7 +58,7 @@ func TestGenerateWithVideo(t *testing.T) {
 			if mode == "suffix" {
 				request.Suffix = "end"
 			}
-			if mode == "raw" {
+			if strings.HasPrefix(mode, "raw") {
 				request.Raw = true
 			}
 			if mode == "empty prompt" {
@@ -60,10 +68,16 @@ func TestGenerateWithVideo(t *testing.T) {
 			if response.Code != http.StatusOK {
 				t.Fatalf("status %d: %s", response.Code, response.Body.String())
 			}
+			if strings.HasPrefix(mode, "native") && !nativeTemplateCalled {
+				t.Fatal("native fixture bypassed llama-server template")
+			}
 			if strings.Count(mock.CompletionRequest.Prompt, "[img-0]") != 1 || strings.Count(mock.CompletionRequest.Prompt, "[img-1]") != 1 {
 				t.Fatalf("unattached media in %q", mock.CompletionRequest.Prompt)
 			}
-			if mode == "role template" && !strings.HasPrefix(mock.CompletionRequest.Prompt, "<role>user:[img-0][img-1]describe") {
+			if (mode == "native implicit" || mode == "raw implicit") && mock.CompletionRequest.Prompt != "describe[img-0][img-1]" {
+				t.Fatalf("native media moved before text: %q", mock.CompletionRequest.Prompt)
+			}
+			if mode == "role template" && !strings.HasPrefix(mock.CompletionRequest.Prompt, "<role>user:describe[img-0][img-1]") {
 				t.Fatalf("video escaped user role: %q", mock.CompletionRequest.Prompt)
 			}
 			media := mock.CompletionRequest.Media
@@ -145,7 +159,7 @@ func TestGenerateVideoTemplateKeepsHistoryRoles(t *testing.T) {
 		t.Fatalf("generate %d: %s", response.Code, response.Body.String())
 	}
 	prompt := mock.CompletionRequest.Prompt
-	for _, want := range []string{"system<role>system:system</role><role>user:[img-0]history</role>", "<role>user:[img-1][img-2]current</role>"} {
+	for _, want := range []string{"system<role>system:system</role><role>user:history[img-0]</role>", "<role>user:current[img-1][img-2]</role>"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("missing %q in %q", want, prompt)
 		}

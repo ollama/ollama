@@ -650,7 +650,11 @@ func TestVideoPromptMediaOrder(t *testing.T) {
 	for _, renderer := range []string{"", "qwen3-vl-instruct", "gemma4"} {
 		t.Run(renderer, func(t *testing.T) {
 			m := &Model{Config: testConfigWithRenderer(renderer)}
-			tagged, media, err := mediaTaggedMessages(m, original, 0, false, m.Config.Renderer == "")
+			placement := mediaTagsDefault
+			if m.Config.Renderer != "" {
+				placement = mediaTagsOmitted
+			}
+			tagged, media, err := mediaTaggedMessages(m, original, 0, false, placement)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -671,7 +675,7 @@ func TestVideoPromptMediaOrder(t *testing.T) {
 					t.Fatalf("missing/duplicate %s in %s", marker, prompt)
 				}
 			}
-			cleared, _, err := mediaTaggedMessages(m, original, 0, true, true)
+			cleared, _, err := mediaTaggedMessages(m, original, 0, true, mediaTagsAfterText)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -680,6 +684,33 @@ func TestVideoPromptMediaOrder(t *testing.T) {
 			}
 			if len(original[0].Videos) != 1 || len(original[0].Images) != 1 || original[0].Content != "look [img] then [img]" {
 				t.Fatal("request mutated")
+			}
+		})
+	}
+}
+
+func TestVideoRendererKeepsImplicitMediaAfterText(t *testing.T) {
+	messages := []api.Message{
+		{Role: "user", Content: "history", Images: []api.ImageData{[]byte("history-image")}},
+		{Role: "assistant", Content: "ok"},
+		{Role: "user", Content: "look", Images: []api.ImageData{[]byte("image")}, Videos: []api.VideoData{[]byte("video")}},
+	}
+	for _, name := range []string{"qwen3-vl-instruct", "gemma4"} {
+		t.Run(name, func(t *testing.T) {
+			prompt, err := renderPrompt(&Model{Config: testConfigWithRenderer(name)}, messages, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(prompt, "look[img-1][img-2]") {
+				t.Fatalf("video moved before instruction or lost history offset: %q", prompt)
+			}
+			for _, marker := range []string{"[img-0]", "[img-1]", "[img-2]"} {
+				if strings.Count(prompt, marker) != 1 {
+					t.Fatalf("missing/duplicate %s in %q", marker, prompt)
+				}
+			}
+			if messages[2].Content != "look" || len(messages[2].Images) != 1 || len(messages[2].Videos) != 1 {
+				t.Fatal("renderer mutated request")
 			}
 		})
 	}

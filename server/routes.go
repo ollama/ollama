@@ -663,7 +663,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					return
 				}
-				nativeReq.Messages, media, err = mediaTaggedMessages(m, nativeReq.Messages, 0, true, true)
+				// Match native Chat's text-then-media ordering without sending the
+				// binary payload twice. Explicit markers retain their positions.
+				nativeReq.Messages, media, err = mediaTaggedMessages(m, nativeReq.Messages, 0, true, mediaTagsAfterText)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
@@ -701,13 +703,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			// templating so media stays inside its role/system delimiters.
 			if len(req.Videos) > 0 || slices.ContainsFunc(values.Messages, func(msg api.Message) bool { return len(msg.Videos) > 0 }) {
 				if len(values.Messages) > 0 {
-					values.Messages, media, err = mediaTaggedMessages(m, values.Messages, 0, true, true)
+					values.Messages, media, err = mediaTaggedMessages(m, values.Messages, 0, true, mediaTagsDefault)
 					if err != nil {
 						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 						return
 					}
 				} else {
-					values.Prompt = mediaTaggedContent(values.Prompt, media)
+					values.Prompt = mediaTaggedContent(values.Prompt, media, mediaTagsDefault)
 				}
 			}
 			if err := tmpl.Execute(&b, values); err != nil {
@@ -719,7 +721,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if req.Raw && len(req.Videos) > 0 {
-		prompt = mediaTaggedContent(prompt, media)
+		prompt = mediaTaggedContent(prompt, media, mediaTagsDefault)
 	}
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
