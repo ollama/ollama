@@ -248,6 +248,26 @@ type ChatResponse struct {
 	Logprobs              []Logprob     `json:"logprobs,omitempty"`
 }
 
+// CompleteWithChat returns a Completion function that sends msgs to s.Chat in
+// place of a rendered prompt, for servers that take messages rather than a
+// prompt.
+func CompleteWithChat(s LlamaServer, msgs []api.Message) func(context.Context, CompletionRequest, func(CompletionResponse)) error {
+	return func(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
+		return s.Chat(ctx, ChatRequest{Messages: msgs, Format: req.Format, Options: req.Options}, func(r ChatResponse) {
+			fn(CompletionResponse{
+				Content:               r.Message.Content,
+				Done:                  r.Done,
+				DoneReason:            r.DoneReason,
+				PromptEvalCount:       r.PromptEvalCount,
+				PromptEvalCachedCount: r.PromptEvalCachedCount,
+				PromptEvalDuration:    r.PromptEvalDuration,
+				EvalCount:             r.EvalCount,
+				EvalDuration:          r.EvalDuration,
+			})
+		})
+	}
+}
+
 // DoneReason represents the reason why a completion response is done
 type DoneReason int
 
