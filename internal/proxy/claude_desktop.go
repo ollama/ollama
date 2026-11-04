@@ -32,14 +32,20 @@ const (
 	healthPath                     = "/_ollama/health"
 	healthHeader                   = "X-Ollama-Claude-Gateway"
 	unsupportedImageNotice         = "[Image omitted by Ollama because the selected model does not support image recognition.]"
+	// claudeDesktopLongContextSuffix marks the million-token variant Claude
+	// Desktop appends to a model ID when the catalog advertises that capacity.
+	claudeDesktopLongContextSuffix = "[1m]"
 )
 
 type gatewayModel struct {
-	ID                  string `json:"id"`
-	Type                string `json:"type"`
-	DisplayName         string `json:"display_name"`
-	CreatedAt           string `json:"created_at"`
-	MaxTokens           int    `json:"max_tokens"`
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	CreatedAt   string `json:"created_at"`
+	MaxTokens   int    `json:"max_tokens"`
+	// MaxInputTokens carries the trained context limit. It is the
+	// Anthropic-native counterpart to max_tokens, which is an output cap.
+	MaxInputTokens      int    `json:"max_input_tokens,omitempty"`
 	AnthropicFamilyTier string `json:"anthropic_family_tier"`
 	IsFamilyDefault     bool   `json:"is_family_default"`
 	OllamaModel         string `json:"-"`
@@ -57,6 +63,10 @@ type ClaudeDesktopConfig struct {
 	RefreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	ResolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	ListLocalModels    func(context.Context) ([]string, error)
+	// ResolveContextLength reports a model's trained context length. Catalog
+	// metadata covers only recommended models, so account-selected models
+	// reach Claude Desktop without a context size unless this fills it in.
+	ResolveContextLength func(context.Context, string) int
 }
 
 // ClaudeDesktopCounts reports requests routed through the proxy.
@@ -86,9 +96,12 @@ type ClaudeDesktop struct {
 	refreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	resolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	listLocalModels    func(context.Context) ([]string, error)
-	routed             atomic.Uint64
-	shutdown           chan struct{}
-	shutdownOnce       sync.Once
+
+	resolveContextLength func(context.Context, string) int
+	contextLengths       sync.Map
+	routed               atomic.Uint64
+	shutdown             chan struct{}
+	shutdownOnce         sync.Once
 
 	readyMu    sync.Mutex
 	readyUntil time.Time
@@ -139,9 +152,11 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		refreshModels:      config.RefreshModels,
 		resolveAccessState: config.ResolveAccessState,
 		listLocalModels:    config.ListLocalModels,
-		shutdown:           make(chan struct{}),
-		readyWait:          upstreamReadyTimeout,
-		readyPoll:          upstreamReadyPoll,
+
+		resolveContextLength: config.ResolveContextLength,
+		shutdown:             make(chan struct{}),
+		readyWait:            upstreamReadyTimeout,
+		readyPoll:            upstreamReadyPoll,
 	}
 	if len(p.models) == 0 {
 		p.models = SelectClaudeDesktopModels(DefaultClaudeDesktopModels(), nil)
@@ -530,7 +545,13 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context, 
 	for _, configuredModel := range configured {
 		access := evaluateClaudeDesktopAccess(configuredModel, state, localModels, inventoryKnown)
 		if access.Availability == ClaudeDesktopAvailabilityAvailable {
-			models = append(models, configuredModel.gateway)
+			gateway := configuredModel.gateway
+			if gateway.MaxInputTokens <= 0 {
+				if contextLength := p.contextLength(ctx, gateway.OllamaModel); contextLength > 0 {
+					gateway.MaxInputTokens = contextLength
+				}
+			}
+			models = append(models, gateway)
 		}
 	}
 
@@ -552,6 +573,27 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context, 
 	}); err != nil {
 		p.logger.Debug("write Claude model catalog", "error", err)
 	}
+}
+
+// contextLength reports a model's trained context length, asking the resolver
+// once per model. A model's trained context does not change while the gateway
+// runs, and the lookup reaches the Ollama server, so every catalog request
+// must not repeat it.
+func (p *ClaudeDesktop) contextLength(ctx context.Context, model string) int {
+	if p.resolveContextLength == nil || strings.TrimSpace(model) == "" {
+		return 0
+	}
+	if cached, ok := p.contextLengths.Load(model); ok {
+		return cached.(int)
+	}
+	contextLength := p.resolveContextLength(ctx, model)
+	if contextLength <= 0 {
+		// A failed lookup is not an answer. Retry it on the next request
+		// rather than caching a model as having no context forever.
+		return 0
+	}
+	p.contextLengths.Store(model, contextLength)
+	return contextLength
 }
 
 func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, models []ClaudeDesktopModel) {
@@ -739,6 +781,10 @@ func (p *ClaudeDesktop) modelForClaudeID(id string) (ClaudeDesktopModel, error) 
 }
 
 func claudeDesktopModelForID(models []ClaudeDesktopModel, id string) (ClaudeDesktopModel, error) {
+	// Claude Desktop offers a second picker entry per model that advertises a
+	// million-token context, and sends it back as the model ID with a "[1m]"
+	// suffix. The suffix selects a context size, not a different route.
+	id = strings.TrimSuffix(id, claudeDesktopLongContextSuffix)
 	for _, model := range models {
 		if model.gateway.ID == id || model.OllamaModel == id {
 			return model, nil
