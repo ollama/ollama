@@ -1,10 +1,75 @@
 package parsers
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestLagunaParserThinkingTagsInToolArguments(t *testing.T) {
+	props := api.NewToolPropertiesMap()
+	props.Set("content", api.ToolProperty{Type: api.PropertyType{"string"}})
+	tools := []api.Tool{{Function: api.ToolFunction{
+		Name:       "write_file",
+		Parameters: api.ToolFunctionParameters{Properties: props},
+	}}}
+
+	for _, name := range []string{"laguna", "poolside-v1"} {
+		for _, think := range []bool{false, true} {
+			for _, value := range []string{"<think>example</think>", "Opening tag: <think>", "Partial tag: <thi"} {
+				t.Run(fmt.Sprintf("%s/think=%t/%s", name, think, value), func(t *testing.T) {
+					input := "<tool_call>write_file<arg_key>content</arg_key><arg_value>" + value + "</arg_value></tool_call>"
+					wantThinking := ""
+					if think {
+						input = "Write the example.</think>" + input
+						wantThinking = "Write the example."
+					}
+					check := func(t *testing.T, chunks []string) {
+						t.Helper()
+						parser := ParserForName(name)
+						parser.Init(tools, nil, &api.ThinkValue{Value: think})
+						content, thinking, calls := lagunaParseChunks(t, parser, chunks...)
+						if content != "" || thinking != wantThinking || len(calls) != 1 {
+							t.Fatalf("content=%q thinking=%q calls=%d", content, thinking, len(calls))
+						}
+						if calls[0].Function.Name != "write_file" || calls[0].Function.Index != 0 {
+							t.Fatalf("unexpected call: %+v", calls[0])
+						}
+						if got, _ := calls[0].Function.Arguments.Get("content"); got != value {
+							t.Fatalf("content argument=%q, want %q", got, value)
+						}
+					}
+					for split := 0; split <= len(input); split++ {
+						t.Run(fmt.Sprintf("split=%d", split), func(t *testing.T) {
+							check(t, []string{input[:split], input[split:], ""})
+						})
+					}
+					t.Run("one character per chunk", func(t *testing.T) {
+						check(t, append(strings.Split(input, ""), ""))
+					})
+					t.Run("single final chunk", func(t *testing.T) {
+						check(t, []string{input})
+					})
+				})
+			}
+		}
+	}
+}
+
+func TestLagunaParserThinkingWithToolLikeText(t *testing.T) {
+	// A tool-like literal inside an explicitly closed thinking block remains
+	// thinking; only the real tool call after </think> is parsed.
+	parser := ParserForName("laguna")
+	parser.Init(lagunaTestTools(), nil, &api.ThinkValue{Value: true})
+	input := "The format starts with <tool_call>.</think>" +
+		"<tool_call>get_weather<arg_key>location</arg_key><arg_value>Paris</arg_value></tool_call>"
+	content, thinking, calls := lagunaParseChunks(t, parser, input)
+	if content != "" || thinking != "The format starts with <tool_call>." || len(calls) != 1 || calls[0].Function.Name != "get_weather" {
+		t.Fatalf("content=%q thinking=%q calls=%+v", content, thinking, calls)
+	}
+}
 
 func lagunaTestTools() []api.Tool {
 	props := api.NewToolPropertiesMap()
