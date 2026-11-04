@@ -77,6 +77,10 @@ func (s *Server) SpeechHandler(c *gin.Context) {
 		return
 	}
 
+	// Keep the system awake for the duration of local inference (issue #4072).
+	releasePowerAssertion := holdPowerAssertionDuringInference()
+	defer releasePowerAssertion()
+
 	prompter, _ := renderers.SpeechPrompterForRenderer(resolveRendererName(m))
 	streamSpeech(c, speaker, llm.SpeechRequest{Input: req.Input, Voice: req.Voice, Prompter: prompter}, format)
 }

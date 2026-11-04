@@ -557,6 +557,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	// Keep the system awake for the duration of local inference (issue #4072).
+	releasePowerAssertion := holdPowerAssertionDuringInference()
+	defer releasePowerAssertion()
+
 	checkpointLoaded := time.Now()
 
 	// load the model
@@ -920,6 +924,11 @@ func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Req
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+
+	// Keep the system awake for the duration of local inference (issue #4072).
+	releasePowerAssertion := holdPowerAssertionDuringInference()
+	defer releasePowerAssertion()
+
 	runner, ok := r.(interface {
 		SystemOne(ctx context.Context, state, questions json.RawMessage, images []api.ImageData) (answers, usage json.RawMessage, err error)
 	})
@@ -1051,6 +1060,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+
+	// Keep the system awake for the duration of local inference (issue #4072).
+	releasePowerAssertion := holdPowerAssertionDuringInference()
+	defer releasePowerAssertion()
+
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local decision model with a scoring-capable runner", req.Model)})
@@ -1212,6 +1226,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+
+	// Keep the system awake for the duration of local inference (issue #4072).
+	releasePowerAssertion := holdPowerAssertionDuringInference()
+	defer releasePowerAssertion()
 
 	checkpointLoaded := time.Now()
 
@@ -1458,6 +1476,10 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+
+	// Keep the system awake for the duration of local inference (issue #4072).
+	releasePowerAssertion := holdPowerAssertionDuringInference()
+	defer releasePowerAssertion()
 
 	// an empty request loads the model
 	if req.Prompt == "" {
@@ -3235,6 +3257,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+
+	// Keep the system awake for the duration of local inference (issue #4072).
+	releasePowerAssertion := holdPowerAssertionDuringInference()
+	defer releasePowerAssertion()
 
 	checkpointLoaded := time.Now()
 

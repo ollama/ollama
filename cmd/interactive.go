@@ -643,14 +643,34 @@ func normalizeFilePath(fp string) string {
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
 		"\\~", "~", // Escaped tilde
+		"\\\"", "\"", // Escaped double quote
 	).Replace(fp)
 }
 
+// unquoteAndExpand resolves shell-style pasted paths before os.Open:
+// it strips one layer of surrounding single/double quotes and expands a
+// leading ~/ to the user's home directory (issue #10333: pasted/dragged
+// paths such as ~/Pictures/shot.png were truncated and silently skipped).
+func unquoteAndExpand(fp string) string {
+	if len(fp) >= 2 {
+		if (fp[0] == '"' && fp[len(fp)-1] == '"') ||
+			(fp[0] == '\'' && fp[len(fp)-1] == '\'') {
+			fp = fp[1 : len(fp)-1]
+		}
+	}
+	if fp == "~" || strings.HasPrefix(fp, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			fp = filepath.Join(home, fp[1:])
+		}
+	}
+	return fp
+}
+
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
+	// Regex to match file paths starting with optional drive letter, ~/, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|~/|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -661,7 +681,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	var imgs []api.ImageData
 
 	for _, fp := range filePaths {
-		nfp := normalizeFilePath(fp)
+		nfp := unquoteAndExpand(normalizeFilePath(fp))
 		data, err := getImageData(nfp)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

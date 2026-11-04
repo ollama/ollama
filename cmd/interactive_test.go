@@ -3,9 +3,11 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExtractFilenames(t *testing.T) {
@@ -146,4 +148,41 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
+}
+
+func writePNG(t *testing.T, path string) {
+	t.Helper()
+	data := make([]byte, 600)
+	copy(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+}
+
+// Faithful repro of issue #10333: Finder drag-drop of an iCloud photo with
+// backslash-escaped spaces into the interactive CLI.
+func TestIssue10333EscapedSpaces(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "Mobile Documents", "com~apple~CloudDocs", "screenshots",
+		"CleanShot 2025-04-17 at 21.26.40@2x.png")
+	writePNG(t, real)
+
+	escaped := strings.ReplaceAll(real, " ", `\ `)
+	input := "describe this " + escaped + " please"
+	cleaned, imgs, err := extractFileData(input)
+	require.NoError(t, err)
+	assert.Len(t, imgs, 1, "escaped-space path should resolve to one image")
+	assert.NotContains(t, cleaned, ".png")
+}
+
+// ~/ should expand to $HOME like a shell does.
+func TestIssue10333TildeExpansion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	real := filepath.Join(home, "Pictures", "shot.png")
+	writePNG(t, real)
+
+	cleaned, imgs, err := extractFileData("what is in ~/Pictures/shot.png ?")
+	require.NoError(t, err)
+	assert.Len(t, imgs, 1, "tilde path should resolve to one image")
+	assert.NotContains(t, cleaned, ".png")
 }
