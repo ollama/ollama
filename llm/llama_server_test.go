@@ -3139,6 +3139,16 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantTotal: 0,
 		},
 		{
+			name: "new b12111 kinds: layer input + rotation",
+			lines: []string{
+				"llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)\n",
+				"init_rotation:         CUDA0 rotation buffer size =    23.04 MiB\n",
+				"init_rotation:     CUDA_Host rotation buffer size =     2.00 MiB\n",
+			},
+			wantGPU:   4.00 + 23.04,
+			wantTotal: 4.00 + 23.04 + 2.00,
+		},
+		{
 			name: "fit probe buffers are replaced by final load",
 			lines: []string{
 				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
