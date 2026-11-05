@@ -5,6 +5,7 @@ package discover
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,25 @@ import (
 const (
 	ggmlBackendDeviceTypeGPU  = 1
 	ggmlBackendDeviceTypeIGPU = 2
+)
+
+// Vulkan values are defined locally so VK_INTEL_device_info (headers 1.4.363+)
+// can be queried regardless of the Vulkan SDK used at build time.
+const (
+	intelVendorID = 0x8086
+
+	vkIntelDeviceInfoExtensionName = "VK_INTEL_device_info"
+	vkEXTPCIBusInfoExtensionName   = "VK_EXT_pci_bus_info"
+
+	vkSuccess                                        = 0
+	vkStructureTypeApplicationInfo                   = 0
+	vkStructureTypeInstanceCreateInfo                = 1
+	vkStructureTypePhysicalDeviceProperties2         = 1000059001
+	vkStructureTypePhysicalDevicePCIBusInfoEXT       = 1000212000
+	vkStructureTypePhysicalDeviceInfoPropertiesINTEL = 1000708000
+	vkPhysicalDeviceTypeIntegratedGPU                = 1
+
+	vkAPIVersion11 = 1<<22 | 1<<12
 )
 
 func ggmlDeviceTypeIntegrated(deviceType int32) bool {
@@ -116,6 +136,40 @@ func nativeProbeHasROCm(libDirs []string) bool {
 		}
 	}
 	return false
+}
+
+func nativeProbeHasVulkan(libDirs []string) bool {
+	for _, dir := range libDirs {
+		if strings.Contains(strings.ToLower(filepath.Base(dir)), "vulkan") {
+			return true
+		}
+	}
+	for _, file := range nativeProbeBackendFiles(libDirs) {
+		if strings.Contains(strings.ToLower(filepath.Base(file)), "vulkan") {
+			return true
+		}
+	}
+	return false
+}
+
+func addIntelVulkanDeviceInfo(devices []nativeProbeDevice, libDirs []string) {
+	hasIntegratedVulkan := false
+	for _, dev := range devices {
+		if dev.Library == "Vulkan" && dev.Integrated {
+			hasIntegratedVulkan = true
+			break
+		}
+	}
+	if !hasIntegratedVulkan || !nativeProbeHasVulkan(libDirs) {
+		return
+	}
+
+	probed, err := probeIntelVulkanDevices(libDirs)
+	if err != nil {
+		slog.Debug("intel vulkan device info unavailable", "error", err)
+		return
+	}
+	applyIntelVulkanDeviceInfo(devices, probed)
 }
 
 func parseNVIDIADriverMajor(version string) (int, error) {

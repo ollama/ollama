@@ -10,23 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Vulkan values are defined locally so VK_INTEL_device_info (headers 1.4.363+)
-// can be queried regardless of the Vulkan SDK used at build time.
-const (
-	intelVendorID = 0x8086
-
-	vkIntelDeviceInfoExtensionName = "VK_INTEL_device_info"
-	vkEXTPCIBusInfoExtensionName   = "VK_EXT_pci_bus_info"
-
-	vkStructureTypeApplicationInfo                   = 0
-	vkStructureTypePhysicalDeviceProperties2         = 1000059001
-	vkStructureTypePhysicalDevicePCIBusInfoEXT       = 1000212000
-	vkStructureTypePhysicalDeviceInfoPropertiesINTEL = 1000708000
-
-	vkAPIVersion11 = 1<<22 | 1<<12
-
-	vkExtensionPropertiesByteCount = 260 // char[256] + uint32
-)
+const vkExtensionPropertiesByteCount = 260 // char[256] + uint32
 
 type vkApplicationInfo struct {
 	SType              uint32

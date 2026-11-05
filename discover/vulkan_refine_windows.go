@@ -8,9 +8,6 @@ import (
 )
 
 const (
-	vkSuccess                           = 0
-	vkStructureTypeInstanceCreateInfo   = 1
-	vkPhysicalDeviceTypeIntegratedGPU   = 1
 	vkMaxPhysicalDeviceNameSize         = 256
 	vkPhysicalDevicePropertiesByteCount = 4096
 )
