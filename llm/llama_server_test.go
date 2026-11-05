@@ -4096,3 +4096,96 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 		t.Errorf("json format converted a schema, %d conversions", got)
 	}
 }
+
+func TestVRAMByGPUFilteredSingleDevice(t *testing.T) {
+	// CUDA1 alone under CUDA_VISIBLE_DEVICES logs as CUDA0.
+	gpus := []ml.DeviceInfo{{
+		DeviceID:    ml.DeviceID{ID: "1", Library: "CUDA"},
+		FilterID:    "GPU-c0d3444b",
+		Name:        "CUDA1",
+		TotalMemory: 24000 * 1024 * 1024,
+	}}
+	runner := &llamaServerRunner{
+		vramByDevice:     map[string]uint64{"CUDA0": 17000 * 1024 * 1024},
+		systemFreeAtLoad: map[string]uint64{"CUDA0": 23500 * 1024 * 1024},
+		gpus:             gpus,
+		deviceLogNames:   runnerDeviceLogNames(gpus, ml.GetDevicesEnv(gpus)),
+	}
+
+	if got := runner.VRAMByGPU(gpus[0].DeviceID); got != 17000*1024*1024 {
+		t.Errorf("VRAMByGPU(CUDA1) = %d, want %d", got, 17000*1024*1024)
+	}
+	infos := runner.GetDeviceInfos(context.Background())
+	if want := uint64((23500 - 17000) * 1024 * 1024); infos[0].FreeMemory != want {
+		t.Errorf("FreeMemory = %d, want %d", infos[0].FreeMemory, want)
+	}
+}
+
+func TestRunnerDeviceLogNames(t *testing.T) {
+	cuda0 := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"}
+	cuda1 := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, Name: "CUDA1"}
+	metal := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "Metal"}, Name: "MTL0"}
+
+	tests := []struct {
+		name string
+		gpus []ml.DeviceInfo
+		env  map[string]string
+		want map[ml.DeviceID]string
+	}{
+		{"filtered second device", []ml.DeviceInfo{cuda1}, map[string]string{"CUDA_VISIBLE_DEVICES": "1"}, map[ml.DeviceID]string{cuda1.DeviceID: "CUDA0"}},
+		{"filtered both devices", []ml.DeviceInfo{cuda0, cuda1}, map[string]string{"CUDA_VISIBLE_DEVICES": "0,1"}, map[ml.DeviceID]string{cuda0.DeviceID: "CUDA0", cuda1.DeviceID: "CUDA1"}},
+		{"unfiltered keeps discovery name", []ml.DeviceInfo{cuda1}, nil, map[ml.DeviceID]string{cuda1.DeviceID: "CUDA1"}},
+		{"unfiltered library", []ml.DeviceInfo{metal}, map[string]string{"CUDA_VISIBLE_DEVICES": "0"}, map[ml.DeviceID]string{metal.DeviceID: "MTL0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runnerDeviceLogNames(tt.gpus, tt.env)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for id, name := range tt.want {
+				if got[id] != name {
+					t.Errorf("name for %v = %q, want %q", id, got[id], name)
+				}
+			}
+		})
+	}
+}
+
+// TestRunnerDeviceLogNamesFromDevicesEnv uses the env GetDevicesEnv builds,
+// so the mapping follows the child's real numbering per backend.
+func TestRunnerDeviceLogNamesFromDevicesEnv(t *testing.T) {
+	dev := func(lib, id, name string) ml.DeviceInfo {
+		return ml.DeviceInfo{DeviceID: ml.DeviceID{ID: id, Library: lib}, FilterID: "f-" + id, Name: name}
+	}
+	cuda0, cuda1 := dev("CUDA", "0", "CUDA0"), dev("CUDA", "1", "CUDA1")
+	rocm1 := dev("ROCm", "1", "ROCm1")
+	vk1 := dev("Vulkan", "1", "Vulkan1")
+
+	tests := []struct {
+		name string
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{"cuda second card alone", []ml.DeviceInfo{cuda1}, []string{"CUDA0"}},
+		{"cuda group in reverse order", []ml.DeviceInfo{cuda1, cuda0}, []string{"CUDA0", "CUDA1"}},
+		{"rocm second card alone", []ml.DeviceInfo{rocm1}, []string{"ROCm0"}},
+		{"vulkan second card alone", []ml.DeviceInfo{vk1}, []string{"Vulkan0"}},
+		// Mixed vendors: CUDA is left unfiltered, ROCm is always filtered.
+		{"mixed cuda and rocm", []ml.DeviceInfo{cuda1, rocm1}, []string{"CUDA1", "ROCm0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if runtime.GOOS != "linux" && slices.ContainsFunc(tt.gpus, func(g ml.DeviceInfo) bool { return g.Library == "ROCm" }) {
+				t.Skip("ROCm filter variable is platform dependent")
+			}
+			env := ml.GetDevicesEnv(tt.gpus)
+			got := runnerDeviceLogNames(tt.gpus, env)
+			for i, gpu := range tt.gpus {
+				if got[gpu.DeviceID] != tt.want[i] {
+					t.Errorf("%s (env %v) = %q, want %q", gpu.Name, env, got[gpu.DeviceID], tt.want[i])
+				}
+			}
+		})
+	}
+}
