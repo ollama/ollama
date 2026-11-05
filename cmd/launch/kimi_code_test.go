@@ -661,6 +661,60 @@ max_context_size = 1048576
 	}
 }
 
+func TestKimiLegacyCLIArchived(t *testing.T) {
+	tests := map[string]bool{
+		"1.50.0": false,
+		"1.51.0": false,
+		"1.52.0": true,
+		"1.53.1": true,
+		"2.0.0":  true,
+		"bogus":  false,
+	}
+	for version, want := range tests {
+		if got := kimiLegacyCLIArchived(version); got != want {
+			t.Errorf("kimiLegacyCLIArchived(%q) = %v, want %v", version, got, want)
+		}
+	}
+}
+
+func TestEnsureKimiInstalled_RejectsArchivedCLIWhenNotInteractive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binaries")
+	}
+	oldGOOS := kimiGOOS
+	kimiGOOS = "linux"
+	t.Cleanup(func() { kimiGOOS = oldGOOS })
+
+	setTestHome(t, t.TempDir())
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	writeFakeBinary(t, binDir, "curl")
+	writeFakeBinary(t, binDir, "bash")
+	legacyPath := filepath.Join(binDir, "kimi")
+	if err := os.WriteFile(legacyPath, []byte("#!/bin/sh\necho 'kimi, version 1.52.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return false }
+	t.Cleanup(func() { isInteractiveSession = oldInteractive })
+
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+
+	_, err := ensureKimiInstalled()
+	if err == nil || !strings.Contains(err.Error(), "no longer runs commands") {
+		t.Fatalf("ensureKimiInstalled() error = %v, want archived kimi-cli error", err)
+	}
+	if !strings.Contains(err.Error(), "https://code.kimi.com/kimi-code/install.sh") {
+		t.Fatalf("error = %v, want install command", err)
+	}
+}
+
 func TestFindKimiBinary_PrefersKimiCodeInstall(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX executable names")
@@ -689,6 +743,173 @@ func TestFindKimiBinary_PrefersKimiCodeInstall(t *testing.T) {
 	}
 	if got != kimiCodeBin {
 		t.Fatalf("findKimiBinary() = %q, want %q", got, kimiCodeBin)
+	}
+}
+
+func TestEnsureKimiInstalled_FallsBackToLegacyCLIOnDecline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binaries")
+	}
+	oldGOOS := kimiGOOS
+	kimiGOOS = "linux"
+	t.Cleanup(func() { kimiGOOS = oldGOOS })
+
+	setTestHome(t, t.TempDir())
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	writeFakeBinary(t, binDir, "curl")
+	writeFakeBinary(t, binDir, "bash")
+	legacyPath := filepath.Join(binDir, "kimi")
+	if err := os.WriteFile(legacyPath, []byte("#!/bin/sh\necho 'kimi, version 1.50.0'\necho 'kimi-cli is no longer maintained.'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	t.Cleanup(func() { isInteractiveSession = oldInteractive })
+
+	var gotPrompt string
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		gotPrompt = prompt
+		return false, nil
+	}
+	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+
+	got, err := ensureKimiInstalled()
+	if err != nil {
+		t.Fatalf("ensureKimiInstalled() error = %v", err)
+	}
+	if got != legacyPath {
+		t.Fatalf("ensureKimiInstalled() = %q, want legacy %q", got, legacyPath)
+	}
+	if !strings.Contains(gotPrompt, "kimi-cli 1.50.0 is no longer maintained") {
+		t.Fatalf("prompt = %q, want archived kimi-cli prompt", gotPrompt)
+	}
+}
+
+func TestKimiRun_RejectsArchivedLegacyCLI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	logPath := filepath.Join(tmpDir, "kimi-args.log")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "kimi, version 1.53.1"
+  exit 0
+fi
+for arg in "$@"; do
+  printf "%%s\n" "$arg" >> %q
+done
+exit 0
+`, logPath)
+	if err := os.WriteFile(filepath.Join(tmpDir, "kimi"), []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to write fake kimi: %v", err)
+	}
+	writeFakeBinary(t, tmpDir, "curl")
+	writeFakeBinary(t, tmpDir, "bash")
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("KIMI_CODE_HOME", "")
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	t.Cleanup(func() { isInteractiveSession = oldInteractive })
+
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return false, nil
+	}
+	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+
+	err := (&Kimi{}).Run("llama3.2", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "no longer runs commands") {
+		t.Fatalf("Run() error = %v, want archived kimi-cli error", err)
+	}
+	if !strings.Contains(err.Error(), "https://code.kimi.com/kimi-code/install.sh") {
+		t.Fatalf("error = %v, want install command", err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("archived kimi-cli should not be launched")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".kimi-code", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("kimi code config should not be written for an archived kimi-cli")
+	}
+}
+
+func TestEnsureKimiInstalled_KeepsLegacyCLIWhenNotInteractive(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binaries")
+	}
+	oldGOOS := kimiGOOS
+	kimiGOOS = "linux"
+	t.Cleanup(func() { kimiGOOS = oldGOOS })
+
+	setTestHome(t, t.TempDir())
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	writeFakeBinary(t, binDir, "curl")
+	writeFakeBinary(t, binDir, "bash")
+	legacyPath := filepath.Join(binDir, "kimi")
+	if err := os.WriteFile(legacyPath, []byte("#!/bin/sh\necho 'kimi, version 1.50.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return false }
+	t.Cleanup(func() { isInteractiveSession = oldInteractive })
+
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+
+	got, err := ensureKimiInstalled()
+	if err != nil {
+		t.Fatalf("ensureKimiInstalled() error = %v", err)
+	}
+	if got != legacyPath {
+		t.Fatalf("ensureKimiInstalled() = %q, want legacy %q", got, legacyPath)
+	}
+}
+
+func TestEnsureKimiInstalled_FallsBackWhenInstallerDepsMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binaries")
+	}
+	oldGOOS := kimiGOOS
+	kimiGOOS = "linux"
+	t.Cleanup(func() { kimiGOOS = oldGOOS })
+
+	setTestHome(t, t.TempDir())
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	legacyPath := filepath.Join(binDir, "kimi")
+	if err := os.WriteFile(legacyPath, []byte("#!/bin/sh\necho 'kimi, version 1.50.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	t.Cleanup(func() { isInteractiveSession = oldInteractive })
+
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+
+	got, err := ensureKimiInstalled()
+	if err != nil {
+		t.Fatalf("ensureKimiInstalled() error = %v", err)
+	}
+	if got != legacyPath {
+		t.Fatalf("ensureKimiInstalled() = %q, want legacy %q", got, legacyPath)
 	}
 }
 
@@ -998,4 +1219,38 @@ func TestKimiConfigureOnlyWritesConfig(t *testing.T) {
 	}
 	cfg := readKimiCodeConfig(t, filepath.Join(kimiHome, "config.toml"))
 	kimiCodeConfigModel(t, cfg, "ollama/glm-5.3:cloud")
+}
+
+func TestEnsureKimiInstalled_RejectsStillArchivedAfterInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake binaries")
+	}
+	oldGOOS := kimiGOOS
+	kimiGOOS = "linux"
+	t.Cleanup(func() { kimiGOOS = oldGOOS })
+
+	setTestHome(t, t.TempDir())
+	binDir := t.TempDir()
+	t.Setenv("PATH", binDir)
+	writeFakeBinary(t, binDir, "curl")
+	writeFakeBinary(t, binDir, "bash")
+	legacyPath := filepath.Join(binDir, "kimi")
+	if err := os.WriteFile(legacyPath, []byte("#!/bin/sh\necho 'kimi, version 1.52.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	t.Cleanup(func() { isInteractiveSession = oldInteractive })
+
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+
+	_, err := ensureKimiInstalled()
+	if err == nil || !strings.Contains(err.Error(), "no longer runs commands") {
+		t.Fatalf("ensureKimiInstalled() error = %v, want archived kimi-cli error after install", err)
+	}
 }

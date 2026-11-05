@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/mod/semver"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -25,6 +26,9 @@ const (
 	kimiDefaultMaxContextSize = 32768
 	kimiCodeProviderName      = "ollama"
 	kimiLegacyVersionPrefix   = "kimi, version "
+	kimiLegacyArchivedVersion = "v1.52.0"
+	kimiInstallScript         = "curl -LsSf https://code.kimi.com/kimi-code/install.sh | bash"
+	kimiInstallPowerShell     = "Invoke-RestMethod https://code.kimi.com/kimi-code/install.ps1 | Invoke-Expression"
 )
 
 var kimiGOOS = runtime.GOOS
@@ -82,6 +86,22 @@ func kimiLegacyCLIVersion(bin string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(version), true
+}
+
+func kimiLegacyCLIArchived(version string) bool {
+	v := "v" + strings.TrimPrefix(version, "v")
+	return semver.IsValid(v) && semver.Compare(v, kimiLegacyArchivedVersion) >= 0
+}
+
+func kimiInstallCommand(goos string) string {
+	if goos == "windows" {
+		return kimiInstallPowerShell
+	}
+	return kimiInstallScript
+}
+
+func kimiArchivedCLIError(version string) error {
+	return fmt.Errorf("kimi-cli %s no longer runs commands; install Kimi Code: %s", version, kimiInstallCommand(kimiGOOS))
 }
 
 func kimiCodeModelAlias(model string) string {
@@ -649,19 +669,47 @@ func resolveKimiMaxContextSize(model string) int {
 }
 
 func ensureKimiInstalled() (string, error) {
-	if path, err := findKimiBinary(); err == nil {
-		return path, nil
+	existing, findErr := findKimiBinary()
+	version := ""
+	archived := false
+	if findErr == nil {
+		var legacy bool
+		version, legacy = kimiLegacyCLIVersion(existing)
+		if !legacy {
+			return existing, nil
+		}
+		archived = kimiLegacyCLIArchived(version)
 	}
 
-	if err := checkKimiInstallerDependencies(); err != nil {
+	if existing != "" {
+		if !kimiInstallerAvailable() || !isInteractiveSession() || currentLaunchConfirmPolicy.requireYesMessage {
+			if archived {
+				return "", kimiArchivedCLIError(version)
+			}
+			fmt.Fprintf(os.Stderr, "%sContinuing with kimi-cli %s%s\n\n", ansiYellow, version, ansiReset)
+			return existing, nil
+		}
+	} else if err := checkKimiInstallerDependencies(); err != nil {
 		return "", err
 	}
 
-	ok, err := ConfirmPrompt("Kimi is not installed. Install now?")
+	prompt := "Kimi is not installed. Install now?"
+	if existing != "" {
+		prompt = fmt.Sprintf("kimi-cli %s is no longer maintained and has been replaced by Kimi Code. Install Kimi Code now?", version)
+	}
+
+	ok, err := ConfirmPrompt(prompt)
 	if err != nil {
 		return "", err
 	}
 	if !ok {
+		if existing != "" {
+			if archived {
+				return "", kimiArchivedCLIError(version)
+			}
+			fmt.Fprintf(os.Stderr, "%sContinuing with kimi-cli %s%s\n\n", ansiYellow, version, ansiReset)
+			return existing, nil
+		}
 		return "", fmt.Errorf("kimi installation cancelled")
 	}
 
@@ -683,9 +731,16 @@ func ensureKimiInstalled() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("kimi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
 	}
+	if version, legacy := kimiLegacyCLIVersion(path); legacy && kimiLegacyCLIArchived(version) {
+		return "", kimiArchivedCLIError(version)
+	}
 
 	fmt.Fprintf(os.Stderr, "%sKimi installed successfully%s\n\n", ansiGreen, ansiReset)
 	return path, nil
+}
+
+func kimiInstallerAvailable() bool {
+	return checkKimiInstallerDependencies() == nil
 }
 
 func checkKimiInstallerDependencies() error {
@@ -717,12 +772,12 @@ func kimiInstallerCommand(goos string) (string, []string, error) {
 			"-ExecutionPolicy",
 			"Bypass",
 			"-Command",
-			"Invoke-RestMethod https://code.kimi.com/install.ps1 | Invoke-Expression",
+			kimiInstallPowerShell,
 		}, nil
 	case "darwin", "linux":
 		return "bash", []string{
 			"-c",
-			"curl -LsSf https://code.kimi.com/install.sh | bash",
+			kimiInstallScript,
 		}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported platform for kimi install: %s", goos)
