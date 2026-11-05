@@ -70,8 +70,8 @@ func (c *ClaudeDesktop) AutodiscoveredModel() string {
 }
 
 // ConfigureAutodiscovery points Claude Desktop at Ollama's local gateway and
-// pins the routes the gateway advertises, so the picker shows the gateway's
-// display names instead of names Claude Desktop derives from the route IDs.
+// pins the routes the gateway advertises, so the picker names the model behind
+// each route instead of a name Claude Desktop derives from the route ID.
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 	autoMode, err := claudeDesktopAutoModePreference()
 	if err != nil {
@@ -779,8 +779,8 @@ func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser
 }
 
 // claudeDesktopInferenceModels converts gateway routes into the profile's
-// pinned model list. labelOverride carries the gateway's display name so the
-// picker shows it instead of a name Claude Desktop derives from the route ID.
+// pinned model list. labelOverride carries the gateway's name for the model so
+// the picker shows that instead of a name derived from the route ID.
 func claudeDesktopInferenceModels(models []proxy.ClaudeDesktopCatalogModel) []any {
 	entries := make([]any, 0, len(models))
 	for _, model := range models {

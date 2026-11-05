@@ -1629,8 +1629,8 @@ func TestClaudeDesktopConfigureAutodiscoveryPinsGatewayLabels(t *testing.T) {
 
 	claudeDesktopFetchCatalog = func(context.Context, *http.Client, string, string) ([]proxy.ClaudeDesktopCatalogModel, error) {
 		return []proxy.ClaudeDesktopCatalogModel{
-			{ID: "claude-fable-5", DisplayName: "GLM 5.2", AnthropicFamilyTier: "fable", IsFamilyDefault: true},
-			{ID: "claude-opus-5", DisplayName: "Kimi K3", AnthropicFamilyTier: "opus"},
+			{ID: "claude-fable-5", DisplayName: "glm-5.2:cloud", AnthropicFamilyTier: "fable", IsFamilyDefault: true},
+			{ID: "claude-opus-5", DisplayName: "kimi-k3:cloud", AnthropicFamilyTier: "opus"},
 		}, nil
 	}
 
@@ -1651,8 +1651,8 @@ func TestClaudeDesktopConfigureAutodiscoveryPinsGatewayLabels(t *testing.T) {
 		t.Fatalf("inferenceModels = %v, want two pinned routes", profile["inferenceModels"])
 	}
 	first, _ := entries[0].(map[string]any)
-	if first["name"] != "claude-fable-5" || first["labelOverride"] != "GLM 5.2" {
-		t.Fatalf("pinned route = %v, want the gateway label on claude-fable-5", first)
+	if first["name"] != "claude-fable-5" || first["labelOverride"] != "glm-5.2:cloud" {
+		t.Fatalf("pinned route = %v, want the gateway model name on claude-fable-5", first)
 	}
 	if first["anthropicFamilyTier"] != "fable" || first["isFamilyDefault"] != true {
 		t.Fatalf("pinned tier metadata = %v", first)

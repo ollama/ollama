@@ -89,13 +89,11 @@ func resolveClaudeDesktopMappings(available []ClaudeDesktopModel, wanted map[str
 
 // ClaudeDesktopModel is one Ollama model adapted for Claude Desktop's model
 // catalog. Name is the canonical recommendation identifier shown to users;
-// OllamaModel is the explicit route sent to the local Ollama server. Label is
-// the human-readable name Claude Desktop's picker shows for the route.
+// OllamaModel is the explicit route sent to the local Ollama server.
 type ClaudeDesktopModel struct {
 	Name             string
 	Description      string
 	DisplayName      string
-	Label            string
 	RequiredPlan     string
 	OllamaModel      string
 	Cloud            bool
@@ -197,6 +195,7 @@ func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 	// move the canonical DeepSeek alias independently.
 	models[3].OllamaModel = "deepseek-v4-flash:0731:cloud"
 	models[3].DisplayName = models[3].OllamaModel
+	models[3].gateway.DisplayName = models[3].OllamaModel
 	models[3].gateway.OllamaModel = models[3].OllamaModel
 	return models
 }
@@ -459,45 +458,13 @@ func newClaudeDesktopModel(name, description, requiredPlan string, maxTokens int
 		entitlementKnown: !cloud || strings.TrimSpace(requiredPlan) != "",
 		gateway: gatewayModel{
 			Type:           "model",
+			DisplayName:    displayName,
 			MaxTokens:      maxTokens,
 			OllamaModel:    ollamaModel,
 			SupportsVision: name == "kimi-k3:cloud",
 		},
 	}
-	model.setLabel(claudeDesktopDisplayName(name))
 	return model
-}
-
-// claudeDesktopDisplayNames names the recommended routes Claude Desktop's
-// picker shows. Routes without an entry keep their name as the label.
-var claudeDesktopDisplayNames = map[string]string{
-	"glm-5.2:cloud":     "GLM 5.2",
-	"kimi-k3:cloud":     "Kimi K3",
-	"deepseek-v4-pro":   "DeepSeek V4 Pro",
-	"deepseek-v4-flash": "DeepSeek V4 Flash",
-	"gemma4:31b-cloud":  "Gemma 4 31B",
-}
-
-func claudeDesktopDisplayName(route string) string {
-	if name := claudeDesktopDisplayNames[route]; name != "" {
-		return name
-	}
-	return route
-}
-
-// setLabel sets the human-readable name Claude Desktop's picker shows for this
-// route. An empty label clears the override so the route name is used again.
-func (m *ClaudeDesktopModel) setLabel(label string) {
-	m.Label = strings.TrimSpace(label)
-	m.gateway.DisplayName = m.displayLabel()
-}
-
-// displayLabel returns the name Claude Desktop should show for this model.
-func (m ClaudeDesktopModel) displayLabel() string {
-	if label := strings.TrimSpace(m.Label); label != "" {
-		return label
-	}
-	return m.DisplayName
 }
 
 func (m *ClaudeDesktopModel) assignClaudeDesktopSlot(slot claudeDesktopModelSlot) {
@@ -508,7 +475,8 @@ func (m *ClaudeDesktopModel) assignClaudeDesktopSlot(slot claudeDesktopModelSlot
 }
 
 // ClaudeDesktopCatalogModel is one model row a Claude Desktop gateway
-// advertises through /v1/models.
+// advertises through /v1/models. Claude Desktop names well-known route IDs
+// itself, so the profile pins these rows to show the model each route serves.
 type ClaudeDesktopCatalogModel struct {
 	ID                  string
 	DisplayName         string
@@ -517,8 +485,7 @@ type ClaudeDesktopCatalogModel struct {
 }
 
 // FetchClaudeDesktopCatalog reads the model rows the gateway at baseURL
-// advertises. Claude Desktop names known route IDs itself, so the profile has
-// to pin these rows with their display names for the picker to show them.
+// advertises.
 func FetchClaudeDesktopCatalog(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]ClaudeDesktopCatalogModel, error) {
 	endpoint := strings.TrimRight(baseURL, "/") + "/v1/models?limit=1000"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

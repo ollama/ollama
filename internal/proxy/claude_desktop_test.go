@@ -101,7 +101,7 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 			if strings.Join(gotIDs, ",") != wantIDs || catalog.FirstID != gotIDs[0] || catalog.LastID != gotIDs[len(gotIDs)-1] || catalog.HasMore {
 				t.Fatalf("gateway catalog = %+v", catalog.Data)
 			}
-			wantNames := "GLM 5.2,Kimi K3,DeepSeek V4 Pro,DeepSeek V4 Flash,Gemma 4 31B"
+			wantNames := "glm-5.2:cloud,kimi-k3:cloud,deepseek-v4-pro:cloud,deepseek-v4-flash:0731:cloud,gemma4:31b-cloud"
 			if strings.Join(gotNames, ",") != wantNames {
 				t.Fatalf("gateway display names = %v, want %s", gotNames, wantNames)
 			}
@@ -170,7 +170,7 @@ func TestGatewayRoutesSelectedKimiByExactRoute(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&catalog); err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Data) != 1 || catalog.Data[0].ID != "claude-fable-5" || catalog.Data[0].DisplayName != "Kimi K3" {
+	if len(catalog.Data) != 1 || catalog.Data[0].ID != "claude-fable-5" || catalog.Data[0].DisplayName != "kimi-k3:cloud" {
 		t.Fatalf("catalog = %+v, want claude-fable-5 displaying Kimi", catalog.Data)
 	}
 
