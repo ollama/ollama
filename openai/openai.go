@@ -628,7 +628,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 		}
 		content := msg.Content
-		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
+		if parts, ok := content.([]any); ok && len(parts) == 0 && (strings.ToLower(msg.Role) == "assistant" || len(msg.ToolCalls) > 0) {
 			content = ""
 		}
 		switch content := content.(type) {
@@ -707,17 +707,20 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 					messages = append(messages[:start], api.Message{Role: msg.Role, Content: sb.String(), ToolName: toolName, ToolCallID: msg.ToolCallID})
 				}
 			}
-			// since we might have added multiple messages above, if we have tools
-			// calls we'll add them to the last message
-			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
-				toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
-				if err != nil {
-					return nil, err
+			// since we might have added multiple messages above, add reasoning
+			// and tool calls to the last message
+			if len(messages) > start {
+				last := &messages[len(messages)-1]
+				last.Thinking = msg.Reasoning
+				if len(msg.ToolCalls) > 0 {
+					toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
+					if err != nil {
+						return nil, err
+					}
+					last.ToolCalls = toolCalls
+					last.ToolName = toolName
+					last.ToolCallID = msg.ToolCallID
 				}
-				messages[len(messages)-1].ToolCalls = toolCalls
-				messages[len(messages)-1].ToolName = toolName
-				messages[len(messages)-1].ToolCallID = msg.ToolCallID
-				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:
 			// content is only optional if tool calls are present

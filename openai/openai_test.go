@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
 )
@@ -269,11 +270,114 @@ func TestFromChatRequest_ToolMessageEmptyArrayContent(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_AssistantArrayContentReasoning(t *testing.T) {
+	imgData, err := base64.StdEncoding.DecodeString(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		message string
+		want    []api.Message
+	}{
+		{
+			name:    "string content control",
+			message: `{"role":"assistant","content":"hello","reasoning":"I thought about it"}`,
+			want:    []api.Message{{Role: "assistant", Content: "hello", Thinking: "I thought about it"}},
+		},
+		{
+			name:    "text part",
+			message: `{"role":"assistant","content":[{"type":"text","text":"hello"}],"reasoning":"I thought about it"}`,
+			want:    []api.Message{{Role: "assistant", Content: "hello", Thinking: "I thought about it"}},
+		},
+		{
+			name:    "multiple text parts",
+			message: `{"role":"assistant","content":[{"type":"text","text":"hello"},{"type":"text","text":" world"}],"reasoning":"I thought about it"}`,
+			want: []api.Message{
+				{Role: "assistant", Content: "hello"},
+				{Role: "assistant", Content: " world", Thinking: "I thought about it"},
+			},
+		},
+		{
+			name:    "text and image parts",
+			message: `{"role":"assistant","content":[{"type":"text","text":"hello"},{"type":"image_url","image_url":{"url":"` + prefix + image + `"}}],"reasoning":"I thought about it"}`,
+			want: []api.Message{
+				{Role: "assistant", Content: "hello"},
+				{Role: "assistant", Images: []api.ImageData{imgData}, Thinking: "I thought about it"},
+			},
+		},
+		{
+			name:    "empty parts with reasoning",
+			message: `{"role":"assistant","content":[],"reasoning":"deep thoughts"}`,
+			want:    []api.Message{{Role: "assistant", Thinking: "deep thoughts"}},
+		},
+		{
+			name:    "empty parts without reasoning",
+			message: `{"role":"assistant","content":[]}`,
+			want:    []api.Message{{Role: "assistant"}},
+		},
+		{
+			name:    "empty parts with uppercase role",
+			message: `{"role":"ASSISTANT","content":[],"reasoning":"deep thoughts"}`,
+			want:    []api.Message{{Role: "ASSISTANT", Thinking: "deep thoughts"}},
+		},
+		{
+			name:    "text parts with tool calls",
+			message: `{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"text","text":" the weather"}],"reasoning":"need a tool","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]}`,
+			want: []api.Message{
+				{Role: "assistant", Content: "checking"},
+				{
+					Role:     "assistant",
+					Content:  " the weather",
+					Thinking: "need a tool",
+					ToolCalls: []api.ToolCall{{
+						ID: "call_1",
+						Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: api.NewToolCallFunctionArguments(),
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var assistant Message
+			if err := json.Unmarshal([]byte(tc.message), &assistant); err != nil {
+				t.Fatal(err)
+			}
+			req := ChatCompletionRequest{
+				Model: "test-model",
+				Messages: []Message{
+					{Role: "user", Content: "hi"},
+					assistant,
+					{Role: "user", Content: "continue"},
+				},
+			}
+
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			want := []api.Message{{Role: "user", Content: "hi"}}
+			want = append(want, tc.want...)
+			want = append(want, api.Message{Role: "user", Content: "continue"})
+			if diff := cmp.Diff(want, result.Messages, argsComparer, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("messages mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_AssistantEmptyArrayContentWithToolCalls(t *testing.T) {
 	var req ChatCompletionRequest
 	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
 		{"role":"user","content":"what is the weather?"},
-		{"role":"assistant","content":[],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
+		{"role":"assistant","content":[],"reasoning":"need a tool","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
 		{"role":"tool","tool_call_id":"call_1","content":"sunny"}
 	]}`), &req); err != nil {
 		t.Fatal(err)
@@ -291,6 +395,9 @@ func TestFromChatRequest_AssistantEmptyArrayContentWithToolCalls(t *testing.T) {
 		t.Errorf("expected user message without tool calls, got role=%q tool_calls=%d", user.Role, len(user.ToolCalls))
 	}
 	assistant := result.Messages[1]
+	if assistant.Thinking != "need a tool" {
+		t.Errorf("expected assistant reasoning, got %q", assistant.Thinking)
+	}
 	if assistant.Role != "assistant" || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Function.Name != "get_weather" {
 		t.Errorf("expected assistant message with get_weather tool call, got role=%q tool_calls=%+v", assistant.Role, assistant.ToolCalls)
 	}
