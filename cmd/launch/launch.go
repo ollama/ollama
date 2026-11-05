@@ -188,6 +188,11 @@ type ManagedAutodiscoveryCloudIntegration interface {
 	UsesOllamaCloud() bool
 }
 
+// ConfigFileIntegration writes its own config file when launched with --config.
+type ConfigFileIntegration interface {
+	ConfigureOnly(model string, models []LaunchModel) error
+}
+
 // RestoreHintIntegration can provide a short restore command after launch
 // switches an app into a launch-managed mode.
 type RestoreHintIntegration interface {
@@ -1527,9 +1532,10 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 
 func (c *launcherClient) resolveRunModels(ctx context.Context, integration string, models []string) []LaunchModel {
 	recommendations := c.recommendations(ctx)
-	if integration == "codex" {
-		// Codex reads its /model choices from the generated catalog. Include
-		// installed tool-capable models as well as the requested starting model.
+	if integration == "codex" || integration == "kimi" {
+		// Codex reads its /model choices from a generated catalog and Kimi Code
+		// from config.toml. Include installed tool-capable models as well as the
+		// requested starting model.
 		if inventory, err := c.modelInventory().Load(ctx); err == nil {
 			cloudDisabled := false
 			if slices.ContainsFunc(inventory, func(model LaunchModel) bool { return model.Remote || isCloudModelName(model.Name) }) {
@@ -1601,6 +1607,11 @@ func runIntegration(runner Runner, modelName string, models []LaunchModel, args 
 
 func launchAfterConfiguration(name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
+		if configurable, ok := runner.(ConfigFileIntegration); ok {
+			if err := configurable.ConfigureOnly(model, models); err != nil {
+				return err
+			}
+		}
 		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
 		if err != nil {
 			return err
