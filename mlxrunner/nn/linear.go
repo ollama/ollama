@@ -79,8 +79,21 @@ func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 }
 
 func (ql *QuantizedLinear) matmul(x, globalScale *mlx.Array) *mlx.Array {
-	return mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true,
+	var shape []int
+	if x.NumDims() == 3 && x.Dim(0) > 1 {
+		// All requests use the same weight matrix. Present their tokens as
+		// matrix rows so MLX can reuse weights instead of dispatching a
+		// separate batched matvec for each request.
+		shape = x.Dims()
+		x = x.Reshape(-1, shape[2])
+	}
+	out := mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true,
 		ql.GroupSize, ql.Bits, ql.Mode, globalScale)
+	if shape != nil {
+		shape[2] = out.Dim(-1)
+		out = out.Reshape(shape...)
+	}
+	return out
 }
 
 // SwiGLU applies gate and up projections followed by a SwiGLU activation.

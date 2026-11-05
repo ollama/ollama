@@ -5,6 +5,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/sample"
 )
@@ -138,7 +139,7 @@ func (d *dflashDraftSession) flush() {
 			SeqOffsets: []int32{int32(offset)},
 			Hidden:     d.takePending(),
 			Layout:     d.layout,
-		}, spec.targets, spec.draftKV)
+		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 		state := make([]*mlx.Array, 0, 2*len(spec.draftKV))
 		for _, c := range spec.draftKV {
 			state = append(state, c.State()...)
@@ -182,7 +183,7 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 			SeqQueryLens: []int32{int32(n + 1)},
 			Hidden:       features,
 			Layout:       d.layout,
-		}, spec.targets, spec.draftKV)
+		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 		candidates = d.selectBlock(hidden, current, n)
 		return candidates.Arrays()
 	})
@@ -199,15 +200,15 @@ func (d *dflashDraftSession) selectBlock(hidden, current *mlx.Array, n int) *dra
 	logits := spec.draft.Unembed(hidden)
 	if selector, ok := spec.draft.(model.BlockSelector); ok {
 		tokens, ids, probs := selector.Select(hidden, logits, current, func(ids, scores *mlx.Array) (*mlx.Array, *mlx.Array) {
-			tokens, dist := r.Sampler.SampleCandidates(pipelineSlot, ids, scores)
+			tokens, dist := r.Sampler.SampleCandidates(spec.slotID, ids, scores)
 			return tokens, dist.Probs
 		})
 		return &draftCandidates{tokens: tokens, dist: sample.Distribution{IDs: ids.Squeeze(0), Probs: probs.Squeeze(0)}}
 	}
 	// Independent DFlash rows see the committed history, without the other
 	// rows of the block contributing to penalties.
-	dist := r.Sampler.Distribution(pipelineSlot, logits, nil)
-	tokens := r.Sampler.SampleDistribution(pipelineSlot, dist)
+	dist := r.Sampler.Distribution(spec.slotID, logits, nil)
+	tokens := r.Sampler.SampleDistribution(spec.slotID, dist)
 	return &draftCandidates{
 		tokens: tokens.ExpandDims(0),
 		dist:   dist,

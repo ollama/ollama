@@ -73,7 +73,7 @@ func NewModel(root *model.Root) (model.Model, error) {
 // option order would yield incorrect hidden states.
 func (m *Model) NewCaches() []cache.Cache { return nil }
 
-func (m *Model) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
 	return m.Model.Forward(b, nil)
 }
 

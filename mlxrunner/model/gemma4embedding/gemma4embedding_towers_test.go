@@ -430,18 +430,9 @@ func TestMediaForwardDiffsFromTextOnly(t *testing.T) {
 				Opaque:    preparedImage{positions: positions, geom: geom},
 			}},
 		}
-		media, err := m.EncodeMedia(prepared)
-		if err != nil {
-			t.Errorf("EncodeMedia: %v", err)
-			return
-		}
-		if len(media) != 1 {
-			t.Errorf("EncodeMedia returned %d items, want 1", len(media))
-			return
-		}
-		if media[0].Pos != mediaPos || media[0].Seq != 0 {
-			t.Errorf("media item pos/seq = (%d,%d), want (%d,0)", media[0].Pos, media[0].Seq, mediaPos)
-		}
+		item := &prepared.Items[0]
+		media := []batch.MediaItem{{Pos: item.Range[0], Opaque: item.Opaque, Features: m.EncodeMedia(item, mlx.FromValues(item.MediaData, item.Dims...))}}
+
 		// The tower code path must actually have run: the feature array is
 		// [NumSoftTokens, text hidden] with finite values.
 		feats := media[0].Features

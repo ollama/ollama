@@ -8,6 +8,33 @@ import (
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
+// attend uses each request's own sparse-selection budget and history length.
+// The projections remain batched; attention does not pad or copy KV histories.
+func (a *fullAttention) attend(b *batch.Batch, q, indexQ *mlx.Array, main, index *nn.KVHistory, cfg *Config) *mlx.Array {
+	if rows := main.Rows(); rows != nil {
+		outputs := make([]*mlx.Array, len(rows))
+		for i, row := range rows {
+			outputs[i] = a.attend(b.Row(i),
+				q.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				indexQ.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				row, index.Rows()[i], cfg)
+		}
+		return mlx.Concatenate(outputs, 0)
+	}
+	keyLength := int32(q.Dim(2))
+	for _, offset := range b.SeqOffsets {
+		keyLength = max(keyLength, offset+int32(q.Dim(2)))
+	}
+	if keyLength <= cfg.IndexerBudget {
+		return nn.ScaledDotProductAttention(b, q, cfg.Scale, nn.WithKVHistory(main), nn.WithMask(nn.CausalMask()))
+	}
+	compressed := qsaCompressedKeys(index.K(), index.V(), a.Indexer, cfg)
+	scores := mlx.Matmul(indexQ.AsType(mlx.DTypeFloat32), mlx.Transpose(compressed.AsType(mlx.DTypeFloat32), 0, 1, 3, 2))
+	scores = mlx.DivScalar(mlx.Sum(mlx.ReLU(scores), 1, false), float32(math.Sqrt(float64(cfg.IndexerHeadDim))))
+	logical, valid := qsaLogicalIndices(scores, b, keyLength, cfg)
+	return qsaSparseAttention(q, main, logical, valid, cfg)
+}
+
 // canonicalRopePositionRows returns exact [B, 1, L, 3] position rows. MRoPE
 // input is the channel-major [B][3][L] layout used by the vision path.
 func canonicalRopePositionRows(b *batch.Batch, L int32, mrope []int32) *mlx.Array {

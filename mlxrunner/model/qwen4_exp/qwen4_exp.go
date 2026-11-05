@@ -116,7 +116,7 @@ func (m *Model) NewCaches() []cache.Cache {
 	return caches
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (*mlx.Array, *mlx.Array) {
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	L := int32(b.InputIDs.Dim(1))
 	var mrope []int32
@@ -130,7 +130,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.
 	}
 	hidden := expandStreams(embedding, m.Config)
 
-	var tokens *engramCache
+	var tokens engramState
 	pleCacheIndex := len(m.Layers)
 	for _, layer := range m.Layers {
 		if layer.Attention != nil {
@@ -138,7 +138,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.
 		}
 	}
 	if len(caches) > pleCacheIndex {
-		tokens, _ = caches[pleCacheIndex].(*engramCache)
+		tokens = caches[pleCacheIndex].(engramState)
 	}
 	if tokens == nil {
 		tokens = newEngramCache(
@@ -153,11 +153,11 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.
 		if layer.PLE != nil {
 			hidden = mlx.Add(hidden, layer.PLE.Forward(hidden, b, tokens, m.Config))
 		}
-		var c cache.Cache
+		var c cache.Layer
 		if i < len(caches) {
 			c = caches[i]
 		}
-		var side cache.Cache
+		var side cache.Layer
 		if layer.Attention != nil && layer.Attention.SideCacheIndex < len(caches) {
 			side = caches[layer.Attention.SideCacheIndex]
 		}
@@ -210,7 +210,7 @@ func (m *mtpDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
 
 func (m *mtpDraft) Unembed(x *mlx.Array) *mlx.Array { return (*Model)(m).Unembed(x) }
 
-func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	B, L := int32(b.InputIDs.Dim(0)), int32(b.InputIDs.Dim(1))
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	var mrope []int32
@@ -230,7 +230,7 @@ func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden
 	backbone = mlx.Add(backbone, mlx.ExpandDims(embedding, -2))
 	backbone = mlx.Reshape(backbone, B, L, m.HCCount*m.HiddenSize)
 
-	var main, side cache.Cache
+	var main, side cache.Layer
 	if len(draftCaches) > 0 {
 		main = draftCaches[0]
 	}

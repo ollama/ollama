@@ -128,3 +128,51 @@ func TestQSASparseAttentionKeepsBatchRowsIndependent(t *testing.T) {
 		}
 	})
 }
+
+func TestQSAIndependentHistories(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		cfg := &Config{NumKeyValueHeads: 1, Scale: .7, IndexerBudget: 8, IndexerCompressRatio: 4, IndexerHeadDim: 2, RopeDim: 2, RMSNormEps: 1e-6, RopeParameters: ropeParameters{RopeTheta: 10000}}
+		a := &fullAttention{Indexer: &attentionIndexer{KNorm: nn.NewRMSNorm(mlx.FromValues([]float32{1, 1}, 2), 1e-6)}}
+		var main, index []*nn.KVHistory
+		offsets := []int32{4, 18, 12}
+		for row, offset := range offsets {
+			n := int(offset + 1)
+			k, v := make([]float32, n*2), make([]float32, n*2)
+			positions := make([]int32, n*3)
+			for i := range n {
+				k[2*i], k[2*i+1] = float32((i+row*3)%7)*.2, float32((i*3+row)%11)*.1
+				v[2*i], v[2*i+1] = float32(row*100+i), float32(i%3)
+				positions[3*i], positions[3*i+1], positions[3*i+2] = int32(i), int32(i), int32(i)
+			}
+			keys := mlx.FromValues(k, 1, 1, n, 2)
+			main = append(main, nn.NewKVHistory(keys, mlx.FromValues(v, 1, 1, n, 2), nil))
+			index = append(index, nn.NewKVHistory(keys, mlx.FromValues(positions, 1, 1, n, 3), nil))
+		}
+		// Mix dense and sparse rows, then reorder and retire rows. Comparing to
+		// independent forwards catches accidental use of the longest row's cache.
+		for _, rows := range [][]int{{0, 1, 2}, {2, 0}, {1, 2}} {
+			b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, len(rows), 1)}
+			var histories, indices []*nn.KVHistory
+			for _, row := range rows {
+				b.SeqOffsets = append(b.SeqOffsets, offsets[row])
+				b.SeqQueryLens = append(b.SeqQueryLens, 1)
+				histories = append(histories, main[row])
+				indices = append(indices, index[row])
+			}
+			q := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, len(rows), 1, 1, 2), .5)
+			got := a.attend(b, q, q, nn.NewRowKVHistory(histories), nn.NewRowKVHistory(indices), cfg)
+			var separate []*mlx.Array
+			for i := range rows {
+				qi := q.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+				separate = append(separate, a.attend(b.Row(i), qi, qi, histories[i], indices[i], cfg))
+			}
+			want := mlx.Concatenate(separate, 0)
+			mlx.Eval(got, want)
+			for i, v := range want.Floats() {
+				if delta := math.Abs(float64(got.Floats()[i] - v)); math.IsNaN(delta) || delta > 1e-4 {
+					t.Fatalf("rows %v element %d got %g want %g", rows, i, got.Floats()[i], v)
+				}
+			}
+		}
+	})
+}

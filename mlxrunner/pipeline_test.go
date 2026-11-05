@@ -1,10 +1,13 @@
 package mlxrunner
 
 import (
+	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
@@ -19,7 +22,7 @@ type textOnlyModel struct{}
 
 func (textOnlyModel) LoadWeights(map[string]*mlx.Array) error { return nil }
 func (textOnlyModel) NewCaches() []cache.Cache                { return nil }
-func (textOnlyModel) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (textOnlyModel) Forward(*batch.Batch, []cache.Layer) (*mlx.Array, *mlx.Array) {
 	return nil, nil
 }
 func (textOnlyModel) Unembed(x *mlx.Array) *mlx.Array { return x }
@@ -28,7 +31,7 @@ func (textOnlyModel) MaxContextLength() int           { return 0 }
 
 func TestPrepareRejectsMediaWithoutSupport(t *testing.T) {
 	r := &Runner{Model: textOnlyModel{}}
-	req := &Request{
+	req := &request{
 		CompletionRequest: CompletionRequest{
 			Prompt: "[img-0] what is this?",
 			Media:  []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte{1}}},
@@ -92,7 +95,7 @@ func mediaTestRunner(t *testing.T) *Runner {
 
 func TestPrepareExpandsMediaTags(t *testing.T) {
 	r := mediaTestRunner(t)
-	req := &Request{
+	req := &request{
 		CompletionRequest: CompletionRequest{
 			Prompt: "01[img-0]23",
 			Media:  []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}},
@@ -157,7 +160,7 @@ func TestPrepareValidatesAuthoredItems(t *testing.T) {
 	for _, c := range cases {
 		r := mediaTestRunner(t)
 		r.Model = rawMediaModel{prepared: model.PreparedRequest{Tokens: []int32{0, 5, 5, 5, 1}, Items: c.items}}
-		err := r.Prepare(&Request{CompletionRequest: CompletionRequest{Prompt: "0[img-0]1", Media: media}})
+		err := r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "0[img-0]1", Media: media}})
 		if c.want == "" {
 			if err != nil {
 				t.Fatalf("%s: unexpected error %v", c.name, err)
@@ -174,13 +177,13 @@ func TestPrepareMediaErrors(t *testing.T) {
 	media := []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}}
 
 	r := mediaTestRunner(t)
-	err := r.Prepare(&Request{CompletionRequest: CompletionRequest{Prompt: "0[img-3]1", Media: media}})
+	err := r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "0[img-3]1", Media: media}})
 	if err == nil || !strings.Contains(err.Error(), "invalid image index: 3") {
 		t.Fatalf("missing-ID error = %v", err)
 	}
 
 	// Unreferenced media is ignored with a warning; the prompt still works.
-	req := &Request{CompletionRequest: CompletionRequest{Prompt: "01", Media: media}}
+	req := &request{CompletionRequest: CompletionRequest{Prompt: "01", Media: media}}
 	if err := r.Prepare(req); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +193,7 @@ func TestPrepareMediaErrors(t *testing.T) {
 
 	// Duplicate references are allowed; each occurrence is its own item with
 	// the same fold.
-	req = &Request{CompletionRequest: CompletionRequest{Prompt: "[img-0]0[img-0]", Media: media}}
+	req = &request{CompletionRequest: CompletionRequest{Prompt: "[img-0]0[img-0]", Media: media}}
 	if err := r.Prepare(req); err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +203,47 @@ func TestPrepareMediaErrors(t *testing.T) {
 
 	// A zero-length expansion cannot carry identity into the trie keys.
 	r.Model = stubMediaModel{}
-	err = r.Prepare(&Request{CompletionRequest: CompletionRequest{Prompt: "[img-0]", Media: media}})
+	err = r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "[img-0]", Media: media}})
 	if err == nil || !strings.Contains(err.Error(), "no tokens") {
 		t.Fatalf("zero-expansion error = %v", err)
 	}
+}
+
+// driveTestDecoder starts at the post-prefill boundary so decoder fixtures use
+// the production scheduler for emission, cancellation and completion.
+func driveTestDecoder(ctx context.Context, r *Runner, request request, session *cacheSession, d decoder, promptEval time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request.Ctx = ctx
+	if session.cache == nil {
+		// Decoder fixtures own their caches directly; prefix retention has
+		// separate lifecycle tests that supply a complete prefixCache.
+		session.cache = &prefixCache{}
+	}
+	req := &batchRequest{
+		request: request, session: session, decoder: d,
+		output: newGenerationOutput(r, request, session, promptEval),
+	}
+	if spec, ok := d.(*speculativeDecoder); ok {
+		req.spec = spec.s
+	}
+	slot := &batchSlot{request: req, cache: session.cache}
+	s := &batchScheduler{r: r, slots: []*batchSlot{slot}}
+	var err error
+	for slot.request != nil {
+		var progressed bool
+		mlx.Scoped(func() { progressed = s.step() })
+		for _, response := range req.responses {
+			if response.Error != nil {
+				err = *response.Error
+			}
+		}
+		if !progressed {
+			runtime.Gosched()
+		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }

@@ -1246,7 +1246,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, L int32, cfg *Config) *mlx.Array {
 	dtype := x.DType()
 	projected := m.InProj.Forward(x)
 	inner := cfg.MambaNumHeads * cfg.MambaHeadDim
@@ -1257,10 +1257,10 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 	dt := mlx.SliceStartStop(projected, []int32{0, 0, inner + convDim}, []int32{B, L, inner + convDim + cfg.MambaNumHeads})
 
 	convTail := cfg.ConvKernel - 1
-	var rc *cache.RecurrentCache
+	var rc cache.Recurrent
 	opts := make([]nn.RecurrentOption, 0, 3)
 	opts = append(opts, nn.WithConvSiLU())
-	if typed, ok := c.(*cache.RecurrentCache); ok {
+	if typed, ok := c.(cache.Recurrent); ok {
 		rc = typed
 		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, mlx.DTypeFloat32)))
 		if splits := rc.SnapshotSplits(int(L)); len(splits) > 0 {
@@ -1337,7 +1337,7 @@ func gatedGroupRMSNorm(y, gate, weight *mlx.Array, cfg *Config, dtype mlx.DType)
 	return mlx.Reshape(y, B, L, inner).AsType(dtype)
 }
 
-func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QProj.Forward(x)
 	k := a.KProj.Forward(x)
 	v := a.VProj.Forward(x)
@@ -1584,7 +1584,7 @@ func (m *SparseMoE) route(x *mlx.Array, cfg *Config, B, L int32) (*mlx.Array, *m
 	return inds, scores
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, L int32, cfg *Config) *mlx.Array {
 	residual := x
 	h := l.Norm.Forward(x, cfg.LayerNormEpsilon)
 	switch l.Type {
@@ -1604,7 +1604,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32,
 	return out
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	tokens := b.InputIDs
 	dims := tokens.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
@@ -1614,7 +1614,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 		h = m.scatterMedia(h, b, 0)
 	}
 	for i, layer := range m.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
@@ -1663,7 +1663,7 @@ func (m *mtpDraft) NewCaches() []cache.Cache {
 
 // Forward runs one MTP step; the head's hidden also serves as the aux hidden
 // seeding the next step.
-func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 
@@ -1679,7 +1679,7 @@ func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden
 
 	cacheIndex := 0
 	for _, layer := range m.MTP.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if mtpLayerUsesCache(layer) && cacheIndex < len(draftCaches) {
 			c = draftCaches[cacheIndex]
 			cacheIndex++
