@@ -1222,6 +1222,18 @@ func TestGemma4RepairCandidates(t *testing.T) {
 	}
 }
 
+func TestGemma4RepairMissingOpeningDelimiter(t *testing.T) {
+	tools := []api.Tool{gemma4TestStringTool("apply_patch", "content")}
+	in := "{content:*** Begin Patch\n*** Update File: d.py\n@@\n-x\n+y\n*** End Patch\n<|\"|>}"
+	args, err := repairGemma4ToolCallArgs(in, "apply_patch", tools)
+	if err != nil {
+		t.Fatal(err) // fails: repair failed to produce valid JSON arguments
+	}
+	if got, ok := args.Get("content"); !ok || got != "*** Begin Patch\n*** Update File: d.py\n@@\n-x\n+y\n*** End Patch\n" {
+		t.Fatalf("unexpected content: %q (ok=%v)", got, ok)
+	}
+}
+
 func gemma4TestStringTool(name string, argNames ...string) api.Tool {
 	props := api.NewToolPropertiesMap()
 	for _, argName := range argNames {
