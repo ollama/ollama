@@ -574,6 +574,32 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				FlashAttention: llm.LlamaServerFlashAttention(gpus),
 			}).Total()
 			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
+
+			// PR5: Evict instead of splitting a model that fits one GPU.
+			// If the placement spans more than one GPU and other models are loaded,
+			// check if a single GPU would fit after evicting its resident models.
+			if len(loadGpus) > 1 && len(s.loaded) > 0 && launchOpts.MainGPU == nil && launchOpts.NumGPU == 0 && !envconfig.SchedSpread() {
+				for _, g := range gpus {
+					// Effective memory: free + total loaded VRAM (all could be evicted)
+					effective := g.FreeMemory
+					for _, r := range s.loaded {
+						if r == nil || r.llama == nil {
+							continue
+						}
+						_, vram := r.llama.MemorySize()
+						effective += vram
+					}
+					if effective >= predicted {
+						slog.Info("evicting instead of splitting: model fits on single GPU after eviction",
+							"gpu", g.ID, "effective", format.HumanBytes2(effective), "predicted", format.HumanBytes2(predicted))
+						mainGPU := 0
+						launchOpts.MainGPU = &mainGPU
+						launchOpts.NumGPU = 0 // auto
+						loadGpus = []ml.DeviceInfo{g}
+						break
+					}
+				}
+			}
 			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
 			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
 			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
