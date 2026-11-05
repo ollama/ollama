@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -288,5 +289,46 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 	}
 	if elapsed >= 5*downloadStallTimeout {
 		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*downloadStallTimeout)
+	}
+}
+
+func TestPrepareResumesPartsWithGlobCharactersInPath(t *testing.T) {
+	for _, dir := range []string{"models [a]", "models [a"} {
+		t.Run(dir, func(t *testing.T) {
+			blobs := filepath.Join(t.TempDir(), dir, "blobs")
+			if err := os.MkdirAll(blobs, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			d := &blobDownload{
+				Name:   filepath.Join(blobs, "sha256-0000000000000000000000000000000000000000000000000000000000000000"),
+				Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			}
+			if err := d.newPart(0, 100); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(d.Name+"-partial", make([]byte, 100), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			var requests atomic.Int32
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Length", "100")
+			}))
+			t.Cleanup(registry.Close)
+			requestURL, err := url.Parse(registry.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			resumed := &blobDownload{Name: d.Name, Digest: d.Digest}
+			if err := resumed.Prepare(t.Context(), requestURL, &registryOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if len(resumed.Parts) != 1 || requests.Load() != 0 {
+				t.Fatalf("parts = %d, requests = %d; want the existing part resumed without a request", len(resumed.Parts), requests.Load())
+			}
+		})
 	}
 }
