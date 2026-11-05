@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/pelletier/go-toml/v2/unstable"
 	"golang.org/x/mod/semver"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
@@ -160,8 +161,10 @@ func writeKimiCodeConfig(primary string, models []LaunchModel) error {
 		entries[alias] = kimiCodeModelEntryFor(m, modelsTable[alias])
 	}
 
-	updated := kimiCodeRemoveDottedAssignments(string(data), aliases)
-	updated = kimiCodeRemoveOwnedSections(updated, aliases)
+	updated, err := kimiCodeRemoveOwnedSections(string(data), aliases)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
 
 	sections, err := kimiCodeSections([]string{"providers", kimiCodeProviderName}, provider)
 	if err != nil {
@@ -228,107 +231,79 @@ func kimiCodeOwnedAlias(alias string) bool {
 	return strings.HasPrefix(alias, kimiCodeProviderName+"/")
 }
 
-func kimiCodeRemoveOwnedSections(text string, aliases map[string]bool) string {
-	var headers []string
-	for _, line := range strings.SplitAfter(text, "\n") {
-		header := strings.TrimSpace(line)
-		path, ok := codexTableHeaderPath(header)
-		if !ok || len(path) < 2 {
-			continue
-		}
-		switch path[0] {
-		case "providers":
-			if len(path) == 2 && path[1] == kimiCodeProviderName {
-				headers = append(headers, header)
+func kimiCodeRemoveOwnedSections(text string, aliases map[string]bool) (string, error) {
+	var parser unstable.Parser
+	parser.Reset([]byte(text))
+	var out strings.Builder
+	var table []string
+	offset, sectionStart := 0, -1
+	ownedSection := false
+	remove := func(start, end int) {
+		out.WriteString(text[offset:start])
+		offset = end
+	}
+	for parser.NextExpression() {
+		expr := parser.Expression()
+		var path []string
+		keys := expr.Key()
+		start := -1
+		for keys.Next() {
+			key := keys.Node()
+			if start < 0 {
+				start = int(key.Raw.Offset)
 			}
-		case "models":
-			if !aliases[path[1]] {
+			path = append(path, string(key.Data))
+		}
+		switch expr.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			start = strings.LastIndexByte(text[:start], '\n') + 1
+			if ownedSection {
+				remove(sectionStart, start)
+			}
+			table = path
+			sectionStart = start
+			ownedSection = kimiCodeOwnsPath(path, aliases)
+		case unstable.KeyValue:
+			if ownedSection || !kimiCodeOwnsPath(append(slices.Clone(table), path...), aliases) {
 				continue
 			}
-			headers = append(headers, header)
+			start = strings.LastIndexByte(text[:start], '\n') + 1
+			end := int(expr.Raw.Offset + expr.Raw.Length)
+			if newline := strings.IndexByte(text[end:], '\n'); newline >= 0 {
+				end += newline + 1
+			} else {
+				end = len(text)
+			}
+			remove(start, end)
 		}
 	}
-	for _, header := range headers {
-		text = codexRemoveSection(text, header)
+	if err := parser.Error(); err != nil {
+		return "", err
 	}
-	return text
+	if ownedSection {
+		remove(sectionStart, len(text))
+	}
+	out.WriteString(text[offset:])
+	return out.String(), nil
 }
 
-func kimiCodeRemoveDottedAssignments(text string, aliases map[string]bool) string {
-	lines := strings.SplitAfter(text, "\n")
-	out := make([]string, 0, len(lines))
-	var table []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if path, ok := codexTableHeaderPath(trimmed); ok {
-			table = path
-			out = append(out, line)
-			continue
-		}
-		if strings.HasPrefix(trimmed, "[[") {
-			table = nil
-			out = append(out, line)
-			continue
-		}
-		if kimiCodeDottedManaged(trimmed, table, aliases) {
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "")
-}
-
-func kimiCodeDottedManaged(line string, table []string, aliases map[string]bool) bool {
-	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
-		return false
-	}
-	key, _, ok := strings.Cut(line, "=")
-	if !ok {
-		return false
-	}
-	path, ok := kimiCodeKeyPath(strings.TrimSpace(key))
-	if !ok {
-		return false
-	}
-	path = append(append([]string(nil), table...), path...)
-	if len(path) < 2 {
-		return false
-	}
-	if len(table) >= 2 {
-		return false
-	}
-	switch path[0] {
-	case "providers":
-		return path[1] == kimiCodeProviderName
-	case "models":
-		return aliases[path[1]]
-	}
-	return false
-}
-
-func kimiCodeKeyPath(key string) ([]string, bool) {
-	const probe = "__ollama_launch_probe"
-	cfg := map[string]any{}
-	if err := toml.Unmarshal([]byte(key+"."+probe+" = true\n"), &cfg); err != nil {
-		return nil, false
-	}
-	return codexFindProbePath(cfg, probe, nil)
+func kimiCodeOwnsPath(path []string, aliases map[string]bool) bool {
+	return len(path) >= 2 && (path[0] == "providers" && path[1] == kimiCodeProviderName || path[0] == "models" && aliases[path[1]])
 }
 
 func kimiCodeProviderValues(existing any) map[string]any {
 	values := map[string]any{
 		"type":     "openai",
 		"base_url": envconfig.ConnectableHost().String() + "/v1",
-		"api_key":  "ollama",
 	}
-	table, ok := existing.(map[string]any)
-	if !ok {
-		return values
-	}
+	table, _ := existing.(map[string]any)
 	for key, value := range table {
 		if _, ours := values[key]; !ours {
 			values[key] = value
 		}
+	}
+	if values["api_key"] == nil && values["api_key_env"] == nil && values["oauth"] == nil {
+		values["api_key"] = "ollama"
 	}
 	return values
 }

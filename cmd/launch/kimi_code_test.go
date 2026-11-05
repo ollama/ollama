@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/pelletier/go-toml/v2"
 
 	modelpkg "github.com/ollama/ollama/types/model"
@@ -661,6 +662,57 @@ max_context_size = 1048576
 	}
 }
 
+func TestWriteKimiCodeConfig_PreservesMultilineHook(t *testing.T) {
+	const command = `cat <<'CONFIG'
+providers.ollama.api_key = "literal hook text"
+[providers.ollama]
+type = "openai"
+[models."ollama/local".overrides]
+max_context_size = 8192
+CONFIG
+`
+	for _, delimiter := range []string{"'''", `"""`} {
+		t.Run(delimiter, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			kimiHome := t.TempDir()
+			t.Setenv("KIMI_CODE_HOME", kimiHome)
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+			path := filepath.Join(kimiHome, "config.toml")
+			existing := fmt.Sprintf("[[hooks]]\nevent = 'SessionStart'\ncommand = %s\n%s%s\n", delimiter, command, delimiter)
+			if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			oldConfirm := DefaultConfirmPrompt
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+			t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+
+			models := []LaunchModel{{Name: "local", ContextLength: 32768}}
+			if err := writeKimiCodeConfig("local", models); err != nil {
+				t.Fatal(err)
+			}
+			cfg := readKimiCodeConfig(t, path)
+			hooks := cfg["hooks"].([]any)
+			if got := hooks[0].(map[string]any)["command"]; got != command {
+				t.Fatalf("hook command = %q, want %q", got, command)
+			}
+			first, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeKimiCodeConfig("local", models); err != nil {
+				t.Fatal(err)
+			}
+			second, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(first) != string(second) {
+				t.Fatal("unchanged configuration was rewritten")
+			}
+		})
+	}
+}
+
 func TestKimiLegacyCLIArchived(t *testing.T) {
 	tests := map[string]bool{
 		"1.50.0": false,
@@ -1146,6 +1198,45 @@ display_name = "GLM (work)"
 	}
 	if ollama["base_url"] != "http://127.0.0.1:11434/v1" {
 		t.Fatalf("base_url = %v, want local host", ollama["base_url"])
+	}
+}
+
+func TestWriteKimiCodeConfig_PreservesProviderAuthentication(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config string
+		key    string
+		want   any
+	}{
+		{"inline key", `api_key = "custom-key"`, "api_key", "custom-key"},
+		{"environment key", `api_key_env = "OLLAMA_API_KEY"`, "api_key_env", "OLLAMA_API_KEY"},
+		{"OAuth", `oauth = { storage = "keyring", key = "ollama-auth" }`, "oauth", map[string]any{"storage": "keyring", "key": "ollama-auth"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			kimiHome := t.TempDir()
+			t.Setenv("KIMI_CODE_HOME", kimiHome)
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+			path := filepath.Join(kimiHome, "config.toml")
+			if err := os.WriteFile(path, []byte("[providers.ollama]\ntype = 'openai'\n"+tc.config+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeKimiCodeConfig("local", []LaunchModel{{Name: "local", ContextLength: 32768}}); err != nil {
+				t.Fatal(err)
+			}
+			cfg := readKimiCodeConfig(t, path)
+			provider := cfg["providers"].(map[string]any)["ollama"].(map[string]any)
+			if diff := cmp.Diff(tc.want, provider[tc.key]); diff != "" {
+				t.Fatalf("authentication changed (-want +got):\n%s", diff)
+			}
+			for _, key := range []string{"api_key", "api_key_env", "oauth"} {
+				if key != tc.key {
+					if _, ok := provider[key]; ok {
+						t.Fatalf("conflicting credential %s was added", key)
+					}
+				}
+			}
+		})
 	}
 }
 
