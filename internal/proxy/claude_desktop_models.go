@@ -176,7 +176,6 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 			strings.TrimSpace(recommendation.RequiredPlan),
 			recommendation.MaxOutputTokens,
 		)
-		model.setLabel(recommendation.DisplayName)
 		model.Recommended = true
 		model.entitlementKnown = true
 		models = append(models, model)
@@ -188,18 +187,17 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 // deliberately small; the Ollama.com app-aware endpoint is the primary source.
 func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
-		{Model: "glm-5.2:cloud", DisplayName: "GLM 5.2", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "kimi-k3:cloud", DisplayName: "Kimi K3", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
-		{Model: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
-		{Model: "gemma4:31b-cloud", DisplayName: "Gemma 4 31B", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
+		{Model: "glm-5.2:cloud", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
 	})
 	// Preserve the proven fallback route while the endpoint remains free to
 	// move the canonical DeepSeek alias independently.
 	models[3].OllamaModel = "deepseek-v4-flash:0731:cloud"
 	models[3].DisplayName = models[3].OllamaModel
 	models[3].gateway.OllamaModel = models[3].OllamaModel
-	models[3].setLabel("DeepSeek V4 Flash")
 	return models
 }
 
@@ -466,8 +464,25 @@ func newClaudeDesktopModel(name, description, requiredPlan string, maxTokens int
 			SupportsVision: name == "kimi-k3:cloud",
 		},
 	}
-	model.gateway.DisplayName = model.displayLabel()
+	model.setLabel(claudeDesktopDisplayName(name))
 	return model
+}
+
+// claudeDesktopDisplayNames names the recommended routes Claude Desktop's
+// picker shows. Routes without an entry keep their name as the label.
+var claudeDesktopDisplayNames = map[string]string{
+	"glm-5.2:cloud":     "GLM 5.2",
+	"kimi-k3:cloud":     "Kimi K3",
+	"deepseek-v4-pro":   "DeepSeek V4 Pro",
+	"deepseek-v4-flash": "DeepSeek V4 Flash",
+	"gemma4:31b-cloud":  "Gemma 4 31B",
+}
+
+func claudeDesktopDisplayName(route string) string {
+	if name := claudeDesktopDisplayNames[route]; name != "" {
+		return name
+	}
+	return route
 }
 
 // setLabel sets the human-readable name Claude Desktop's picker shows for this

@@ -527,15 +527,15 @@ func TestDefaultClaudeDesktopMappingsOnlyUseAvailableModels(t *testing.T) {
 
 func TestClaudeDesktopModelsAdvertiseDisplayNames(t *testing.T) {
 	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
-		{Model: "kimi-k3:cloud", DisplayName: "Kimi K3", RequiredPlan: "pro"},
-		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "qwen3.8:27b", RequiredPlan: "pro"},
 	})
 	if len(models) != 2 {
 		t.Fatalf("models = %+v", models)
 	}
 
-	// A recommendation display name is what Claude Desktop's picker shows,
-	// while the exact Ollama route stays available for routing and messages.
+	// A known route is advertised under its Claude Desktop display name while
+	// the exact Ollama route stays available for routing and messages.
 	if models[0].gateway.DisplayName != "Kimi K3" {
 		t.Fatalf("gateway display name = %q, want Kimi K3", models[0].gateway.DisplayName)
 	}
@@ -543,10 +543,10 @@ func TestClaudeDesktopModelsAdvertiseDisplayNames(t *testing.T) {
 		t.Fatalf("route = %+v, want kimi-k3:cloud", models[0])
 	}
 
-	// Without a display name the route is the label, so legacy contracts and
-	// local models keep their existing behavior.
-	if models[1].Label != "" || models[1].gateway.DisplayName != "glm-5.2:cloud" {
-		t.Fatalf("fallback label = %+v, want route name", models[1])
+	// Routes without a display name keep the route as the label, so local and
+	// newly recommended models behave as before.
+	if models[1].gateway.DisplayName != "qwen3.8:27b" {
+		t.Fatalf("fallback label = %q, want route name", models[1].gateway.DisplayName)
 	}
 
 	// Labels survive route remapping: a curated name never turns into a tag.
@@ -555,7 +555,7 @@ func TestClaudeDesktopModelsAdvertiseDisplayNames(t *testing.T) {
 		t.Fatalf("mapped = %+v, want Kimi K3 on claude-opus-5", mapped)
 	}
 
-	// Restoring the route name clears the override instead of pinning it.
+	// Clearing the label falls back to the route name instead of pinning it.
 	mapped[0].setLabel("")
 	if mapped[0].gateway.DisplayName != "kimi-k3:cloud" {
 		t.Fatalf("cleared label = %q, want route name", mapped[0].gateway.DisplayName)
