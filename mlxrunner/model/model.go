@@ -19,12 +19,13 @@ type Model interface {
 	// stacking, quantized layer creation) happens here.
 	LoadWeights(tensors map[string]*mlx.Array) error
 
-	// NewCaches builds the cache slots this model's layers need.
+	// NewCaches builds one request's owned cache slots, usually one per model layer.
 	NewCaches() []cache.Cache
 
 	// Forward returns the hidden state to unembed and the state a draft
 	// model conditions on; plain models return the final hidden for both.
-	Forward(b *batch.Batch, cache []cache.Cache) (hidden, auxHidden *mlx.Array)
+	// Cache slots are borrowed for this call and may span several requests.
+	Forward(b *batch.Batch, cache []cache.Layer) (hidden, auxHidden *mlx.Array)
 	Unembed(x *mlx.Array) *mlx.Array
 
 	Tokenizer() *tokenizer.Tokenizer
@@ -45,7 +46,7 @@ type DraftModel interface {
 	// Forward consumes b.Hidden (the draft-conditioning state) and returns
 	// its hidden plus the aux hidden that seeds the next step. targetCaches
 	// is read-only, for drafts that attend over the target's history.
-	Forward(b *batch.Batch, targetCaches, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array)
+	Forward(b *batch.Batch, targetCaches, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array)
 
 	// Unembed projects a hidden state to vocabulary logits.
 	Unembed(x *mlx.Array) *mlx.Array

@@ -540,8 +540,9 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	numParallel := max(int(envconfig.NumParallel()), 1)
 	completion := req.model.CheckCapabilities(model.CapabilityCompletion) == nil
 
-	// Embedding models should always be loaded with parallel=1
-	if !completion {
+	// MLX owns batching for generation, scoring, embeddings and speech.
+	// Keep the existing serial load for llama.cpp non-completion models.
+	if !completion && !req.model.IsMLX() {
 		numParallel = 1
 	}
 

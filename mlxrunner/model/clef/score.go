@@ -11,7 +11,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 )
 
-var _ model.CachedScorer = (*Model)(nil)
+var _ model.Scorer = (*Model)(nil)
 
 // ScorePlan holds one schema. Its questions interact in the joint head, so a
 // complete schema is one backbone row even when it contains many questions.
@@ -23,7 +23,7 @@ type ScorePlan struct {
 }
 
 // PrepareScore is CPU-only and needs no MLX thread or array scope, allowing
-// preparation to overlap GPU work. Score currently calls it serially.
+// preparation to overlap GPU work.
 func (m *Model) PrepareScore(ctx context.Context, input llm.ScoreRequest) (*ScorePlan, error) {
 	if len(input.Segments) < 3 || len(input.Fields) < 1 || len(input.Fields) > 64 || input.MaxTokens < 1 || input.MaxTokens > m.MaxContextLength() {
 		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "invalid Clef question count or context limit"}
@@ -78,9 +78,6 @@ func (m *Model) FinishScore(plan *ScorePlan, hidden *mlx.Array) [][]float32 {
 	return result
 }
 
-// Score retains the serial runner path while sharing preparation and readout.
-// Keep preparation and readout model-owned and separate from forward execution
-// so scheduling can evolve without duplicating model logic.
 func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
 	cached := 0
@@ -89,13 +86,9 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model
 	if err != nil {
 		return result, err
 	}
-	mlx.Scoped(func() {
-		var hidden *mlx.Array
-		hidden, cached, err = forward(ctx, plan.prepared, plan.segments)
-		if err != nil {
-			return
-		}
+	cached, err = forward(ctx, plan.prepared, plan.segments, func(hidden *mlx.Array) error {
 		result.Logits = m.FinishScore(plan, hidden)
+		return nil
 	})
 	if err != nil {
 		return result, err
