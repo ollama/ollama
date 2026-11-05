@@ -3504,4 +3504,24 @@ int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim) {
     return projection_dim;
 }
 
+bool register_npu_weight_source(const ggml_tensor * cur, const void * data, size_t n_size) {
+    if (!cur || !data || !cur->buffer || ggml_backend_buffer_is_host(cur->buffer)) return false;
+
+    using register_fn = void (*)(const ggml_tensor *, const void *, size_t);
+    static register_fn fn = []() -> register_fn {
+        const char * off = std::getenv("OLLAMA_ROCKET_NO_MMAP_SOURCE");
+        if (off && *off && std::strcmp(off, "0") != 0) return nullptr;
+        ggml_backend_reg_t reg = ggml_backend_reg_by_name("ROCKET");
+        if (!reg) return nullptr;
+        auto f = (register_fn) ggml_backend_reg_get_proc_address(reg, "ggml_backend_rocket_register_weight_source");
+        if (f) {
+            LLAMA_LOG_INFO("%s: keeping mmapped sources of repacked weights for the ROCKET backend\n", __func__);
+        }
+        return f;
+    }();
+    if (!fn) return false;
+    fn(cur, data, n_size);
+    return true;
+}
+
 } // namespace llama_ollama_compat

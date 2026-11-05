@@ -59,6 +59,19 @@ index 7663797ba..4140399a5 100644
  
          const bool from_mapping = use_mmap || lazy.has(cur);
  
+@@ -1650,6 +1665,12 @@ bool llama_model_loader::load_all_data(
+                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
+             } else {
+                 ggml_backend_tensor_set(cur, data, 0, n_size);
++                if (use_mmap && !lazy.has(cur) && llama_ollama_compat::register_npu_weight_source(cur, data, n_size)) {
++                    // keep the original bytes mapped for the NPU (not unmapped as a fragment below)
++                    auto & mmap_used = mmaps_used[weight->idx];
++                    mmap_used.first  = std::min(mmap_used.first,  weight->offs);
++                    mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
++                }
+             }
+         } else {
+             const auto & file = files.at(weight->idx);
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
 index 90de19575..5a8e4c675 100644
 --- a/tools/mtmd/clip.cpp

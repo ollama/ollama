@@ -102,4 +102,14 @@ LLAMA_API const void * maybe_load_text_tensor_range(const llama_model_loader * m
 // is missing from that helper in the pinned llama.cpp version.
 LLAMA_API int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim);
 
+// Called from llama_model_loader::load_all_data after a tensor was copied out
+// of the mmapped file into a buffer the CPU repacks (a non-host buffer such as
+// CPU_REPACK). When the Rockchip NPU (ROCKET) backend is loaded, hands it the
+// tensor's original mmapped bytes so the NPU can prefill from them while
+// ggml-cpu decodes from its repacked copy. Returns true when the source was
+// registered: the caller must then keep that file range mapped (not unmap it
+// as a fragment) for as long as the model lives. OLLAMA_ROCKET_NO_MMAP_SOURCE=1
+// turns it off.
+LLAMA_API bool register_npu_weight_source(const ggml_tensor * cur, const void * data, size_t n_size);
+
 } // namespace llama_ollama_compat

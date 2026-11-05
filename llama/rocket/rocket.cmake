@@ -19,7 +19,7 @@ if(GGML_ROCKET)
         include(FetchContent)
         find_package(Threads REQUIRED)
 
-        set(GGML_ROCKET_GIT_TAG "f995b86c3e8083db20bedd93624783f336485412" CACHE STRING "Pinned ggml-rocket commit")
+        set(GGML_ROCKET_GIT_TAG "1501f7027239b69332add1c08d1434667cdb91d2" CACHE STRING "Pinned ggml-rocket commit")
         set(ROCKET_USERSPACE_GIT_TAG "88cae6d37367bcf65e467524a0a15b89dec01d0d" CACHE STRING "Pinned rocket-userspace commit")
         set(RKNPU_SUBMIT_GIT_TAG "0d1fa72d28b0112c918c7865b18904e6fa140752" CACHE STRING "Pinned rknpu-submit commit")
 

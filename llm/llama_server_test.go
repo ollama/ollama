@@ -4069,8 +4069,20 @@ func TestRocketArgsAndMemoryAccounting(t *testing.T) {
 		FreeMemory:  28 * 1024 * 1024 * 1024,
 	}
 
-	t.Run("appendRocketArgs adds --no-repack", func(t *testing.T) {
+	t.Run("appendRocketArgs keeps repack with mmap", func(t *testing.T) {
 		params := appendRocketArgs(nil, api.Options{Runner: api.Runner{NumGPU: -1}}, []ml.DeviceInfo{rocketGPU}, nil)
+		if len(params) != 0 {
+			t.Fatalf("appendRocketArgs = %v, want no args", params)
+		}
+	})
+
+	t.Run("appendRocketArgs adds --no-repack without mmap or when forced", func(t *testing.T) {
+		noMMap := false
+		params := appendRocketArgs(nil, api.Options{Runner: api.Runner{NumGPU: -1, UseMMap: &noMMap}}, []ml.DeviceInfo{rocketGPU}, nil)
+		if !reflect.DeepEqual(params, []string{"--no-repack"}) {
+			t.Fatalf("appendRocketArgs = %v, want [--no-repack]", params)
+		}
+		params = appendRocketArgs(nil, api.Options{Runner: api.Runner{NumGPU: -1}}, []ml.DeviceInfo{rocketGPU}, map[string]string{"OLLAMA_ROCKET_NO_REPACK": "1"})
 		if !reflect.DeepEqual(params, []string{"--no-repack"}) {
 			t.Fatalf("appendRocketArgs = %v, want [--no-repack]", params)
 		}

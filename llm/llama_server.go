@@ -699,15 +699,29 @@ func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo)
 	return params
 }
 
-// appendRocketArgs disables CPU tensor repacking (--no-repack) when the Rockchip
-// NPU (Rocket) backend is active so quantized model weights stay in host buffers
-// (CPU_Mapped / CPU) instead of CPU_REPACK, allowing ROCKET to accelerate
-// quantized MAT_MUL prefill operations.
+// appendRocketArgs decides whether the Rockchip NPU (Rocket) backend needs CPU
+// tensor repacking disabled (--no-repack).
+//
+// With mmap on (the default), repacking stays on: ggml-cpu keeps its repacked
+// copy (CPU_REPACK) for decode, and the model loader hands Rocket each repacked
+// tensor's original mmapped bytes so it can still prefill quantized matmuls on
+// the NPU (see register_npu_weight_source in llama/compat). Without mmap there
+// are no original bytes to hand over, so the weights must stay in host buffers
+// (CPU_Mapped / CPU) for Rocket to read them, and --no-repack is passed.
+// OLLAMA_ROCKET_NO_REPACK=1 forces the old behaviour.
 func appendRocketArgs(params []string, opts api.Options, gpus []ml.DeviceInfo, extraEnvs map[string]string) []string {
 	if opts.NumGPU == 0 {
 		return params
 	}
 	if extraEnvs["LLAMA_ARG_REPACK"] != "" || os.Getenv("LLAMA_ARG_REPACK") != "" {
+		return params
+	}
+	forced := extraEnvs["OLLAMA_ROCKET_NO_REPACK"]
+	if forced == "" {
+		forced = os.Getenv("OLLAMA_ROCKET_NO_REPACK")
+	}
+	noMMap := opts.UseMMap != nil && !*opts.UseMMap
+	if !noMMap && (forced == "" || forced == "0" || strings.EqualFold(forced, "false")) {
 		return params
 	}
 	for _, g := range gpus {
