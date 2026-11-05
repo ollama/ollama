@@ -33,9 +33,25 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen", "agy"}
 
 var integrationSpecs = []*IntegrationSpec{
+	{
+		Name:        "agy",
+		Runner:      &Agy{},
+		Description: "Google's antigravity cli",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, ok := findAgy()
+				return ok
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureAgyInstalled()
+				return err
+			},
+			Command: []string{"npm", "install", "-g", "agy"},
+		},
+	},
 	{
 		Name:        "claude",
 		Runner:      &Claude{},
