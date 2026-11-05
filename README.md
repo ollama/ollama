@@ -303,6 +303,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [llama-roofline](https://github.com/manunicholasjacob/llama-roofline) - Inspect a pulled model's quantization and per-token memory reads
 
 ### Productivity & Apps
 
