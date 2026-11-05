@@ -26,7 +26,7 @@ describe("desktop model settings", () => {
     );
     expect(fetch).toHaveBeenLastCalledWith(
       "http://127.0.0.1:3001/api/v1/integrations/chatgpt/models?catalog=false",
-      { signal: undefined },
+      { signal: undefined, credentials: "include" },
     );
     fetch.mockResolvedValue(new Response(JSON.stringify({ installed: true })));
     const controller = new AbortController();
@@ -35,7 +35,7 @@ describe("desktop model settings", () => {
     ).resolves.toEqual({ installed: true });
     expect(fetch).toHaveBeenLastCalledWith(
       "http://127.0.0.1:3001/api/v1/integrations/claude-desktop/models?catalog=true",
-      { signal: controller.signal },
+      { signal: controller.signal, credentials: "include" },
     );
   });
 
@@ -116,6 +116,7 @@ describe("getIntegrationStatuses", () => {
     ]);
     expect(fetch).toHaveBeenCalledWith(
       "http://127.0.0.1:3001/api/v1/integrations",
+      { credentials: "include" },
     );
   });
 });
