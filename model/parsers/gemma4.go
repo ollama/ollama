@@ -908,10 +908,12 @@ func repairGemma4BareWordValues(s string) string {
 // call:edit{set:[{path:<|"|>Level<|"|>,value:\"5\"}]}.
 // Only an even count of delimiters is repaired, and only a value that is all of
 // the text between the two `\"`, after an object's key and its colon or as a
-// list's item: its text holds no `\` and no `"`, and a `,`, `}` or `]` follows the
-// closing `\"` after any whitespace. The delimiters are written for the two `\"`.
-// Strings are copied as they are. Where the strings or brackets are unclear,
-// nothing is repaired.
+// list's item: its text holds no `"` and no `\` but in `\\`, which is read as the
+// one `\` it escapes, and a `,`, `}` or `]` follows the closing `\"` after any
+// whitespace. A text of lines written so keeps its line ends as `\n`:
+// value:\"- Data:\\n    Level: 1\"}. The delimiters are written for the two
+// `\"`. Strings are copied as they are. Where the strings or brackets are
+// unclear, nothing is repaired.
 func repairGemma4EscapedQuoteValues(s string) string {
 	return repairGemma4Values(s, gemma4EscapedQuoteValue)
 }
@@ -923,22 +925,26 @@ func gemma4EscapedQuoteValue(s string, i int) (string, int, bool) {
 	if !strings.HasPrefix(s[i:], quote) {
 		return "", 0, false
 	}
-	start := i + len(quote)
-	length := strings.Index(s[start:], quote)
-	if length == -1 {
-		return "", 0, false
+	var text strings.Builder
+	for j := i + len(quote); j < len(s); j++ {
+		switch {
+		case strings.HasPrefix(s[j:], `\\`):
+			text.WriteByte('\\')
+			j++
+		case strings.HasPrefix(s[j:], quote):
+			end := j + len(quote)
+			next := gemma4SkipSpace(s, end)
+			if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+				return "", 0, false
+			}
+			return text.String(), end, true
+		case s[j] == '\\' || s[j] == '"':
+			return "", 0, false
+		default:
+			text.WriteByte(s[j])
+		}
 	}
-	text := s[start : start+length]
-	if strings.ContainsAny(text, `\"`) {
-		return "", 0, false
-	}
-
-	end := start + length + len(quote)
-	next := gemma4SkipSpace(s, end)
-	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
-		return "", 0, false
-	}
-	return text, end, true
+	return "", 0, false
 }
 
 // repairGemma4HexNumberValues reads a hex number the model wrote bare for a value

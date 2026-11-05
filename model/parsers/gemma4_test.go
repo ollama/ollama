@@ -1772,6 +1772,16 @@ func TestRepairGemma4EscapedQuoteValues(t *testing.T) {
 			expected: `{path:\"a\b\",say:\"a"b\"}`,
 		},
 		{
+			name:     "reads_an_escaped_backslash_as_one",
+			input:    `{value:\"- Data:\\n    Level: 1\",end:\"a\\\",n:1}`,
+			expected: `{value:<|"|>- Data:\n    Level: 1<|"|>,end:<|"|>a\<|"|>,n:1}`,
+		},
+		{
+			name:     "keeps_a_backslash_beside_an_escaped_one",
+			input:    `{value:\"a\\\b\"}`,
+			expected: `{value:\"a\\\b\"}`,
+		},
+		{
 			name:     "keeps_text_that_is_not_all_of_the_value",
 			input:    `{a:\"x\"y,b:1}`,
 			expected: `{a:\"x\"y,b:1}`,
@@ -1833,6 +1843,14 @@ func TestParseGemma4ClosedToolCall_EscapedQuoteValues(t *testing.T) {
 			name:    "in_an_unclosed_list",
 			content: `call:set{flags:[\"Female\",\"Unique\",level:5}`,
 			want:    map[string]any{"flags": []any{"Female", "Unique"}, "level": 5.0},
+		},
+		{
+			// A list's items as the lines of a file, their line ends escaped once more.
+			name:    "lines_with_escaped_line_ends",
+			content: `call:editRecord{build:true,project:<|"|>BanditSilver<|"|>,set:[{path:<|"|>Entries<|"|>,value:\"- Data:\\n    Level: 1\\n    Reference: 039D26:Skyrim.esm  # SubCharBandit01Melee1H\\n    Count: 1\"}]}`,
+			want: map[string]any{"build": true, "project": "BanditSilver", "set": []any{
+				map[string]any{"path": "Entries", "value": "- Data:\\n    Level: 1\\n    Reference: 039D26:Skyrim.esm  # SubCharBandit01Melee1H\\n    Count: 1"},
+			}},
 		},
 		{
 			name:    "text_with_a_backslash",
