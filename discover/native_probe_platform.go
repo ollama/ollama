@@ -32,6 +32,8 @@ func ggmlProbeLibraryName(name string) string {
 		return "Vulkan"
 	case "metal":
 		return "Metal"
+	case "sycl":
+		return "SYCL"
 	default:
 		return name
 	}
@@ -78,6 +80,7 @@ func nativeProbeBackendPatterns(dir string) []string {
 			filepath.Join(dir, "ggml-cuda.dll"),
 			filepath.Join(dir, "ggml-hip.dll"),
 			filepath.Join(dir, "ggml-vulkan.dll"),
+			filepath.Join(dir, "ggml-sycl.dll"),
 		}
 	}
 
@@ -85,6 +88,7 @@ func nativeProbeBackendPatterns(dir string) []string {
 		filepath.Join(dir, "libggml-cuda.so"),
 		filepath.Join(dir, "libggml-hip.so"),
 		filepath.Join(dir, "libggml-vulkan.so"),
+		filepath.Join(dir, "libggml-sycl.so"),
 	}
 }
 
