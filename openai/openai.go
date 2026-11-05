@@ -33,6 +33,7 @@ type ErrorResponse struct {
 type Message struct {
 	Role       string     `json:"role"`
 	Content    any        `json:"content"`
+	Refusal    string     `json:"refusal,omitempty"`
 	Reasoning  string     `json:"reasoning,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	Name       string     `json:"name,omitempty"`
@@ -631,6 +632,10 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
 			content = ""
 		}
+		// an assistant turn that was refused carries its text in refusal, with null content
+		if content == nil && msg.Refusal != "" {
+			content = msg.Refusal
+		}
 		switch content := content.(type) {
 		case string:
 			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
@@ -652,6 +657,14 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 						return nil, errors.New("invalid message format")
 					}
 					messages = append(messages, api.Message{Role: msg.Role, Content: text})
+				case "refusal":
+					// assistant history may carry a refusal part instead of text;
+					// keep it as visible content, as the Responses API does
+					refusal, ok := data["refusal"].(string)
+					if !ok {
+						return nil, errors.New("invalid message format")
+					}
+					messages = append(messages, api.Message{Role: msg.Role, Content: refusal})
 				case "image_url":
 					var url string
 					if urlMap, ok := data["image_url"].(map[string]any); ok {
