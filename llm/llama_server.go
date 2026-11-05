@@ -381,6 +381,48 @@ func FindLlamaServer() (string, error) {
 	return path, nil
 }
 
+// llamaServerArgs builds the CLI args for llama-server from a launch config.
+func llamaServerArgs(launch llamaServerLaunchConfig, port int) []string {
+	params := []string{
+		"--model", launch.modelPath,
+		"--port", strconv.Itoa(port),
+		"--host", "127.0.0.1",
+		"--no-webui",
+		"--offline",
+		"-c", strconv.Itoa(launch.opts.NumCtx * launch.numParallel),
+	}
+	if launch.decision {
+		params = append(params, "-np", "16", "--kv-unified", "--cache-ram", "0")
+	} else {
+		params = append(params, "-np", strconv.Itoa(launch.numParallel))
+	}
+	params = appendLlamaServerLogArgs(params)
+	params = appendJinjaArgs(params, launch.config)
+	params = appendMMProjArgs(params, launch)
+	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
+	params = append(params, qwenVLServerArgs(launch.modelArch)...)
+	for _, adapter := range launch.adapters {
+		params = append(params, "--lora", adapter)
+	}
+	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
+	if launch.kvCacheType != "" {
+		params = append(params, "--cache-type-k", launch.kvCacheType, "--cache-type-v", launch.kvCacheType)
+	}
+	params = appendFlashAttentionArgs(params, launch.gpus)
+	params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
+	if launch.opts.NumGPU > 0 {
+		params = append(params, "-ngl", strconv.Itoa(launch.opts.NumGPU))
+	} else if launch.opts.NumGPU == 0 {
+		params = append(params, "-ngl", "0")
+	}
+	if launch.opts.NumThread > 0 {
+		params = append(params, "-t", strconv.Itoa(launch.opts.NumThread))
+	}
+	params = appendMainGPUArgs(params, launch.opts)
+	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
+	return params
+}
+
 // startLlamaServer spawns the upstream llama-server process with appropriate CLI flags.
 func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.Cmd, port int, err error) {
 	exe, err := FindLlamaServer()
@@ -906,6 +948,94 @@ func hasLegacyQwenMTPDraft(arch string, tensors []gguf.TensorInfo) bool {
 	default:
 		return false
 	}
+}
+
+// newLlamaServerLaunch creates the launch config and split model from params.
+func newLlamaServerLaunch(
+	gpus []ml.DeviceInfo,
+	modelPath string,
+	f *gguf.Model,
+	adapters, projectors []string,
+	opts api.Options,
+	numParallel int,
+	kvCacheType string,
+	config LlamaServerConfig,
+) (llamaServerLaunchConfig, splitModelLaunch, map[string]string, error) {
+	arch := f.KV().Architecture()
+	isEmbedding := f.KV().Has("pooling_type")
+	decisionType := f.KV().String("decision.type")
+
+	compatClipArches := map[string]bool{
+		"gemma3":          true,
+		"gemma4":          true,
+		"qwen35":          true,
+		"qwen35moe":       true,
+		"qwen25vl":        true,
+		"qwen3vl":         true,
+		"qwen3vlmoe":      true,
+		"mistral3":        true,
+		"deepseekocr":     true,
+		"glmocr":          true,
+		"llama4":          true,
+		"nemotron_h_omni": true,
+	}
+	if len(projectors) == 0 &&
+		len(f.Tensors().Items("v.")) > 0 &&
+		compatClipArches[arch] {
+		projectors = []string{modelPath}
+	}
+	mmprojMemory, err := mmprojMemoryRequirement(modelPath, f, projectors)
+	if err != nil {
+		return llamaServerLaunchConfig{}, splitModelLaunch{}, nil, err
+	}
+	if config.DraftModelPath == "" && hasMTPDraft(f) {
+		config.EnableMTP = true
+	}
+
+	draftType := ""
+	if config.EnableMTP {
+		draftType = draftTypeMTP
+	}
+	if config.DraftModelPath != "" {
+		draftType, err = externalDraftType(config.DraftModelPath, config.DraftModelShardPaths...)
+		if err != nil {
+			return llamaServerLaunchConfig{}, splitModelLaunch{}, nil, err
+		}
+	}
+	splitModel, err := materializeSplitModels(f.Files(), projectors, config)
+	if err != nil {
+		return llamaServerLaunchConfig{}, splitModelLaunch{}, nil, err
+	}
+	config.DraftModelPath = splitModel.draftModelPath
+
+	gpuLibs := ml.LibraryPaths(gpus)
+	mediaMarker := newLlamaServerMediaMarker()
+	extraEnvs := ml.GetDevicesEnv(gpus)
+	serverEnvs := make(map[string]string, len(extraEnvs)+1)
+	for k, v := range extraEnvs {
+		serverEnvs[k] = v
+	}
+	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+
+	launch := llamaServerLaunchConfig{
+		modelPath:    splitModel.modelPath,
+		modelArch:    arch,
+		draftType:    draftType,
+		projectors:   slices.Clone(splitModel.projectors),
+		mmprojMemory: mmprojMemory,
+		modelLayers:  f.KV().BlockCount() + 1,
+		adapters:     slices.Clone(adapters),
+		opts:         opts,
+		numParallel:  numParallel,
+		kvCacheType:  kvCacheType,
+		embedding:    isEmbedding,
+		decision:     decisionType != "",
+		config:       config,
+		gpus:         slices.Clone(gpus),
+		gpuLibs:      slices.Clone(gpuLibs),
+		extraEnvs:    serverEnvs,
+	}
+	return launch, splitModel, extraEnvs, nil
 }
 
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
@@ -2862,13 +2992,6 @@ func (s *llamaServerRunner) incompleteGPUOffload() string {
 // hostModelSlack tolerates small host-side weight buffers (e.g. norms).
 const hostModelSlack = 256 << 20
 
-// hostResidentWeights returns the model weight bytes expected on host with a
-// full GPU offload (token embeddings, position embeddings, etc.).
-func hostResidentWeights(f *gguf.Model) uint64 {
-	return f.Tensors().Size("token_embd.weight", "per_layer_token_embd.weight",
-		"position_embd.weight", "token_types.weight", "token_embd_norm.weight", "token_embd_norm.bias")
-}
-
 // MemorySize returns total and GPU memory usage parsed from llama-server's
 // post-load log output. Full model-layer offload is reported as 100% GPU.
 func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
@@ -2910,27 +3033,6 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 		vram = total
 	}
 	return total, vram
-}
-
-// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
-	weights := modelFileSize(modelPath, f)
-
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
-
-	return weights + kvCache
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output
@@ -2979,7 +3081,6 @@ var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
 	fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
 	fitShortfallRegex         = regexp.MustCompile(`common_params_fit_impl:\s+cannot meet free memory target of`)
-	mmprojUsageRegex          = regexp.MustCompile(`estimated worst-case memory usage of mmproj is\s+[\d.]+\s+MiB`)
 )
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
@@ -3042,7 +3143,11 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 				w.runner.fitShortfall = true
 			}
 			if m := mmprojUsageRegex.FindSubmatch(b); m != nil && len(w.runner.launch.projectors) > 0 {
-				slog.Debug("llama-server estimated projector usage", "model", w.runner.modelPath)
+				if mib, err := strconv.ParseFloat(string(m[1]), 64); err == nil {
+					for _, proj := range w.runner.launch.projectors {
+						recordMMProjUsage(proj, mib)
+					}
+				}
 			}
 			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
 				backendName := string(match[2])
