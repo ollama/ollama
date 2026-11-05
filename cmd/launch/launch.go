@@ -311,6 +311,7 @@ Supported integrations:
   pool            Pool
   cline           Cline
   qwen            Qwen Code
+  talos           Talos
   vscode          VS Code (aliases: code)
 
 Examples:
