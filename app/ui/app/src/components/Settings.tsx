@@ -24,6 +24,7 @@ import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   Squares2X2Icon,
+  SpeakerWaveIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
@@ -105,6 +106,10 @@ export async function applySettingsDefaults({
         Tools: false,
         ContextLength: currentSettings.ContextLength,
         AutoUpdateEnabled: true,
+        SpeechVoice: "",
+        SpeechRate: 1,
+        SpeechVolume: 1,
+        SpeechAutoRead: false,
       }),
     );
     rollbacks.push(() => updateSettings(currentSettings));
@@ -147,12 +152,25 @@ export default function Settings() {
   const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+  const [speechVoices, setSpeechVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
   const [hasCodexDraftChanges, setHasCodexDraftChanges] = useState(false);
   const claudeModelsSettingsRef =
     useRef<ClaudeDesktopModelsSettingsHandle>(null);
   const codexModelsSettingsRef = useRef<CodexDesktopModelsSettingsHandle>(null);
   const savedConfirmationTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      return;
+    }
+
+    const synthesis = window.speechSynthesis;
+    const loadVoices = () => setSpeechVoices(synthesis.getVoices());
+    loadVoices();
+    synthesis.addEventListener("voiceschanged", loadVoices);
+    return () => synthesis.removeEventListener("voiceschanged", loadVoices);
+  }, []);
   useBlocker({
     shouldBlockFn: () =>
       !window.confirm("Discard unapplied app model changes?"),
@@ -768,6 +786,80 @@ export default function Settings() {
                           { value: 131072, label: "128k" },
                           { value: 262144, label: "256k" },
                         ]}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </Field>
+
+              <Field>
+                <div className="flex items-start space-x-3">
+                  <SpeakerWaveIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                  <div className="w-full space-y-3">
+                    <div>
+                      <Label>Read aloud</Label>
+                      <Description>
+                        Choose the system voice, speed, and volume used for AI
+                        responses.
+                      </Description>
+                    </div>
+                    <label className="block text-sm font-medium">
+                      Voice
+                      <select
+                        aria-label="Read aloud voice"
+                        className="mt-1 block w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                        value={settings.SpeechVoice ?? ""}
+                        onChange={(event) =>
+                          handleChange("SpeechVoice", event.target.value)
+                        }
+                      >
+                        <option value="">System default</option>
+                        {speechVoices.map((voice) => (
+                          <option key={voice.voiceURI} value={voice.voiceURI}>
+                            {voice.name} ({voice.lang})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Slider
+                      label="Speed"
+                      value={settings.SpeechRate ?? 1}
+                      onChange={(value) => handleChange("SpeechRate", value)}
+                      options={[
+                        { value: 0.5, label: "0.5×" },
+                        { value: 0.75, label: "0.75×" },
+                        { value: 1, label: "1×" },
+                        { value: 1.25, label: "1.25×" },
+                        { value: 1.5, label: "1.5×" },
+                        { value: 1.75, label: "1.75×" },
+                        { value: 2, label: "2×" },
+                      ]}
+                    />
+                    <Slider
+                      label="Volume"
+                      value={settings.SpeechVolume ?? 1}
+                      onChange={(value) => handleChange("SpeechVolume", value)}
+                      options={[
+                        { value: 0, label: "0%" },
+                        { value: 0.25, label: "25%" },
+                        { value: 0.5, label: "50%" },
+                        { value: 0.75, label: "75%" },
+                        { value: 1, label: "100%" },
+                      ]}
+                    />
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <Label>Auto read new responses</Label>
+                        <Description>
+                          Speak each completed AI response automatically.
+                        </Description>
+                      </div>
+                      <Switch
+                        aria-label="Auto read new responses"
+                        checked={settings.SpeechAutoRead ?? false}
+                        onChange={(checked) =>
+                          handleChange("SpeechAutoRead", checked)
+                        }
                       />
                     </div>
                   </div>
