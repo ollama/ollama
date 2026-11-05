@@ -159,6 +159,8 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 }
 
 func (r *Runner) Close() {
+	r.cache.close()
+	r.cache = nil
 	r.scoreCache.close()
 	r.scoreCache, r.scoreHidden = nil, nil
 	if r.grammarEngine != nil {
