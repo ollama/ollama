@@ -4,7 +4,7 @@ import Message from "./Message";
 import Downloading from "./Downloading";
 import { ErrorMessage } from "./ErrorMessage";
 
-export default function MessageList({
+function MessageList({
   messages,
   spacerHeight,
   isWaitingForLoad,
@@ -166,3 +166,5 @@ export default function MessageList({
     </div>
   );
 }
+
+export default React.memo(MessageList);
