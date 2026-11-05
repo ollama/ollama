@@ -274,6 +274,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		wantLogprobs:    request.SamplerOpts.Logprobs,
 		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
 	}
+	stops := stopBuffer{stops: request.Options.Stop}
 
 	cachedPromptCount := len(session.inputs) - len(session.remaining)
 	final := CompletionResponse{
@@ -330,16 +331,25 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 				}
 			}
 
-			for _, res := range results[:stream] {
+			for index, res := range results[:stream] {
 				resp, ok := detok.detokenize(res)
 				if !ok {
 					continue
 				}
-				select {
-				case <-ctx.Done():
-					err = ctx.Err()
-					return
-				case request.Responses <- resp:
+				ready, stopped := stops.add(resp)
+				for _, part := range ready {
+					select {
+					case <-ctx.Done():
+						err = ctx.Err()
+						return
+					case request.Responses <- part:
+					}
+				}
+				if stopped {
+					generated -= stream - index - 1
+					final.DoneReason = 0
+					done = true
+					break
 				}
 			}
 		})
@@ -356,6 +366,13 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		}
 	}
 
+	for _, part := range stops.flush() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case request.Responses <- part:
+		}
+	}
 	final.EvalCount = generated
 	final.EvalDuration = time.Since(now)
 	select {
