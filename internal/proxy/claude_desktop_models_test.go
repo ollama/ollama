@@ -529,9 +529,15 @@ func TestClaudeDesktopModelsAdvertiseDisplayNames(t *testing.T) {
 	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
 		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
 		{Model: "qwen3.8:27b", RequiredPlan: "pro"},
+		{Model: "glm-5.2:cloud", DisplayName: "Endpoint Name", RequiredPlan: "pro"},
 	})
-	if len(models) != 2 {
+	if len(models) != 3 {
 		t.Fatalf("models = %+v", models)
+	}
+
+	// A name from the recommendation endpoint wins over the built-in table.
+	if models[2].gateway.DisplayName != "Endpoint Name" {
+		t.Fatalf("endpoint display name = %q, want Endpoint Name", models[2].gateway.DisplayName)
 	}
 
 	// A known route is advertised under its Claude Desktop display name while

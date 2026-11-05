@@ -176,6 +176,11 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 			strings.TrimSpace(recommendation.RequiredPlan),
 			recommendation.MaxOutputTokens,
 		)
+		// The endpoint owns the name when it supplies one; the built-in table
+		// only covers routes the recommendation contract does not label.
+		if displayName := strings.TrimSpace(recommendation.DisplayName); displayName != "" {
+			model.setLabel(displayName)
+		}
 		model.Recommended = true
 		model.entitlementKnown = true
 		models = append(models, model)
