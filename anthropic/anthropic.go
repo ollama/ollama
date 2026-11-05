@@ -1,17 +1,26 @@
 package anthropic
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Error types matching Anthropic API
@@ -60,7 +69,7 @@ type MessagesRequest struct {
 	Model         string          `json:"model"`
 	MaxTokens     int             `json:"max_tokens"`
 	Messages      []MessageParam  `json:"messages"`
-	System        any             `json:"system,omitempty"` // string or []ContentBlock
+	System        any             `json:"system,omitempty"` // string or []map[string]any (JSON-decoded ContentBlock)
 	Stream        bool            `json:"stream,omitempty"`
 	Temperature   *float64        `json:"temperature,omitempty"`
 	TopP          *float64        `json:"top_p,omitempty"`
@@ -70,34 +79,61 @@ type MessagesRequest struct {
 	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
 	Metadata      *Metadata       `json:"metadata,omitempty"`
+	OutputConfig  *OutputConfig   `json:"output_config,omitempty"`
+}
+
+type OutputConfig struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 // MessageParam represents a message in the request
 type MessageParam struct {
-	Role    string `json:"role"`    // "user" or "assistant"
-	Content any    `json:"content"` // string or []ContentBlock
+	Role    string         `json:"role"`    // "user" or "assistant"
+	Content []ContentBlock `json:"content"` // always []ContentBlock; plain strings are normalized on unmarshal
+}
+
+func (m *MessageParam) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.Role = raw.Role
+
+	var s string
+	if err := json.Unmarshal(raw.Content, &s); err == nil {
+		m.Content = []ContentBlock{{Type: "text", Text: &s}}
+		return nil
+	}
+
+	return json.Unmarshal(raw.Content, &m.Content)
 }
 
 // ContentBlock represents a content block in a message.
 // Text and Thinking use pointers so they serialize as the field being present (even if empty)
 // only when set, which is required for SDK streaming accumulation.
 type ContentBlock struct {
-	Type string `json:"type"` // text, image, tool_use, tool_result, thinking
+	Type string `json:"type"` // text, image, tool_use, tool_result, thinking, server_tool_use, web_search_tool_result
 
 	// For text blocks - pointer so field only appears when set (SDK requires it for accumulation)
 	Text *string `json:"text,omitempty"`
 
+	// For text blocks with citations
+	Citations []Citation `json:"citations,omitempty"`
+
 	// For image blocks
 	Source *ImageSource `json:"source,omitempty"`
 
-	// For tool_use blocks
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Input any    `json:"input,omitempty"`
+	// For tool_use and server_tool_use blocks
+	ID    string                        `json:"id,omitempty"`
+	Name  string                        `json:"name,omitempty"`
+	Input api.ToolCallFunctionArguments `json:"input,omitzero"`
 
-	// For tool_result blocks
+	// For tool_result and web_search_tool_result blocks
 	ToolUseID string `json:"tool_use_id,omitempty"`
-	Content   any    `json:"content,omitempty"` // string or []ContentBlock
+	Content   any    `json:"content,omitempty"` // string, []ContentBlock, []WebSearchResult, or WebSearchToolResultError
 	IsError   bool   `json:"is_error,omitempty"`
 
 	// For thinking blocks - pointer so field only appears when set (SDK requires it for accumulation)
@@ -105,9 +141,33 @@ type ContentBlock struct {
 	Signature string  `json:"signature,omitempty"`
 }
 
+// Citation represents a citation in a text block
+type Citation struct {
+	Type           string `json:"type"` // "web_search_result_location"
+	URL            string `json:"url"`
+	Title          string `json:"title"`
+	EncryptedIndex string `json:"encrypted_index,omitempty"`
+	CitedText      string `json:"cited_text,omitempty"`
+}
+
+// WebSearchResult represents a single web search result
+type WebSearchResult struct {
+	Type             string `json:"type"` // "web_search_result"
+	URL              string `json:"url"`
+	Title            string `json:"title"`
+	EncryptedContent string `json:"encrypted_content,omitempty"`
+	PageAge          string `json:"page_age,omitempty"`
+}
+
+// WebSearchToolResultError represents an error from web search
+type WebSearchToolResultError struct {
+	Type      string `json:"type"` // "web_search_tool_result_error"
+	ErrorCode string `json:"error_code"`
+}
+
 // ImageSource represents the source of an image
 type ImageSource struct {
-	Type      string `json:"type"` // "base64" or "url"
+	Type      string `json:"type"` // "base64"
 	MediaType string `json:"media_type,omitempty"`
 	Data      string `json:"data,omitempty"`
 	URL       string `json:"url,omitempty"`
@@ -115,10 +175,13 @@ type ImageSource struct {
 
 // Tool represents a tool definition
 type Tool struct {
-	Type        string          `json:"type,omitempty"` // "custom" for user-defined tools
+	Type        string          `json:"type,omitempty"` // "custom" for user-defined tools, or "web_search_20250305" for web search
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+
+	// Web search specific fields
+	MaxUses int `json:"max_uses,omitempty"`
 }
 
 // ToolChoice controls how the model uses tools
@@ -155,8 +218,31 @@ type MessagesResponse struct {
 
 // Usage contains token usage information
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
+}
+
+// UsageFromMetrics separates total prompt tokens into uncached and cache-read counts.
+func UsageFromMetrics(metrics api.Metrics) Usage {
+	total := max(0, metrics.PromptEvalCount)
+	var cached *int
+	if metrics.PromptEvalCachedCount != nil {
+		count := min(max(0, *metrics.PromptEvalCachedCount), total)
+		cached = &count
+	}
+	return Usage{
+		InputTokens:          total - intValue(cached),
+		CacheReadInputTokens: cached,
+		OutputTokens:         metrics.EvalCount,
+	}
+}
+
+func intValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // Streaming event types
@@ -211,7 +297,9 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
 }
 
 // MessageStopEvent signals the end of the message
@@ -230,8 +318,11 @@ type StreamErrorEvent struct {
 	Error Error  `json:"error"`
 }
 
-// FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest
-func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
+// FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
+	logutil.Trace("anthropic: converting request", "req", TraceMessagesRequest(r))
+
 	var messages []api.Message
 
 	if r.System != nil {
@@ -258,9 +349,10 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	for _, msg := range r.Messages {
+	for i, msg := range r.Messages {
 		converted, err := convertMessage(msg)
 		if err != nil {
+			logutil.Trace("anthropic: message conversion failed", "index", i, "role", msg.Role, "err", err)
 			return nil, err
 		}
 		messages = append(messages, converted...)
@@ -287,8 +379,24 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	var tools api.Tools
+	hasBuiltinWebSearch := false
 	for _, t := range r.Tools {
-		tool, err := convertTool(t)
+		if strings.HasPrefix(t.Type, "web_search") {
+			hasBuiltinWebSearch = true
+			break
+		}
+	}
+
+	for _, t := range r.Tools {
+		// Anthropic built-in web_search maps to Ollama function name "web_search".
+		// If a user-defined tool also uses that name in the same request, drop the
+		// user-defined one to avoid ambiguous tool-call routing.
+		if hasBuiltinWebSearch && !strings.HasPrefix(t.Type, "web_search") && t.Name == "web_search" {
+			logutil.Trace("anthropic: dropping colliding custom web_search tool", "tool", TraceTool(t))
+			continue
+		}
+
+		tool, _, err := convertTool(t)
 		if err != nil {
 			return nil, err
 		}
@@ -299,17 +407,39 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
 	}
+	if r.Thinking != nil && r.Thinking.Type == "disabled" {
+		think = &api.ThinkValue{Value: false}
+	}
+	if think == nil && r.OutputConfig != nil {
+		effort := r.OutputConfig.Effort
+		if len(thinking) > 0 && thinking[0].Valid() {
+			if effort != "" {
+				think = &api.ThinkValue{Value: effort}
+			}
+		} else {
+			effort = strings.ToLower(strings.TrimSpace(effort))
+			if effort == "xhigh" {
+				effort = "high"
+			}
+			legacyThink := &api.ThinkValue{Value: effort}
+			if api.ValidateLegacyThinking(legacyThink) == nil {
+				think = legacyThink
+			}
+		}
+	}
 
 	stream := r.Stream
-
-	return &api.ChatRequest{
+	convertedRequest := &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
 		Options:  options,
 		Stream:   &stream,
 		Tools:    tools,
 		Think:    think,
-	}, nil
+	}
+	logutil.Trace("anthropic: converted request", "req", TraceChatRequest(convertedRequest))
+
+	return convertedRequest, nil
 }
 
 // convertMessage converts an Anthropic MessageParam to Ollama api.Message(s)
@@ -317,129 +447,227 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 	var messages []api.Message
 	role := strings.ToLower(msg.Role)
 
-	switch content := msg.Content.(type) {
-	case string:
-		messages = append(messages, api.Message{Role: role, Content: content})
+	var textContent strings.Builder
+	var images []api.ImageData
+	var toolCalls []api.ToolCall
+	var thinking string
+	var toolResults []api.Message
+	textBlocks := 0
+	imageBlocks := 0
+	toolUseBlocks := 0
+	toolResultBlocks := 0
+	serverToolUseBlocks := 0
+	webSearchToolResultBlocks := 0
+	thinkingBlocks := 0
+	unknownBlocks := 0
 
-	case []any:
-		var textContent strings.Builder
-		var images []api.ImageData
-		var toolCalls []api.ToolCall
-		var thinking string
-		var toolResults []api.Message
-
-		for _, block := range content {
-			blockMap, ok := block.(map[string]any)
-			if !ok {
-				return nil, errors.New("invalid content block format")
+	for _, block := range msg.Content {
+		switch block.Type {
+		case "text":
+			textBlocks++
+			if block.Text != nil {
+				textContent.WriteString(*block.Text)
 			}
 
-			blockType, _ := blockMap["type"].(string)
-
-			switch blockType {
-			case "text":
-				if text, ok := blockMap["text"].(string); ok {
-					textContent.WriteString(text)
-				}
-
-			case "image":
-				source, ok := blockMap["source"].(map[string]any)
-				if !ok {
-					return nil, errors.New("invalid image source")
-				}
-
-				sourceType, _ := source["type"].(string)
-				if sourceType == "base64" {
-					data, _ := source["data"].(string)
-					decoded, err := base64.StdEncoding.DecodeString(data)
-					if err != nil {
-						return nil, fmt.Errorf("invalid base64 image data: %w", err)
-					}
-					images = append(images, decoded)
-				} else {
-					return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", sourceType)
-				}
-				// URL images would need to be fetched - skip for now
-
-			case "tool_use":
-				id, ok := blockMap["id"].(string)
-				if !ok {
-					return nil, errors.New("tool_use block missing required 'id' field")
-				}
-				name, ok := blockMap["name"].(string)
-				if !ok {
-					return nil, errors.New("tool_use block missing required 'name' field")
-				}
-				tc := api.ToolCall{
-					ID: id,
-					Function: api.ToolCallFunction{
-						Name: name,
-					},
-				}
-				if input, ok := blockMap["input"].(map[string]any); ok {
-					tc.Function.Arguments = mapToArgs(input)
-				}
-				toolCalls = append(toolCalls, tc)
-
-			case "tool_result":
-				toolUseID, _ := blockMap["tool_use_id"].(string)
-				var resultContent string
-
-				switch c := blockMap["content"].(type) {
-				case string:
-					resultContent = c
-				case []any:
-					for _, cb := range c {
-						if cbMap, ok := cb.(map[string]any); ok {
-							if cbMap["type"] == "text" {
-								if text, ok := cbMap["text"].(string); ok {
-									resultContent += text
-								}
-							}
-						}
-					}
-				}
-
-				toolResults = append(toolResults, api.Message{
-					Role:       "tool",
-					Content:    resultContent,
-					ToolCallID: toolUseID,
-				})
-
-			case "thinking":
-				if t, ok := blockMap["thinking"].(string); ok {
-					thinking = t
-				}
+		case "image":
+			imageBlocks++
+			if block.Source == nil {
+				logutil.Trace("anthropic: invalid image source", "role", role)
+				return nil, errors.New("invalid image source")
 			}
+
+			decoded, err := resolveImageSource(block.Source)
+			if err != nil {
+				logutil.Trace("anthropic: unsupported image source", "role", role, "source_type", block.Source.Type, "error", err)
+				return nil, err
+			}
+			images = append(images, decoded)
+
+		case "tool_use":
+			toolUseBlocks++
+			if block.ID == "" {
+				logutil.Trace("anthropic: tool_use block missing id", "role", role)
+				return nil, errors.New("tool_use block missing required 'id' field")
+			}
+			if block.Name == "" {
+				logutil.Trace("anthropic: tool_use block missing name", "role", role)
+				return nil, errors.New("tool_use block missing required 'name' field")
+			}
+			toolCalls = append(toolCalls, api.ToolCall{
+				ID: block.ID,
+				Function: api.ToolCallFunction{
+					Name:      block.Name,
+					Arguments: block.Input,
+				},
+			})
+
+		case "tool_result":
+			toolResultBlocks++
+			resultContent, resultImages, err := convertToolResultContent(block.Content)
+			if err != nil {
+				logutil.Trace("anthropic: invalid tool_result content", "role", role, "error", err)
+				return nil, err
+			}
+
+			toolResults = append(toolResults, api.Message{
+				Role:       "tool",
+				Content:    resultContent,
+				Images:     resultImages,
+				ToolCallID: block.ToolUseID,
+			})
+
+		case "thinking":
+			thinkingBlocks++
+			if block.Thinking != nil {
+				thinking = *block.Thinking
+			}
+
+		case "server_tool_use":
+			serverToolUseBlocks++
+			toolCalls = append(toolCalls, api.ToolCall{
+				ID: block.ID,
+				Function: api.ToolCallFunction{
+					Name:      block.Name,
+					Arguments: block.Input,
+				},
+			})
+
+		case "web_search_tool_result":
+			webSearchToolResultBlocks++
+			toolResults = append(toolResults, api.Message{
+				Role:       "tool",
+				Content:    formatWebSearchToolResultContent(block.Content),
+				ToolCallID: block.ToolUseID,
+			})
+		default:
+			unknownBlocks++
 		}
-
-		if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 || thinking != "" {
-			m := api.Message{
-				Role:      role,
-				Content:   textContent.String(),
-				Images:    images,
-				ToolCalls: toolCalls,
-				Thinking:  thinking,
-			}
-			messages = append(messages, m)
-		}
-
-		// Add tool results as separate messages
-		messages = append(messages, toolResults...)
-
-	default:
-		return nil, fmt.Errorf("invalid message content type: %T", content)
 	}
+
+	if role == "user" && len(toolResults) > 0 {
+		messages = append(messages, toolResults...)
+	}
+
+	if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 || thinking != "" {
+		m := api.Message{
+			Role:      role,
+			Content:   textContent.String(),
+			Images:    images,
+			ToolCalls: toolCalls,
+			Thinking:  thinking,
+		}
+		messages = append(messages, m)
+	}
+
+	// Add tool results as separate messages.
+	if role != "user" || len(toolResults) == 0 {
+		messages = append(messages, toolResults...)
+	}
+	logutil.Trace("anthropic: converted block message",
+		"role", role,
+		"blocks", len(msg.Content),
+		"text", textBlocks,
+		"image", imageBlocks,
+		"tool_use", toolUseBlocks,
+		"tool_result", toolResultBlocks,
+		"server_tool_use", serverToolUseBlocks,
+		"web_search_result", webSearchToolResultBlocks,
+		"thinking", thinkingBlocks,
+		"unknown", unknownBlocks,
+		"messages", TraceAPIMessages(messages),
+	)
 
 	return messages, nil
 }
 
-// convertTool converts an Anthropic Tool to an Ollama api.Tool
-func convertTool(t Tool) (api.Tool, error) {
+func formatWebSearchToolResultContent(content any) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []WebSearchResult:
+		var resultContent strings.Builder
+		for _, item := range c {
+			if item.Type != "web_search_result" {
+				continue
+			}
+			fmt.Fprintf(&resultContent, "- %s: %s\n", item.Title, item.URL)
+		}
+		return resultContent.String()
+	case []any:
+		var resultContent strings.Builder
+		for _, item := range c {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch itemMap["type"] {
+			case "web_search_result":
+				title, _ := itemMap["title"].(string)
+				url, _ := itemMap["url"].(string)
+				fmt.Fprintf(&resultContent, "- %s: %s\n", title, url)
+			case "web_search_tool_result_error":
+				errorCode, _ := itemMap["error_code"].(string)
+				if errorCode == "" {
+					return "web_search_tool_result_error"
+				}
+				return "web_search_tool_result_error: " + errorCode
+			}
+		}
+		return resultContent.String()
+	case map[string]any:
+		if c["type"] == "web_search_tool_result_error" {
+			errorCode, _ := c["error_code"].(string)
+			if errorCode == "" {
+				return "web_search_tool_result_error"
+			}
+			return "web_search_tool_result_error: " + errorCode
+		}
+		data, err := json.Marshal(c)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	case WebSearchToolResultError:
+		if c.ErrorCode == "" {
+			return "web_search_tool_result_error"
+		}
+		return "web_search_tool_result_error: " + c.ErrorCode
+	default:
+		data, err := json.Marshal(c)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
+}
+
+// convertTool converts an Anthropic Tool to an Ollama api.Tool, returning true if it's a server tool
+func convertTool(t Tool) (api.Tool, bool, error) {
+	if strings.HasPrefix(t.Type, "web_search") {
+		props := api.NewToolPropertiesMap()
+		props.Set("query", api.ToolProperty{
+			Type:        api.PropertyType{"string"},
+			Description: "The search query to look up on the web",
+		})
+		return api.Tool{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "web_search",
+				Description: "Search the web for current information. Use this to find up-to-date information about any topic.",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Required:   []string{"query"},
+					Properties: props,
+				},
+			},
+		}, true, nil
+	}
+
 	var params api.ToolFunctionParameters
 	if len(t.InputSchema) > 0 {
 		if err := json.Unmarshal(t.InputSchema, &params); err != nil {
-			return api.Tool{}, fmt.Errorf("invalid input_schema for tool %q: %w", t.Name, err)
+			logutil.Trace("anthropic: invalid tool schema", "tool", t.Name, "err", err)
+			return api.Tool{}, false, fmt.Errorf("invalid input_schema for tool %q: %w", t.Name, err)
 		}
 	}
 
@@ -450,7 +678,7 @@ func convertTool(t Tool) (api.Tool, error) {
 			Description: t.Description,
 			Parameters:  params,
 		},
-	}, nil
+	}, false, nil
 }
 
 // ToMessagesResponse converts an Ollama api.ChatResponse to an Anthropic MessagesResponse
@@ -489,10 +717,7 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		Model:      r.Model,
 		Content:    content,
 		StopReason: stopReason,
-		Usage: Usage{
-			InputTokens:  r.Metrics.PromptEvalCount,
-			OutputTokens: r.Metrics.EvalCount,
-		},
+		Usage:      UsageFromMetrics(r.Metrics),
 	}
 }
 
@@ -517,24 +742,27 @@ func mapStopReason(reason string, hasToolCalls bool) string {
 
 // StreamConverter manages state for converting Ollama streaming responses to Anthropic format
 type StreamConverter struct {
-	ID              string
-	Model           string
-	firstWrite      bool
-	contentIndex    int
-	inputTokens     int
-	outputTokens    int
-	thinkingStarted bool
-	thinkingDone    bool
-	textStarted     bool
-	toolCallsSent   map[string]bool
+	ID                   string
+	Model                string
+	firstWrite           bool
+	contentIndex         int
+	inputTokens          int
+	cacheReadTokens      *int
+	outputTokens         int
+	estimatedInputTokens int // Estimated tokens from request (used when actual metrics are 0)
+	thinkingStarted      bool
+	thinkingDone         bool
+	textStarted          bool
+	toolCallsSent        map[string]bool
 }
 
-func NewStreamConverter(id, model string) *StreamConverter {
+func NewStreamConverter(id, model string, estimatedInputTokens int) *StreamConverter {
 	return &StreamConverter{
-		ID:            id,
-		Model:         model,
-		firstWrite:    true,
-		toolCallsSent: make(map[string]bool),
+		ID:                   id,
+		Model:                model,
+		firstWrite:           true,
+		estimatedInputTokens: estimatedInputTokens,
+		toolCallsSent:        make(map[string]bool),
 	}
 }
 
@@ -550,7 +778,13 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 
 	if c.firstWrite {
 		c.firstWrite = false
-		c.inputTokens = r.Metrics.PromptEvalCount
+		// Use actual metrics if available, otherwise use estimate
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		if c.inputTokens == 0 && intValue(c.cacheReadTokens) == 0 && c.estimatedInputTokens > 0 {
+			c.inputTokens = c.estimatedInputTokens
+		}
 
 		events = append(events, StreamEvent{
 			Event: "message_start",
@@ -563,8 +797,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Model:   c.Model,
 					Content: []ContentBlock{},
 					Usage: Usage{
-						InputTokens:  c.inputTokens,
-						OutputTokens: 0,
+						InputTokens:          c.inputTokens,
+						CacheReadInputTokens: c.cacheReadTokens,
+						OutputTokens:         0,
 					},
 				},
 			},
@@ -572,6 +807,18 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	}
 
 	if r.Message.Thinking != "" && !c.thinkingDone {
+		if c.textStarted {
+			events = append(events, StreamEvent{
+				Event: "content_block_stop",
+				Data: ContentBlockStopEvent{
+					Type:  "content_block_stop",
+					Index: c.contentIndex,
+				},
+			})
+			c.contentIndex++
+			c.textStarted = false
+		}
+
 		if !c.thinkingStarted {
 			c.thinkingStarted = true
 			events = append(events, StreamEvent{
@@ -646,6 +893,19 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			continue
 		}
 
+		// Close thinking block if still open (thinking → tool_use without text in between)
+		if c.thinkingStarted && !c.thinkingDone {
+			c.thinkingDone = true
+			events = append(events, StreamEvent{
+				Event: "content_block_stop",
+				Data: ContentBlockStopEvent{
+					Type:  "content_block_stop",
+					Index: c.contentIndex,
+				},
+			})
+			c.contentIndex++
+		}
+
 		if c.textStarted {
 			events = append(events, StreamEvent{
 				Event: "content_block_stop",
@@ -663,7 +923,6 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			slog.Error("failed to marshal tool arguments", "error", err, "tool_id", tc.ID)
 			continue
 		}
-
 		events = append(events, StreamEvent{
 			Event: "content_block_start",
 			Data: ContentBlockStartEvent{
@@ -673,7 +932,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Type:  "tool_use",
 					ID:    tc.ID,
 					Name:  tc.Function.Name,
-					Input: map[string]any{},
+					Input: api.NewToolCallFunctionArguments(),
 				},
 			},
 		})
@@ -721,7 +980,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			})
 		}
 
-		c.outputTokens = r.Metrics.EvalCount
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		c.outputTokens = usage.OutputTokens
 		stopReason := mapStopReason(r.DoneReason, len(c.toolCallsSent) > 0)
 
 		events = append(events, StreamEvent{
@@ -732,7 +994,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					StopReason: stopReason,
 				},
 				Usage: DeltaUsage{
-					OutputTokens: c.outputTokens,
+					InputTokens:          c.inputTokens,
+					CacheReadInputTokens: c.cacheReadTokens,
+					OutputTokens:         c.outputTokens,
 				},
 			},
 		})
@@ -763,16 +1027,286 @@ func GenerateMessageID() string {
 	return generateID("msg")
 }
 
+func resolveImageSource(source *ImageSource) (api.ImageData, error) {
+	if source.Type != "base64" {
+		return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", source.Type)
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(source.Data)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64 image data: %w", err)
+	}
+
+	return decoded, nil
+}
+
+func convertToolResultContent(content any) (string, []api.ImageData, error) {
+	switch c := content.(type) {
+	case nil:
+		return "", nil, nil
+	case string:
+		return c, nil, nil
+	case []any:
+		var text strings.Builder
+		var images []api.ImageData
+
+		for _, cb := range c {
+			cbMap, ok := cb.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			switch cbMap["type"] {
+			case "text":
+				if t, ok := cbMap["text"].(string); ok {
+					text.WriteString(t)
+				}
+			case "image":
+				rawSource, ok := cbMap["source"].(map[string]any)
+				if !ok {
+					return "", nil, errors.New("invalid tool_result image source")
+				}
+
+				var source ImageSource
+				if rawType, ok := rawSource["type"].(string); ok {
+					source.Type = rawType
+				}
+				if rawMediaType, ok := rawSource["media_type"].(string); ok {
+					source.MediaType = rawMediaType
+				}
+				if rawData, ok := rawSource["data"].(string); ok {
+					source.Data = rawData
+				}
+
+				img, err := resolveImageSource(&source)
+				if err != nil {
+					return "", nil, err
+				}
+				images = append(images, img)
+			}
+		}
+
+		return text.String(), images, nil
+	default:
+		return "", nil, nil
+	}
+}
+
 // ptr returns a pointer to the given string value
 func ptr(s string) *string {
 	return &s
 }
 
-// mapToArgs converts a map to ToolCallFunctionArguments
-func mapToArgs(m map[string]any) api.ToolCallFunctionArguments {
-	args := api.NewToolCallFunctionArguments()
-	for k, v := range m {
-		args.Set(k, v)
+// CountTokensRequest represents an Anthropic count_tokens request
+type CountTokensRequest struct {
+	Model    string          `json:"model"`
+	Messages []MessageParam  `json:"messages"`
+	System   any             `json:"system,omitempty"`
+	Tools    []Tool          `json:"tools,omitempty"`
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
+}
+
+// EstimateInputTokens estimates input tokens from a MessagesRequest (reuses CountTokensRequest logic)
+func EstimateInputTokens(req MessagesRequest) int {
+	return EstimateCountTokens(CountTokensRequest{
+		Model:    req.Model,
+		Messages: req.Messages,
+		System:   req.System,
+		Tools:    req.Tools,
+		Thinking: req.Thinking,
+	})
+}
+
+// CountTokensResponse represents an Anthropic count_tokens response
+type CountTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
+}
+
+// EstimateCountTokens returns a rough estimate of tokens (len/4).
+// TODO: Replace with actual tokenization via Tokenize API for accuracy.
+// Current len/4 heuristic is a rough approximation (~4 chars/token average).
+func EstimateCountTokens(req CountTokensRequest) int {
+	var totalLen int
+
+	// Count system prompt
+	totalLen += countAnyContent(req.System)
+
+	for _, msg := range req.Messages {
+		// Count role (always present)
+		totalLen += len(msg.Role)
+		// Count content
+		totalLen += countAnyContent(msg.Content)
 	}
-	return args
+
+	for _, tool := range req.Tools {
+		totalLen += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
+	}
+
+	// Return len/4 as rough token estimate, minimum 1 if there's any content
+	tokens := totalLen / 4
+	if tokens == 0 && (len(req.Messages) > 0 || req.System != nil) {
+		tokens = 1
+	}
+	return tokens
+}
+
+func countAnyContent(content any) int {
+	if content == nil {
+		return 0
+	}
+
+	switch c := content.(type) {
+	case string:
+		return len(c)
+	case []ContentBlock:
+		total := 0
+		for _, block := range c {
+			total += countContentBlock(block)
+		}
+		return total
+	case []any:
+		total := 0
+		for _, item := range c {
+			data, err := json.Marshal(item)
+			if err != nil {
+				continue
+			}
+			var block ContentBlock
+			if err := json.Unmarshal(data, &block); err == nil {
+				total += countContentBlock(block)
+			}
+		}
+		return total
+	default:
+		if data, err := json.Marshal(content); err == nil {
+			return len(data)
+		}
+		return 0
+	}
+}
+
+func countContentBlock(block ContentBlock) int {
+	total := 0
+	if block.Text != nil {
+		total += len(*block.Text)
+	}
+	if block.Thinking != nil {
+		total += len(*block.Thinking)
+	}
+	if block.Type == "tool_use" || block.Type == "tool_result" {
+		if data, err := json.Marshal(block); err == nil {
+			total += len(data)
+		}
+	}
+	return total
+}
+
+// OllamaWebSearchRequest represents a request to the Ollama web search API
+type OllamaWebSearchRequest struct {
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+// OllamaWebSearchResult represents a single search result from Ollama API
+type OllamaWebSearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+// OllamaWebSearchResponse represents the response from the Ollama web search API
+type OllamaWebSearchResponse struct {
+	Results []OllamaWebSearchResult `json:"results"`
+}
+
+var WebSearchEndpoint = "https://ollama.com/api/web_search"
+
+func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error) {
+	if internalcloud.Disabled() {
+		logutil.TraceContext(ctx, "anthropic: web search blocked", "reason", "cloud_disabled")
+		return nil, errors.New(internalcloud.DisabledError("web search is unavailable"))
+	}
+
+	if maxResults <= 0 {
+		maxResults = 5
+	}
+	if maxResults > 10 {
+		maxResults = 10
+	}
+
+	reqBody := OllamaWebSearchRequest{
+		Query:      query,
+		MaxResults: maxResults,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal web search request: %w", err)
+	}
+
+	searchURL, err := url.Parse(WebSearchEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse web search URL: %w", err)
+	}
+	logutil.TraceContext(ctx, "anthropic: web search request",
+		"query", TraceTruncateString(query),
+		"max_results", maxResults,
+		"url", searchURL.String(),
+	)
+
+	q := searchURL.Query()
+	q.Set("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	searchURL.RawQuery = q.Encode()
+
+	signature := ""
+	if strings.EqualFold(searchURL.Hostname(), "ollama.com") {
+		challenge := fmt.Sprintf("%s,%s", http.MethodPost, searchURL.RequestURI())
+		signature, err = auth.Sign(ctx, []byte(challenge))
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign web search request: %w", err)
+		}
+	}
+	logutil.TraceContext(ctx, "anthropic: web search auth", "signed", signature != "")
+
+	req, err := http.NewRequestWithContext(ctx, "POST", searchURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create web search request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if signature != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", signature))
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("web search request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	logutil.TraceContext(ctx, "anthropic: web search response", "status", resp.StatusCode)
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("web search returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var searchResp OllamaWebSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode web search response: %w", err)
+	}
+	logutil.TraceContext(ctx, "anthropic: web search results", "count", len(searchResp.Results))
+
+	return &searchResp, nil
+}
+
+func ConvertOllamaToAnthropicResults(ollamaResults *OllamaWebSearchResponse) []WebSearchResult {
+	var results []WebSearchResult
+	for _, r := range ollamaResults.Results {
+		results = append(results, WebSearchResult{
+			Type:  "web_search_result",
+			URL:   r.URL,
+			Title: r.Title,
+		})
+	}
+	return results
 }

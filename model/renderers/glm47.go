@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 // GLM47Renderer renders messages for GLM-4.7 models.
@@ -37,6 +38,10 @@ import (
 //     included in <think>...</think> blocks, equivalent to clear_thinking=false)
 //   - Users can disable thinking per-turn via thinkValue=false
 type GLM47Renderer struct{}
+
+func (r *GLM47Renderer) LeadingBOS() string {
+	return ""
+}
 
 func (r *GLM47Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
@@ -167,4 +172,8 @@ func formatGLM47ToolJSON(raw []byte) string {
 	}
 
 	return sb.String()
+}
+
+func (r *GLM47Renderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, true}, Default: true}
 }

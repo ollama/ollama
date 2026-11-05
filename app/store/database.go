@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	sqlite3 "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 12
+const currentSchemaVersion = 19
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -73,7 +73,7 @@ func (db *database) init() error {
 		agent BOOLEAN NOT NULL DEFAULT 0,
 		tools BOOLEAN NOT NULL DEFAULT 0,
 		working_dir TEXT NOT NULL DEFAULT '',
-		context_length INTEGER NOT NULL DEFAULT 4096,
+		context_length INTEGER NOT NULL DEFAULT 0,
 		window_width INTEGER NOT NULL DEFAULT 0,
 		window_height INTEGER NOT NULL DEFAULT 0,
 		config_migrated BOOLEAN NOT NULL DEFAULT 0,
@@ -82,9 +82,15 @@ func (db *database) init() error {
 		websearch_enabled BOOLEAN NOT NULL DEFAULT 0,
 		selected_model TEXT NOT NULL DEFAULT '',
 		sidebar_open BOOLEAN NOT NULL DEFAULT 0,
+		last_home_view TEXT NOT NULL DEFAULT 'chat',
+		onboarding_version INTEGER NOT NULL DEFAULT 0,
 		think_enabled BOOLEAN NOT NULL DEFAULT 0,
 		think_level TEXT NOT NULL DEFAULT '',
+		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
+		auto_update_enabled BOOLEAN NOT NULL DEFAULT 1,
+		claude_desktop_used BOOLEAN NOT NULL DEFAULT 0,
+		codex_desktop_used BOOLEAN NOT NULL DEFAULT 0,
 		schema_version INTEGER NOT NULL DEFAULT %d
 	);
 
@@ -244,6 +250,47 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v11 to v12: %w", err)
 			}
 			version = 12
+		case 12:
+			// add cloud_setting_migrated column to settings table
+			if err := db.migrateV12ToV13(); err != nil {
+				return fmt.Errorf("migrate v12 to v13: %w", err)
+			}
+			version = 13
+		case 13:
+			// change default context_length from 4096 to 0 (VRAM-based tiered defaults)
+			if err := db.migrateV13ToV14(); err != nil {
+				return fmt.Errorf("migrate v13 to v14: %w", err)
+			}
+			version = 14
+		case 14:
+			// add auto_update_enabled column to settings table
+			if err := db.migrateV14ToV15(); err != nil {
+				return fmt.Errorf("migrate v14 to v15: %w", err)
+			}
+			version = 15
+		case 15:
+			// add last_home_view column to settings table
+			if err := db.migrateV15ToV16(); err != nil {
+				return fmt.Errorf("migrate v15 to v16: %w", err)
+			}
+			version = 16
+		case 16:
+			// Existing users should not be shown onboarding after an upgrade.
+			if err := db.migrateV16ToV17(); err != nil {
+				return fmt.Errorf("migrate v16 to v17: %w", err)
+			}
+			version = 17
+		case 17:
+			// Remember that Claude Desktop has been connected at least once.
+			if err := db.migrateV17ToV18(); err != nil {
+				return fmt.Errorf("migrate v17 to v18: %w", err)
+			}
+			version = 18
+		case 18:
+			if err := db.migrateV18ToV19(); err != nil {
+				return fmt.Errorf("migrate v18 to v19: %w", err)
+			}
+			version = 19
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -452,6 +499,109 @@ func (db *database) migrateV11ToV12() error {
 	return nil
 }
 
+// migrateV12ToV13 adds cloud_setting_migrated to settings.
+func (db *database) migrateV12ToV13() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add cloud_setting_migrated column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 13`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV13ToV14 changes the default context_length from 4096 to 0.
+// When context_length is 0, the ollama server uses VRAM-based tiered defaults.
+func (db *database) migrateV13ToV14() error {
+	_, err := db.conn.Exec(`UPDATE settings SET context_length = 0 WHERE context_length = 4096`)
+	if err != nil {
+		return fmt.Errorf("update context_length default: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 14`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV14ToV15 adds the auto_update_enabled column to the settings table
+func (db *database) migrateV14ToV15() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN auto_update_enabled BOOLEAN NOT NULL DEFAULT 1`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add auto_update_enabled column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 15`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV15ToV16 adds the last_home_view column to the settings table
+func (db *database) migrateV15ToV16() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN last_home_view TEXT NOT NULL DEFAULT 'chat'`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add last_home_view column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 16`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV16ToV17 adds versioned onboarding state. The schema default stays at
+// zero for genuinely new installs, while all existing rows are marked complete
+// and moved off the retired launch home view.
+func (db *database) migrateV16ToV17() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN onboarding_version INTEGER NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add onboarding_version column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET onboarding_version = 1, last_home_view = 'chat', schema_version = 17`)
+	if err != nil {
+		return fmt.Errorf("complete onboarding for existing users: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV17ToV18 adds durable Claude Desktop integration history.
+func (db *database) migrateV17ToV18() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN claude_desktop_used BOOLEAN NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add claude_desktop_used column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 18`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV18ToV19 records successful ChatGPT integration use.
+func (db *database) migrateV18ToV19() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN codex_desktop_used BOOLEAN NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add codex_desktop_used column: %w", err)
+	}
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 19`)
+	return err
+}
+
 // cleanupOrphanedData removes orphaned records that may exist due to the foreign key bug
 func (db *database) cleanupOrphanedData() error {
 	_, err := db.conn.Exec(`
@@ -482,19 +632,11 @@ func (db *database) cleanupOrphanedData() error {
 }
 
 func duplicateColumnError(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
-		return sqlite3Err.Code == sqlite3.ErrError &&
-			strings.Contains(sqlite3Err.Error(), "duplicate column name")
-	}
-	return false
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
 }
 
 func columnNotExists(err error) bool {
-	if sqlite3Err, ok := err.(sqlite3.Error); ok {
-		return sqlite3Err.Code == sqlite3.ErrError &&
-			strings.Contains(sqlite3Err.Error(), "no such column")
-	}
-	return false
+	return err != nil && strings.Contains(err.Error(), "no such column")
 }
 
 func (db *database) getAllChats() ([]Chat, error) {
@@ -1108,9 +1250,9 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, airplane_mode, turbo_enabled, websearch_enabled, selected_model, sidebar_open, think_enabled, think_level 
+		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled, claude_desktop_used, codex_desktop_used
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.AirplaneMode, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.ThinkEnabled, &s.ThinkLevel)
+	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled, &s.ClaudeDesktopUsed, &s.CodexDesktopUsed)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1119,14 +1261,55 @@ func (db *database) getSettings() (Settings, error) {
 }
 
 func (db *database) setSettings(s Settings) error {
+	lastHomeView := strings.ToLower(strings.TrimSpace(s.LastHomeView))
+	if lastHomeView != "chat" {
+		lastHomeView = "chat"
+	}
+
 	_, err := db.conn.Exec(`
-		UPDATE settings 
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, airplane_mode = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, think_enabled = ?, think_level = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.AirplaneMode, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, s.ThinkEnabled, s.ThinkLevel)
+		UPDATE settings
+		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = MAX(onboarding_version, ?), think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?
+	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}
 	return nil
+}
+
+func (db *database) markOnboardingCompleted() error {
+	_, err := db.conn.Exec("UPDATE settings SET onboarding_version = MAX(onboarding_version, ?)", CurrentOnboardingVersion)
+	return err
+}
+
+func (db *database) markCodexDesktopUsed() error {
+	_, err := db.conn.Exec(`UPDATE settings SET codex_desktop_used = 1`)
+	return err
+}
+
+func (db *database) isCloudSettingMigrated() (bool, error) {
+	var migrated bool
+	err := db.conn.QueryRow("SELECT cloud_setting_migrated FROM settings").Scan(&migrated)
+	if err != nil {
+		return false, fmt.Errorf("get cloud setting migration status: %w", err)
+	}
+	return migrated, nil
+}
+
+func (db *database) setCloudSettingMigrated(migrated bool) error {
+	_, err := db.conn.Exec("UPDATE settings SET cloud_setting_migrated = ?", migrated)
+	if err != nil {
+		return fmt.Errorf("set cloud setting migration status: %w", err)
+	}
+	return nil
+}
+
+func (db *database) getAirplaneMode() (bool, error) {
+	var airplaneMode bool
+	err := db.conn.QueryRow("SELECT airplane_mode FROM settings").Scan(&airplaneMode)
+	if err != nil {
+		return false, fmt.Errorf("get airplane_mode: %w", err)
+	}
+	return airplaneMode, nil
 }
 
 func (db *database) getWindowSize() (int, int, error) {

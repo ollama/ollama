@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/types/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +21,10 @@ func testPropsMap(m map[string]ToolProperty) *ToolPropertiesMap {
 		props.Set(k, v)
 	}
 	return props
+}
+
+func testIntPtr(v int) *int {
+	return &v
 }
 
 // testArgs creates ToolCallFunctionArguments from a map (convenience function for tests, order not preserved)
@@ -168,6 +175,63 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 	}
 }
 
+func TestMainGPUParsingFromJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     string
+		wantGPU *int
+	}{
+		{
+			name: "Undefined",
+			req:  `{}`,
+		},
+		{
+			name:    "Zero",
+			req:     `{ "main_gpu": 0 }`,
+			wantGPU: testIntPtr(0),
+		},
+		{
+			name:    "Nonzero",
+			req:     `{ "main_gpu": 1 }`,
+			wantGPU: testIntPtr(1),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var oMap map[string]any
+			err := json.Unmarshal([]byte(test.req), &oMap)
+			require.NoError(t, err)
+
+			opts := DefaultOptions()
+			err = opts.FromMap(oMap)
+			require.NoError(t, err)
+
+			if test.wantGPU == nil {
+				assert.Nil(t, opts.MainGPU)
+			} else if assert.NotNil(t, opts.MainGPU) {
+				assert.Equal(t, *test.wantGPU, *opts.MainGPU)
+			}
+		})
+	}
+}
+
+func TestGenerationDefaultMappingsAreOptions(t *testing.T) {
+	jsonOpts := make(map[string]struct{})
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(Options{})) {
+		jsonTag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if jsonTag != "" {
+			jsonOpts[jsonTag] = struct{}{}
+		}
+	}
+
+	for _, option := range model.GenerationDefaultOptions() {
+		if _, ok := jsonOpts[option]; !ok {
+			t.Fatalf("%s should be defined on api.Options", option)
+		}
+	}
+}
+
 func TestUseMmapFormatParams(t *testing.T) {
 	tr := true
 	fa := false
@@ -230,6 +294,12 @@ func TestUseMmapFormatParams(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMainGPUFormatParams(t *testing.T) {
+	resp, err := FormatParams(map[string][]string{"main_gpu": {"0"}})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), resp["main_gpu"])
 }
 
 func TestMessage_UnmarshalJSON(t *testing.T) {
@@ -496,10 +566,14 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			expectedThinking: &ThinkValue{Value: "low"},
 		},
 		{
-			name:             "invalid_string",
-			input:            `{ "think": "invalid" }`,
-			expectedThinking: nil,
-			expectedError:    true,
+			name:             "string_max",
+			input:            `{ "think": "max" }`,
+			expectedThinking: &ThinkValue{Value: "max"},
+		},
+		{
+			name:             "unknown_string",
+			input:            `{ "think": "future-level" }`,
+			expectedThinking: &ThinkValue{Value: "future-level"},
 		},
 	}
 
@@ -909,4 +983,75 @@ func TestToolPropertiesMap_NestedProperties(t *testing.T) {
 		expected := `{"outer":{"type":"object","properties":{"z_field":{"type":"string"},"a_field":{"type":"number"}}}}`
 		assert.Equal(t, expected, string(data))
 	})
+}
+
+func TestValidateLegacyThinking(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		valid bool
+	}{
+		{`null`, true},
+		{`true`, true},
+		{`false`, true},
+		{`"low"`, true},
+		{`"medium"`, true},
+		{`"high"`, true},
+		{`"max"`, true},
+		{`"xhigh"`, false},
+		{`"minimal"`, false},
+		{`"future"`, false},
+		{`""`, false},
+		{`"HIGH"`, false},
+		{`" high "`, false},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			var think *ThinkValue
+			if err := json.Unmarshal([]byte(tt.input), &think); err != nil {
+				t.Fatal(err)
+			}
+			if !think.IsValid() {
+				t.Fatal("legacy validation must not restrict transport types")
+			}
+			if err := ValidateLegacyThinking(think); (err == nil) != tt.valid {
+				t.Fatalf("ValidateLegacyThinking(%s) = %v, want valid=%v", tt.input, err, tt.valid)
+			}
+		})
+	}
+}
+
+func TestThinkValueTransportTypes(t *testing.T) {
+	for _, tt := range []struct {
+		input   string
+		want    any
+		invalid bool
+	}{
+		{`null`, nil, false},
+		{`true`, true, false},
+		{`false`, false, false},
+		{`"xhigh"`, "xhigh", false},
+		{`"minimal"`, "minimal", false},
+		{`""`, "", false},
+		{`75`, nil, true},
+		{`0.75`, nil, true},
+		{`[]`, nil, true},
+		{`{}`, nil, true},
+		{`tru`, nil, true},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			var think ThinkValue
+			err := json.Unmarshal([]byte(tt.input), &think)
+			if (err != nil) != tt.invalid {
+				t.Fatalf("error = %v, invalid = %v", err, tt.invalid)
+			}
+			if err != nil {
+				return
+			}
+			if think.Value != tt.want {
+				t.Fatalf("got %#v, want %#v", think.Value, tt.want)
+			}
+			if think.IsString() && !think.Bool() {
+				t.Fatal("named effort must express intent to think")
+			}
+		})
+	}
 }

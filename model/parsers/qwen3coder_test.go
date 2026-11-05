@@ -387,6 +387,17 @@ func TestQwenToolParser(t *testing.T) {
 
 	steps := []step{
 		{
+			name: "literal function close in string parameter",
+			tools: []api.Tool{tool("write", map[string]api.ToolProperty{
+				"content": {Type: api.PropertyType{"string"}},
+			})},
+			rawToolCall: `<function=write><parameter=content>text = "</function>"</parameter></function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name:      "write",
+				Arguments: testArgs(map[string]any{"content": `text = "</function>"`}),
+			}},
+		},
+		{
 			name:  "simple tool call",
 			tools: []api.Tool{},
 			rawToolCall: `<function=get_current_temperature>
@@ -1032,6 +1043,168 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 				t.Errorf("got %v (type %T), want %v (type %T)", got, got, tc.want, tc.want)
 			}
 		})
+	}
+}
+
+func TestQwen3CoderParserToolCallIndexing(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	input := `<tool_call><function=first><parameter=a>1</parameter></function></tool_call>
+<tool_call><function=second><parameter=b>2</parameter></function></tool_call>
+<tool_call><function=third><parameter=c>3</parameter></function></tool_call>`
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: testArgs(map[string]any{"a": "1"}), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "second", Arguments: testArgs(map[string]any{"b": "2"}), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: testArgs(map[string]any{"c": "3"}), Index: 2}},
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(calls))
+	}
+	for i := range want {
+		if !toolCallEqual(calls[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestQwen3CoderParserDoneFlushesBufferedContent(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		chunks []string
+		want   string
+	}{
+		{name: "trailing whitespace", chunks: []string{"answer", " \n"}, want: "answer \n"},
+		{name: "partial opener", chunks: []string{"answer ", "<tool_"}, want: "answer <tool_"},
+		{name: "empty open tool call", chunks: []string{"<tool_call>"}, want: "<tool_call>"},
+		{name: "truncated tool call", chunks: []string{"<tool_call>", "<function=test>"}, want: "<tool_call><function=test>"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := Qwen3CoderParser{}
+			parser.Init(nil, nil, nil)
+
+			var got string
+			for _, chunk := range tt.chunks {
+				content, _, calls, err := parser.Add(chunk, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(calls) != 0 {
+					t.Fatalf("calls = %v, want none", calls)
+				}
+				got += content
+			}
+			content, _, calls, err := parser.Add("", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got += content
+			if len(calls) != 0 {
+				t.Fatalf("calls = %v, want none", calls)
+			}
+			if got != tt.want {
+				t.Fatalf("content = %q, want %q", got, tt.want)
+			}
+
+			content, _, calls, err = parser.Add("next", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if content != "next" || len(calls) != 0 {
+				t.Fatalf("parser was not reset after done: content = %q, calls = %v", content, calls)
+			}
+		})
+	}
+}
+
+func TestQwen3CoderParserToolCallIndexingStreaming(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init([]api.Tool{tool("write", map[string]api.ToolProperty{
+		"content": {Type: api.PropertyType{"string"}},
+	})}, nil, nil)
+
+	var all []api.ToolCall
+
+	content, _, calls, err := parser.Add(`Before<tool_call><function=first><parameter=a>1</parameter></function></tool_call>Between<tool_call><function=write><parameter=content>text = "</fun`, false)
+	if err != nil {
+		t.Fatalf("step 1 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+
+	c, _, calls, err := parser.Add(`ction>"</parameter></function></tool_call>After<tool_call><function=third><parameter=c>3</parameter></function></tool_call>`, true)
+	if err != nil {
+		t.Fatalf("step 2 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+	if content+c != "BeforeBetweenAfter" {
+		t.Fatalf("unexpected content: %q", content+c)
+	}
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: testArgs(map[string]any{"a": "1"}), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "write", Arguments: testArgs(map[string]any{"content": `text = "</function>"`}), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: testArgs(map[string]any{"c": "3"}), Index: 2}},
+	}
+	if len(all) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(all))
+	}
+	for i := range want {
+		if !toolCallEqual(all[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, all[i], want[i])
+		}
+	}
+}
+
+func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	_, _, _, err := parser.Add("<tool_call><function=first><parameter=a>1</parameter></function></tool_call>", true)
+	if err != nil {
+		t.Fatalf("first parse failed: %v", err)
+	}
+
+	parser.Init(nil, nil, nil)
+	_, _, calls, err := parser.Add("<tool_call><function=second><parameter=b>2</parameter></function></tool_call>", true)
+	if err != nil {
+		t.Fatalf("second parse failed: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{Name: "second", Arguments: testArgs(map[string]any{"b": "2"}), Index: 0},
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if !toolCallEqual(calls[0], want) {
+		t.Fatalf("got %#v, want %#v", calls[0], want)
+	}
+}
+
+func TestQwen3CoderParserRejectsMalformedParameters(t *testing.T) {
+	for _, raw := range []string{
+		`<function=write><parameter=content>print('ok')</function>`,
+		`<function=write><parameter=content>print('ok')</parameter=content></function>`,
+		`<function=write><parameter=content>text = "</function>"</parameter>`,
+		// Reduced shape from #18563's follow-up: the outer edits parameter is unclosed.
+		`<function=edit>
+<parameter=path>src/orders.py</parameter>
+<parameter=edits>
+<parameter=oldText>before</parameter>
+<parameter=newText>after</parameter>
+</function>`,
+	} {
+		parser := Qwen3CoderParser{}
+		parser.Init(nil, nil, nil)
+		_, _, calls, err := parser.Add(toolOpenTag+raw+toolCloseTag, true)
+		if err == nil || len(calls) != 0 {
+			t.Errorf("raw=%q: expected rejection without tool calls, got calls=%#v, err=%v", raw, calls, err)
+		}
 	}
 }
 

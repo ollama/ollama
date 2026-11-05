@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -127,8 +128,7 @@ fahrenheit
 <|im_start|>user
 <tool_response>
 {"location": "San Francisco, CA", "temperature": 68, "condition": "partly cloudy", "humidity": 65, "wind_speed": 12}
-</tool_response>
-<|im_end|>
+</tool_response><|im_end|>
 <|im_start|>user
 That sounds nice! What about New York?<|im_end|>
 <|im_start|>assistant
@@ -233,8 +233,7 @@ I'll call double(1) and triple(2) for you.
 </tool_response>
 <tool_response>
 {"number": 6}
-</tool_response>
-<|im_end|>
+</tool_response><|im_end|>
 <|im_start|>assistant
 `,
 		},
@@ -280,8 +279,7 @@ call tool<|im_end|>
 <|im_start|>user
 <tool_response>
 {"payload": {"foo": "bar"}}
-</tool_response>
-<|im_end|>
+</tool_response><|im_end|>
 <|im_start|>assistant
 `,
 		},
@@ -334,6 +332,31 @@ func TestFormatToolCallArgument(t *testing.T) {
 				t.Errorf("formatToolCallArgument(%v) = %v, want %v", tt.arg, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestQwen3CoderRendererToolResponseNoTrailingNewline(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "call tool"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{Function: api.ToolCallFunction{
+				Name:      "echo",
+				Arguments: testArgs(map[string]any{"payload": "ok"}),
+			}},
+		}},
+		{Role: "tool", Content: "{\"payload\":\"ok\"}", ToolName: "echo"},
+	}
+
+	rendered, err := (&Qwen3CoderRenderer{}).Render(msgs, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(rendered, "</tool_response>\n<|im_end|>") {
+		t.Fatalf("expected no newline after </tool_response>, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "</tool_response><|im_end|>") {
+		t.Fatalf("expected </tool_response> to be immediately followed by <|im_end|>, got:\n%s", rendered)
 	}
 }
 

@@ -45,7 +45,8 @@ type InferenceCompute struct {
 }
 
 type InferenceComputeResponse struct {
-	InferenceComputes []InferenceCompute `json:"inferenceComputes"`
+	InferenceComputes    []InferenceCompute `json:"inferenceComputes"`
+	DefaultContextLength int                `json:"defaultContextLength"`
 }
 
 type ModelCapabilitiesResponse struct {
@@ -132,9 +133,8 @@ type Error struct {
 }
 
 type ModelUpstreamResponse struct {
-	Digest   string `json:"digest,omitempty"`
-	PushTime int64  `json:"pushTime"`
-	Error    string `json:"error,omitempty"`
+	Stale bool   `json:"stale"`
+	Error string `json:"error,omitempty"`
 }
 
 // Serializable data for the browser state

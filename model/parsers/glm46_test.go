@@ -3,6 +3,7 @@ package parsers
 import (
 	"encoding/xml"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -445,6 +446,140 @@ func TestGLM46ParserStreaming(t *testing.T) {
 	}
 }
 
+func TestGLM46ParserFinalizesCompleteToolCallOnDone(t *testing.T) {
+	type chunk struct {
+		content string
+		done    bool
+	}
+
+	toolBody := `grep
+<arg_key>pattern</arg_key>
+<arg_value>needle</arg_value>
+<arg_key>path</arg_key>
+<arg_value>.</arg_value>`
+	tests := []struct {
+		name   string
+		chunks []chunk
+	}{
+		{
+			name: "empty final chunk",
+			chunks: []chunk{
+				{content: "<tool_call>" + toolBody},
+				{done: true},
+			},
+		},
+		{
+			name: "tool body in final chunk",
+			chunks: []chunk{
+				{content: "<tool_call>" + toolBody, done: true},
+			},
+		},
+		{
+			name: "partial outer close in final chunk",
+			chunks: []chunk{
+				{content: "<tool_call>" + toolBody + "</tool_", done: true},
+			},
+		},
+	}
+
+	tools := glm46FinalizationTestTools()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := GLM46Parser{}
+			parser.Init(tools, nil, nil)
+
+			var calls []api.ToolCall
+			for _, chunk := range tt.chunks {
+				content, thinking, got, err := parser.Add(chunk.content, chunk.done)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if content != "" || thinking != "" {
+					t.Fatalf("content=%q thinking=%q, want empty", content, thinking)
+				}
+				calls = append(calls, got...)
+			}
+
+			if len(calls) != 1 {
+				t.Fatalf("got %d tool calls, want 1", len(calls))
+			}
+			if calls[0].Function.Name != "grep" {
+				t.Fatalf("tool name=%q, want grep", calls[0].Function.Name)
+			}
+			if pattern, ok := calls[0].Function.Arguments.Get("pattern"); !ok || pattern != "needle" {
+				t.Fatalf("pattern=%#v, %v; want needle", pattern, ok)
+			}
+			if path, ok := calls[0].Function.Arguments.Get("path"); !ok || path != "." {
+				t.Fatalf("path=%#v, %v; want .", path, ok)
+			}
+		})
+	}
+}
+
+func TestGLM46ParserRejectsIncompleteToolCallOnDone(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "empty body", input: "<tool_call>"},
+		{name: "partial tool name", input: "<tool_call>gr"},
+		{
+			name: "incomplete argument value",
+			input: `<tool_call>write
+<arg_key>path</arg_key>
+<arg_value>out.txt</arg_value>
+<arg_key>content</arg_key>
+<arg_value>partial`,
+		},
+		{
+			name: "undeclared tool",
+			input: `<tool_call>shell
+<arg_key>command</arg_key>
+<arg_value>echo unsafe</arg_value>`,
+		},
+		{
+			name: "missing required argument",
+			input: `<tool_call>write
+<arg_key>path</arg_key>
+<arg_value>out.txt</arg_value>`,
+		},
+	}
+
+	tools := glm46FinalizationTestTools()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := GLM46Parser{}
+			parser.Init(tools, nil, nil)
+
+			content, thinking, calls, err := parser.Add(tt.input, true)
+			if err == nil || !strings.Contains(err.Error(), "incomplete GLM tool call") {
+				t.Fatalf("error=%v, want incomplete GLM tool call", err)
+			}
+			if content != "" || thinking != "" || len(calls) != 0 {
+				t.Fatalf("content=%q thinking=%q calls=%v, want no output", content, thinking, calls)
+			}
+		})
+	}
+}
+
+func glm46FinalizationTestTools() []api.Tool {
+	grep := tool("grep", map[string]api.ToolProperty{
+		"pattern": {Type: api.PropertyType{"string"}},
+		"path":    {Type: api.PropertyType{"string"}},
+	})
+	grep.Function.Parameters.Required = []string{"pattern", "path"}
+
+	write := tool("write", map[string]api.ToolProperty{
+		"path":    {Type: api.PropertyType{"string"}},
+		"content": {Type: api.PropertyType{"string"}},
+	})
+	write.Function.Parameters.Required = []string{"path", "content"}
+
+	return []api.Tool{grep, write}
+}
+
 // TestGLMToolCallXMLOrderPreservation verifies that xml.Unmarshal preserves
 // document order when collecting multiple elements with the same tag name into slices.
 // This is a critical assumption for the GLM-4.6 parser's struct-based approach.
@@ -846,6 +981,69 @@ line3</arg_value>`,
 				},
 			},
 		},
+		{
+			name:  "unclosed arg_value at end",
+			tools: []api.Tool{},
+			rawToolCall: `get-weather
+<arg_key>city</arg_key>
+<arg_value>Paris`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "Paris"}`),
+				},
+			},
+		},
+		{
+			name:  "unclosed arg_value before next arg_key",
+			tools: []api.Tool{},
+			rawToolCall: `get-weather
+<arg_key>city</arg_key>
+<arg_value>Paris<arg_key>unit</arg_key>
+<arg_value>celsius</arg_value>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "Paris", "unit": "celsius"}`),
+				},
+			},
+		},
+		{
+			name:  "multiple unclosed arg_values",
+			tools: []api.Tool{},
+			rawToolCall: `get-weather
+<arg_key>city</arg_key>
+<arg_value>Paris<arg_key>unit</arg_key>
+<arg_value>celsius`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "Paris", "unit": "celsius"}`),
+				},
+			},
+		},
+		{
+			name:        "unopened arg_value after arg_key",
+			tools:       []api.Tool{},
+			rawToolCall: "get-weather\n<arg_key>city</arg_key>\nNew York</arg_value>\n<arg_key>unit</arg_key>\ncelsius</arg_value>",
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "New York", "unit": "celsius"}`),
+				},
+			},
+		},
+		{
+			name:        "mixed unopened and valid arg_values",
+			tools:       []api.Tool{},
+			rawToolCall: "get-weather\n<arg_key>city</arg_key>\n<arg_value>Paris</arg_value>\n<arg_key>unit</arg_key>\ncelsius</arg_value>",
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "Paris", "unit": "celsius"}`),
+				},
+			},
+		},
 	}
 
 	for i, tc := range cases {
@@ -856,6 +1054,78 @@ line3</arg_value>`,
 			}
 			if !toolCallEqual(gotToolCall, tc.wantToolCall) {
 				t.Errorf("case %d (%s): got tool call %#v, want %#v", i, tc.name, gotToolCall, tc.wantToolCall)
+			}
+		})
+	}
+}
+
+func TestRepairGLM46XML(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "already valid",
+			input: `func<arg_key>k</arg_key><arg_value>v</arg_value>`,
+			want:  `func<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "missing </arg_value> at end",
+			input: `func<arg_key>k</arg_key><arg_value>v`,
+			want:  `func<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "missing </arg_value> before next arg_key",
+			input: `func<arg_key>a</arg_key><arg_value>1<arg_key>b</arg_key><arg_value>2</arg_value>`,
+			want:  `func<arg_key>a</arg_key><arg_value>1</arg_value><arg_key>b</arg_key><arg_value>2</arg_value>`,
+		},
+		{
+			name:  "no tags at all",
+			input: `just plain text`,
+			want:  `just plain text`,
+		},
+		{
+			name:  "missing <arg_value> open tag",
+			input: `func<arg_key>k</arg_key>v</arg_value>`,
+			want:  `func<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "missing </arg_key> close tag",
+			input: `func<arg_key>k<arg_value>v</arg_value>`,
+			want:  `func<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "missing <arg_key> open tag",
+			input: `func k</arg_key><arg_value>v</arg_value>`,
+			want:  `func<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "all closing tags missing",
+			input: `func<arg_key>k<arg_value>v`,
+			want:  `func<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "all opening tags missing",
+			input: "func k</arg_key>v</arg_value>",
+			want:  "func<arg_key>k</arg_key><arg_value>v</arg_value>",
+		},
+		{
+			name:  "multiple pairs with mixed missing tags",
+			input: `func<arg_key>a</arg_key>1</arg_value><arg_key>b<arg_value>2</arg_value>`,
+			want:  `func<arg_key>a</arg_key><arg_value>1</arg_value><arg_key>b</arg_key><arg_value>2</arg_value>`,
+		},
+		{
+			name:  "newlines preserved",
+			input: "func\n<arg_key>city</arg_key>\nNew York</arg_value>",
+			want:  "func\n<arg_key>city</arg_key><arg_value>\nNew York</arg_value>",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := repairGLM46XML(tc.input)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
 	}

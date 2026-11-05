@@ -16,7 +16,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestMaxQueue(t *testing.T) {
+func runMaxQueue(t *testing.T) {
 	t.Skip("this test needs to be re-evaluated to use a proper embedding model")
 
 	if os.Getenv("OLLAMA_TEST_EXISTING") != "" {
@@ -45,9 +45,7 @@ func TestMaxQueue(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 
 	// Context for the worker threads so we can shut them down
 	// embedCtx, embedCancel := context.WithCancel(ctx)

@@ -3,6 +3,8 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -14,13 +16,77 @@ const (
 	testImage = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
-// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
-func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+func testIntPtr(v int) *int {
+	return &v
+}
+
+// textContent is a convenience for constructing []ContentBlock with a single text block in tests.
+func textContent(s string) []ContentBlock {
+	return []ContentBlock{{Type: "text", Text: &s}}
+}
+
+// makeArgs creates ToolCallFunctionArguments from key-value pairs (convenience function for tests)
+func makeArgs(kvs ...any) api.ToolCallFunctionArguments {
 	args := api.NewToolCallFunctionArguments()
-	for k, v := range m {
-		args.Set(k, v)
+	for i := 0; i < len(kvs)-1; i += 2 {
+		args.Set(kvs[i].(string), kvs[i+1])
 	}
 	return args
+}
+
+func TestUsageFromMetricsBoundsCacheReads(t *testing.T) {
+	tests := []struct {
+		name    string
+		metrics api.Metrics
+		want    Usage
+	}{
+		{
+			name:    "negative counts",
+			metrics: api.Metrics{PromptEvalCount: -1, PromptEvalCachedCount: testIntPtr(-2), EvalCount: 3},
+			want:    Usage{CacheReadInputTokens: testIntPtr(0), OutputTokens: 3},
+		},
+		{
+			name:    "cache reads exceed prompt",
+			metrics: api.Metrics{PromptEvalCount: 3, PromptEvalCachedCount: testIntPtr(5), EvalCount: 2},
+			want:    Usage{CacheReadInputTokens: testIntPtr(3), OutputTokens: 2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if diff := cmp.Diff(tt.want, UsageFromMetrics(tt.metrics)); diff != "" {
+				t.Errorf("usage mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestUsageCacheReadJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		count *int
+		want  string
+	}{
+		{name: "unreported", want: `{"input_tokens":10,"output_tokens":2}`},
+		{name: "zero", count: testIntPtr(0), want: `{"input_tokens":10,"cache_read_input_tokens":0,"output_tokens":2}`},
+		{name: "positive", count: testIntPtr(4), want: `{"input_tokens":6,"cache_read_input_tokens":4,"output_tokens":2}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(UsageFromMetrics(api.Metrics{
+				PromptEvalCount:       10,
+				PromptEvalCachedCount: tt.count,
+				EvalCount:             2,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(data); got != tt.want {
+				t.Errorf("json = %s, want %s", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestFromMessagesRequest_Basic(t *testing.T) {
@@ -28,7 +94,7 @@ func TestFromMessagesRequest_Basic(t *testing.T) {
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 		},
 	}
 
@@ -60,7 +126,7 @@ func TestFromMessagesRequest_WithSystemPrompt(t *testing.T) {
 		MaxTokens: 1024,
 		System:    "You are a helpful assistant.",
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 		},
 	}
 
@@ -87,7 +153,7 @@ func TestFromMessagesRequest_WithSystemPromptArray(t *testing.T) {
 			map[string]any{"type": "text", "text": " Be concise."},
 		},
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 		},
 	}
 
@@ -112,7 +178,7 @@ func TestFromMessagesRequest_WithOptions(t *testing.T) {
 	req := MessagesRequest{
 		Model:         "test-model",
 		MaxTokens:     2048,
-		Messages:      []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:      []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Temperature:   &temp,
 		TopP:          &topP,
 		TopK:          &topK,
@@ -138,6 +204,118 @@ func TestFromMessagesRequest_WithOptions(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_ClaudeAutoModeClassifierFixtures(t *testing.T) {
+	tests := []struct {
+		name       string
+		request    string
+		model      string
+		maxTokens  int
+		wantStop   []string
+		wantSystem string
+		wantUser   string
+	}{
+		{
+			name: "stage one local model",
+			request: `{
+  "model": "qwen3.5:latest",
+  "max_tokens": 2112,
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "<transcript>\n"},
+      {"type": "text", "text": "User: Run the safe test.\n"},
+      {"type": "text", "text": "Bash go test ./safe\n"},
+      {"type": "text", "text": "</transcript>\n"},
+      {"type": "text", "text": "Return only the stage-one block verdict."}
+    ]
+  }],
+  "system": [
+    {
+      "type": "text",
+      "text": "Synthetic policy fixture. Evaluate whether the proposed action needs further review.",
+      "cache_control": {"type": "ephemeral"}
+    },
+    {"type": "text", "text": "Synthetic session context."}
+  ],
+  "stop_sequences": ["</block>"]
+}`,
+			model:      "qwen3.5:latest",
+			maxTokens:  2112,
+			wantStop:   []string{"</block>"},
+			wantSystem: "Synthetic policy fixture. Evaluate whether the proposed action needs further review.Synthetic session context.",
+			wantUser:   "<transcript>\nUser: Run the safe test.\nBash go test ./safe\n</transcript>\nReturn only the stage-one block verdict.",
+		},
+		{
+			name: "stage two cloud model",
+			request: `{
+  "model": "glm-5.2:cloud",
+  "max_tokens": 10240,
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "<transcript>\n"},
+      {"type": "text", "text": "User: Send the fixture to an external host.\n"},
+      {"type": "text", "text": "Bash upload fixture.txt\n"},
+      {"type": "text", "text": "</transcript>\n"},
+      {"type": "text", "text": "Return the stage-two block verdict and reason."}
+    ]
+  }],
+  "system": [
+    {
+      "type": "text",
+      "text": "Synthetic policy fixture. Evaluate whether the proposed action must be denied.",
+      "cache_control": {"type": "ephemeral"}
+    },
+    {"type": "text", "text": "Synthetic session context."}
+  ]
+}`,
+			model:      "glm-5.2:cloud",
+			maxTokens:  10240,
+			wantSystem: "Synthetic policy fixture. Evaluate whether the proposed action must be denied.Synthetic session context.",
+			wantUser:   "<transcript>\nUser: Send the fixture to an external host.\nBash upload fixture.txt\n</transcript>\nReturn the stage-two block verdict and reason.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request MessagesRequest
+			if err := json.Unmarshal([]byte(tt.request), &request); err != nil {
+				t.Fatal(err)
+			}
+
+			converted, err := FromMessagesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if converted.Model != tt.model {
+				t.Fatalf("model = %q, want exact selected model %q", converted.Model, tt.model)
+			}
+			if converted.Stream == nil || *converted.Stream {
+				t.Fatalf("stream = %v, want explicit non-streaming conversion", converted.Stream)
+			}
+			if len(converted.Tools) != 0 {
+				t.Fatalf("tools = %v, want tool-free classifier request", converted.Tools)
+			}
+			if got := converted.Options["num_predict"]; got != tt.maxTokens {
+				t.Fatalf("num_predict = %v, want %d", got, tt.maxTokens)
+			}
+			gotStop, _ := converted.Options["stop"].([]string)
+			if diff := cmp.Diff(tt.wantStop, gotStop); diff != "" {
+				t.Fatalf("stop sequences mismatch (-want +got):\n%s", diff)
+			}
+			if len(converted.Messages) != 2 {
+				t.Fatalf("messages = %+v, want system and user messages", converted.Messages)
+			}
+			if got := converted.Messages[0]; got.Role != "system" || got.Content != tt.wantSystem {
+				t.Fatalf("system message = %+v", got)
+			}
+			if got := converted.Messages[1]; got.Role != "user" || got.Content != tt.wantUser {
+				t.Fatalf("user message = %+v", got)
+			}
+		})
+	}
+}
+
 func TestFromMessagesRequest_WithImage(t *testing.T) {
 	imgData, _ := base64.StdEncoding.DecodeString(testImage)
 
@@ -147,14 +325,14 @@ func TestFromMessagesRequest_WithImage(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "user",
-				Content: []any{
-					map[string]any{"type": "text", "text": "What's in this image?"},
-					map[string]any{
-						"type": "image",
-						"source": map[string]any{
-							"type":       "base64",
-							"media_type": "image/png",
-							"data":       testImage,
+				Content: []ContentBlock{
+					{Type: "text", Text: ptr("What's in this image?")},
+					{
+						Type: "image",
+						Source: &ImageSource{
+							Type:      "base64",
+							MediaType: "image/png",
+							Data:      testImage,
 						},
 					},
 				},
@@ -189,15 +367,15 @@ func TestFromMessagesRequest_WithToolUse(t *testing.T) {
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages: []MessageParam{
-			{Role: "user", Content: "What's the weather in Paris?"},
+			{Role: "user", Content: textContent("What's the weather in Paris?")},
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type":  "tool_use",
-						"id":    "call_123",
-						"name":  "get_weather",
-						"input": map[string]any{"location": "Paris"},
+				Content: []ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "call_123",
+						Name:  "get_weather",
+						Input: makeArgs("location", "Paris"),
 					},
 				},
 			},
@@ -233,11 +411,11 @@ func TestFromMessagesRequest_WithToolResult(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "user",
-				Content: []any{
-					map[string]any{
-						"type":        "tool_result",
-						"tool_use_id": "call_123",
-						"content":     "The weather in Paris is sunny, 22°C",
+				Content: []ContentBlock{
+					{
+						Type:      "tool_result",
+						ToolUseID: "call_123",
+						Content:   "The weather in Paris is sunny, 22°C",
 					},
 				},
 			},
@@ -265,11 +443,246 @@ func TestFromMessagesRequest_WithToolResult(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_WithToolResultImage(t *testing.T) {
+	imgData, _ := base64.StdEncoding.DecodeString(testImage)
+
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{
+				Role: "user",
+				Content: []ContentBlock{
+					{
+						Type:      "tool_result",
+						ToolUseID: "call_img",
+						Content: []any{
+							map[string]any{"type": "text", "text": "Attached image"},
+							map[string]any{
+								"type": "image",
+								"source": map[string]any{
+									"type":       "base64",
+									"media_type": "image/png",
+									"data":       testImage,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+	if msg.Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", msg.Role)
+	}
+	if msg.ToolCallID != "call_img" {
+		t.Errorf("expected tool_call_id 'call_img', got %q", msg.ToolCallID)
+	}
+	if msg.Content != "Attached image" {
+		t.Errorf("unexpected content: %q", msg.Content)
+	}
+	if len(msg.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(msg.Images))
+	}
+	if string(msg.Images[0]) != string(imgData) {
+		t.Error("image data mismatch")
+	}
+}
+
+func TestFromMessagesRequest_WithToolResultFollowedByUserText(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{
+				Role: "assistant",
+				Content: []ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "call_read",
+						Name:  "Read",
+						Input: makeArgs("file_path", "/Users/hoyyeva/Desktop/aaa.png"),
+					},
+				},
+			},
+			{
+				Role: "user",
+				Content: []ContentBlock{
+					{
+						Type:      "tool_result",
+						ToolUseID: "call_read",
+						Content:   "Read image (311.5KB)",
+					},
+					{
+						Type: "text",
+						Text: ptr("Please describe it."),
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+	}
+
+	if result.Messages[1].Role != "tool" {
+		t.Fatalf("expected second message to be tool, got %q", result.Messages[1].Role)
+	}
+	if result.Messages[1].ToolCallID != "call_read" {
+		t.Fatalf("expected tool_call_id 'call_read', got %q", result.Messages[1].ToolCallID)
+	}
+	if result.Messages[2].Role != "user" {
+		t.Fatalf("expected third message to be user, got %q", result.Messages[2].Role)
+	}
+	if result.Messages[2].Content != "Please describe it." {
+		t.Fatalf("unexpected user content: %q", result.Messages[2].Content)
+	}
+}
+
+func TestFromMessagesRequest_WithOutputConfigEffort(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "high",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set from output_config.effort")
+	}
+
+	if got := result.Think.String(); got != "high" {
+		t.Fatalf("expected think level 'high', got %q", got)
+	}
+}
+
+func TestFromMessagesRequest_WithOutputConfigEffortXHighMapsToHigh(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "xhigh",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set from output_config.effort")
+	}
+
+	if got := result.Think.String(); got != "high" {
+		t.Fatalf("expected think level 'high' for xhigh effort, got %q", got)
+	}
+}
+
+func TestFromMessagesRequest_ThinkingDisabledOverridesOutputConfigEffort(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		Thinking: &ThinkingConfig{
+			Type: "disabled",
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "high",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set")
+	}
+
+	if got := result.Think.Value; got != false {
+		t.Fatalf("expected think=false when thinking is disabled, got %v", got)
+	}
+}
+
+func TestFromMessagesRequest_ThinkingAdaptiveUsesOutputConfigEffort(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "gemma4",
+		MaxTokens: 32000,
+		Messages: []MessageParam{
+			{
+				Role:    "user",
+				Content: textContent("Describe the image."),
+			},
+		},
+		Thinking: &ThinkingConfig{
+			Type: "adaptive",
+		},
+		OutputConfig: &OutputConfig{
+			Effort: "high",
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected think to be set from output_config.effort")
+	}
+
+	if got := result.Think.String(); got != "high" {
+		t.Fatalf("expected think level 'high' for adaptive thinking, got %q", got)
+	}
+}
+
 func TestFromMessagesRequest_WithTools(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Tools: []Tool{
 			{
 				Name:        "get_weather",
@@ -300,11 +713,83 @@ func TestFromMessagesRequest_WithTools(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_DropsCustomWebSearchWhenBuiltinPresent(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Tools: []Tool{
+			{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			},
+			{
+				Type:        "custom",
+				Name:        "web_search",
+				Description: "User-defined web search that should be dropped",
+				InputSchema: json.RawMessage(`{"type":"invalid"}`),
+			},
+			{
+				Type:        "custom",
+				Name:        "get_weather",
+				Description: "Get current weather",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 2 {
+		t.Fatalf("expected 2 tools after dropping custom web_search, got %d", len(result.Tools))
+	}
+	if result.Tools[0].Function.Name != "web_search" {
+		t.Fatalf("expected first tool to be built-in web_search, got %q", result.Tools[0].Function.Name)
+	}
+	if result.Tools[1].Function.Name != "get_weather" {
+		t.Fatalf("expected second tool to be get_weather, got %q", result.Tools[1].Function.Name)
+	}
+}
+
+func TestFromMessagesRequest_KeepsCustomWebSearchWhenBuiltinAbsent(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Tools: []Tool{
+			{
+				Type:        "custom",
+				Name:        "web_search",
+				Description: "User-defined web search",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 1 {
+		t.Fatalf("expected 1 custom tool, got %d", len(result.Tools))
+	}
+	if result.Tools[0].Function.Name != "web_search" {
+		t.Fatalf("expected custom tool name web_search, got %q", result.Tools[0].Function.Name)
+	}
+	if result.Tools[0].Function.Description != "User-defined web search" {
+		t.Fatalf("expected custom description preserved, got %q", result.Tools[0].Function.Description)
+	}
+}
+
 func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Thinking:  &ThinkingConfig{Type: "enabled", BudgetTokens: 1000},
 	}
 
@@ -321,20 +806,18 @@ func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	}
 }
 
-// TestFromMessagesRequest_ThinkingOnlyBlock verifies that messages containing only
-// a thinking block (no text, images, or tool calls) are preserved and not dropped.
 func TestFromMessagesRequest_ThinkingOnlyBlock(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type":     "thinking",
-						"thinking": "Let me think about this...",
+				Content: []ContentBlock{
+					{
+						Type:     "thinking",
+						Thinking: ptr("Let me think about this..."),
 					},
 				},
 			},
@@ -363,10 +846,10 @@ func TestFromMessagesRequest_ToolUseMissingID(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type": "tool_use",
-						"name": "get_weather",
+				Content: []ContentBlock{
+					{
+						Type: "tool_use",
+						Name: "get_weather",
 					},
 				},
 			},
@@ -389,10 +872,10 @@ func TestFromMessagesRequest_ToolUseMissingName(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type": "tool_use",
-						"id":   "call_123",
+				Content: []ContentBlock{
+					{
+						Type: "tool_use",
+						ID:   "call_123",
 					},
 				},
 			},
@@ -412,7 +895,7 @@ func TestFromMessagesRequest_InvalidToolSchema(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Tools: []Tool{
 			{
 				Name:        "bad_tool",
@@ -437,8 +920,9 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 		Done:       true,
 		DoneReason: "stop",
 		Metrics: api.Metrics{
-			PromptEvalCount: 10,
-			EvalCount:       5,
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             5,
 		},
 	}
 
@@ -462,8 +946,50 @@ func TestToMessagesResponse_Basic(t *testing.T) {
 	if result.StopReason != "end_turn" {
 		t.Errorf("expected stop_reason 'end_turn', got %q", result.StopReason)
 	}
-	if result.Usage.InputTokens != 10 || result.Usage.OutputTokens != 5 {
+	if result.Usage.InputTokens != 6 || intValue(result.Usage.CacheReadInputTokens) != 4 || result.Usage.OutputTokens != 5 {
 		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+
+	data, err := json.Marshal(result.Usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"cache_read_input_tokens":4`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
+func TestToMessagesResponse_PreservesClaudeAutoClassifierOutput(t *testing.T) {
+	for _, output := range []string{
+		"<block>no",
+		"<block>yes</block><category>Synthetic risk</category><reason>Denied by the synthetic fixture.</reason>",
+		"malformed classifier output",
+	} {
+		t.Run(output, func(t *testing.T) {
+			result := ToMessagesResponse("msg_classifier", api.ChatResponse{
+				Model: "qwen3.5:latest",
+				Message: api.Message{
+					Role:    "assistant",
+					Content: output,
+				},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics: api.Metrics{
+					PromptEvalCount: 24644,
+					EvalCount:       300,
+				},
+			})
+
+			if result.Model != "qwen3.5:latest" || len(result.Content) != 1 || result.Content[0].Text == nil || *result.Content[0].Text != output {
+				t.Fatalf("classifier response = %+v, want opaque output on the selected model", result)
+			}
+			if result.StopReason != "end_turn" {
+				t.Fatalf("stop reason = %q, want end_turn", result.StopReason)
+			}
+			if result.Usage.InputTokens != 24644 || result.Usage.OutputTokens != 300 {
+				t.Fatalf("usage = %+v", result.Usage)
+			}
+		})
 	}
 }
 
@@ -477,7 +1003,7 @@ func TestToMessagesResponse_WithToolCalls(t *testing.T) {
 					ID: "call_123",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"location": "Paris"}),
+						Arguments: makeArgs("location", "Paris"),
 					},
 				},
 			},
@@ -605,7 +1131,7 @@ func TestGenerateMessageID(t *testing.T) {
 }
 
 func TestStreamConverter_Basic(t *testing.T) {
-	conv := NewStreamConverter("msg_123", "test-model")
+	conv := NewStreamConverter("msg_123", "test-model", 0)
 
 	// First chunk
 	resp1 := api.ChatResponse{
@@ -614,7 +1140,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 			Role:    "assistant",
 			Content: "Hello",
 		},
-		Metrics: api.Metrics{PromptEvalCount: 10},
+		Metrics: api.Metrics{PromptEvalCount: 10, PromptEvalCachedCount: testIntPtr(4)},
 	}
 
 	events1 := conv.Process(resp1)
@@ -642,7 +1168,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 		},
 		Done:       true,
 		DoneReason: "stop",
-		Metrics:    api.Metrics{EvalCount: 5},
+		Metrics:    api.Metrics{PromptEvalCount: 10, PromptEvalCachedCount: testIntPtr(4), EvalCount: 5},
 	}
 
 	events2 := conv.Process(resp2)
@@ -650,6 +1176,24 @@ func TestStreamConverter_Basic(t *testing.T) {
 	// Should have content_block_delta, content_block_stop, message_delta, message_stop
 	hasStop := false
 	for _, e := range events2 {
+		if e.Event == "message_delta" {
+			if data, ok := e.Data.(MessageDeltaEvent); ok {
+				if data.Type != "message_delta" {
+					t.Errorf("unexpected data type: %+v", data)
+				}
+
+				if data.Delta.StopReason != "end_turn" {
+					t.Errorf("unexpected stop reason: %+v", data.Delta.StopReason)
+				}
+
+				if data.Usage.InputTokens != 6 || intValue(data.Usage.CacheReadInputTokens) != 4 || data.Usage.OutputTokens != 5 {
+					t.Errorf("unexpected usage: %+v", data.Usage)
+				}
+			} else {
+				t.Errorf("unexpected data: %+v", e.Data)
+			}
+		}
+
 		if e.Event == "message_stop" {
 			hasStop = true
 		}
@@ -660,7 +1204,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 }
 
 func TestStreamConverter_WithToolCalls(t *testing.T) {
-	conv := NewStreamConverter("msg_123", "test-model")
+	conv := NewStreamConverter("msg_123", "test-model", 0)
 
 	resp := api.ChatResponse{
 		Model: "test-model",
@@ -671,7 +1215,7 @@ func TestStreamConverter_WithToolCalls(t *testing.T) {
 					ID: "call_123",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"location": "Paris"}),
+						Arguments: makeArgs("location", "Paris"),
 					},
 				},
 			},
@@ -710,10 +1254,161 @@ func TestStreamConverter_WithToolCalls(t *testing.T) {
 	}
 }
 
+// TestStreamConverter_ThinkingDirectlyFollowedByToolCall verifies that when a
+// model emits a thinking block followed directly by a tool_use block (with no
+// text block in between), the streaming converter correctly closes the thinking
+// block and increments the content index before opening the tool_use block.
+// Previously, the converter reused contentIndex=0 for the tool_use block,
+// which caused "Content block not found" errors in clients. See #14816.
+func TestStreamConverter_ThinkingDirectlyFollowedByToolCall(t *testing.T) {
+	conv := NewStreamConverter("msg_123", "test-model", 0)
+
+	// First chunk: thinking content (no text)
+	resp1 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:     "assistant",
+			Thinking: "I should call the tool.",
+		},
+	}
+	events1 := conv.Process(resp1)
+
+	// Should have: message_start, content_block_start(thinking), content_block_delta(thinking)
+	if len(events1) < 3 {
+		t.Fatalf("expected at least 3 events for thinking chunk, got %d", len(events1))
+	}
+	if events1[0].Event != "message_start" {
+		t.Errorf("expected first event 'message_start', got %q", events1[0].Event)
+	}
+	thinkingStart, ok := events1[1].Data.(ContentBlockStartEvent)
+	if !ok || thinkingStart.ContentBlock.Type != "thinking" {
+		t.Errorf("expected content_block_start(thinking) as second event, got %+v", events1[1])
+	}
+	if thinkingStart.Index != 0 {
+		t.Errorf("expected thinking block at index 0, got %d", thinkingStart.Index)
+	}
+
+	// Second chunk: tool call (no text between thinking and tool)
+	resp2 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_abc",
+					Function: api.ToolCallFunction{
+						Name:      "ask_user",
+						Arguments: makeArgs("question", "cats or dogs?"),
+					},
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+	}
+	events2 := conv.Process(resp2)
+
+	// Expect: content_block_stop(index=0), content_block_start(tool_use, index=1),
+	//         content_block_delta(input_json_delta, index=1), content_block_stop(index=1),
+	//         message_delta, message_stop
+	var thinkingStop, toolStart, toolDelta, toolStop *StreamEvent
+	for i := range events2 {
+		e := &events2[i]
+		switch e.Event {
+		case "content_block_stop":
+			if stop, ok := e.Data.(ContentBlockStopEvent); ok {
+				if stop.Index == 0 && thinkingStop == nil {
+					thinkingStop = e
+				} else if stop.Index == 1 {
+					toolStop = e
+				}
+			}
+		case "content_block_start":
+			if start, ok := e.Data.(ContentBlockStartEvent); ok && start.ContentBlock.Type == "tool_use" {
+				toolStart = e
+			}
+		case "content_block_delta":
+			if delta, ok := e.Data.(ContentBlockDeltaEvent); ok && delta.Delta.Type == "input_json_delta" {
+				toolDelta = e
+			}
+		}
+	}
+
+	if thinkingStop == nil {
+		t.Error("expected content_block_stop for thinking block (index 0)")
+	}
+	if toolStart == nil {
+		t.Fatal("expected content_block_start for tool_use block")
+	}
+	if start, ok := toolStart.Data.(ContentBlockStartEvent); !ok || start.Index != 1 {
+		t.Errorf("expected tool_use block at index 1, got %+v", toolStart.Data)
+	}
+	if toolDelta == nil {
+		t.Fatal("expected input_json_delta event for tool call")
+	}
+	if delta, ok := toolDelta.Data.(ContentBlockDeltaEvent); !ok || delta.Index != 1 {
+		t.Errorf("expected tool delta at index 1, got %+v", toolDelta.Data)
+	}
+	if toolStop == nil {
+		t.Error("expected content_block_stop for tool_use block (index 1)")
+	}
+}
+
+func TestStreamConverter_TextBeforeThinking(t *testing.T) {
+	conv := NewStreamConverter("msg_123", "test-model", 0)
+
+	responses := []api.ChatResponse{
+		{Message: api.Message{Role: "assistant", Content: "---\n"}},
+		{Message: api.Message{Role: "assistant", Thinking: "Let me think."}},
+		{
+			Message:    api.Message{Role: "assistant", Content: "The answer."},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+		},
+	}
+
+	var got []string
+	for _, response := range responses {
+		for _, event := range conv.Process(response) {
+			switch data := event.Data.(type) {
+			case ContentBlockStartEvent:
+				got = append(got, fmt.Sprintf("%s:%s:%d", event.Event, data.ContentBlock.Type, data.Index))
+			case ContentBlockDeltaEvent:
+				got = append(got, fmt.Sprintf("%s:%s:%d", event.Event, data.Delta.Type, data.Index))
+			case ContentBlockStopEvent:
+				got = append(got, fmt.Sprintf("%s:%d", event.Event, data.Index))
+			default:
+				got = append(got, event.Event)
+			}
+		}
+	}
+
+	want := []string{
+		"message_start",
+		"content_block_start:text:0",
+		"content_block_delta:text_delta:0",
+		"content_block_stop:0",
+		"content_block_start:thinking:1",
+		"content_block_delta:thinking_delta:1",
+		"content_block_stop:1",
+		"content_block_start:text:2",
+		"content_block_delta:text_delta:2",
+		"content_block_stop:2",
+		"message_delta",
+		"message_stop",
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("unexpected stream events (-want +got):\n%s", diff)
+	}
+}
+
 func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 	// Test that unmarshalable arguments (like channels) are handled gracefully
 	// and don't cause a panic or corrupt stream
-	conv := NewStreamConverter("msg_123", "test-model")
+	conv := NewStreamConverter("msg_123", "test-model", 0)
 
 	// Create a channel which cannot be JSON marshaled
 	unmarshalable := make(chan int)
@@ -760,7 +1455,7 @@ func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 
 func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 	// Test that valid tool calls still work when mixed with invalid ones
-	conv := NewStreamConverter("msg_123", "test-model")
+	conv := NewStreamConverter("msg_123", "test-model", 0)
 
 	unmarshalable := make(chan int)
 	badArgs := api.NewToolCallFunctionArguments()
@@ -775,7 +1470,7 @@ func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 					ID: "call_good",
 					Function: api.ToolCallFunction{
 						Name:      "good_function",
-						Arguments: testArgs(map[string]any{"location": "Paris"}),
+						Arguments: makeArgs("location", "Paris"),
 					},
 				},
 				{
@@ -824,10 +1519,6 @@ func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 	}
 }
 
-// TestContentBlockJSON_EmptyFieldsPresent verifies that empty text and thinking fields
-// are serialized in JSON output. The Anthropic SDK requires these fields to be present
-// (even when empty) in content_block_start events to properly accumulate streaming deltas.
-// Without these fields, the SDK throws: "TypeError: unsupported operand type(s) for +=: 'NoneType' and 'str'"
 func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -881,11 +1572,60 @@ func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 	}
 }
 
-// TestStreamConverter_ContentBlockStartIncludesEmptyFields verifies that content_block_start
-// events include the required empty fields for SDK compatibility.
+func TestContentBlockJSON_NonToolBlocksDoNotIncludeInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		block ContentBlock
+	}{
+		{
+			name: "text block",
+			block: ContentBlock{
+				Type: "text",
+				Text: ptr("hello"),
+			},
+		},
+		{
+			name: "thinking block",
+			block: ContentBlock{
+				Type:     "thinking",
+				Thinking: ptr("let me think"),
+			},
+		},
+		{
+			name: "image block",
+			block: ContentBlock{
+				Type: "image",
+				Source: &ImageSource{
+					Type:      "base64",
+					MediaType: "image/png",
+					Data:      testImage,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.block)
+			if err != nil {
+				t.Fatalf("failed to marshal: %v", err)
+			}
+
+			var result map[string]any
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatalf("failed to unmarshal: %v", err)
+			}
+
+			if _, ok := result["input"]; ok {
+				t.Fatalf("unexpected input field in non-tool block JSON: %s", string(data))
+			}
+		})
+	}
+}
+
 func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 	t.Run("text block start includes empty text", func(t *testing.T) {
-		conv := NewStreamConverter("msg_123", "test-model")
+		conv := NewStreamConverter("msg_123", "test-model", 0)
 
 		resp := api.ChatResponse{
 			Model:   "test-model",
@@ -903,7 +1643,9 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 						// Marshal and verify the text field is present
 						data, _ := json.Marshal(start)
 						var result map[string]any
-						json.Unmarshal(data, &result)
+						if err := json.Unmarshal(data, &result); err != nil {
+							t.Fatalf("failed to unmarshal content_block_start JSON: %v", err)
+						}
 						cb := result["content_block"].(map[string]any)
 						if _, ok := cb["text"]; !ok {
 							t.Error("content_block_start for text should include 'text' field")
@@ -919,7 +1661,7 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 	})
 
 	t.Run("thinking block start includes empty thinking", func(t *testing.T) {
-		conv := NewStreamConverter("msg_123", "test-model")
+		conv := NewStreamConverter("msg_123", "test-model", 0)
 
 		resp := api.ChatResponse{
 			Model:   "test-model",
@@ -950,4 +1692,481 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 			t.Error("expected thinking content_block_start event")
 		}
 	})
+
+	t.Run("tool_use block start includes empty input object", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model", 0)
+
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_123",
+						Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: makeArgs("location", "Paris"),
+						},
+					},
+				},
+			},
+		}
+
+		events := conv.Process(resp)
+
+		var foundToolStart bool
+		for _, e := range events {
+			if e.Event == "content_block_start" {
+				if start, ok := e.Data.(ContentBlockStartEvent); ok {
+					if start.ContentBlock.Type == "tool_use" {
+						foundToolStart = true
+						if start.ContentBlock.Input.Len() != 0 {
+							t.Errorf("expected empty input object, got len=%d", start.ContentBlock.Input.Len())
+						}
+
+						data, _ := json.Marshal(start)
+						var result map[string]any
+						json.Unmarshal(data, &result)
+						cb := result["content_block"].(map[string]any)
+						input, ok := cb["input"]
+						if !ok {
+							t.Error("content_block_start for tool_use should include 'input' field")
+							continue
+						}
+						inputMap, ok := input.(map[string]any)
+						if !ok {
+							t.Errorf("input field should be an object, got %T", input)
+							continue
+						}
+						if len(inputMap) != 0 {
+							t.Errorf("expected empty input object in content_block_start, got %v", inputMap)
+						}
+					}
+				}
+			}
+		}
+
+		if !foundToolStart {
+			t.Error("expected tool_use content_block_start event")
+		}
+	})
+}
+
+func TestEstimateTokens_SimpleMessage(t *testing.T) {
+	req := CountTokensRequest{
+		Model: "test-model",
+		Messages: []MessageParam{
+			{Role: "user", Content: textContent("Hello, world!")},
+		},
+	}
+
+	tokens := EstimateCountTokens(req)
+
+	// "user" (4) + "Hello, world!" (13) = 17 chars / 4 = 4 tokens
+	if tokens < 1 {
+		t.Errorf("expected at least 1 token, got %d", tokens)
+	}
+	// Sanity check: shouldn't be wildly off
+	if tokens > 10 {
+		t.Errorf("expected fewer than 10 tokens for short message, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_WithSystemPrompt(t *testing.T) {
+	req := CountTokensRequest{
+		Model:  "test-model",
+		System: "You are a helpful assistant.",
+		Messages: []MessageParam{
+			{Role: "user", Content: textContent("Hello")},
+		},
+	}
+
+	tokens := EstimateCountTokens(req)
+
+	// System prompt adds to count
+	if tokens < 5 {
+		t.Errorf("expected at least 5 tokens with system prompt, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_WithTools(t *testing.T) {
+	req := CountTokensRequest{
+		Model: "test-model",
+		Messages: []MessageParam{
+			{Role: "user", Content: textContent("What's the weather?")},
+		},
+		Tools: []Tool{
+			{
+				Name:        "get_weather",
+				Description: "Get the current weather for a location",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}}}`),
+			},
+		},
+	}
+
+	tokens := EstimateCountTokens(req)
+
+	// Tools add significant content
+	if tokens < 10 {
+		t.Errorf("expected at least 10 tokens with tools, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_WithThinking(t *testing.T) {
+	req := CountTokensRequest{
+		Model: "test-model",
+		Messages: []MessageParam{
+			{Role: "user", Content: textContent("Hello")},
+			{
+				Role: "assistant",
+				Content: []ContentBlock{
+					{
+						Type:     "thinking",
+						Thinking: ptr("Let me think about this carefully..."),
+					},
+					{
+						Type: "text",
+						Text: ptr("Here is my response."),
+					},
+				},
+			},
+		},
+	}
+
+	tokens := EstimateCountTokens(req)
+
+	// Thinking content should be counted
+	if tokens < 10 {
+		t.Errorf("expected at least 10 tokens with thinking content, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_EmptyContent(t *testing.T) {
+	req := CountTokensRequest{
+		Model:    "test-model",
+		Messages: []MessageParam{},
+	}
+
+	tokens := EstimateCountTokens(req)
+
+	if tokens != 0 {
+		t.Errorf("expected 0 tokens for empty content, got %d", tokens)
+	}
+}
+
+// Web Search Tests
+
+func TestConvertTool_WebSearch(t *testing.T) {
+	tool := Tool{
+		Type:    "web_search_20250305",
+		Name:    "web_search",
+		MaxUses: 5,
+	}
+
+	result, isServerTool, err := convertTool(tool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !isServerTool {
+		t.Error("expected isServerTool to be true for web_search tool")
+	}
+
+	if result.Type != "function" {
+		t.Errorf("expected type 'function', got %q", result.Type)
+	}
+
+	if result.Function.Name != "web_search" {
+		t.Errorf("expected name 'web_search', got %q", result.Function.Name)
+	}
+
+	if result.Function.Description == "" {
+		t.Error("expected non-empty description for web_search tool")
+	}
+
+	// Check that query parameter is defined
+	if result.Function.Parameters.Properties == nil {
+		t.Fatal("expected properties to be defined")
+	}
+
+	queryProp, ok := result.Function.Parameters.Properties.Get("query")
+	if !ok {
+		t.Error("expected 'query' property to be defined")
+	}
+
+	if len(queryProp.Type) == 0 || queryProp.Type[0] != "string" {
+		t.Errorf("expected query type to be 'string', got %v", queryProp.Type)
+	}
+}
+
+func TestConvertTool_RegularTool(t *testing.T) {
+	tool := Tool{
+		Type:        "custom",
+		Name:        "get_weather",
+		Description: "Get the weather",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}}}`),
+	}
+
+	result, isServerTool, err := convertTool(tool)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if isServerTool {
+		t.Error("expected isServerTool to be false for regular tool")
+	}
+
+	if result.Function.Name != "get_weather" {
+		t.Errorf("expected name 'get_weather', got %q", result.Function.Name)
+	}
+}
+
+func TestConvertMessage_ServerToolUse(t *testing.T) {
+	msg := MessageParam{
+		Role: "assistant",
+		Content: []ContentBlock{
+			{
+				Type:  "server_tool_use",
+				ID:    "srvtoolu_123",
+				Name:  "web_search",
+				Input: makeArgs("query", "test query"),
+			},
+		},
+	}
+
+	messages, err := convertMessage(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+
+	if len(messages[0].ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(messages[0].ToolCalls))
+	}
+
+	tc := messages[0].ToolCalls[0]
+	if tc.ID != "srvtoolu_123" {
+		t.Errorf("expected tool call ID 'srvtoolu_123', got %q", tc.ID)
+	}
+
+	if tc.Function.Name != "web_search" {
+		t.Errorf("expected tool name 'web_search', got %q", tc.Function.Name)
+	}
+}
+
+func TestConvertMessage_WebSearchToolResult(t *testing.T) {
+	msg := MessageParam{
+		Role: "user",
+		Content: []ContentBlock{
+			{
+				Type:      "web_search_tool_result",
+				ToolUseID: "srvtoolu_123",
+				Content: []any{
+					map[string]any{
+						"type":  "web_search_result",
+						"title": "Test Result",
+						"url":   "https://example.com",
+					},
+				},
+			},
+		},
+	}
+
+	messages, err := convertMessage(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have a tool result message
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+
+	if messages[0].Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", messages[0].Role)
+	}
+
+	if messages[0].ToolCallID != "srvtoolu_123" {
+		t.Errorf("expected tool_call_id 'srvtoolu_123', got %q", messages[0].ToolCallID)
+	}
+
+	if messages[0].Content == "" {
+		t.Error("expected non-empty content from web search results")
+	}
+}
+
+func TestConvertMessage_WebSearchToolResultEmptyStillCreatesToolMessage(t *testing.T) {
+	msg := MessageParam{
+		Role: "user",
+		Content: []ContentBlock{
+			{
+				Type:      "web_search_tool_result",
+				ToolUseID: "srvtoolu_empty",
+				Content:   []any{},
+			},
+		},
+	}
+
+	messages, err := convertMessage(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].Role != "tool" {
+		t.Fatalf("expected role tool, got %q", messages[0].Role)
+	}
+	if messages[0].ToolCallID != "srvtoolu_empty" {
+		t.Fatalf("expected tool_call_id srvtoolu_empty, got %q", messages[0].ToolCallID)
+	}
+	if messages[0].Content != "" {
+		t.Fatalf("expected empty content for empty web search results, got %q", messages[0].Content)
+	}
+}
+
+func TestConvertMessage_WebSearchToolResultErrorStillCreatesToolMessage(t *testing.T) {
+	msg := MessageParam{
+		Role: "user",
+		Content: []ContentBlock{
+			{
+				Type:      "web_search_tool_result",
+				ToolUseID: "srvtoolu_error",
+				Content: map[string]any{
+					"type":       "web_search_tool_result_error",
+					"error_code": "max_uses_exceeded",
+				},
+			},
+		},
+	}
+
+	messages, err := convertMessage(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].Role != "tool" {
+		t.Fatalf("expected role tool, got %q", messages[0].Role)
+	}
+	if messages[0].ToolCallID != "srvtoolu_error" {
+		t.Fatalf("expected tool_call_id srvtoolu_error, got %q", messages[0].ToolCallID)
+	}
+	if !strings.Contains(messages[0].Content, "max_uses_exceeded") {
+		t.Fatalf("expected error code in converted tool content, got %q", messages[0].Content)
+	}
+}
+
+func TestConvertOllamaToAnthropicResults(t *testing.T) {
+	ollamaResp := &OllamaWebSearchResponse{
+		Results: []OllamaWebSearchResult{
+			{
+				Title:   "Test Title",
+				URL:     "https://example.com",
+				Content: "Test content",
+			},
+			{
+				Title:   "Another Result",
+				URL:     "https://example.org",
+				Content: "More content",
+			},
+		},
+	}
+
+	results := ConvertOllamaToAnthropicResults(ollamaResp)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	if results[0].Type != "web_search_result" {
+		t.Errorf("expected type 'web_search_result', got %q", results[0].Type)
+	}
+
+	if results[0].Title != "Test Title" {
+		t.Errorf("expected title 'Test Title', got %q", results[0].Title)
+	}
+
+	if results[0].URL != "https://example.com" {
+		t.Errorf("expected URL 'https://example.com', got %q", results[0].URL)
+	}
+}
+
+func TestWebSearchTypes(t *testing.T) {
+	// Test that WebSearchResult serializes correctly
+	result := WebSearchResult{
+		Type:             "web_search_result",
+		URL:              "https://example.com",
+		Title:            "Test",
+		EncryptedContent: "abc123",
+		PageAge:          "2025-01-01",
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("failed to marshal WebSearchResult: %v", err)
+	}
+
+	var unmarshaled WebSearchResult
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal WebSearchResult: %v", err)
+	}
+
+	if unmarshaled.Type != result.Type {
+		t.Errorf("type mismatch: expected %q, got %q", result.Type, unmarshaled.Type)
+	}
+
+	// Test WebSearchToolResultError
+	errResult := WebSearchToolResultError{
+		Type:      "web_search_tool_result_error",
+		ErrorCode: "max_uses_exceeded",
+	}
+
+	data, err = json.Marshal(errResult)
+	if err != nil {
+		t.Fatalf("failed to marshal WebSearchToolResultError: %v", err)
+	}
+
+	var unmarshaledErr WebSearchToolResultError
+	if err := json.Unmarshal(data, &unmarshaledErr); err != nil {
+		t.Fatalf("failed to unmarshal WebSearchToolResultError: %v", err)
+	}
+
+	if unmarshaledErr.ErrorCode != "max_uses_exceeded" {
+		t.Errorf("error_code mismatch: expected 'max_uses_exceeded', got %q", unmarshaledErr.ErrorCode)
+	}
+}
+
+func TestCitation(t *testing.T) {
+	citation := Citation{
+		Type:           "web_search_result_location",
+		URL:            "https://example.com",
+		Title:          "Example",
+		EncryptedIndex: "enc123",
+		CitedText:      "Some cited text...",
+	}
+
+	data, err := json.Marshal(citation)
+	if err != nil {
+		t.Fatalf("failed to marshal Citation: %v", err)
+	}
+
+	var unmarshaled Citation
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("failed to unmarshal Citation: %v", err)
+	}
+
+	if unmarshaled.Type != "web_search_result_location" {
+		t.Errorf("type mismatch: expected 'web_search_result_location', got %q", unmarshaled.Type)
+	}
+
+	if unmarshaled.CitedText != "Some cited text..." {
+		t.Errorf("cited_text mismatch: expected 'Some cited text...', got %q", unmarshaled.CitedText)
+	}
 }

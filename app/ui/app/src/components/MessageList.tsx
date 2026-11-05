@@ -73,7 +73,7 @@ export default function MessageList({
                     ? String(args.url).trim()
                     : "";
               if (candidate) lastQuery = candidate;
-            } catch {}
+            } catch { /* ignored */ }
           }
         }
       }
@@ -107,9 +107,9 @@ export default function MessageList({
       })}
 
       {/* Inline error message */}
-      {error &&
-        error.code !== "usage_limit_upgrade" &&
-        error.code !== "cloud_unauthorized" && <ErrorMessage error={error} />}
+      {error && error.code !== "cloud_unauthorized" && (
+        <ErrorMessage error={error} />
+      )}
 
       {/* Indeterminate loading indicator */}
       {showDots && (

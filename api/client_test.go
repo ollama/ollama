@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -192,6 +194,35 @@ func TestClientStream(t *testing.T) {
 	}
 }
 
+func TestClientStreamReportsReadErrors(t *testing.T) {
+	client := NewClient(
+		&url.URL{Scheme: "http", Host: "example.com"},
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			body := failingReader{
+				data: []byte(`{"message":{"content":"partial"}}` + "\n"),
+				err:  io.ErrUnexpectedEOF,
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Body:       io.NopCloser(&body),
+				Header:     make(http.Header),
+			}, nil
+		})},
+	)
+
+	err := client.stream(t.Context(), http.MethodPost, "/api/chat", nil, func([]byte) error {
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected stream read error")
+	}
+	if !strings.Contains(err.Error(), io.ErrUnexpectedEOF.Error()) {
+		t.Fatalf("expected unexpected EOF, got %v", err)
+	}
+}
+
 func TestClientDo(t *testing.T) {
 	testCases := []struct {
 		name           string
@@ -319,4 +350,227 @@ func TestClientDo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHeadBlob(t *testing.T) {
+	testCases := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantExists bool
+		wantErr    string
+	}{
+		{
+			name:       "exists",
+			statusCode: http.StatusOK,
+			wantExists: true,
+		},
+		{
+			name:       "missing",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":"missing"}`,
+		},
+		{
+			name:       "server error",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":"stat failed"}`,
+			wantErr:    "stat failed",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(
+				&url.URL{Scheme: "http", Host: "example.com"},
+				&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					if req.Method != http.MethodHead {
+						t.Fatalf("method = %q, want HEAD", req.Method)
+					}
+					if req.URL.Path != "/api/blobs/sha256:abc" {
+						t.Fatalf("path = %q, want /api/blobs/sha256:abc", req.URL.Path)
+					}
+
+					status := http.StatusText(tc.statusCode)
+					return &http.Response{
+						StatusCode: tc.statusCode,
+						Status:     fmt.Sprintf("%d %s", tc.statusCode, status),
+						Body:       io.NopCloser(strings.NewReader(tc.body)),
+						Header:     make(http.Header),
+						Request:    req,
+					}, nil
+				})},
+			)
+
+			exists, err := client.HeadBlob(t.Context(), "sha256:abc")
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("got nil, want error %q", tc.wantErr)
+				}
+				if err.Error() != tc.wantErr {
+					t.Fatalf("error = %q, want %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("HeadBlob() error = %v", err)
+			}
+			if exists != tc.wantExists {
+				t.Fatalf("HeadBlob() exists = %v, want %v", exists, tc.wantExists)
+			}
+		})
+	}
+}
+
+func TestClientWebSearchExperimentalUsesLocalRoute(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	var gotRequest WebSearchRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(w).Encode(WebSearchResponse{
+			Results: []WebSearchResult{{Title: "Ollama", URL: "https://ollama.com", Content: "models"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+	resp, err := client.WebSearchExperimental(t.Context(), &WebSearchRequest{Query: "ollama", MaxResults: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/experimental/web_search" {
+		t.Fatalf("path = %q, want /api/experimental/web_search", gotPath)
+	}
+	if gotRequest.Query != "ollama" || gotRequest.MaxResults != 3 {
+		t.Fatalf("request = %#v", gotRequest)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Title != "Ollama" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestClientWebSearchExperimentalErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		assertError func(*testing.T, error)
+	}{
+		{
+			name:   "unauthorized retains sign in URL",
+			status: http.StatusUnauthorized,
+			body:   `{"error":"unauthorized","signin_url":"https://ollama.com/signin/example"}`,
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				var authErr AuthorizationError
+				if !errors.As(err, &authErr) {
+					t.Fatalf("error = %T, want AuthorizationError", err)
+				}
+				if authErr.StatusCode != http.StatusUnauthorized || authErr.SigninURL != "https://ollama.com/signin/example" {
+					t.Fatalf("authorization error = %#v", authErr)
+				}
+			},
+		},
+		{
+			name:   "rate limit retains status",
+			status: http.StatusTooManyRequests,
+			body:   `{"error":"rate limit exceeded"}`,
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				var statusErr StatusError
+				if !errors.As(err, &statusErr) {
+					t.Fatalf("error = %T, want StatusError", err)
+				}
+				if statusErr.StatusCode != http.StatusTooManyRequests || statusErr.ErrorMessage != "rate limit exceeded" {
+					t.Fatalf("status error = %#v", statusErr)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer ts.Close()
+
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			_, err := client.WebSearchExperimental(t.Context(), &WebSearchRequest{Query: "ollama"})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			tt.assertError(t, err)
+		})
+	}
+}
+
+func TestClientWebFetchExperimentalUsesLocalRoute(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	var gotRequest WebFetchRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(w).Encode(WebFetchResponse{
+			Title:   "Ollama",
+			Content: "models",
+			Links:   []string{"https://ollama.com/library"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+	resp, err := client.WebFetchExperimental(t.Context(), &WebFetchRequest{URL: "https://ollama.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/experimental/web_fetch" {
+		t.Fatalf("path = %q, want /api/experimental/web_fetch", gotPath)
+	}
+	if gotRequest.URL != "https://ollama.com" {
+		t.Fatalf("request = %#v", gotRequest)
+	}
+	if resp.Title != "Ollama" || resp.Content != "models" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type failingReader struct {
+	data []byte
+	err  error
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if len(r.data) > 0 {
+		n := copy(p, r.data)
+		r.data = r.data[n:]
+		return n, nil
+	}
+	return 0, r.err
 }

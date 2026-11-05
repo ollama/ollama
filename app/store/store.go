@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/app/types/not"
+	"github.com/ollama/ollama/internal/onboarding"
 )
 
 type File struct {
@@ -149,9 +150,6 @@ type Settings struct {
 	// ContextLength specifies the context length for the ollama server (using OLLAMA_CONTEXT_LENGTH)
 	ContextLength int
 
-	// AirplaneMode when true, turns off Ollama Turbo features and only uses local models
-	AirplaneMode bool
-
 	// TurboEnabled indicates if Ollama Turbo features are enabled
 	TurboEnabled bool
 
@@ -169,10 +167,30 @@ type Settings struct {
 
 	// SidebarOpen indicates if the chat sidebar is open
 	SidebarOpen bool
+
+	// LastHomeView is retained for settings compatibility and resolves to chat.
+	LastHomeView string
+
+	// OnboardingVersion stores the latest onboarding flow the user has completed.
+	OnboardingVersion int
+
+	// AutoUpdateEnabled indicates if automatic updates should be downloaded
+	AutoUpdateEnabled bool
+
+	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
+	ClaudeDesktopUsed bool
+
+	// CodexDesktopUsed records whether ChatGPT has successfully connected through Ollama.
+	// Only MarkCodexDesktopUsed updates it; SetSettings preserves the stored value.
+	CodexDesktopUsed bool
 }
 
+// Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
+const CurrentOnboardingVersion = onboarding.CurrentVersion
+
 type Store struct {
-	// DBPath allows overriding the default database path (mainly for testing)
+	// DBPath overrides the database path. Custom stores keep their shared
+	// onboarding record alongside the database, isolated from the user's state.
 	DBPath string
 
 	// dbMu protects database initialization only
@@ -180,16 +198,7 @@ type Store struct {
 	db   *database
 }
 
-var defaultDBPath = func() string {
-	switch runtime.GOOS {
-	case "windows":
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "db.sqlite")
-	case "darwin":
-		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "db.sqlite")
-	default:
-		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
-	}
-}()
+var defaultDBPath = onboarding.AppDatabasePath()
 
 // legacyConfigPath is the path to the old config.json file
 var legacyConfigPath = func() string {
@@ -259,6 +268,40 @@ func (s *Store) ensureDB() error {
 		}
 	}
 
+	// Run one-time migration from legacy airplane_mode behavior.
+	if err := s.migrateCloudSetting(database); err != nil {
+		return fmt.Errorf("migrate cloud setting: %w", err)
+	}
+
+	return nil
+}
+
+// migrateCloudSetting migrates legacy airplane_mode into server.json exactly once.
+// After this, cloud state is sourced from server.json OR OLLAMA_NO_CLOUD.
+func (s *Store) migrateCloudSetting(database *database) error {
+	migrated, err := database.isCloudSettingMigrated()
+	if err != nil {
+		return err
+	}
+	if migrated {
+		return nil
+	}
+
+	airplaneMode, err := database.getAirplaneMode()
+	if err != nil {
+		return err
+	}
+
+	if airplaneMode {
+		if err := setCloudEnabled(false); err != nil {
+			return fmt.Errorf("migrate airplane_mode to cloud disabled: %w", err)
+		}
+	}
+
+	if err := database.setCloudSettingMigrated(true); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -296,6 +339,16 @@ func (s *Store) migrateFromConfig(database *database) error {
 	hasCompleted := legacy.FirstTimeRun // If old FirstTimeRun is true, it means first run was completed
 	if err := database.setHasCompletedFirstRun(hasCompleted); err != nil {
 		return fmt.Errorf("migrate first time run: %w", err)
+	}
+	if hasCompleted {
+		settings, err := database.getSettings()
+		if err != nil {
+			return fmt.Errorf("read settings for onboarding migration: %w", err)
+		}
+		settings.OnboardingVersion = CurrentOnboardingVersion
+		if err := database.setSettings(settings); err != nil {
+			return fmt.Errorf("migrate onboarding completion: %w", err)
+		}
 	}
 	slog.Info("migrated first run status from config.json", "hasCompleted", hasCompleted)
 
@@ -341,6 +394,9 @@ func (s *Store) Settings() (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
+	if err := s.syncOnboarding(&settings); err != nil {
+		return Settings{}, fmt.Errorf("load shared onboarding state: %w", err)
+	}
 
 	// Set default models directory if not set
 	if settings.Models == "" {
@@ -355,6 +411,10 @@ func (s *Store) Settings() (Settings, error) {
 		}
 	}
 
+	if settings.LastHomeView == "" {
+		settings.LastHomeView = "chat"
+	}
+
 	return settings, nil
 }
 
@@ -363,7 +423,52 @@ func (s *Store) SetSettings(settings Settings) error {
 		return err
 	}
 
-	return s.db.setSettings(settings)
+	if err := s.db.setSettings(settings); err != nil {
+		return err
+	}
+	if settings.OnboardingVersion >= CurrentOnboardingVersion {
+		return s.syncOnboarding(&settings)
+	}
+	return nil
+}
+
+func (s *Store) onboardingState() onboarding.State {
+	if s.DBPath != "" {
+		return onboarding.State{Dir: filepath.Dir(s.DBPath)}
+	}
+	return onboarding.State{}
+}
+
+func (s *Store) syncOnboarding(settings *Settings) error {
+	state := s.onboardingState()
+	if settings.OnboardingVersion >= CurrentOnboardingVersion {
+		// Migrate existing app completion so the CLI recognizes it too.
+		// SQLite is already saved; publishing the shared record is best-effort.
+		if err := state.Complete(); err != nil {
+			slog.Warn("could not share onboarding completion", "error", err)
+		}
+		return nil
+	}
+	completed, err := state.Completed()
+	if err != nil {
+		slog.Warn("could not read shared onboarding completion", "error", err)
+		return nil
+	}
+	if !completed {
+		return nil
+	}
+	if err := s.db.markOnboardingCompleted(); err != nil {
+		return err
+	}
+	settings.OnboardingVersion = CurrentOnboardingVersion
+	return nil
+}
+
+func (s *Store) MarkCodexDesktopUsed() error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	return s.db.markCodexDesktopUsed()
 }
 
 func (s *Store) Chats() ([]Chat, error) {

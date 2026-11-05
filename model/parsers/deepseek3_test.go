@@ -50,7 +50,8 @@ func TestDeepSeekParser(t *testing.T) {
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Name: "get_weather",
+						Index: 0,
+						Name:  "get_weather",
 						Arguments: testArgs(map[string]any{
 							"location": "Paris",
 						}),
@@ -74,7 +75,8 @@ func TestDeepSeekParser(t *testing.T) {
 				},
 				{
 					Function: api.ToolCallFunction{
-						Name: "get_weather",
+						Index: 1,
+						Name:  "get_weather",
 						Arguments: testArgs(map[string]any{
 							"location": "London",
 						}),

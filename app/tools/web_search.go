@@ -88,11 +88,18 @@ func (w *WebSearch) Execute(ctx context.Context, args map[string]any) (any, stri
 	if err != nil {
 		return nil, "", err
 	}
+	for _, result := range result.Results {
+		addAllowedDirectURL(ctx, result.URL)
+	}
 
 	return result, "", nil
 }
 
 func performWebSearch(ctx context.Context, query string, maxResults int) (*SearchResponse, error) {
+	if err := ensureCloudEnabledForTool(ctx, "web search is unavailable"); err != nil {
+		return nil, err
+	}
+
 	reqBody := SearchRequest{Query: query, MaxResults: maxResults}
 
 	jsonBody, err := json.Marshal(reqBody)

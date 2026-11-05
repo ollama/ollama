@@ -17,96 +17,125 @@ import (
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
-// chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
+// chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, images []llm.ImageData, _ error) {
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
 	var system []api.Message
 
-	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
-	// Clip images are represented as 768 tokens, each an embedding
+	// TODO: This is only a truncation heuristic; llama-server handles the
+	// actual image/media inputs. Replace this with projector/model-aware media
+	// token accounting so image history is neither over-packed nor over-trimmed.
+	// Clip images are represented as 768 tokens, each an embedding.
 	imageNumTokens := 768
 
-	n := len(msgs) - 1
-	// in reverse, find all messages that fit into context window
-	for i := n; i >= 0; i-- {
-		// always include the last message
-		if i == n {
-			continue
-		}
+	lastMsgIdx := len(msgs) - 1
+	currMsgIdx := 0
 
-		system = make([]api.Message, 0)
-		for j := range i {
-			if msgs[j].Role == "system" {
-				system = append(system, msgs[j])
+	if truncate {
+		// Start with all messages and remove from the front until it fits in context
+		for i := 0; i <= lastMsgIdx; i++ {
+			// Collect system messages from the portion we're about to skip
+			system = make([]api.Message, 0)
+			for j := range i {
+				if msgs[j].Role == "system" {
+					system = append(system, msgs[j])
+				}
 			}
-		}
 
-		p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
-		if err != nil {
-			return "", nil, err
-		}
-
-		s, err := tokenize(ctx, p)
-		if err != nil {
-			return "", nil, err
-		}
-
-		ctxLen := len(s)
-		if m.ProjectorPaths != nil {
-			for _, m := range msgs[i:] {
-				ctxLen += imageNumTokens * len(m.Images)
+			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+			if err != nil {
+				return "", nil, err
 			}
-		}
 
-		if truncate && ctxLen > opts.NumCtx {
-			slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
-			break
-		} else {
-			n = i
+			s, err := tokenize(ctx, p)
+			if err != nil {
+				return "", nil, err
+			}
+
+			ctxLen := len(s)
+			if m.ProjectorPaths != nil {
+				for _, msg := range msgs[i:] {
+					ctxLen += imageNumTokens * len(msg.Images)
+				}
+			}
+
+			if ctxLen <= opts.NumCtx {
+				currMsgIdx = i
+				break
+			}
+
+			// Must always include at least the last message
+			if i == lastMsgIdx {
+				currMsgIdx = lastMsgIdx
+				break
+			}
 		}
 	}
 
-	currMsgIdx := n
+	if currMsgIdx > 0 {
+		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
+	}
 
-	for cnt, msg := range msgs[currMsgIdx:] {
+	renderMsgs, media, err := imageTaggedMessages(m, msgs, currMsgIdx, false)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// truncate any messages that do not fit into the context window
+	p, err := renderPrompt(m, append(system, renderMsgs[currMsgIdx:]...), tools, think)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return p, media, nil
+}
+
+func imageTaggedMessages(m *Model, msgs []api.Message, start int, clearImages bool) ([]api.Message, []llm.MediaData, error) {
+	renderMsgs := slices.Clone(msgs)
+	var media []llm.MediaData
+
+	for cnt, msg := range renderMsgs[start:] {
 		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
-			return "", nil, errors.New("this model only supports one image while more than one image requested")
+			return nil, nil, errors.New("this model only supports one image while more than one image requested")
 		}
 
 		var prefix string
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
-			imgData := llm.ImageData{
-				ID:   len(images),
-				Data: i,
+			mediaData := llm.NewMediaData(len(media), i)
+			media = append(media, mediaData)
+
+			if m.Config.Renderer != "" {
+				continue
 			}
 
-			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
+			// The prompt marker is still image-named for compatibility with
+			// existing templates and llama-server media marker replacement.
+			imgTag := fmt.Sprintf("[img-%d]", mediaData.ID)
 			if !strings.Contains(prompt, "[img]") {
 				prefix += imgTag
 			} else {
 				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
 			}
-
-			images = append(images, imgData)
 		}
-		msgs[currMsgIdx+cnt].Content = prefix + prompt
+
+		if m.Config.Renderer == "" {
+			renderMsgs[start+cnt].Content = prefix + prompt
+		}
+		if clearImages {
+			renderMsgs[start+cnt].Images = nil
+		}
 	}
 
-	// truncate any messages that do not fit into the context window
-	p, err := renderPrompt(m, append(system, msgs[currMsgIdx:]...), tools, think)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return p, images, nil
+	return renderMsgs, media, nil
 }
 
 func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	if m.Config.Renderer != "" {
-		rendered, err := renderers.RenderWithRenderer(m.Config.Renderer, msgs, tools, think)
+		rendererName := resolveRendererName(m)
+		rendered, err := renderers.RenderWithRenderer(rendererName, msgs, tools, think)
 		if err != nil {
 			return "", err
 		}

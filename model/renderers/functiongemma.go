@@ -6,11 +6,16 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type FunctionGemmaRenderer struct{}
 
 const defaultSystemMessage = "You can do function calling with the following functions:"
+
+func (r *FunctionGemmaRenderer) LeadingBOS() string {
+	return "<bos>"
+}
 
 func (r *FunctionGemmaRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
@@ -284,4 +289,8 @@ func (r *FunctionGemmaRenderer) formatArrayValue(arr []any) string {
 
 	sb.WriteString("]")
 	return sb.String()
+}
+
+func (r *FunctionGemmaRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false}, Default: false}
 }

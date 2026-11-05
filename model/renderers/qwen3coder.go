@@ -7,12 +7,17 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 var (
 	imStartTag = "<|im_start|>"
 	imEndTag   = "<|im_end|>"
 )
+
+func (r *Qwen3CoderRenderer) LeadingBOS() string {
+	return ""
+}
 
 // renderAdditionalKeys renders all JSON fields except the ones in handledKeys
 // This follows the same approach from the reference implementation, which gives
@@ -167,12 +172,12 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 
 			// only start a new user block if this is the first tool response
 			if i == 0 || filteredMessages[i-1].Role != "tool" {
-				sb.WriteString(imStartTag + "user\n")
+				sb.WriteString(imStartTag + "user")
 			}
 
-			sb.WriteString("<tool_response>\n")
+			sb.WriteString("\n<tool_response>\n")
 			sb.WriteString(message.Content)
-			sb.WriteString("\n</tool_response>\n")
+			sb.WriteString("\n</tool_response>")
 
 			// close the user block only if this is the last tool response
 			if i == len(filteredMessages)-1 || filteredMessages[i+1].Role != "tool" {
@@ -235,4 +240,8 @@ func formatToolDefinitionType(tp api.PropertyType) string {
 	}
 
 	return string(jsonBytes)
+}
+
+func (r *Qwen3CoderRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false}, Default: false}
 }
