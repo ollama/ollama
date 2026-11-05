@@ -666,11 +666,13 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	gpuIDs, err := llama.Load(req.ctx, systemInfo, loadGpus, requireFull)
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
+			// Close the runner: llama-server fixes its placement at startup,
+			// so a retry after eviction must respawn it.
+			s.activeLoading.Close()
+			s.activeLoading = nil
 			if !requireFull {
 				// No other models loaded, yet we still don't fit, so report an error
 				slog.Info("model is too large for system memory", "requireFull", requireFull)
-				s.activeLoading.Close()
-				s.activeLoading = nil
 				req.errCh <- err
 				return false
 			}

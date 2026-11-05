@@ -187,6 +187,12 @@ type llamaServerRunner struct {
 
 	metadata      *gguf.Model
 	totalLayers   uint64 // maximum offloadable model layers
+
+	// Post-load verification of full GPU offload: signs that llama.cpp moved
+	// weights off the GPU despite "offloaded N/N layers".
+	memHostModel       uint64 // model weight bytes in host buffers (CPU_Mapped, CUDA_Host, ...)
+	expectedHostModel  uint64 // host weights expected with full offload (token embeddings)
+	fitShortfall       bool   // llama.cpp's --fit could not meet its free-memory target
 	loadStart     time.Time
 	loadActivity  atomic.Int64
 	loadTracking  atomic.Bool
@@ -1015,6 +1021,7 @@ func NewLlamaServerRunner(
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,
 		deviceLogNames:   runnerDeviceLogNames(gpus, extraEnvs),
+		expectedHostModel: hostResidentWeights(f),
 		metadata:         f,
 		totalLayers:      f.KV().BlockCount() + 1,
 		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
@@ -1106,7 +1113,7 @@ func qwenVLServerArgs(modelArch string) []string {
 // the model at startup and auto-detects GPU layers, so this just waits for
 // health to report ready. The scheduler handles full-fit preflight for
 // llama-server before this point.
-func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, _ bool) ([]ml.DeviceID, error) {
+func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	slog.Info("loading model via llama-server", "model", s.modelPath)
 
 	if err := s.WaitUntilRunning(ctx); err != nil {
@@ -1123,6 +1130,13 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 	}
 	if err := s.removeSplitDirs(); err != nil {
 		slog.Debug("split GGUF alias cleanup deferred until runner shutdown", "error", err)
+	}
+
+	if requireFull {
+		if reason := s.incompleteGPUOffload(); reason != "" {
+			slog.Warn("llama-server did not fully offload to GPU", "model", s.modelPath, "reason", reason)
+			return nil, ErrLoadRequiredFull
+		}
 	}
 
 	// Verify that buffer size parsing captured GPU allocations.
@@ -1192,6 +1206,8 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 	s.memCPUMappedModel = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
+	s.memHostModel = 0
+	s.fitShortfall = false
 	for k := range s.vramByDevice {
 		delete(s.vramByDevice, k)
 	}
@@ -2819,6 +2835,40 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 	return infos
 }
 
+// incompleteGPUOffload returns why the loaded model is not fully on GPU, or
+// "" when the load log shows a full offload (or nothing was parsed).
+func (s *llamaServerRunner) incompleteGPUOffload() string {
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
+	if s.totalLayers == 0 && s.memHostModel == 0 && !s.fitShortfall {
+		return ""
+	}
+
+	switch {
+	case s.totalLayers > 0 && s.gpuLayers < s.totalLayers && s.gpuLayers > 0 && (s.options.NumGPU <= 0 || s.options.NumGPU >= int(s.totalLayers)):
+		return fmt.Sprintf("%d/%d layers offloaded", s.gpuLayers, s.totalLayers)
+	case s.gpuLayerOverflow > 0:
+		return fmt.Sprintf("%d layers overflowing", s.gpuLayerOverflow)
+	case s.memHostModel > s.expectedHostModel+hostModelSlack:
+		return fmt.Sprintf("weights on host: %d MiB (expected ≤ %d MiB)",
+			s.memHostModel>>20, s.expectedHostModel>>20)
+	case s.fitShortfall:
+		return "fit shortfall: llama.cpp could not meet its free-memory target"
+	}
+	return ""
+}
+
+// hostModelSlack tolerates small host-side weight buffers (e.g. norms).
+const hostModelSlack = 256 << 20
+
+// hostResidentWeights returns the model weight bytes expected on host with a
+// full GPU offload (token embeddings, position embeddings, etc.).
+func hostResidentWeights(f *gguf.Model) uint64 {
+	return f.Tensors().Size("token_embd.weight", "per_layer_token_embd.weight",
+		"position_embd.weight", "token_types.weight", "token_embd_norm.weight", "token_embd_norm.bias")
+}
+
 // MemorySize returns total and GPU memory usage parsed from llama-server's
 // post-load log output. Full model-layer offload is reported as 100% GPU.
 func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
@@ -2847,7 +2897,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 				total -= min(memCPUMappedModel, memModelFileBacked-modelSize)
 			}
 		}
-		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
+		weightsMoved := s.memHostModel > s.expectedHostModel+hostModelSlack
+		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 && !weightsMoved {
 			total = vram
 		}
 		return total, vram
@@ -2927,6 +2978,8 @@ var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
 	fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+	fitShortfallRegex         = regexp.MustCompile(`common_params_fit_impl:\s+cannot meet free memory target of`)
+	mmprojUsageRegex          = regexp.MustCompile(`estimated worst-case memory usage of mmproj is\s+[\d.]+\s+MiB`)
 )
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
@@ -2985,6 +3038,12 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					w.runner.gpuLayerOverflow += int(overflowing)
 				}
 			}
+			if fitShortfallRegex.Match(b) {
+				w.runner.fitShortfall = true
+			}
+			if m := mmprojUsageRegex.FindSubmatch(b); m != nil && len(w.runner.launch.projectors) > 0 {
+				slog.Debug("llama-server estimated projector usage", "model", w.runner.modelPath)
+			}
 			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
 				backendName := string(match[2])
 				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
@@ -3035,6 +3094,15 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 	w.runner.memModelFileBacked = modelFileBacked
 	w.runner.memCPUMappedModel = cpuMappedModel
 	w.runner.vramByDevice = byDevice
+
+	// Track host model weight bytes for offload verification.
+	var hostModel uint64
+	for key, buffer := range w.buffers {
+		if key.kind == "model" && !isGPUBuffer(key.backend) {
+			hostModel += buffer.bytes
+		}
+	}
+	w.runner.memHostModel = hostModel
 }
 
 // deviceLogName returns llama-server's log name for gpu.

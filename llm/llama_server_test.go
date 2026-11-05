@@ -4189,3 +4189,108 @@ func TestRunnerDeviceLogNamesFromDevicesEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestIncompleteGPUOffload(t *testing.T) {
+	base := func() *llamaServerRunner {
+		opts := api.DefaultOptions()
+		return &llamaServerRunner{
+			options:           opts,
+			gpus:              []ml.DeviceInfo{{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"}},
+			vramByDevice:      map[string]uint64{"CUDA0": 15 << 30},
+			totalLayers:       31,
+			gpuLayers:         31,
+			expectedHostModel: 577 << 20,
+			memHostModel:      577 << 20,
+		}
+	}
+
+	if r := base(); r.incompleteGPUOffload() != "" {
+		t.Fatalf("full offload reported incomplete: %q", r.incompleteGPUOffload())
+	}
+
+	cases := map[string]func(*llamaServerRunner){
+		"layers on CPU":         func(r *llamaServerRunner) { r.gpuLayers = 20 },
+		"fit overflow":          func(r *llamaServerRunner) { r.gpuLayerOverflow = 2 },
+		"experts moved to host": func(r *llamaServerRunner) { r.memHostModel = 11203 << 20 }, // 2026-11-03 22:35 gemma4 load
+		"fit shortfall":         func(r *llamaServerRunner) { r.fitShortfall = true },
+	}
+	for name, mutate := range cases {
+		r := base()
+		mutate(r)
+		if r.incompleteGPUOffload() == "" {
+			t.Errorf("%s: not reported", name)
+		}
+	}
+
+	r := base()
+	r.gpuLayers = 20
+	r.options.NumGPU = 20
+	if got := r.incompleteGPUOffload(); got != "" {
+		t.Errorf("explicit partial num_gpu reported: %q", got)
+	}
+
+	r = base()
+	r.vramByDevice = map[string]uint64{}
+	r.gpuLayers = 0
+	if got := r.incompleteGPUOffload(); got != "" {
+		t.Errorf("unparsed logs reported: %q", got)
+	}
+}
+
+// TestMemorySizeWeightsMovedToHost: "offloaded 31/31 layers" with 11 GiB of
+// weights in CUDA_Host must not be reported as 100% GPU.
+func TestMemorySizeWeightsMovedToHost(t *testing.T) {
+	r := &llamaServerRunner{
+		memTotal:          (3130 + 11203 + 552) << 20,
+		memGPU:            (3130 + 552) << 20,
+		totalLayers:       31,
+		gpuLayers:         31,
+		memHostModel:      11203 << 20,
+		expectedHostModel: 577 << 20,
+	}
+	total, vram := r.MemorySize()
+	if total == vram {
+		t.Fatalf("MemorySize total == vram (%d) with weights in host memory", total)
+	}
+
+	r.memHostModel = 577 << 20
+	r.memTotal = r.memGPU + r.memHostModel
+	if total, vram := r.MemorySize(); total != vram {
+		t.Errorf("full offload: total %d != vram %d", total, vram)
+	}
+}
+
+// TestParseC3OffloadLog feeds the 2026-11-03 22:35 gemma4 load (scheduler
+// placed it on an occupied GPU; --fit moved the experts to host) through the
+// log parser.
+func TestParseC3OffloadLog(t *testing.T) {
+	r := &llamaServerRunner{
+		vramByDevice:      map[string]uint64{},
+		systemFreeAtLoad:  map[string]uint64{},
+		totalLayers:       31,
+		expectedHostModel: 577 << 20,
+		options:           api.DefaultOptions(),
+		gpus:              []ml.DeviceInfo{{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, Name: "CUDA1"}},
+	}
+	w := &memoryParsingWriter{inner: io.Discard, runner: r}
+	for _, line := range []string{
+		"common_params_fit_impl: projected to use 14663 MiB of device memory vs. 6428 MiB of free device memory\n",
+		"common_params_fit_impl: cannot meet free memory target of 2170 MiB, need to reduce device memory by 10405 MiB\n",
+		"load_tensors: offloaded 31/31 layers to GPU\n",
+		"load_tensors:        CUDA0 model buffer size =  3129.88 MiB\n",
+		"load_tensors:    CUDA_Host model buffer size = 11203.03 MiB\n",
+	} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !r.fitShortfall {
+		t.Error("fit shortfall not parsed")
+	}
+	if r.memHostModel < 11000<<20 {
+		t.Errorf("host model bytes = %d", r.memHostModel)
+	}
+	if r.incompleteGPUOffload() == "" {
+		t.Error("C3 load not reported as incomplete")
+	}
+}
