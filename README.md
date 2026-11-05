@@ -269,6 +269,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [Herald](https://github.com/KianJRoss/herald-release) - Local-first router for models, coding CLIs and MCP tools
 
 ### RAG & Knowledge Bases
 
@@ -320,6 +321,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [Ultimate Assistant](https://github.com/KianJRoss/UltimateAssistant-release) - Desktop and voice assistant with specialist agents and computer control
 
 ### Observability & Monitoring
 
