@@ -217,3 +217,50 @@ func TestCodeEmbeddingSum(t *testing.T) {
 		}
 	})
 }
+
+func TestDepthBatchMatchesIndependent(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		d, _, _ := tinyDepth(t)
+		h := randArray(rand.New(rand.NewPCG(31, 32)), 1, 2, 1, 6)
+		if got := d.project(h).Dims(); !slices.Equal(got, []int{2, 3, 8}) {
+			t.Fatalf("depth input lost batch dimension: %v", got)
+		}
+		codes := []int32{0, 1, 2, 3, 2, 1}
+		masked := []bool{true, false, true, false, true, false}
+		got := floats(d.Logits(h, codes, masked))
+		for i := range 2 {
+			want := floats(d.Logits(h.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice()), codes[i*3:(i+1)*3], masked[i*3:(i+1)*3]))
+			if delta := maxDiff(got[i*15:(i+1)*15], want); delta > 1e-5 || math.IsNaN(delta) {
+				t.Fatalf("row %d logits differ: %g", i, delta)
+			}
+		}
+		var together, alone []*FrameSampler
+		for i := range 2 {
+			opts := SampleOptions{Temperature: .7, RepetitionPenalty: 1.2, RepetitionWindow: 4}
+			a, err := NewFrameSampler(d.cfg, opts, rand.New(rand.NewPCG(uint64(i+1), 50)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := NewFrameSampler(d.cfg, opts, rand.New(rand.NewPCG(uint64(i+1), 50)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			together, alone = append(together, a), append(alone, b)
+		}
+		for _, order := range [][]int{{0, 1}, {1, 0}, {1}, {0, 1}} {
+			var inputs []*mlx.Array
+			var samplers []*FrameSampler
+			for _, i := range order {
+				inputs = append(inputs, h.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice()))
+				samplers = append(samplers, together[i])
+			}
+			frames, eos := d.DecodeFrames(mlx.Concatenate(inputs, 0), samplers)
+			for row, i := range order {
+				want, end := d.DecodeFrame(inputs[row], alone[i])
+				if eos[row] != end || !slices.Equal(frames[row], want) {
+					t.Fatalf("order %v row %d frame=%v eos=%v, want %v/%v", order, i, frames[row], eos[row], want, end)
+				}
+			}
+		}
+	})
+}

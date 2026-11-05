@@ -30,6 +30,69 @@ func newBatch(seqOffsets []int32, L int, qLens []int32) *batch.Batch {
 	}
 }
 
+func TestRowKVHistoryAttention(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		b := newBatch([]int32{2, 2}, 2, nil)
+		q := mlx.FromValues([]float32{.1, .3, .7, -.2, -.1, .5, .2, .9}, 2, 1, 2, 2)
+		k := mlx.FromValues([]float32{.2, .4, .1, -.3, .8, .2, .3, .1, -.5, .2, .1, .8, .4, -.2, .9, .1}, 2, 1, 4, 2)
+		v := mlx.MulScalar(k, 3)
+		rows := make([]*KVHistory, 2)
+		for i := range rows {
+			rows[i] = NewKVHistory(
+				k.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				v.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()), nil)
+		}
+		array := mlx.FromValues([]float32{0, -.2, .1, -.4, .3, 0, -.7, .2}, 2, 1, 1, 4)
+		arrayRow := func(i int) AttentionMask {
+			return ArrayMask(array.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()))
+		}
+		masks := []struct {
+			batch AttentionMask
+			rows  []AttentionMask
+		}{
+			{CausalMask(), []AttentionMask{CausalMask(), CausalMask()}},
+			{CausalMask().Relax(1, 2, 3, 3, 4), []AttentionMask{CausalMask(), CausalMask().Relax(0, 2, 3, 3, 4)}},
+			{ArrayMask(array), []AttentionMask{arrayRow(0), arrayRow(1)}},
+			{CausalMask().Relax(0, 2, 3, 3, 4).Intersect(ArrayMask(array)), []AttentionMask{
+				CausalMask().Relax(0, 2, 3, 3, 4).Intersect(arrayRow(0)), CausalMask().Intersect(arrayRow(1)),
+			}},
+		}
+		for i, mask := range masks {
+			got := ScaledDotProductAttention(b, q, .7, WithKVHistory(NewRowKVHistory(rows)), WithMask(mask.batch))
+			// The contract is independent requests, which can select different
+			// native kernels than a rectangular batch (including CUDA TF32).
+			// Spell out each mask independently to verify the row remapping.
+			var outputs []*mlx.Array
+			for row, rowMask := range mask.rows {
+				query := q.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+				outputs = append(outputs, ScaledDotProductAttention(b.Row(row), query, .7, WithKVHistory(rows[row]), WithMask(rowMask)))
+			}
+			want := mlx.Concatenate(outputs, 0)
+			mlx.Eval(got, want)
+			g, w := got.Floats(), want.Floats()
+			for j := range w {
+				if math.IsNaN(float64(g[j])) || math.Abs(float64(g[j]-w[j])) > 1e-5 {
+					t.Fatalf("mask %d element %d = %g, want %g", i, j, g[j], w[j])
+				}
+			}
+		}
+		// MLA keeps per-row storage while deriving V from the K prefix.
+		got := ScaledDotProductAttention(b, q, .7, WithMLAHistory(NewRowKVHistory(rows), 1), WithMask(CausalMask()))
+		var outputs []*mlx.Array
+		for row, history := range rows {
+			query := q.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+			outputs = append(outputs, ScaledDotProductAttention(b.Row(row), query, .7, WithMLAHistory(history, 1), WithMask(CausalMask())))
+		}
+		want := mlx.Concatenate(outputs, 0)
+		mlx.Eval(got, want)
+		for i, value := range want.Floats() {
+			if math.Abs(float64(got.Floats()[i]-value)) > 1e-5 {
+				t.Fatalf("MLA element %d mismatch", i)
+			}
+		}
+	})
+}
+
 func TestAttentionMaskZero(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		var m AttentionMask
@@ -666,7 +729,7 @@ func fillTensor(seed float32, B, H, T, D int) *mlx.Array {
 // SeqOffsets and SeqQueryLens through ScaledDotProductAttention via
 // the no-cache (WithKV) path, then compares each row's real
 // positions against a B=1 reference at that row's offset and length.
-// Padded-tail outputs are unconstrained and not checked. Pins the
+// Padded-tail outputs must be zero for use by subsequent layers. Pins the
 // central multi-sequence contract: right-padded rows must produce
 // per-row outputs that don't depend on the padded tails.
 func TestSDPAMultiSequenceParity(t *testing.T) {
@@ -711,8 +774,12 @@ func TestSDPAMultiSequenceParity(t *testing.T) {
 
 		// got is [2, H, L, D] = [B=2, 1, 4, 4]. Row 0 is got[0,...] and
 		// must match ref0 over the full [L, D]. Row 1 is got[1,...] and
-		// must match ref1 over [qShort, D] only — padded positions are
-		// unconstrained.
+		// must match ref1 over [qShort, D], with zero padded positions.
+		for i, v := range gotF[H*L*D+qShort*D:] {
+			if v != 0 {
+				t.Fatalf("padded output %d = %g, want zero", i, v)
+			}
+		}
 		rowStride := H * L * D
 		for i := range rowStride {
 			if !approxEqual(gotF[i], ref0F[i], 1e-5) {
@@ -953,6 +1020,33 @@ func TestSDPANativeWindowSinksKernelParity(t *testing.T) {
 		for i := range ws {
 			if !approxEqual(gs[i], ws[i], 1e-3) {
 				t.Fatalf("index %d: got %v, want %v", i, gs[i], ws[i])
+			}
+		}
+	})
+}
+
+// Learned sink logits belong to every query head, including when each request
+// supplies its own history. Flint relies on them in every attention layer.
+func TestSDPARowHistoryPreservesSinks(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const heads, dim = 2, 64
+		q := mlx.Zeros(mlx.DTypeFloat32, 2, heads, 1, dim)
+		sinks := mlx.FromValues([]float32{1, 2}, heads)
+		var histories []*KVHistory
+		var want []*mlx.Array
+		for i, n := range []int{2, 5} {
+			k := mlx.Zeros(mlx.DTypeFloat32, 1, 1, n, dim)
+			v := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, 1, n, dim), float32(i+1))
+			histories = append(histories, NewKVHistory(k, v, nil))
+			b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 1), SeqOffsets: []int32{int32(n - 1)}, SeqQueryLens: []int32{1}}
+			want = append(want, ScaledDotProductAttention(b, q.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()), 1, WithKVHistory(histories[i]), WithSinks(sinks)))
+		}
+		b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 2, 1), SeqOffsets: []int32{1, 4}, SeqQueryLens: []int32{1, 1}}
+		got := ScaledDotProductAttention(b, q, 1, WithKVHistory(NewRowKVHistory(histories)), WithSinks(sinks))
+		values, expected := got.Floats(), mlx.Concatenate(want, 0).Floats()
+		for i, v := range values {
+			if math.IsNaN(float64(v)) || math.Abs(float64(v-expected[i])) > 1e-6 {
+				t.Fatalf("value %d = %g, want %g (sink logits lost)", i, v, expected[i])
 			}
 		}
 	})

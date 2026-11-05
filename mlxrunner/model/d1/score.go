@@ -18,11 +18,12 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model/lfm3"
 )
 
-var _ llm.Scorer = (*Model)(nil)
+var _ model.Scorer = (*Model)(nil)
 
 // row is one packed forward pass: the state, then up to set-size questions.
 type row struct {
 	prepared  *model.PreparedRequest
+	segments  []model.Segment
 	stateLen  int
 	group     []int32 // per token: -1 in the state, else the question's index in the row
 	questions []int   // request indexes
@@ -35,7 +36,7 @@ func badRequest(format string, args ...any) error {
 
 // Score answers with a score's probability-weighted level, as System One
 // defines it; the publisher's own API defaults to the median level.
-func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
 	cached := 0
 	result.CachedTokens = &cached
@@ -89,8 +90,9 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 		}
 		result.InputTokens += len(r.prepared.Tokens)
 		var rowAnswers []json.RawMessage
-		mlx.Scoped(func() {
-			rowAnswers, err = m.answerRow(r, qs, slots)
+		_, err = forward(ctx, r.prepared, r.segments, func(hidden *mlx.Array) error {
+			rowAnswers, err = m.answerRow(r, qs, slots, hidden)
+			return err
 		})
 		if err != nil {
 			return result, err
@@ -147,7 +149,7 @@ func (m *Model) buildRow(body string, media []model.Segment, qs []question, suff
 	}
 	stateLen := total - tail - len(firstSuffix)
 
-	r := &row{prepared: prepared, stateLen: stateLen, group: make([]int32, total)}
+	r := &row{prepared: prepared, segments: segments, stateLen: stateLen, group: make([]int32, total)}
 	for i := range stateLen {
 		r.group[i] = -1
 	}
@@ -164,6 +166,7 @@ func (m *Model) buildRow(body string, media []model.Segment, qs []question, suff
 		r.slots = append(r.slots, pos+n-1+slots[j].offset)
 		pos += n
 	}
+	prepared.Layout = r
 	return r, nil
 }
 
@@ -204,33 +207,8 @@ func setAttention(r *row, window int) func(q, k, v *mlx.Array, scale float32, sl
 	}
 }
 
-func (m *Model) answerRow(r *row, qs []question, slots []slot) ([]json.RawMessage, error) {
-	prepared := r.prepared
-	media := make([]batch.MediaItem, len(prepared.Items))
-	for j := range prepared.Items {
-		item := &prepared.Items[j]
-		data := mlx.FromValues(item.MediaData, item.Dims...)
-		media[j] = batch.MediaItem{Pos: item.Range[0], Opaque: item.Opaque, Features: m.EncodeMedia(item, data)}
-		item.MediaData = nil
-	}
-	b := &batch.Batch{
-		InputIDs:     mlx.FromValues(prepared.Tokens, 1, len(prepared.Tokens)),
-		SeqOffsets:   []int32{0},
-		SeqQueryLens: []int32{int32(len(prepared.Tokens))},
-		Media:        media,
-	}
-	if prepared.Layout != nil {
-		b.Layout = []any{prepared.Layout}
-	}
-	m.Config.UncachedAttention = setAttention(r, int(m.Config.SlidingWindow))
-	defer func() { m.Config.UncachedAttention = nil }()
-	// Ending the forward's scope before evaluating frees each layer's
-	// activations as the next consumes them.
-	hidden := mlx.ScopedEval(func() []*mlx.Array {
-		h, _ := m.Forward(b, nil)
-		return []*mlx.Array{h}
-	})[0]
-	h := hidden.Reshape(len(prepared.Tokens), int(m.config.HiddenSize))
+func (m *Model) answerRow(r *row, qs []question, slots []slot, hidden *mlx.Array) ([]json.RawMessage, error) {
+	h := hidden.Reshape(len(r.prepared.Tokens), int(m.config.HiddenSize))
 
 	// Every answer slot's vocabulary scores in one gather and transfer.
 	positions := make([]int32, len(r.slots))
@@ -305,4 +283,22 @@ func (m *Model) answerRow(r *row, qs []question, slots []slot) ([]json.RawMessag
 		answers[k] = data
 	}
 	return answers, nil
+}
+
+func batchSetAttention(b *batch.Batch, window int) func(q, k, v *mlx.Array, scale float32, sliding bool) *mlx.Array {
+	return func(q, k, v *mlx.Array, scale float32, sliding bool) *mlx.Array {
+		rows := make([]*mlx.Array, len(b.SeqQueryLens))
+		for i, n := range b.SeqQueryLens {
+			layout := b.Layout[i].(*row)
+			slice := func(a *mlx.Array) *mlx.Array {
+				return a.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(0, int(n)), mlx.Slice())
+			}
+			out := setAttention(layout, window)(slice(q), slice(k), slice(v), scale, sliding)
+			if tail := q.Dim(2) - int(n); tail > 0 {
+				out = mlx.Concatenate([]*mlx.Array{out, mlx.Zeros(out.DType(), 1, out.Dim(1), tail, out.Dim(3))}, 2)
+			}
+			rows[i] = out
+		}
+		return mlx.Concatenate(rows, 0)
+	}
 }

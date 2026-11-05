@@ -114,96 +114,159 @@ func (m *SpeechModel) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func (m *SpeechModel) Speak(ctx context.Context, req llm.SpeechRequest, emit func([]float32) error) error {
+func (m *SpeechModel) NewSpeech(ctx context.Context, req llm.SpeechRequest) (model.SpeechState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if m.Speech == nil {
-		return api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "this model was created without its speech codec; recreate it to use speech"}
+		return nil, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "this model was created without its speech codec; recreate it to use speech"}
 	}
 	voice, err := renderers.ParseLFM3Voice(req.Voice)
 	if err != nil {
-		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
 	count := func(s string) int { return len(m.tok.Encode(s, false)) }
 	chunks := renderers.LFM3SpeechChunks(req.Input, renderers.LFM3SpeechChunkTokens, count)
 	if len(chunks) == 0 {
-		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "input has no text to speak"}
+		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "input has no text to speak"}
 	}
-	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
-	stream := m.Speech.Codec.NewStream()
-	defer stream.Close()
-	// One codec stream carries every chunk so the audio has no seams.
-	for _, text := range chunks {
-		if err := m.speakChunk(ctx, voice, text, count(text), rng, stream, emit); err != nil {
-			return err
-		}
-	}
-	return emit(stream.Flush())
+	return &speechState{
+		voice: voice, chunks: chunks,
+		rng: rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())), stream: m.Speech.Codec.NewStream(),
+	}, nil
 }
 
-// speakChunk generates one utterance with fresh backbone state.
-func (m *SpeechModel) speakChunk(ctx context.Context, voice renderers.LFM3Voice, text string, textTokens int, rng *rand.Rand, stream *lfm3speech.Stream, emit func([]float32) error) error {
-	sampler, err := lfm3speech.NewFrameSampler(m.setup.cfg, lfm3speech.DefaultSampleOptions(m.setup.omni), rng)
+type speechState struct {
+	voice                                   renderers.LFM3Voice
+	chunks                                  []string
+	rng                                     *rand.Rand
+	stream                                  *lfm3speech.Stream
+	sampler                                 *lfm3speech.FrameSampler
+	caches                                  []cache.Cache
+	held                                    *mlx.Scope
+	hidden                                  *mlx.Array
+	position, generated, budget, textTokens int
+}
+
+func (s *speechState) startChunk(m *SpeechModel) error {
+	text := s.chunks[0]
+	s.chunks = s.chunks[1:]
+	var err error
+	s.sampler, err = lfm3speech.NewFrameSampler(m.setup.cfg, lfm3speech.DefaultSampleOptions(m.setup.omni), s.rng)
 	if err != nil {
 		return err
 	}
-	prompt := m.tok.Encode(speechPrompt(m.setup.omni, voice, text), false)
-	budget := renderers.LFM3SpeechFrameBudget(textTokens)
-
-	caches := m.NewCaches()
-	defer func() {
-		for _, c := range caches {
-			c.Free()
-		}
-	}()
-	held := mlx.NewScope()
-	defer held.Close()
-
-	hidden, err := m.forwardSpeech(caches, 0, func() (*mlx.Array, *mlx.Array, error) {
+	prompt := m.tok.Encode(speechPrompt(m.setup.omni, s.voice, text), false)
+	s.textTokens = len(m.tok.Encode(text, false))
+	s.budget, s.generated = renderers.LFM3SpeechFrameBudget(s.textTokens), 0
+	s.caches, s.held = m.NewCaches(), mlx.NewScope()
+	s.hidden, err = m.forwardSpeech(s.caches, 0, func() (*mlx.Array, *mlx.Array, error) {
 		ids := mlx.FromValues(prompt, 1, len(prompt))
 		return ids, m.EmbedTokens.Forward(ids), nil
 	})
 	if err != nil {
 		return err
 	}
-	held.Attach(hidden)
-	pos := len(prompt)
-	for n := range budget {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		frame, eos := m.Speech.Depth.DecodeFrame(hidden, sampler)
-		if eos {
-			return nil
-		}
-		// Queue the next backbone step before decoding audio so the GPU
-		// is not idle while the host prepares the codec input.
-		if n+1 < budget {
-			next, err := m.forwardSpeech(caches, pos, func() (*mlx.Array, *mlx.Array, error) {
-				embedded, err := m.Speech.Codes.Forward(frame)
-				if err != nil {
-					return nil, nil, err
-				}
-				return mlx.Zeros(mlx.DTypeInt32, 1, 1), mlx.ExpandDims(embedded, 0), nil
-			})
-			if err != nil {
-				return err
+	s.held.Attach(s.hidden)
+	s.position = len(prompt)
+	return nil
+}
+
+// DecodeSpeech batches the depth decoder and feedback backbone forwards.
+// Audio codecs keep their independent streaming histories and flush points.
+func (m *SpeechModel) DecodeSpeech(states []model.SpeechState) ([]model.SpeechOutput, error) {
+	output := make([]model.SpeechOutput, len(states))
+	var active []int
+	var hidden []*mlx.Array
+	var samplers []*lfm3speech.FrameSampler
+	for i, state := range states {
+		s := state.(*speechState)
+		if s.held == nil && len(s.chunks) > 0 {
+			if err := s.startChunk(m); err != nil {
+				output[i].Err = err
+				continue
 			}
-			held.Discard(hidden)
-			hidden = next
-			held.Attach(hidden)
-			pos++
 		}
-		samples, err := stream.Push(frame)
-		if err != nil {
-			return err
+		if s.held == nil {
+			output[i] = model.SpeechOutput{Samples: s.stream.Flush(), Done: true}
+			continue
 		}
-		if len(samples) > 0 {
-			if err := emit(samples); err != nil {
-				return err
-			}
+		active, hidden, samplers = append(active, i), append(hidden, s.hidden), append(samplers, s.sampler)
+	}
+	if len(active) == 0 {
+		return output, nil
+	}
+	frames, eos := m.Speech.Depth.DecodeFrames(mlx.Concatenate(hidden, 0), samplers)
+	var feedback []int
+	var codes [][]int32
+	var owners [][]cache.Cache
+	b := &batch.Batch{}
+	for row, id := range active {
+		s := states[id].(*speechState)
+		if !eos[row] && s.generated+1 < s.budget {
+			feedback, codes, owners = append(feedback, id), append(codes, frames[row]), append(owners, s.caches)
+			b.SeqOffsets, b.SeqQueryLens = append(b.SeqOffsets, int32(s.position)), append(b.SeqQueryLens, 1)
 		}
 	}
-	slog.Warn("LFM3 speech hit its frame budget before ending", "frames", budget, "text_tokens", textTokens)
-	return nil
+	// Keep the shared next backbone in flight while codecs consume this frame.
+	if len(feedback) > 0 {
+		layers, err := cache.Batch(owners)
+		if err != nil {
+			return nil, err
+		}
+		embedded, err := m.Speech.Codes.Forward(codes...)
+		if err != nil {
+			return nil, err
+		}
+		b.InputIDs = mlx.Zeros(mlx.DTypeInt32, len(feedback), 1)
+		next := mlx.ScopedArrays(func() []*mlx.Array {
+			h, _ := m.forwardHidden(embedded.ExpandDims(1), b, layers)
+			return []*mlx.Array{h}
+		})[0]
+		var eval []*mlx.Array
+		for row, id := range feedback {
+			s := states[id].(*speechState)
+			s.held.Discard(s.hidden)
+			s.hidden = next.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice())
+			s.held.Attach(s.hidden)
+			s.position++
+			eval = append(eval, s.hidden)
+			for _, c := range s.caches {
+				eval = append(eval, c.State()...)
+			}
+		}
+		mlx.AsyncEval(eval...)
+	}
+	for row, id := range active {
+		s := states[id].(*speechState)
+		if eos[row] {
+			s.closeChunk()
+			continue
+		}
+		output[id].Samples, output[id].Err = s.stream.Push(frames[row])
+		s.generated++
+		if s.generated == s.budget {
+			slog.Warn("LFM3 speech hit its frame budget before ending", "frames", s.budget, "text_tokens", s.textTokens)
+			s.closeChunk()
+		}
+	}
+	return output, nil
+}
+
+func (s *speechState) closeChunk() {
+	for _, c := range s.caches {
+		c.Free()
+	}
+	s.caches = nil
+	if s.held != nil {
+		s.held.Close()
+		s.held, s.hidden = nil, nil
+	}
+}
+
+func (s *speechState) Close() {
+	s.closeChunk()
+	s.stream.Close()
 }
 
 // forwardSpeech runs one backbone forward at pos and returns the final-norm
@@ -221,7 +284,7 @@ func (m *SpeechModel) forwardSpeech(caches []cache.Cache, pos int, input func() 
 			InputIDs:     ids,
 			SeqOffsets:   []int32{int32(pos)},
 			SeqQueryLens: []int32{L},
-		}, caches)
+		}, cache.Layers(caches))
 		return []*mlx.Array{mlx.SliceStartStop(h, []int32{0, L - 1, 0}, []int32{1, L, m.HiddenSize})}
 	})
 	if err != nil {
