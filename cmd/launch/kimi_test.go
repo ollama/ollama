@@ -313,7 +313,7 @@ func TestKimiRun_RejectsConflictingArgsBeforeInstall(t *testing.T) {
 	}
 }
 
-func TestKimiRun_PassesInlineConfigAndExtraArgs(t *testing.T) {
+func TestKimiRun_LegacyCLIPassesInlineConfigAndExtraArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell fake binary")
 	}
@@ -322,6 +322,10 @@ func TestKimiRun_PassesInlineConfigAndExtraArgs(t *testing.T) {
 	setTestHome(t, tmpDir)
 	logPath := filepath.Join(tmpDir, "kimi-args.log")
 	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "kimi, version 1.50.0"
+  exit 0
+fi
 for arg in "$@"; do
   printf "%%s\n" "$arg" >> %q
 done
