@@ -24,6 +24,7 @@ const (
 	claudeDesktopProfileID       = "00000000-0000-4000-8000-000000000114"
 	claudeDesktopGatewayBaseURL  = "http://" + proxy.DefaultClaudeDesktopListenAddr
 	claudeDesktopProbeTimeout    = 2 * time.Second
+	claudeDesktopCatalogTimeout  = 2 * time.Second
 	claudeDesktopModelLabel      = "Default Ollama model"
 	claudeDesktopSuccessMessage  = "Claude Desktop profile changed to Ollama."
 	claudeDesktopRestoreMessage  = "To restore the usual Claude profile, run: ollama launch claude-desktop --restore"
@@ -45,6 +46,7 @@ var (
 	claudeDesktopRunningAppPath = defaultClaudeDesktopRunningAppPath
 	claudeDesktopGlob           = filepath.Glob
 	claudeDesktopProbeGateway   = proxy.ProbeClaudeDesktop
+	claudeDesktopFetchCatalog   = proxy.FetchClaudeDesktopCatalog
 )
 
 // ClaudeDesktop configures and launches Claude Desktop in third-party
@@ -67,9 +69,9 @@ func (c *ClaudeDesktop) AutodiscoveredModel() string {
 	return claudeDesktopModelLabel
 }
 
-// ConfigureAutodiscovery points Claude Desktop at Ollama's local gateway
-// without pinning a model list, so Claude discovers the selected catalog and
-// exact Ollama route names the gateway advertises.
+// ConfigureAutodiscovery points Claude Desktop at Ollama's local gateway and
+// pins the routes the gateway advertises, so the picker names the model behind
+// each route instead of a name Claude Desktop derives from the route ID.
 func (c *ClaudeDesktop) ConfigureAutodiscovery() error {
 	autoMode, err := claudeDesktopAutoModePreference()
 	if err != nil {
@@ -91,7 +93,21 @@ func (c *ClaudeDesktop) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error 
 	if err != nil {
 		return err
 	}
-	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode)
+	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode, claudeDesktopCatalog())
+}
+
+// claudeDesktopCatalog reads the routes the gateway advertises so the profile
+// can pin the same names the gateway serves. Claude Desktop names well-known
+// route IDs itself, so discovery alone never renames them in the picker. A
+// failed read is not fatal: the profile then stays on plain discovery.
+func claudeDesktopCatalog() []proxy.ClaudeDesktopCatalogModel {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeDesktopCatalogTimeout)
+	defer cancel()
+	models, err := claudeDesktopFetchCatalog(ctx, nil, claudeDesktopGatewayBaseURL, "ollama")
+	if err != nil {
+		return nil
+	}
+	return models
 }
 
 func (c *ClaudeDesktop) RestoreHint() string {
@@ -382,9 +398,9 @@ func (c *ClaudeDesktop) Restore() error {
 	})
 }
 
-func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool) error {
+func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool, models []proxy.ClaudeDesktopCatalogModel) error {
 	for _, target := range targets.thirdPartyProfiles {
-		if err := writeClaudeDesktopGatewayProfile(target.profile, baseURL, apiKey, true, autoMode); err != nil {
+		if err := writeClaudeDesktopGatewayProfile(target.profile, baseURL, apiKey, true, autoMode, models); err != nil {
 			return err
 		}
 		if err := writeClaudeDesktopMeta(target.meta, claudeDesktopProfileID, claudeDesktopProfileName); err != nil {
@@ -738,7 +754,7 @@ func writeClaudeDesktopMeta(path, id, name string) error {
 	return writeClaudeDesktopJSON(path, meta)
 }
 
-func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser, autoMode bool) error {
+func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser, autoMode bool, models []proxy.ClaudeDesktopCatalogModel) error {
 	cfg, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
 		return fmt.Errorf("parse Claude Desktop Ollama profile: %w", err)
@@ -749,13 +765,42 @@ func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser
 	cfg["inferenceGatewayAuthScheme"] = "bearer"
 	cfg["deploymentDisplayName"] = claudeDesktopProfileName
 	cfg["chatTabEnabled"] = true
-	delete(cfg, "inferenceModels")
+	if entries := claudeDesktopInferenceModels(models); len(entries) > 0 {
+		cfg["inferenceModels"] = entries
+	} else {
+		delete(cfg, "inferenceModels")
+	}
 	cfg["disableDeploymentModeChooser"] = forceChooser
 	cfg["coworkEgressAllowedHosts"] = claudeDesktopEgressHosts
 	cfg["disableEssentialTelemetry"] = true
 	cfg["disableNonessentialTelemetry"] = true
 	cfg["autoModeEnabled"] = autoMode
 	return writeClaudeDesktopJSON(path, cfg)
+}
+
+// claudeDesktopInferenceModels converts gateway routes into the profile's
+// pinned model list. labelOverride carries the gateway's name for the model so
+// the picker shows that instead of a name derived from the route ID.
+func claudeDesktopInferenceModels(models []proxy.ClaudeDesktopCatalogModel) []any {
+	entries := make([]any, 0, len(models))
+	for _, model := range models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		entry := map[string]any{"name": id}
+		if label := strings.TrimSpace(model.DisplayName); label != "" && label != id {
+			entry["labelOverride"] = label
+		}
+		if tier := strings.TrimSpace(model.AnthropicFamilyTier); tier != "" {
+			entry["anthropicFamilyTier"] = tier
+		}
+		if model.IsFamilyDefault {
+			entry["isFamilyDefault"] = true
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func restoreClaudeDesktopMeta(path string) error {
