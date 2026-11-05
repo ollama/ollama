@@ -636,7 +636,38 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 					"system_limited", systemLimited)
 			}
 
-			launchOpts = s.applyLlamaServerMmapDefaults(req, launchOpts, systemInfo, loadGpus, f, numParallel)
+			// PR4: Fail fast when pinned num_gpu can't fit.
+			if launchOpts.NumGPU > 0 && uint64(launchOpts.NumGPU) >= f.KV().BlockCount() {
+				pred := llm.PredictServerVRAM(req.model.ModelPath, f, req.model.ProjectorPaths, launchOpts, llm.VRAMPredictConfig{
+					FlashAttention: llm.LlamaServerFlashAttention(loadGpus),
+				})
+				if minTotal := pred.MinTotal(); minTotal > 0 && len(loadGpus) > 0 {
+					maxAvailable := uint64(0)
+					for _, g := range loadGpus {
+						maxAvailable += g.FreeMemory
+					}
+					for _, r := range s.loaded {
+						if r == nil || r.llama == nil {
+							continue
+						}
+						_, vram := r.llama.MemorySize()
+						maxAvailable += vram
+					}
+					if minTotal > maxAvailable {
+						s.loadedMu.Unlock()
+						s.activeLoading.Close()
+						s.activeLoading = nil
+						err := fmt.Errorf(
+							"model does not fit in GPU memory with all layers on GPU: needs at least %s for %d layers at num_ctx %d (num_gpu %d), but at most %s can be made available on %d GPU(s); lower num_gpu to let llama.cpp keep some layers on CPU, or lower num_ctx",
+							format.HumanBytes2(minTotal), f.KV().BlockCount(), req.opts.NumCtx, launchOpts.NumGPU,
+							format.HumanBytes2(maxAvailable), len(loadGpus))
+						slog.Error("llama-server load refused: pinned num_gpu cannot fit", "error", err)
+						req.errCh <- err
+						return false
+					}
+				}
+			}
+
 			req.contextShift = resolveContextShift(req.shift, req.model)
 
 			config := llamaServerConfigForModel(req.model)
