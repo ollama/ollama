@@ -799,6 +799,13 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 	if hex := repairGemma4HexNumberValues(quoted); hex != quoted {
 		addCandidate(repairGemma4BareWordValues(hex), false)
 	}
+	// JSON has no trailing comma. Tried after every candidate above, and on top of
+	// each, so a call one of them reads is read as before.
+	for _, candidate := range append([]string(nil), candidates...) {
+		if trimmed := repairGemma4TrailingCommas(candidate); trimmed != candidate {
+			addCandidate(trimmed, false)
+		}
+	}
 
 	return candidates
 }
@@ -1144,6 +1151,55 @@ func gemma4WordEnd(s string, i int, digitFirst bool) int {
 		end += size
 	}
 	return end
+}
+
+// repairGemma4TrailingCommas drops each comma that a `}` or `]` follows after any
+// whitespace, as in call:editRecord{…,remove:[<|"|>Unit<|"|>],set:[],}: JSON has
+// no trailing comma, and such a comma separates nothing. Only an even count of
+// delimiters is repaired; strings are copied as they are, and where the strings
+// are unclear, nothing is repaired.
+func repairGemma4TrailingCommas(s string) string {
+	if strings.Count(s, gemma4StringDelimiter)%2 != 0 {
+		return s
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				return s
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+
+		if s[i] == '"' {
+			end := gemma4JSONQuotedStringEnd(s, i)
+			if end == -1 {
+				return s
+			}
+			sb.WriteString(s[i:end])
+			i = end
+			continue
+		}
+
+		if s[i] == ',' {
+			if next := gemma4SkipSpace(s, i+1); next < len(s) && (s[next] == '}' || s[next] == ']') {
+				i++
+				continue
+			}
+		}
+
+		sb.WriteByte(s[i])
+		i++
+	}
+
+	return sb.String()
 }
 
 // repairGemma4MissingObjectClose adds a final object close after another repair

@@ -2018,6 +2018,130 @@ func TestGemma4Parser_HexNumberValueInFinishedToolCall(t *testing.T) {
 	}
 }
 
+func TestRepairGemma4TrailingCommas(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "before_an_object_close",
+			input:    `{a:1,set:[],}`,
+			expected: `{a:1,set:[]}`,
+		},
+		{
+			name:     "before_a_list_close_and_with_spaces",
+			input:    `{a:[1, 2 , ],b:{c:<|"|>x<|"|> , } }`,
+			expected: `{a:[1, 2  ],b:{c:<|"|>x<|"|>  } }`,
+		},
+		{
+			name:     "keeps_commas_that_separate",
+			input:    `{a:1,b:[2,3],c:{d:4,e:5}}`,
+			expected: `{a:1,b:[2,3],c:{d:4,e:5}}`,
+		},
+		{
+			name:     "keeps_commas_in_strings",
+			input:    `{a:<|"|>x,}<|"|>,b:"y,]",c:2,}`,
+			expected: `{a:<|"|>x,}<|"|>,b:"y,]",c:2}`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{a:1,b:<|"|>y,}`,
+			expected: `{a:1,b:<|"|>y,}`,
+		},
+		{
+			name:     "keeps_an_unclosed_json_string",
+			input:    `{a:1,b:"y,}`,
+			expected: `{a:1,b:"y,}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4TrailingCommas(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4TrailingCommas(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4TrailingCommaEditRecordCall removes fields and sets none, with a comma
+// after its last argument.
+const gemma4TrailingCommaEditRecordCall = `call:editRecord{build:true,project:<|"|>FeatherStep<|"|>,record:<|"|>MagicEffects/FeatherStepEffect.yaml<|"|>,remove:[<|"|>EffectType<|"|>,<|"|>BaseValue<|"|>,<|"|>Unit<|"|>],set:[],}`
+
+var gemma4TrailingCommaEditRecordArgs = map[string]any{
+	"build":   true,
+	"project": "FeatherStep",
+	"record":  "MagicEffects/FeatherStepEffect.yaml",
+	"remove":  []any{"EffectType", "BaseValue", "Unit"},
+	"set":     []any{},
+}
+
+func TestParseGemma4ClosedToolCall_TrailingCommas(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "after_the_last_argument",
+			content: gemma4TrailingCommaEditRecordCall,
+			want:    gemma4TrailingCommaEditRecordArgs,
+		},
+		{
+			name:    "in_lists_and_beside_other_repairs",
+			content: `call:set{a:[1,2,],b:'y z',c:Fast,d:0x0F,}`,
+			want:    map[string]any{"a": []any{1.0, 2.0}, "b": "y z", "c": "Fast", "d": "0x0F"},
+		},
+		{
+			name:    "in_an_unclosed_list",
+			content: `call:set{items:[1,2,`,
+			want:    map[string]any{"items": []any{1.0, 2.0}},
+		},
+		{
+			name:    "a_comma_that_is_all_of_a_value",
+			content: `call:set{a:,}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_TrailingCommaInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4TrailingCommaEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4TrailingCommaEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func gemma4TestStringTool(name string, argNames ...string) api.Tool {
 	props := api.NewToolPropertiesMap()
 	for _, argName := range argNames {
