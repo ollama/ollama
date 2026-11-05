@@ -68,7 +68,7 @@ const CopyButton: React.FC<CopyButtonProps> = ({
   const iconSize = size === "sm" ? "h-3 w-3" : "h-7 w-7";
   const baseClasses =
     size === "sm"
-      ? `text-xs px-4 py-2 z-10 rounded-lg hover:cursor-pointer ${className}`
+      ? `text-xs px-4 py-2 z-10 cursor-pointer rounded-lg ${className}`
       : `${iconSize} px-1 py-0.5 text-xs cursor-pointer rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center justify-center ${className}`;
 
   const icon = isCopied ? (

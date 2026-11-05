@@ -39,6 +39,7 @@ type Gemma4Parser struct {
 	callIndex             int
 	hasThinkingSupport    bool
 	thinkingEnabled       bool // true when both model supports and user requested thinking
+	contentPrefill        bool // true when the prompt continues assistant content
 	needsChannelNameStrip bool // true when we just entered thinking and need to strip "thought\n"
 }
 
@@ -48,6 +49,13 @@ func (p *Gemma4Parser) HasToolSupport() bool {
 
 func (p *Gemma4Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
+}
+
+func (p *Gemma4Parser) ThinkingClose() []string {
+	if p.thinkingEnabled && !p.contentPrefill {
+		return []string{gemma4ThinkingCloseTag}
+	}
+	return nil
 }
 
 func (p *Gemma4Parser) PreservedTokens() []string {
@@ -65,7 +73,7 @@ func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	p.tools = tools
 	p.callIndex = 0
 
-	prefill := lastMessage != nil && lastMessage.Role == "assistant"
+	p.contentPrefill = lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Content != ""
 
 	p.thinkingEnabled = p.HasThinkingSupport() && (thinkValue != nil && thinkValue.Bool())
 
@@ -80,7 +88,7 @@ func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 		return tools
 	}
 
-	if prefill && lastMessage.Content != "" {
+	if p.contentPrefill {
 		p.state = Gemma4CollectingContent
 		return tools
 	}

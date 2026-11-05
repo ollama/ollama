@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
@@ -44,6 +46,159 @@ func (r *launcherEditorRunner) Edit(models []LaunchModel) error {
 
 func (r *launcherEditorRunner) Models() []string {
 	return append([]string(nil), r.models...)
+}
+
+func TestResolveRunModelsCarriesRecommendationThinkingMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[{"model":"deepseek-v4-flash:cloud","description":"Coding","context_length":1048576,"max_output_tokens":65536,"thinking":{"values":[false,true,"max"],"default":true}}]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"deepseek-v4-flash:cloud","remote_model":"deepseek-v4-flash"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := client.resolveRunModels(context.Background(), "test", []string{"deepseek-v4-flash:cloud"})
+	if len(models) != 1 || models[0].Thinking == nil {
+		t.Fatalf("resolved models = %#v, want recommendation thinking metadata", models)
+	}
+	if !slices.Equal(models[0].Thinking.Values, []any{false, true, "max"}) || models[0].Thinking.Default != true {
+		t.Fatalf("thinking = %#v, want exact endpoint values/default", models[0].Thinking)
+	}
+}
+
+func TestResolveRunModelsCodexIncludesInstalledToolModels(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cloud disabled=%t", disabled), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"qwen3:latest","capabilities":["completion","tools"]},{"name":"qwen3:4b","capabilities":["completion","tools"]},{"name":"embedding:latest","capabilities":["embedding"]},{"name":"custom:cloud","remote_model":"custom","capabilities":["completion","tools"]}]}`)
+				case "/api/experimental/model-recommendations":
+					fmt.Fprint(w, `{"recommendations":[]}`)
+				case "/api/status":
+					fmt.Fprintf(w, `{"cloud":{"disabled":%t}}`, disabled)
+				case "/api/show":
+					fmt.Fprint(w, `{}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			models := client.resolveRunModels(t.Context(), "codex", []string{"qwen3"})
+			want := []string{"qwen3:latest", "qwen3:4b"}
+			if !disabled {
+				want = append(want, "custom:cloud")
+			}
+			// The writer collapses the requested alias and installed canonical name.
+			catalog := codexCatalogModels("qwen3", models)
+			want[0] = "qwen3"
+			if got := launchModelNames(catalog); !slices.Equal(got, want) {
+				t.Fatalf("catalog = %v, want %v", got, want)
+			}
+			if got := launchModelNames(client.resolveRunModels(t.Context(), "test", []string{"qwen3"})); !slices.Equal(got, []string{"qwen3:latest"}) {
+				t.Fatalf("other integration received extra models: %v", got)
+			}
+		})
+	}
+}
+
+func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, show     string
+		integration    string
+		recommendation bool
+		want           []any
+	}{
+		{"local custom CLI model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", false, []any{false, true, "medium"}},
+		{"local custom desktop model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "chatgpt", false, []any{false, true, "medium"}},
+		{"show overrides recommendation", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", true, []any{false, true, "medium"}},
+		{"invalid metadata preserves recommendation", `{"thinking":{"values":[false,true],"default":"missing"}}`, "codex", true, []any{false, true}},
+		{"missing metadata preserves recommendation", `{}`, "codex", true, []any{false, true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			showCalls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/experimental/model-recommendations":
+					if tc.recommendation {
+						fmt.Fprint(w, `{"recommendations":[{"model":"custom-local","thinking":{"values":[false,true],"default":true}}]}`)
+					} else {
+						fmt.Fprint(w, `{"recommendations":[]}`)
+					}
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"custom-local:latest","capabilities":["completion","thinking"]}]}`)
+				case "/api/show":
+					showCalls++
+					fmt.Fprint(w, tc.show)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			models := client.resolveRunModels(t.Context(), tc.integration, []string{"custom-local"})
+			if len(models) != 1 || models[0].Thinking == nil || !slices.Equal(models[0].Thinking.Values, tc.want) || showCalls != 1 {
+				t.Fatalf("models=%+v showCalls=%d", models, showCalls)
+			}
+			contract := codexAppThinkingContractForModel(models[0])
+			if !slices.Equal(contract.controls.Values, tc.want) {
+				t.Fatalf("desktop controls=%+v, want %v", contract.controls, tc.want)
+			}
+		})
+	}
+}
+
+type thinkingDeadlineTransport struct {
+	t     *testing.T
+	calls int
+}
+
+func (transport *thinkingDeadlineTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	transport.calls++
+	deadline, ok := r.Context().Deadline()
+	if !ok || time.Until(deadline) > 5*time.Second {
+		transport.t.Error("thinking discovery request must have a bounded deadline")
+	}
+	return nil, context.DeadlineExceeded
+}
+
+func TestResolveRunModelsThinkingDiscoveryTimeout(t *testing.T) {
+	client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &thinkingDeadlineTransport{t: t}
+	client.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "thinking.test"}, &http.Client{Transport: transport})
+	client.recommendationsLoaded = true
+	// Seed the existing inventory so this test isolates the new best-effort lookup.
+	client.inventory = newModelInventory(client.apiClient)
+	client.inventory.loaded = true
+	client.inventory.models = []LaunchModel{{Name: "custom-local", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}}}
+	models := client.resolveRunModels(t.Context(), "codex", []string{"custom-local"})
+	if len(models) != 1 || models[0].Thinking == nil || models[0].Thinking.Default != true {
+		t.Fatalf("failed discovery lost existing metadata: %+v", models)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("show calls=%d, want 1", transport.calls)
+	}
 }
 
 type launcherSingleRunner struct {
@@ -86,6 +241,7 @@ type launcherManagedRunner struct {
 	currentModel         string
 	configured           []string
 	ranModel             string
+	ranModels            []LaunchModel
 	onboarded            bool
 	onboardCalls         int
 	onboardingComplete   bool
@@ -96,8 +252,9 @@ type launcherManagedRunner struct {
 	skipModelReadiness   bool
 }
 
-func (r *launcherManagedRunner) Run(model string, _ []LaunchModel, args []string) error {
+func (r *launcherManagedRunner) Run(model string, models []LaunchModel, args []string) error {
 	r.ranModel = model
+	r.ranModels = cloneLaunchModels(models)
 	return nil
 }
 
@@ -144,11 +301,28 @@ func (r *launcherHeadlessManagedRunner) RequiresInteractiveOnboarding() bool { r
 type launcherManagedListRunner struct {
 	launcherManagedRunner
 	configuredModelLists [][]string
+	configuredModels     [][]LaunchModel
 }
 
 func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models []LaunchModel) error {
 	r.configuredModelLists = append(r.configuredModelLists, launchModelNames(models))
+	r.configuredModels = append(r.configuredModels, cloneLaunchModels(models))
 	return r.Configure(primary)
+}
+
+type launcherCanonicalManagedListRunner struct {
+	launcherManagedListRunner
+}
+
+func (r *launcherCanonicalManagedListRunner) ConfigureWithModels(primary string, models []LaunchModel) error {
+	r.configuredModelLists = append(r.configuredModelLists, launchModelNames(models))
+	r.configured = append(r.configured, primary)
+	if selected, ok := findLaunchModel(models, primary); ok {
+		r.currentModel = selected.Name
+	} else {
+		r.currentModel = primary
+	}
+	return nil
 }
 
 type launcherManagedAutodiscoveryRunner struct {
@@ -223,7 +397,6 @@ func withLauncherHooks(t *testing.T) {
 	oldMultiWithUpdates := DefaultMultiSelectorWithUpdates
 	oldConfirm := DefaultConfirmPrompt
 	oldSignIn := DefaultSignIn
-	oldUpgrade := DefaultUpgrade
 	t.Cleanup(func() {
 		DefaultSingleSelector = oldSingle
 		DefaultSingleSelectorWithUpdates = oldSingleWithUpdates
@@ -231,7 +404,6 @@ func withLauncherHooks(t *testing.T) {
 		DefaultMultiSelectorWithUpdates = oldMultiWithUpdates
 		DefaultConfirmPrompt = oldConfirm
 		DefaultSignIn = oldSignIn
-		DefaultUpgrade = oldUpgrade
 	})
 }
 
@@ -506,6 +678,113 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfiguresOnboardsAndRuns(t *
 	}
 	if diff := compareStrings(saved.Models, []string{"gemma4"}); diff != "" {
 		t.Fatalf("saved models mismatch: %s", diff)
+	}
+}
+
+func TestLaunchManagedSingleIntegrationReusesThinkingDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		showStatus    int
+		configureOnly bool
+		unchanged     bool
+	}{
+		{name: "configure and run", showStatus: http.StatusOK},
+		{name: "failed discovery keeps fallback", showStatus: http.StatusServiceUnavailable},
+		{name: "configure only", showStatus: http.StatusOK, configureOnly: true},
+		{name: "unchanged configuration", showStatus: http.StatusOK, unchanged: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setLaunchTestHome(t, t.TempDir())
+			withInteractiveSession(t, true)
+			withLauncherHooks(t)
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+
+			var primaryCalls, secondaryCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					var request api.ShowRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					switch request.Model {
+					case "custom-primary:latest":
+						primaryCalls.Add(1)
+					case "custom-secondary:latest":
+						secondaryCalls.Add(1)
+					default:
+						t.Errorf("unexpected show model %q", request.Model)
+					}
+					w.WriteHeader(tc.showStatus)
+					fmt.Fprint(w, `{"thinking":{"values":[false,"medium","xhigh"],"default":"xhigh"}}`)
+				case "/api/status":
+					fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			client, err := newLauncherClient(defaultLaunchPolicy(true, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fallback := &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}
+			client.recommendationsLoaded = true
+			client.recommendationItems = []ModelItem{{Name: "custom-primary", Thinking: fallback}}
+			client.inventory.loaded = true
+			client.inventory.models = []LaunchModel{{Name: "custom-primary:latest"}, {Name: "custom-secondary:latest"}}
+			runner := &launcherManagedListRunner{launcherManagedRunner: launcherManagedRunner{
+				currentModel:       "custom-primary",
+				onboardingComplete: true,
+				skipModelReadiness: true,
+			}}
+			saved := &config.IntegrationConfig{Models: []string{"custom-primary"}, Onboarded: true}
+			request := IntegrationLaunchRequest{ModelOverride: "custom-primary", ConfigureOnly: tc.configureOnly}
+			if tc.unchanged {
+				request.ModelOverride = ""
+			}
+			if err := client.launchManagedSingleIntegration(t.Context(), chatGPTIntegrationName, runner, runner, saved, request); err != nil {
+				t.Fatal(err)
+			}
+			if got := primaryCalls.Load(); got != 1 {
+				t.Fatalf("primary show calls = %d, want 1", got)
+			}
+			wantSecondary := int32(1)
+			if tc.unchanged {
+				wantSecondary = 0
+			}
+			if got := secondaryCalls.Load(); got != wantSecondary {
+				t.Fatalf("secondary show calls = %d, want %d", got, wantSecondary)
+			}
+			wantThinking := &api.ModelRecommendationThinking{Values: []any{false, "medium", "xhigh"}, Default: "xhigh"}
+			if tc.showStatus != http.StatusOK {
+				wantThinking = fallback
+			}
+			if !tc.unchanged {
+				if len(runner.configuredModels) != 1 || len(runner.configuredModels[0]) != 2 {
+					t.Fatalf("configured models = %+v, want both selected models once", runner.configuredModels)
+				}
+				if diff := cmp.Diff(wantThinking, runner.configuredModels[0][0].Thinking); diff != "" {
+					t.Fatalf("configured thinking mismatch (-want +got):\n%s", diff)
+				}
+			}
+			if tc.configureOnly {
+				if runner.ranModel != "" {
+					t.Fatal("configure-only flow launched the runner")
+				}
+				return
+			}
+			if runner.ranModel != "custom-primary" || len(runner.ranModels) != 1 || runner.ranModels[0].Name != "custom-primary:latest" {
+				t.Fatalf("run model=%q models=%+v, want only the primary model", runner.ranModel, runner.ranModels)
+			}
+			if diff := cmp.Diff(wantThinking, runner.ranModels[0].Thinking); diff != "" {
+				t.Fatalf("run thinking mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
@@ -1086,6 +1365,51 @@ func TestLaunchIntegration_ManagedSingleIntegrationCanConfigureWithModelList(t *
 	}
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
 		t.Fatalf("configured primary mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationSavesCanonicalModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:latest"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherCanonicalManagedListRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	request := IntegrationLaunchRequest{Name: "stubmanaged", ModelOverride: "qwen3.5"}
+	if err := LaunchIntegration(context.Background(), request); err != nil {
+		t.Fatalf("first LaunchIntegration returned error: %v", err)
+	}
+
+	saved, err := config.LoadIntegration("stubmanaged")
+	if err != nil {
+		t.Fatalf("failed to reload managed integration config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"qwen3.5:latest"}); diff != "" {
+		t.Fatalf("saved models mismatch: %s", diff)
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("second LaunchIntegration returned error: %v", err)
+	}
+	if diff := compareStrings(runner.configured, []string{"qwen3.5"}); diff != "" {
+		t.Fatalf("expected second launch to skip configuration: %s", diff)
 	}
 }
 
@@ -2080,7 +2404,7 @@ func TestResolveRunModel_MetadataSignedOutUsesSignInHook(t *testing.T) {
 	}
 }
 
-func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
+func TestResolveRunModel_PaidModelContinuesWithoutPlanChange(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2098,8 +2422,8 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 		}
 		for _, item := range items {
 			if item.Name == "kimi-k2.6:cloud" {
-				if item.AvailabilityBadge != "Upgrade required" {
-					t.Fatalf("availability badge = %q, want Upgrade required", item.AvailabilityBadge)
+				if item.AvailabilityBadge != "Use usage credits or upgrade your plan" {
+					t.Fatalf("availability badge = %q, want Use usage credits or upgrade your plan", item.AvailabilityBadge)
 				}
 				return "kimi-k2.6:cloud", nil
 			}
@@ -2112,18 +2436,17 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 		return "", nil
 	}
 
-	plan := "free"
-	upgradeCalled := false
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		upgradeCalled = true
-		if modelName != "kimi-k2.6:cloud" {
-			t.Fatalf("unexpected model passed to upgrade: %q", modelName)
+	withInteractiveSession(t, true)
+	paymentConfirmed := false
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		paymentConfirmed = true
+		if !strings.Contains(prompt, "This model requires usage credits or a paid plan.") || !strings.Contains(prompt, "kimi-k2.6:cloud") {
+			t.Fatalf("unexpected payment prompt: %q", prompt)
 		}
-		if requiredPlan != "pro" {
-			t.Fatalf("unexpected required plan: %q", requiredPlan)
+		if options.YesLabel != "Continue" || options.NoLabel != "Choose another model" || options.Default != ConfirmDefaultYes {
+			t.Fatalf("unexpected payment actions: %+v", options)
 		}
-		plan = "max"
-		return plan, nil
+		return true, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2138,7 +2461,7 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 		case "/api/show":
 			fmt.Fprint(w, `{"remote_model":"kimi-k2.6"}`)
 		case "/api/me":
-			fmt.Fprintf(w, `{"name":"test-user","plan":%q}`, plan)
+			fmt.Fprint(w, `{"name":"test-user","plan":"free"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2153,12 +2476,12 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 	if model != "kimi-k2.6:cloud" {
 		t.Fatalf("expected selected cloud model, got %q", model)
 	}
-	if !upgradeCalled {
-		t.Fatal("expected upgrade hook to be used for subscription-gated cloud model")
+	if !paymentConfirmed {
+		t.Fatal("expected payment guidance before continuing with the free account")
 	}
 }
 
-func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
+func TestResolveRunModel_PaymentDeclinedReturnsToModelSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2176,8 +2499,9 @@ func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
 			return "", nil
 		}
 	}
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		return "", ErrCancelled
+	withInteractiveSession(t, true)
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2222,9 +2546,9 @@ func TestResolveRunModel_SubscriptionModelUnavailableWhoamiAllowsSelection(t *te
 	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		return "kimi-k2.6:cloud", nil
 	}
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		t.Fatalf("did not expect upgrade hook when plan could not be verified")
-		return "", nil
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect payment guidance when account could not be verified")
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2670,14 +2994,16 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 		t.Fatalf("unexpected prompt: %q", prompt)
 		return false, nil
 	}
+	signInCalls := 0
 	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		signInCalls++
 		return "", ErrCancelled
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[]}`)
+			fmt.Fprint(w, `{"recommendations":[{"model":"glm-5:cloud","context_length":262144,"max_output_tokens":32768,"required_plan":"pro"}]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"sample-model"},{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
 		case "/api/status":
@@ -2714,6 +3040,9 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	if launchErr != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
 	}
+	if signInCalls != 1 {
+		t.Fatalf("sign-in calls = %d, want 1", signInCalls)
+	}
 	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use local primary, got %q", editor.ranModel)
 	}
@@ -2732,7 +3061,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	}
 }
 
-func TestLaunchIntegration_EditorConfigureUpgradeCancelledReturnsToModelSelector(t *testing.T) {
+func TestLaunchIntegration_EditorConfigurePaymentDeclinedReturnsToModelSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2760,12 +3089,13 @@ func TestLaunchIntegration_EditorConfigureUpgradeCancelledReturnsToModelSelector
 			return nil, nil
 		}
 	}
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		return "", ErrCancelled
-	}
+	withInteractiveSession(t, true)
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
+		}
+		if options.NoLabel == "Choose another model" {
+			return false, ErrCancelled
 		}
 		t.Fatalf("unexpected prompt: %q", prompt)
 		return false, nil
@@ -4136,4 +4466,64 @@ func compareStringSlices(got, want [][]string) string {
 		}
 	}
 	return ""
+}
+
+func TestResolveSingleIntegrationTargetPaymentGuidance(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		current     string
+		mode        LaunchConfirmMode
+		proceed     bool
+		wantModel   string
+		wantPrompts int
+		wantError   string
+	}{
+		{name: "new selection continues with free plan", mode: LaunchConfirmPrompt, proceed: true, wantModel: "paid:cloud", wantPrompts: 1},
+		{name: "saved selection skips payment prompt", current: "paid:cloud", mode: LaunchConfirmPrompt, wantModel: "paid:cloud"},
+		{name: "yes approves payment guidance", mode: LaunchConfirmAutoApprove, wantModel: "paid:cloud"},
+		{name: "headless requires yes", mode: LaunchConfirmRequireYes, wantError: "Continue with paid:cloud? requires confirmation; re-run with --yes to continue"},
+		{name: "decline returns to picker", mode: LaunchConfirmPrompt, wantModel: "local-model", wantPrompts: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			withLauncherHooks(t)
+			DefaultSingleSelectorWithUpdates = nil
+			DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "local-model", nil }
+			prompts := 0
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) {
+				prompts++
+				return tt.proceed, nil
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/me":
+					fmt.Fprint(w, `{"name":"test-user","plan":"free"}`)
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"local-model"}]}`)
+				case "/api/show":
+					fmt.Fprint(w, `{"remote_model":"paid"}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("OLLAMA_HOST", srv.URL)
+			client, err := newLauncherClient(LaunchPolicy{Confirm: tt.mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.recommendationsLoaded = true
+			client.recommendationItems = []ModelItem{{Name: "paid:cloud", RequiredPlan: "pro"}}
+			model, _, err := client.resolveSingleIntegrationTarget(context.Background(), "claude", &Claude{}, tt.current, IntegrationLaunchRequest{ModelOverride: "paid:cloud"})
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+					t.Fatalf("error = %v, want %q", err, tt.wantError)
+				}
+			} else if err != nil || model != tt.wantModel {
+				t.Fatalf("model = %q, error = %v; want %q", model, err, tt.wantModel)
+			}
+			if prompts != tt.wantPrompts {
+				t.Fatalf("payment prompts = %d, want %d", prompts, tt.wantPrompts)
+			}
+		})
+	}
 }
