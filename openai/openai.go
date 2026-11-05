@@ -717,6 +717,8 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				messages[len(messages)-1].ToolCalls = toolCalls
 				messages[len(messages)-1].ToolName = toolName
 				messages[len(messages)-1].ToolCallID = msg.ToolCallID
+			}
+			if len(messages) > start && msg.Reasoning != "" {
 				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:

@@ -296,6 +296,29 @@ func TestFromChatRequest_AssistantEmptyArrayContentWithToolCalls(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_AssistantArrayContentKeepsReasoning(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"user","content":"hi"},
+		{"role":"assistant","reasoning":"greet back","content":[{"type":"text","text":"hello"}]}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+	assistant := result.Messages[1]
+	if assistant.Content != "hello" || assistant.Thinking != "greet back" {
+		t.Errorf("expected content %q and thinking %q, got content=%q thinking=%q", "hello", "greet back", assistant.Content, assistant.Thinking)
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{
