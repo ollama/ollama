@@ -474,38 +474,6 @@ static NSImage *ollamaApplicationIcon(void) {
     [menu setDelegate:self];
     [menu setAutoenablesItems:NO];
 
-    self.claudeMenuItem = [[NSMenuItem alloc] initWithTitle:@"Claude"
-                                                     action:nil
-                                              keyEquivalent:@""];
-    [self.claudeMenuItem setEnabled:YES];
-    self.claudeAppRow = [[IntegrationMenuRow alloc]
-        initWithTitle:@"Claude"
-           symbolName:@"sparkles"
-               target:self
-           openAction:@selector(openClaudeApp:)
-         toggleAction:@selector(toggleClaudeAppProxy:)];
-    [self.claudeMenuItem setView:self.claudeAppRow];
-    [menu addItem:self.claudeMenuItem];
-    [self refreshClaudeAppState];
-
-    self.codexMenuItem = [[NSMenuItem alloc] initWithTitle:@"ChatGPT"
-                                                    action:nil
-                                             keyEquivalent:@""];
-    [self.codexMenuItem setEnabled:YES];
-    self.codexAppRow = [[IntegrationMenuRow alloc]
-        initWithTitle:@"ChatGPT"
-           symbolName:@"bubble.left.and.bubble.right"
-               target:self
-           openAction:@selector(openChatGPTApp:)
-         toggleAction:@selector(toggleCodexApp:)];
-    [self.codexMenuItem setView:self.codexAppRow];
-    [menu addItem:self.codexMenuItem];
-    [self refreshCodexAppState];
-
-    self.claudeMenuSeparatorItem = [NSMenuItem separatorItem];
-    [menu addItem:self.claudeMenuSeparatorItem];
-    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
-
     NSMenuItem *appsMenuItem =
         [[NSMenuItem alloc] initWithTitle:@"Open Ollama"
                                    action:@selector(appsUI)

@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,7 +53,7 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 	oldCanOpenID := codexAppCanOpenID
 	oldExitTimeout := codexAppExitTimeout
 	codexAppIsRunning = isRunning
-	codexAppQuitApp = quit
+	codexAppQuitApp = func(context.Context) error { return quit() }
 	codexAppOpenApp = func([]string) error { return open() }
 	t.Cleanup(func() {
 		codexAppIsRunning = oldIsRunning
@@ -434,7 +435,7 @@ func TestCodexAppDesktopRequiresConsentBeforeStoppingLegacyProfile(t *testing.T)
 	codexAppCanOpenID = func() bool { return true }
 	codexAppProfileIsRunning = func() bool { return true }
 	stopCalls := 0
-	codexAppStopProfile = func() error { stopCalls++; return nil }
+	codexAppStopProfile = func(context.Context) error { stopCalls++; return nil }
 	t.Cleanup(func() {
 		codexAppCanOpenID = oldCanOpenID
 		codexAppProfileIsRunning = oldProfileRunning
@@ -1153,7 +1154,7 @@ func TestCodexAppLegacyProfileCleanupRejectsStalePID(t *testing.T) {
 		codexAppProcessCommand = oldCommand
 	})
 
-	err := defaultCodexAppStopOllamaProfile()
+	err := defaultCodexAppStopOllamaProfile(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "identity could not be verified") {
 		t.Fatalf("stale PID error = %v, want identity verification", err)
 	}
@@ -2676,8 +2677,8 @@ func TestCodexAppConfigureMigratesLegacyManagedConfigWithoutPollutingRestoreStat
 	if efforts, ok := codexAppConfigReasoningEfforts(restoredConfig); !ok || !slices.Equal(efforts, []string{"low", "high"}) {
 		t.Fatalf("restored desktop reasoning efforts = %v, %v; want [low high]", efforts, ok)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -2742,8 +2743,8 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, restored)
 		}
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
 		t.Fatalf("restore state should be removed, got err=%v", err)
@@ -2919,8 +2920,8 @@ func TestCodexAppRestoreMissingConfigRemovesRestoreState(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(configPath), "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("managed auth should be removed when config is missing, got err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -3015,17 +3016,13 @@ func TestCodexAppConfigureRefreshesRestoreStateAfterManualProfileSwitch(t *testi
 			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, restored)
 		}
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
 func TestCodexAppRestoreRejectsMalformedTomlWithoutWriting(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withCodexAppPlatform(t, "darwin")
-
-	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	_, configPath := codexAppRestoreFixture(t)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3134,8 +3131,8 @@ func TestCodexAppRestoreWithoutStateRemovesManagedRootModel(t *testing.T) {
 	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -3214,8 +3211,8 @@ func TestCodexAppRestoreDoesNotStompUserChangedRootConfig(t *testing.T) {
 	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -3498,7 +3495,6 @@ func TestCodexAppRunNeverForcesAStuckAppToQuit(t *testing.T) {
 
 func TestCodexAppDesktopRestartTimeoutPreservesProfile(t *testing.T) {
 	withCodexAppPlatform(t, "darwin")
-	codexAppExitTimeout = 0
 	changeCalls := 0
 	openCalls := 0
 	withCodexAppProcessHooks(t,
@@ -3506,11 +3502,12 @@ func TestCodexAppDesktopRestartTimeoutPreservesProfile(t *testing.T) {
 		func() error { return nil },
 		func() error { openCalls++; return nil },
 	)
+	codexAppExitTimeout = 0
 
-	err := codexAppApplyProfileFromDesktop(func() error {
+	err := codexAppApplyProfileChange(func() error {
 		changeCalls++
 		return nil
-	}, true, true)
+	}, true, true, nil, codexAppExitTimeout)
 	if err == nil || !strings.Contains(err.Error(), "did not quit") {
 		t.Fatalf("restart error = %v, want a manual-close error", err)
 	}

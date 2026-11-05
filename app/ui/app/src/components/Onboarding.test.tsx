@@ -1,8 +1,7 @@
 import { StrictMode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { QueryClient } from "@tanstack/react-query";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ClaudeConnectedIntro,
   FIRST_MODEL_COMMAND,
@@ -38,24 +37,6 @@ vi.mock("@headlessui/react", async (importOriginal) => {
       show: boolean;
       children: React.ReactNode;
     }) => (show ? <div>{children}</div> : null),
-  });
-});
-
-let queryClient: QueryClient;
-beforeEach(() => {
-  queryClient = new QueryClient();
-});
-afterEach(() => queryClient.clear());
-
-vi.mock("@tanstack/react-query", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
-  return Object.assign({}, actual, {
-    useQueryClient: () => queryClient,
-    useMutation: (options: Parameters<typeof actual.useMutation>[0]) =>
-      actual.useMutation(options, queryClient),
-    useMutationState: (
-      options: Parameters<typeof actual.useMutationState>[0],
-    ) => actual.useMutationState(options, queryClient),
   });
 });
 
@@ -878,7 +859,7 @@ describe("ConnectAppsScreen interactions", () => {
   });
 
   it.each(["darwin", "windows"])(
-    "copies every catalog command and limits desktop connections to macOS (%s)",
+    "copies catalog commands and both ChatGPT commands on macOS (%s)",
     async (platform) => {
       const copyCommand = vi
         .spyOn(clipboard, "copyTextToClipboard")
@@ -909,38 +890,89 @@ describe("ConnectAppsScreen interactions", () => {
                 },
               ]}
               initialClaudeStatus={DISCONNECTED_CLAUDE}
-              initialCodexStatus={{
-                supported: true,
-                installed: true,
-                connected: false,
-                running: false,
-              }}
             />,
           );
         });
-        const cards = renderer!.root.findAll(
+        const rows = renderer!.root.findAll(
           (node) =>
-            node.type === "button" && node.props.id?.startsWith("integration-"),
+            node.type === "div" &&
+            node.props.id?.startsWith("integration-") &&
+            node.findAllByType("code").length > 0,
         );
-        expect(new Set(cards.map((card) => card.props.id))).toEqual(
-          new Set(launchers.map((item) => `integration-${item.id}`)),
+        expect(new Set(rows.map((row) => row.props.id))).toEqual(
+          new Set([
+            ...launchers.map((item) => `integration-${item.id}`),
+            ...(platform === "darwin" ? ["integration-chatgpt"] : []),
+          ]),
         );
         expect(
-          renderer!.root.findAll(
-            (node) =>
-              node.type === "button" &&
-              typeof node.props["aria-pressed"] === "boolean",
-          ),
-        ).toHaveLength(platform === "darwin" ? 2 : 0);
+          renderer!.root.findAllByProps({ id: "integration-claude-desktop" }),
+        ).toHaveLength(platform === "darwin" ? 1 : 0);
         for (const item of launchers) {
           await act(async () => {
             await renderer!.root
               .findByProps({ id: `integration-${item.id}` })
+              .findByType("button")
               .props.onClick();
           });
           expect(copyCommand).toHaveBeenLastCalledWith(item.command);
         }
-        expect(copyCommand).toHaveBeenCalledTimes(launchers.length);
+        if (platform === "darwin") {
+          const chatgpt = renderer!.root.findByProps({
+            id: "integration-chatgpt",
+          });
+          expect(
+            chatgpt.findAllByType("code").map((node) => node.children.join("")),
+          ).toEqual(["ollama launch chatgpt"]);
+          const connect = chatgpt.findByProps({
+            "aria-label": "Show ChatGPT connect command",
+          });
+          const disconnect = chatgpt.findByProps({
+            "aria-label": "Show ChatGPT disconnect command",
+          });
+          const copy = chatgpt.findByProps({
+            "aria-label": "Copy ChatGPT connect command",
+          });
+          expect(connect.props["aria-pressed"]).toBe(true);
+          await act(async () => {
+            await copy.props.onClick();
+          });
+          expect(copyCommand).toHaveBeenLastCalledWith("ollama launch chatgpt");
+          expect(copy.props["aria-label"]).toBe(
+            "ChatGPT connect command copied",
+          );
+          await act(async () => {
+            disconnect.props.onClick();
+          });
+          expect(
+            chatgpt.findAllByType("code").map((node) => node.children.join("")),
+          ).toEqual(["ollama launch chatgpt --restore"]);
+          expect(connect.props["aria-pressed"]).toBe(false);
+          expect(disconnect.props["aria-pressed"]).toBe(true);
+          expect(copyCommand).toHaveBeenCalledTimes(launchers.length + 1);
+          expect(copy.props["aria-label"]).toBe(
+            "Copy ChatGPT disconnect command",
+          );
+          await act(async () => {
+            await copy.props.onClick();
+          });
+          expect(copyCommand).toHaveBeenLastCalledWith(
+            "ollama launch chatgpt --restore",
+          );
+          expect(copy.props["aria-label"]).toBe(
+            "ChatGPT disconnect command copied",
+          );
+          await act(async () => {
+            connect.props.onClick();
+          });
+          expect(
+            chatgpt.findAllByType("code").map((node) => node.children.join("")),
+          ).toEqual(["ollama launch chatgpt"]);
+          expect(copy.props["aria-label"]).toBe("Copy ChatGPT connect command");
+        }
+        expect(copyCommand).toHaveBeenCalledTimes(
+          launchers.length + (platform === "darwin" ? 2 : 0),
+        );
       } finally {
         if (renderer) act(() => renderer?.unmount());
         copyCommand.mockRestore();
@@ -948,6 +980,95 @@ describe("ConnectAppsScreen interactions", () => {
       }
     },
   );
+
+  it("does not report a pending ChatGPT copy after changing command modes", async () => {
+    let resolveCopy!: (copied: boolean) => void;
+    const pending = new Promise<boolean>((resolve) => {
+      resolveCopy = resolve;
+    });
+    const copyCommand = vi
+      .spyOn(clipboard, "copyTextToClipboard")
+      .mockReturnValueOnce(pending)
+      .mockResolvedValue(true);
+    stubAppsWindow();
+    let renderer: ReactTestRenderer | undefined;
+    let pendingCopy: Promise<void> | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen
+            initialIntegrations={appsIntegrations(true)}
+            initialClaudeStatus={DISCONNECTED_CLAUDE}
+          />,
+        );
+      });
+      const chatgpt = renderer!.root.findByProps({ id: "integration-chatgpt" });
+      const copy = chatgpt.findByProps({
+        "aria-label": "Copy ChatGPT connect command",
+      });
+      act(() => {
+        pendingCopy = copy.props.onClick();
+      });
+      const disabledWhileCopying = copy.props.disabled;
+      const pendingLabel = copy.props["aria-label"];
+      expect(copy.props["aria-busy"]).toBe(true);
+      expect(copy.props.title).toBe("Copying…");
+      const otherCopyButtons = renderer!.root.findAll(
+        (node) =>
+          node.type === "button" &&
+          node !== copy &&
+          node.props.title === "Copying…",
+      );
+      await act(async () => {
+        chatgpt
+          .findByProps({ "aria-label": "Show ChatGPT disconnect command" })
+          .props.onClick();
+      });
+      const disabledAfterSwitch = copy.props.disabled;
+      expect(copy.props["aria-busy"]).toBeUndefined();
+      expect(copy.props.title).toBe("Copy command");
+      expect(pendingLabel).toBe("Copying ChatGPT connect command");
+      expect(otherCopyButtons).toHaveLength(0);
+      if (!copy.props.disabled) {
+        await act(async () => {
+          await copy.props.onClick();
+        });
+      }
+      expect(copyCommand).toHaveBeenCalledExactlyOnceWith(
+        "ollama launch chatgpt",
+      );
+      await act(async () => {
+        resolveCopy(true);
+        await pendingCopy;
+      });
+      expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
+      expect(disabledWhileCopying).toBe(true);
+      expect(disabledAfterSwitch).toBe(true);
+      expect(copy.props.disabled).toBe(false);
+      expect(copy.props["aria-label"]).toBe("Copy ChatGPT disconnect command");
+      await act(async () => {
+        await copy.props.onClick();
+      });
+      expect(copyCommand).toHaveBeenLastCalledWith(
+        "ollama launch chatgpt --restore",
+      );
+      expect(copy.props["aria-label"]).toBe(
+        "ChatGPT disconnect command copied",
+      );
+      expect(
+        renderer!.root.findByProps({ role: "status" }).findAllByType("p")[0]
+          .children,
+      ).toEqual(["Command copied."]);
+    } finally {
+      await act(async () => {
+        resolveCopy(true);
+        await pendingCopy;
+      });
+      if (renderer) act(() => renderer?.unmount());
+      copyCommand.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
 
   it("renews the copy notification on each click and dismisses it after inactivity", async () => {
     vi.useFakeTimers();
@@ -967,7 +1088,9 @@ describe("ConnectAppsScreen interactions", () => {
         await settle();
       });
       const card = () =>
-        renderer!.root.findByProps({ id: "integration-codex" });
+        renderer!.root
+          .findByProps({ id: "integration-codex" })
+          .findByType("button");
       await act(async () => {
         await card().props.onClick();
       });
@@ -1018,7 +1141,9 @@ describe("ConnectAppsScreen interactions", () => {
           await settle();
         });
         const card = () =>
-          renderer!.root.findByProps({ id: "integration-codex" });
+          renderer!.root
+            .findByProps({ id: "integration-codex" })
+            .findByType("button");
         await act(async () => {
           await card().props.onClick();
         });
@@ -1078,7 +1203,9 @@ describe("ConnectAppsScreen interactions", () => {
           await settle();
         });
         const card = () =>
-          renderer!.root.findByProps({ id: "integration-codex" });
+          renderer!.root
+            .findByProps({ id: "integration-codex" })
+            .findByType("button");
         await act(async () => {
           await card().props.onClick();
         });
@@ -1169,6 +1296,7 @@ describe("ConnectAppsScreen interactions", () => {
         await act(async () => {
           await renderer!.root
             .findByProps({ id: "integration-codex" })
+            .findByType("button")
             .props.onClick();
         });
         expect(copyCommand).toHaveBeenCalledWith("ollama launch codex");

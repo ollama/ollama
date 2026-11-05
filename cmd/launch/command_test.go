@@ -297,7 +297,7 @@ func TestLaunchCmdChatGPT(t *testing.T) {
 		{name: "unavailable configure only", args: []string{"codex-app", "--model", "qwen3:8b", "--config"}},
 		{name: "healthy launch", args: []string{"chatgpt", "--model", "qwen3:8b"}, routerReady: true, wantOpen: 1},
 		{name: "healthy configure only", args: []string{"chatgpt", "--model", "qwen3:8b", "--config"}, routerReady: true},
-		{name: "restore without server", args: []string{"chatgpt", "--restore"}, wantOpen: 1},
+		{name: "restore without server", args: []string{"chatgpt", "--restore"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()

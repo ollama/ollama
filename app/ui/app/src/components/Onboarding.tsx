@@ -1,5 +1,4 @@
 import CopyButton from "@/components/CopyButton";
-import { CodexDesktopRow } from "@/components/CodexDesktopRow";
 import Logo from "@/components/Logo";
 import type { OnboardingStep } from "@/lib/onboarding";
 import { IntegrationConnectButton } from "@/components/IntegrationConnectButton";
@@ -25,14 +24,15 @@ import { isWindowsPlatform } from "@/lib/platform";
 import type {
   ClaudeDesktopActionResult,
   ClaudeDesktopStatus,
-  CodexDesktopStatus,
 } from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   ArrowsRightLeftIcon,
   CommandLineIcon,
   ShieldCheckIcon,
+  Square2StackIcon,
 } from "@heroicons/react/24/outline";
+import { CheckIcon } from "@heroicons/react/20/solid";
 import {
   useCallback,
   useEffect,
@@ -96,7 +96,6 @@ interface RunOllamaScreenProps {
 interface ConnectAppsScreenProps {
   initialIntegrations?: IntegrationStatuses;
   initialClaudeStatus?: ClaudeDesktopStatus;
-  initialCodexStatus?: CodexDesktopStatus;
 }
 
 function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
@@ -443,9 +442,11 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
 export function ConnectAppsScreen({
   initialIntegrations,
   initialClaudeStatus,
-  initialCodexStatus,
 }: ConnectAppsScreenProps) {
   const isWindows = isWindowsPlatform();
+  const [chatgptCommand, setChatgptCommand] = useState<
+    "Connect" | "Disconnect"
+  >("Connect");
   const [copyNotice, setCopyNotice] = useState<{
     sequence: number;
     id: string;
@@ -454,7 +455,11 @@ export function ConnectAppsScreen({
     copied: boolean;
     visible: boolean;
   } | null>(null);
-  const copyInFlight = useRef(false);
+  const [copyPending, setCopyPending] = useState<{
+    id: string;
+    command: string;
+  } | null>(null);
+  const copyInFlight = useRef<string | null>(null);
   const copySequence = useRef(0);
   const copyNoticeRef = useRef<HTMLDivElement>(null);
   const [initialClaudeStatusSettled, setInitialClaudeStatusSettled] = useState(
@@ -811,18 +816,21 @@ export function ConnectAppsScreen({
 
   const copyLaunchCommand = async (item: IntegrationStatus) => {
     if (!item.command || copyInFlight.current) return;
-    copyInFlight.current = true;
+    copyInFlight.current = item.id;
+    setCopyPending({ id: item.id, command: item.command });
+    const sequence = ++copySequence.current;
     let copied = false;
     try {
       copied = await copyTextToClipboard(item.command);
     } catch {
       // Keep the command available for manual copying when clipboard access fails.
     } finally {
-      copyInFlight.current = false;
+      copyInFlight.current = null;
+      if (screenMounted.current) setCopyPending(null);
     }
-    if (!screenMounted.current) return;
+    if (!screenMounted.current || sequence !== copySequence.current) return;
     setCopyNotice({
-      sequence: ++copySequence.current,
+      sequence,
       id: item.id,
       name: item.name,
       command: item.command,
@@ -963,14 +971,15 @@ export function ConnectAppsScreen({
   const claudeIntegration = isWindows
     ? undefined
     : integrationStatuses?.find((item) => item.id === "claude-desktop");
-  const codexIntegration = isWindows
+  const chatgptIntegration = isWindows
     ? undefined
-    : (integrationStatuses?.find((item) => item.id === "chatgpt") ?? {
+    : {
+        ...integrationStatuses?.find((item) => item.id === "chatgpt"),
         id: "chatgpt",
-        name: "ChatGPT (Desktop)",
-        description: "Use Ollama models in ChatGPT",
-        installed: false,
-      });
+        name: "ChatGPT",
+        description: "Use Ollama models in Codex mode in ChatGPT.",
+        command: "ollama launch chatgpt",
+      };
   const launchIntegrations =
     integrationStatuses?.filter(
       (item) =>
@@ -1012,49 +1021,113 @@ export function ConnectAppsScreen({
     claudeStatus?.error,
     claudeError,
   );
-  const launchIntegrationCard = (item: IntegrationStatus) => {
+  const launchIntegrationRow = (item: IntegrationStatus) => {
+    const command =
+      item.id === "chatgpt"
+        ? `ollama launch chatgpt${chatgptCommand === "Disconnect" ? " --restore" : ""}`
+        : (item.command ?? "");
     const copied =
-      copyNotice?.id === item.id && copyNotice.copied && copyNotice.visible;
+      copyNotice?.id === item.id &&
+      copyNotice.command === command &&
+      copyNotice.copied &&
+      copyNotice.visible;
+    const copying =
+      copyPending?.id === item.id && copyPending.command === command;
+    const actionName =
+      item.id === "chatgpt"
+        ? `${item.name} ${chatgptCommand.toLowerCase()}`
+        : item.name;
     return (
-      <button
+      <div
         key={item.id}
         id={`integration-${item.id}`}
-        type="button"
-        onClick={() => copyLaunchCommand(item)}
-        aria-label={
-          copied ? `${item.name} command copied` : `Copy ${item.name} command`
-        }
-        title={item.description}
-        className="relative isolate flex min-w-0 items-center gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-left transition-colors duration-700 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 motion-reduce:transition-none dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+        className="flex min-h-18 flex-wrap items-center justify-between gap-4 px-4 py-3"
       >
-        {copied && (
-          <span
-            key={copyNotice?.sequence}
-            aria-hidden="true"
-            className="apps-copy-card-feedback pointer-events-none absolute inset-0 -z-10 rounded-[inherit] bg-neutral-100 ring-1 ring-inset ring-neutral-300/70 dark:bg-neutral-700/60 dark:ring-neutral-500/50"
-          />
-        )}
-        <LaunchCommandIcon id={item.id} />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-950 dark:text-neutral-100">
-          {item.name}
-        </span>
-      </button>
+        <div className="flex min-w-56 flex-1 items-center gap-3">
+          <LaunchCommandIcon id={item.id} />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
+              {item.name}
+            </p>
+            <p className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400">
+              {item.description}
+            </p>
+          </div>
+        </div>
+        <div className="ml-auto flex max-w-full items-center gap-2">
+          {item.id === "chatgpt" && (
+            <div
+              role="group"
+              aria-label="ChatGPT command"
+              className="inline-flex shrink-0 rounded-lg bg-neutral-100 p-0.5 dark:bg-neutral-800"
+            >
+              {(["Connect", "Disconnect"] as const).map((action) => (
+                <button
+                  key={action}
+                  type="button"
+                  aria-label={`Show ChatGPT ${action.toLowerCase()} command`}
+                  aria-pressed={chatgptCommand === action}
+                  onClick={() => {
+                    if (chatgptCommand === action) return;
+                    setChatgptCommand(action);
+                    if (copyInFlight.current === "chatgpt") {
+                      ++copySequence.current;
+                    }
+                    setCopyNotice((current) =>
+                      current?.id === "chatgpt" ? null : current,
+                    );
+                  }}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 ${chatgptCommand === action ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100" : "text-neutral-500 hover:text-neutral-950 dark:text-neutral-400 dark:hover:text-neutral-100"}`}
+                >
+                  {action}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex min-w-0 max-w-full items-center overflow-hidden rounded-lg bg-neutral-100 pl-3 dark:bg-neutral-800">
+            <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
+              {command}
+            </code>
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100"
+              onClick={() => copyLaunchCommand({ ...item, command })}
+              disabled={Boolean(copyPending)}
+              aria-busy={copying || undefined}
+              aria-label={
+                copying
+                  ? `Copying ${actionName} command`
+                  : copied
+                    ? `${actionName} command copied`
+                    : `Copy ${actionName} command`
+              }
+              title={copying ? "Copying…" : copied ? "Copied" : "Copy command"}
+            >
+              {copied ? (
+                <CheckIcon className="h-4 w-4 text-green-600" />
+              ) : (
+                <Square2StackIcon className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
     );
   };
   const claudeRow = claudeIntegration ? (
     <div
       id={`integration-${claudeIntegration.id}`}
-      className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 transition-colors duration-700 motion-reduce:transition-none dark:border-neutral-700 dark:bg-neutral-800/50"
+      className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3 dark:bg-neutral-900"
     >
-      <div className="flex min-w-0 flex-1 items-center gap-4">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <LaunchCommandIcon id={claudeIntegration.id} />
         <div className="min-w-0">
-          <p className="text-base font-medium text-neutral-950 dark:text-neutral-100">
-            Claude Code
+          <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
+            {claudeIntegration.name}
           </p>
           <p
             role={claudeGuidance ? "alert" : undefined}
-            className="mt-1 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400"
+            className="text-xs leading-5 text-neutral-500 dark:text-neutral-400"
           >
             {claudeGuidance ??
               (claudeConnected
@@ -1071,7 +1144,7 @@ export function ConnectAppsScreen({
                           ? "Restoring Claude’s usual connection…"
                           : !claudeInstalled
                             ? "We’ll download Claude and connect it to Ollama."
-                            : "Use Ollama models in your Claude Code.")}
+                            : claudeIntegration.description)}
           </p>
         </div>
       </div>
@@ -1095,47 +1168,17 @@ export function ConnectAppsScreen({
 
   return (
     <main className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pb-6 pt-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-6">
         <section className="min-h-0 flex-1">
-          <div className="mx-auto w-full max-w-[620px] text-left">
+          <div className="mx-auto w-full max-w-4xl text-left">
             {integrationStatuses ? (
-              <div className="space-y-8 pb-4 pt-2">
-                {(claudeIntegration || codexIntegration) && (
-                  <section aria-labelledby="recommended-heading">
-                    <h2
-                      id="recommended-heading"
-                      className="text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
-                    >
-                      Recommended
-                    </h2>
-                    <div className="mt-2 space-y-2 bg-white dark:bg-neutral-900">
-                      {claudeRow}
-                      {codexIntegration && (
-                        <CodexDesktopRow
-                          integration={codexIntegration}
-                          initialStatus={initialCodexStatus}
-                        />
-                      )}
-                    </div>
-                  </section>
-                )}
-
-                {launchIntegrations.length > 0 && (
-                  <section aria-labelledby="terminal-heading">
-                    <h2
-                      id="terminal-heading"
-                      className="text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
-                    >
-                      {isWindows ? "Apps" : "Other apps"}
-                    </h2>
-                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {launchIntegrations.map(launchIntegrationCard)}
-                    </div>
-                  </section>
-                )}
+              <div className="space-y-2 bg-white pb-4 pt-2 dark:bg-neutral-900">
+                {claudeRow}
+                {chatgptIntegration && launchIntegrationRow(chatgptIntegration)}
+                {launchIntegrations.map(launchIntegrationRow)}
 
                 {!claudeIntegration &&
-                  !codexIntegration &&
+                  !chatgptIntegration &&
                   launchIntegrations.length === 0 && (
                     <p className="py-12 text-center text-sm text-neutral-400 dark:text-neutral-500">
                       No apps found.
@@ -1174,7 +1217,7 @@ export function ConnectAppsScreen({
             <div className="min-w-0 flex-1">
               <p className="font-semibold leading-5 text-neutral-900 dark:text-neutral-100">
                 {copyNotice.copied
-                  ? "Launch command copied."
+                  ? "Command copied."
                   : `Couldn’t copy the ${copyNotice.name} command`}
               </p>
               <p className="mt-0.5 leading-5 text-neutral-600 dark:text-neutral-200">
