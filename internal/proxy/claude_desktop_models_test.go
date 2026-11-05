@@ -524,3 +524,40 @@ func TestDefaultClaudeDesktopMappingsOnlyUseAvailableModels(t *testing.T) {
 		t.Fatalf("partial catalog defaults = %v, want %v", got, want)
 	}
 }
+
+func TestClaudeDesktopModelsAdvertiseDisplayNames(t *testing.T) {
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "kimi-k3:cloud", DisplayName: "Kimi K3", RequiredPlan: "pro"},
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+	})
+	if len(models) != 2 {
+		t.Fatalf("models = %+v", models)
+	}
+
+	// A recommendation display name is what Claude Desktop's picker shows,
+	// while the exact Ollama route stays available for routing and messages.
+	if models[0].gateway.DisplayName != "Kimi K3" {
+		t.Fatalf("gateway display name = %q, want Kimi K3", models[0].gateway.DisplayName)
+	}
+	if models[0].OllamaModel != "kimi-k3:cloud" || models[0].DisplayName != "kimi-k3:cloud" {
+		t.Fatalf("route = %+v, want kimi-k3:cloud", models[0])
+	}
+
+	// Without a display name the route is the label, so legacy contracts and
+	// local models keep their existing behavior.
+	if models[1].Label != "" || models[1].gateway.DisplayName != "glm-5.2:cloud" {
+		t.Fatalf("fallback label = %+v, want route name", models[1])
+	}
+
+	// Labels survive route remapping: a curated name never turns into a tag.
+	mapped := MapClaudeDesktopModels(models, map[string]string{"claude-opus-5": "kimi-k3:cloud"})
+	if len(mapped) != 1 || mapped[0].gateway.DisplayName != "Kimi K3" {
+		t.Fatalf("mapped = %+v, want Kimi K3 on claude-opus-5", mapped)
+	}
+
+	// Restoring the route name clears the override instead of pinning it.
+	mapped[0].setLabel("")
+	if mapped[0].gateway.DisplayName != "kimi-k3:cloud" {
+		t.Fatalf("cleared label = %q, want route name", mapped[0].gateway.DisplayName)
+	}
+}

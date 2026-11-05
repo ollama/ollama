@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,11 +89,13 @@ func resolveClaudeDesktopMappings(available []ClaudeDesktopModel, wanted map[str
 
 // ClaudeDesktopModel is one Ollama model adapted for Claude Desktop's model
 // catalog. Name is the canonical recommendation identifier shown to users;
-// OllamaModel is the explicit route sent to the local Ollama server.
+// OllamaModel is the explicit route sent to the local Ollama server. Label is
+// the human-readable name Claude Desktop's picker shows for the route.
 type ClaudeDesktopModel struct {
 	Name             string
 	Description      string
 	DisplayName      string
+	Label            string
 	RequiredPlan     string
 	OllamaModel      string
 	Cloud            bool
@@ -173,6 +176,7 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 			strings.TrimSpace(recommendation.RequiredPlan),
 			recommendation.MaxOutputTokens,
 		)
+		model.setLabel(recommendation.DisplayName)
 		model.Recommended = true
 		model.entitlementKnown = true
 		models = append(models, model)
@@ -184,18 +188,18 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 // deliberately small; the Ollama.com app-aware endpoint is the primary source.
 func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
-		{Model: "glm-5.2:cloud", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "kimi-k3:cloud", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
-		{Model: "deepseek-v4-pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "deepseek-v4-flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
-		{Model: "gemma4:31b-cloud", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
+		{Model: "glm-5.2:cloud", DisplayName: "GLM 5.2", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", DisplayName: "Kimi K3", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", DisplayName: "Gemma 4 31B", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
 	})
 	// Preserve the proven fallback route while the endpoint remains free to
 	// move the canonical DeepSeek alias independently.
 	models[3].OllamaModel = "deepseek-v4-flash:0731:cloud"
 	models[3].DisplayName = models[3].OllamaModel
-	models[3].gateway.DisplayName = models[3].OllamaModel
 	models[3].gateway.OllamaModel = models[3].OllamaModel
+	models[3].setLabel("DeepSeek V4 Flash")
 	return models
 }
 
@@ -457,13 +461,28 @@ func newClaudeDesktopModel(name, description, requiredPlan string, maxTokens int
 		entitlementKnown: !cloud || strings.TrimSpace(requiredPlan) != "",
 		gateway: gatewayModel{
 			Type:           "model",
-			DisplayName:    displayName,
 			MaxTokens:      maxTokens,
 			OllamaModel:    ollamaModel,
 			SupportsVision: name == "kimi-k3:cloud",
 		},
 	}
+	model.gateway.DisplayName = model.displayLabel()
 	return model
+}
+
+// setLabel sets the human-readable name Claude Desktop's picker shows for this
+// route. An empty label clears the override so the route name is used again.
+func (m *ClaudeDesktopModel) setLabel(label string) {
+	m.Label = strings.TrimSpace(label)
+	m.gateway.DisplayName = m.displayLabel()
+}
+
+// displayLabel returns the name Claude Desktop should show for this model.
+func (m ClaudeDesktopModel) displayLabel() string {
+	if label := strings.TrimSpace(m.Label); label != "" {
+		return label
+	}
+	return m.DisplayName
 }
 
 func (m *ClaudeDesktopModel) assignClaudeDesktopSlot(slot claudeDesktopModelSlot) {
@@ -471,4 +490,69 @@ func (m *ClaudeDesktopModel) assignClaudeDesktopSlot(slot claudeDesktopModelSlot
 	m.gateway.CreatedAt = slot.createdAt
 	m.gateway.AnthropicFamilyTier = slot.family
 	m.gateway.IsFamilyDefault = slot.familyDefault
+}
+
+// ClaudeDesktopCatalogModel is one model row a Claude Desktop gateway
+// advertises through /v1/models.
+type ClaudeDesktopCatalogModel struct {
+	ID                  string
+	DisplayName         string
+	AnthropicFamilyTier string
+	IsFamilyDefault     bool
+}
+
+// FetchClaudeDesktopCatalog reads the model rows the gateway at baseURL
+// advertises. Claude Desktop names known route IDs itself, so the profile has
+// to pin these rows with their display names for the picker to show them.
+func FetchClaudeDesktopCatalog(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]ClaudeDesktopCatalogModel, error) {
+	endpoint := strings.TrimRight(baseURL, "/") + "/v1/models?limit=1000"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create Claude gateway catalog request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if client == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		defer transport.CloseIdleConnections()
+		client = &http.Client{Transport: transport}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connect to Claude gateway: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("read Claude gateway catalog: status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Data []gatewayModel `json:"data"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, maxClaudeDesktopRecommendationsBody))
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode Claude gateway catalog: %w", err)
+	}
+
+	models := make([]ClaudeDesktopCatalogModel, 0, len(payload.Data))
+	seen := make(map[string]struct{}, len(payload.Data))
+	for _, row := range payload.Data {
+		id := strings.TrimSpace(row.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		models = append(models, ClaudeDesktopCatalogModel{
+			ID:                  id,
+			DisplayName:         strings.TrimSpace(row.DisplayName),
+			AnthropicFamilyTier: strings.TrimSpace(row.AnthropicFamilyTier),
+			IsFamilyDefault:     row.IsFamilyDefault,
+		})
+	}
+	return models, nil
 }

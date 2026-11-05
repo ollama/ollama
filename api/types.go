@@ -909,7 +909,10 @@ type ModelRecommendationMappings map[string]ModelRecommendationMapping
 
 // ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].
 type ModelRecommendation struct {
-	Model           string                       `json:"model"`
+	Model string `json:"model"`
+	// DisplayName is the human-readable name clients show in place of the raw
+	// model identifier. Clients fall back to Model when it is empty.
+	DisplayName     string                       `json:"display_name,omitempty"`
 	Description     string                       `json:"description"`
 	ContextLength   int                          `json:"context_length,omitempty"`
 	MaxOutputTokens int                          `json:"max_output_tokens,omitempty"`
