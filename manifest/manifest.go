@@ -1493,7 +1493,7 @@ func (m *unverifiedManifestFile) verifiedData() ([]byte, string, error) {
 // openManifestFileLocked checks the named path before opening its contents.
 // Only the verification methods expose the contents to callers.
 func openManifestFileLocked(path, root string) (*unverifiedManifestFile, error) {
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	resolvedRoot, err := resolveLinks(root)
 	if err != nil {
 		return nil, err
 	}
@@ -1647,7 +1647,7 @@ func evalAbs(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.EvalSymlinks(abs)
+	return resolveLinks(abs)
 }
 
 func sameFile(a, b string) bool {
