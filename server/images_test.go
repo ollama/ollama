@@ -518,6 +518,51 @@ func TestPushLayersForManifestListIncludesChildManifests(t *testing.T) {
 	}
 }
 
+func TestCopyModelPrunesOverwrittenDestination(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	config, err := manifest.NewLayer(strings.NewReader("shared config"), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeModel := func(name, layerData string) manifest.Layer {
+		t.Helper()
+		layer, err := manifest.NewLayer(strings.NewReader(layerData), "application/vnd.ollama.image.model")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifest(model.ParseName(name), config, []manifest.Layer{layer}); err != nil {
+			t.Fatal(err)
+		}
+		return layer
+	}
+
+	srcLayer := writeModel("copy-src", "source layer")
+	oldDstLayer := writeModel("copy-dst", "destination layer")
+
+	if _, err := CopyModel(model.ParseName("copy-src"), model.ParseName("copy-dst")); err != nil {
+		t.Fatal(err)
+	}
+
+	blobExists := func(digest string) bool {
+		t.Helper()
+		path, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = os.Stat(path)
+		return err == nil
+	}
+	if blobExists(oldDstLayer.Digest) {
+		t.Fatalf("layer %s used only by the overwritten model was not removed", oldDstLayer.Digest)
+	}
+	for _, digest := range []string{srcLayer.Digest, config.Digest} {
+		if !blobExists(digest) {
+			t.Fatalf("blob %s still in use was removed", digest)
+		}
+	}
+}
+
 func TestCopyModelNarrowsManifestListToLocalChildren(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
