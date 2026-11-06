@@ -2332,6 +2332,127 @@ func TestParseGemma4ClosedToolCall_FencedValues(t *testing.T) {
 	}
 }
 
+func TestRepairGemma4MismatchedFences(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "opened_by_a_yaml_fence_closed_by_the_delimiter",
+			input:    "{content:---EditorID: A\nDuration: 60<|\"|>,path:<|\"|>A.yaml<|\"|>}",
+			expected: "{content:<|\"|>EditorID: A\nDuration: 60<|\"|>,path:<|\"|>A.yaml<|\"|>}",
+		},
+		{
+			name:     "opened_by_a_fence_line",
+			input:    "{content:---\nA: 1<|\"|>}",
+			expected: "{content:<|\"|>A: 1<|\"|>}",
+		},
+		{
+			name:     "opened_by_a_code_fence_with_its_language",
+			input:    "{content:```yaml\nA: 1\n<|\"|>,path:<|\"|>x<|\"|>}",
+			expected: "{content:<|\"|>A: 1\n<|\"|>,path:<|\"|>x<|\"|>}",
+		},
+		{
+			name:     "opened_by_the_delimiter_closed_by_a_code_fence",
+			input:    "{content:<|\"|>EditorID: A\nCount: 10\n```,path:<|\"|>C:\\A.yaml<|\"|>}",
+			expected: "{content:<|\"|>EditorID: A\nCount: 10<|\"|>,path:<|\"|>C:\\A.yaml<|\"|>}",
+		},
+		{
+			name:     "closed_by_a_yaml_fence_before_the_close",
+			input:    "{a:1,content:<|\"|>B: 2\n---}",
+			expected: "{a:1,content:<|\"|>B: 2<|\"|>}",
+		},
+		{
+			name:     "the_last_fence_before_the_next_delimiter",
+			input:    "{content:<|\"|>A: ```x```\n```\n,path:<|\"|>x<|\"|>}",
+			expected: "{content:<|\"|>A: ```x```<|\"|>\n,path:<|\"|>x<|\"|>}",
+		},
+		{
+			name:     "keeps_an_even_count_of_delimiters",
+			input:    "{content:<|\"|>---A<|\"|>,path:<|\"|>x\n```<|\"|>}",
+			expected: "{content:<|\"|>---A<|\"|>,path:<|\"|>x\n```<|\"|>}",
+		},
+		{
+			name:     "keeps_a_delimiter_followed_by_more_text",
+			input:    "{content:---A<|\"|> and more,path:<|\"|>x}",
+			expected: "{content:---A<|\"|> and more,path:<|\"|>x}",
+		},
+		{
+			name:     "keeps_a_fence_followed_by_more_text",
+			input:    "{content:<|\"|>A\n``` more,path:x}",
+			expected: "{content:<|\"|>A\n``` more,path:x}",
+		},
+		{
+			name:     "keeps_a_value_that_is_no_key_s",
+			input:    "[---A<|\"|>,1]",
+			expected: "[---A<|\"|>,1]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4MismatchedFences(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4MismatchedFences(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ClosedToolCall_MismatchedFences(t *testing.T) {
+	writeTool := []api.Tool{gemma4TestStringTool("write", "content", "path")}
+	// The two calls Ollama dropped on 2026-11-06, a record file's text in each.
+	effect := "EditorID: FeatherStepEffect\nName:\n  TargetLanguage: English\n  Value: Feather Step\nFlags:\n- Recover\nArchetype:\n  MutagenObjectType: MagicEffectPeakValueModArchetype\n  ActorValue: CarryWeight\nDescription:\n  TargetLanguage: English\n  Value: Carry weight is increased by <mag> points for <dur> seconds.\nMagnitude: 100\nDuration: 60"
+	chest := "EditorID: HuntersChest\nName:\n  TargetLanguage: English\n  Value: Hunter's Chest\nModel:\n  File: Clutter\\Upperclass\\UpperChest01.nif\nItems:\n- Item:\n    Item: Gold001\n    Count: 500"
+	tests := []struct {
+		name    string
+		content string
+		tools   []api.Tool
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "opened_by_a_yaml_fence",
+			content: "call:write{content:---" + effect + "<|\"|>,path:<|\"|>FeatherStep/plugin/MagicEffects/FeatherStepEffect.yaml<|\"|>}",
+			tools:   writeTool,
+			want:    map[string]any{"content": effect, "path": "FeatherStep/plugin/MagicEffects/FeatherStepEffect.yaml"},
+		},
+		{
+			name:    "closed_by_a_code_fence",
+			content: "call:write{content:<|\"|>" + chest + "\n```,path:<|\"|>C:\\Mods\\HuntersChest.yaml<|\"|>}",
+			tools:   writeTool,
+			want:    map[string]any{"content": chest, "path": "C:\\Mods\\HuntersChest.yaml"},
+		},
+		{
+			name:    "with_no_tools",
+			content: "call:write{content:---A: 1<|\"|>,path:<|\"|>x<|\"|>}",
+			want:    map[string]any{"content": "A: 1", "path": "x"},
+		},
+		{
+			name:    "a_fence_and_no_delimiter_to_close_it",
+			content: "call:write{content:---A: 1,path:x",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tt.tools)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: "write", Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4Parser_FencedValueInFinishedToolCall(t *testing.T) {
 	parser := &Gemma4Parser{hasThinkingSupport: true}
 	parser.Init([]api.Tool{gemma4TestStringTool("write", "content", "path")}, nil, &api.ThinkValue{Value: true})

@@ -462,12 +462,20 @@ func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, 
 	// The string delimiter is repaired first. The bracket repair skips strings,
 	// so one left unterminated would hide every bracket after it.
 	closed := content[:braceIdx] + repairGemma4UnclosedBrackets(repairGemma4MissingStringDelimiter(content[braceIdx:]))
-	if closed == content {
-		return toolCall, err
+	if closed != content {
+		if repaired, repairErr := parseGemma4ToolCall(closed, tools); repairErr == nil {
+			return repaired, nil
+		}
 	}
 
-	if repaired, repairErr := parseGemma4ToolCall(closed, tools); repairErr == nil {
-		return repaired, nil
+	// A value with a fence at one end and the delimiter at the other, its fence
+	// written as the delimiter: tried last, once every repair above has failed,
+	// so a call they read is read as before; the arguments are then read as any
+	// call's are, with the value repairs.
+	if mismatched := repairGemma4MismatchedFences(content[braceIdx:]); mismatched != content[braceIdx:] {
+		if repaired, repairErr := parseGemma4ToolCall(content[:braceIdx]+mismatched, tools); repairErr == nil {
+			return repaired, nil
+		}
 	}
 
 	return toolCall, err
@@ -1104,6 +1112,125 @@ func gemma4FencedValue(s string, i int) (string, int, bool) {
 		line += newline + 1
 	}
 	return "", 0, false
+}
+
+// gemma4MismatchedFences are what a model wrote at one end of a value's text
+// where the string delimiter goes, the other end having the delimiter: a YAML
+// document's `---`, and a code block's ``` fence.
+var gemma4MismatchedFences = []string{gemma4Fence, "```"}
+
+// repairGemma4MismatchedFences writes the string delimiter for a fence the model
+// wrote at one end of a value whose other end has the delimiter, as in
+// call:write{content:---EditorID: Name\n...<|"|>,path:<|"|>Name.yaml<|"|>} and
+// call:write{content:<|"|>EditorID: Name\n...\n```,path:<|"|>Name.yaml<|"|>}.
+// Only an odd count of delimiters is repaired, and only a value after an
+// object's key and its colon, whose end a `}`, or a `,` and an object's key and
+// its colon, follows after any whitespace: a value opened by a fence runs to
+// the first delimiter, a fence's line end and a ``` fence's language left out
+// of its text; a value opened by the delimiter runs to the last fence before
+// the next delimiter, the line end before that fence left out. One value is
+// repaired, the first one found: the count is even after it. Where no value is
+// so, nothing is repaired.
+func repairGemma4MismatchedFences(s string) string {
+	if strings.Count(s, gemma4StringDelimiter)%2 == 0 {
+		return s
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' && s[i] != ',' {
+			continue
+		}
+		v := gemma4ValueAfterKey(s, i+1)
+		if v == -1 {
+			continue
+		}
+		if repaired, ok := gemma4FenceOpenedValue(s, v); ok {
+			return repaired
+		}
+		if repaired, ok := gemma4FenceClosedValue(s, v); ok {
+			return repaired
+		}
+	}
+	return s
+}
+
+// gemma4ValueEnds reports whether a `}`, or a `,` and an object's key and its
+// colon, follows s[i] after any whitespace: where a value of an object ends.
+func gemma4ValueEnds(s string, i int) bool {
+	next := gemma4SkipSpace(s, i)
+	return next < len(s) && (s[next] == '}' || s[next] == ',' && gemma4KeyFollows(s, next+1))
+}
+
+// gemma4FenceOpenedValue writes the delimiter for the fence a value at s[v]
+// opens with, where the first delimiter after it closes the value.
+func gemma4FenceOpenedValue(s string, v int) (string, bool) {
+	for _, fence := range gemma4MismatchedFences {
+		if !strings.HasPrefix(s[v:], fence) {
+			continue
+		}
+		start := v + len(fence)
+		if fence == "```" {
+			for start < len(s) && (s[start] >= 'a' && s[start] <= 'z' || s[start] >= 'A' && s[start] <= 'Z') {
+				start++
+			}
+		}
+		for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+			start++
+		}
+		if strings.HasPrefix(s[start:], "\r\n") {
+			start += 2
+		} else if strings.HasPrefix(s[start:], "\n") {
+			start++
+		}
+		end := strings.Index(s[start:], gemma4StringDelimiter)
+		if end == -1 {
+			return "", false
+		}
+		end += start
+		if !gemma4ValueEnds(s, end+len(gemma4StringDelimiter)) {
+			return "", false
+		}
+		return s[:v] + gemma4StringDelimiter + s[start:], true
+	}
+	return "", false
+}
+
+// gemma4FenceClosedValue writes the delimiter for the fence a value opened by
+// the delimiter at s[v] closes with: the last fence before the next delimiter
+// whose end the value's end follows.
+func gemma4FenceClosedValue(s string, v int) (string, bool) {
+	if !strings.HasPrefix(s[v:], gemma4StringDelimiter) {
+		return "", false
+	}
+	start := v + len(gemma4StringDelimiter)
+	limit := len(s)
+	if next := strings.Index(s[start:], gemma4StringDelimiter); next != -1 {
+		limit = start + next
+	}
+	best, bestFence := -1, ""
+	for _, fence := range gemma4MismatchedFences {
+		for k := limit; k > start; {
+			at := strings.LastIndex(s[start:k], fence)
+			if at == -1 {
+				break
+			}
+			at += start
+			if gemma4ValueEnds(s, at+len(fence)) {
+				if at > best {
+					best, bestFence = at, fence
+				}
+				break
+			}
+			k = at
+		}
+	}
+	if best == -1 {
+		return "", false
+	}
+	text := s[start:best]
+	if strings.HasSuffix(text, "\n") {
+		text = strings.TrimSuffix(strings.TrimSuffix(text, "\n"), "\r")
+	}
+	return s[:start] + text + gemma4StringDelimiter + s[best+len(bestFence):], true
 }
 
 // repairGemma4Values writes the delimiters around each value that value reads
