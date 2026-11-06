@@ -64,17 +64,17 @@ func (m LaunchModel) WithCloudLimits() LaunchModel {
 }
 
 func (m LaunchModel) WithServerMetadata() LaunchModel {
-	if (!m.Remote && !isCloudModelName(m.Name)) || (m.ContextLength > 0 && len(m.Capabilities) > 0) {
+	if !m.Remote && !isCloudModelName(m.Name) {
 		return m
 	}
 	meta, ok := lookupServerModelMetadata(m.Name)
 	if !ok {
 		return m
 	}
-	if m.ContextLength <= 0 {
+	if meta.ContextLength > 0 {
 		m.ContextLength = meta.ContextLength
 	}
-	if len(m.Capabilities) == 0 {
+	if len(meta.Capabilities) != 0 {
 		m.Capabilities = slices.Clone(meta.Capabilities)
 		m.ToolCapable = slices.Contains(m.Capabilities, modelpkg.CapabilityTools)
 	}
