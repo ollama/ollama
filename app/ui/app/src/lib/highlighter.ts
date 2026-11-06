@@ -1,5 +1,5 @@
 import { createHighlighter } from "shiki";
-import type { ThemeRegistration } from "shiki";
+import type { Highlighter, ThemeRegistration } from "shiki";
 
 const oneLightTheme: ThemeRegistration = {
   name: "one-light",
@@ -125,33 +125,35 @@ const oneDarkTheme: ThemeRegistration = {
   ],
 };
 
-export let highlighter: Awaited<ReturnType<typeof createHighlighter>> | null =
-  null;
+let highlighterPromise: Promise<Highlighter> | null = null;
 
-export const highlighterPromise = createHighlighter({
-  themes: [oneLightTheme, oneDarkTheme],
-  langs: [
-    "javascript",
-    "typescript",
-    "python",
-    "bash",
-    "shell",
-    "json",
-    "html",
-    "css",
-    "tsx",
-    "jsx",
-    "go",
-    "rust",
-    "java",
-    "c",
-    "cpp",
-    "sql",
-    "swift",
-    "yaml",
-    "markdown",
-  ],
-}).then((h) => {
-  highlighter = h;
-  return h;
-});
+export function loadHighlighter(): Promise<Highlighter> {
+  highlighterPromise ??= createHighlighter({
+    themes: [oneLightTheme, oneDarkTheme],
+    langs: [
+      "javascript",
+      "typescript",
+      "python",
+      "bash",
+      "shell",
+      "json",
+      "html",
+      "css",
+      "tsx",
+      "jsx",
+      "go",
+      "rust",
+      "java",
+      "c",
+      "cpp",
+      "sql",
+      "swift",
+      "yaml",
+      "markdown",
+    ],
+  }).catch((error) => {
+    highlighterPromise = null;
+    throw error;
+  });
+  return highlighterPromise;
+}
