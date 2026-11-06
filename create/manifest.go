@@ -146,20 +146,11 @@ func safetensorsDraftMetadata(draftDir string) (*model.Draft, error) {
 		return nil, fmt.Errorf("failed to read draft config %s: %w", configPath, err)
 	}
 
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
+	var cfg sourceModelConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse draft config %s: %w", configPath, err)
 	}
-	arch := ""
-	if len(cfg.Architectures) > 0 {
-		arch = cfg.Architectures[0]
-	}
-	if arch == "" {
-		arch = cfg.ModelType
-	}
+	arch := cfg.declaredArchitecture()
 	if arch == "" {
 		return nil, fmt.Errorf("draft architecture not found in %s", configPath)
 	}
