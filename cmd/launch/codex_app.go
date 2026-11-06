@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -72,7 +71,7 @@ var (
 	codexAppProfileIsRunning   = defaultCodexAppOllamaProfileIsRunning
 	codexAppProcessCommand     = defaultCodexAppProcessCommand
 
-	codexAppExitTimeout = 5 * time.Second
+	codexAppExitTimeout = 30 * time.Second
 )
 
 // CodexApp adds Ollama models to ChatGPT's native catalog using a loopback router.
@@ -735,15 +734,15 @@ func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []Launch
 	if (codexAppIsRunning() || codexAppProfileIsRunning()) && !restartConfirmed {
 		return ErrCodexAppRestartConfirmationRequired
 	}
-	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
+	if err := stopLegacyCodexAppOllamaProfile(nil, codexAppExitTimeout); err != nil {
 		return err
 	}
-	return codexAppApplyProfileFromDesktop(func() error {
+	return codexAppApplyProfileChange(func() error {
 		if err := resetCodexAppRegularProfileRequestCount(); err != nil {
 			return err
 		}
 		return c.ConfigureWithModels(primary, models)
-	}, openWhenStopped, restartConfirmed)
+	}, openWhenStopped, restartConfirmed, nil, codexAppExitTimeout)
 }
 
 func defaultCodexAppRouterHealth() error {
@@ -783,16 +782,34 @@ func defaultCodexAppRouterHealth() error {
 // RestoreFromDesktop removes the additive Ollama catalog and restores the
 // prior base URL and model settings. A stopped ChatGPT app remains stopped.
 func (c *CodexApp) RestoreFromDesktop(restartConfirmed bool) error {
+	return c.restore(restartConfirmed, nil, codexAppExitTimeout)
+}
+
+func (c *CodexApp) restore(restartConfirmed bool, cancel <-chan struct{}, exitTimeout time.Duration) error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
-	if (codexAppIsRunning() || codexAppProfileIsRunning()) && !restartConfirmed {
+	select {
+	case <-cancel:
+		return ErrCancelled
+	default:
+	}
+	legacyRunning := codexAppGOOS == "darwin" && codexAppProfileIsRunning()
+	if (codexAppIsRunning() || legacyRunning) && !restartConfirmed {
 		return ErrCodexAppRestartConfirmationRequired
 	}
-	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
+	if err := stopLegacyCodexAppOllamaProfile(cancel, exitTimeout); err != nil {
 		return err
 	}
-	return codexAppApplyProfileFromDesktop(restoreCodexAppProfile, false, restartConfirmed)
+	if legacyRunning && !codexAppIsRunning() {
+		select {
+		case <-cancel:
+			return ErrCancelled
+		default:
+		}
+		return codexAppChangeAndReopen(restoreCodexAppProfile, func() error { return codexAppOpenApp(nil) })
+	}
+	return codexAppApplyProfileChange(restoreCodexAppProfile, false, restartConfirmed, cancel, exitTimeout)
 }
 
 // RestartFromDesktop repairs and restarts the saved profile without requiring live inventory.
@@ -806,31 +823,43 @@ func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 	if !c.OllamaConfigured() {
 		return errors.New("ChatGPT is not configured to use Ollama")
 	}
-	return codexAppApplyProfileFromDesktop(repairCodexAppCatalogAuthVisibility, true, restartConfirmed)
+	return codexAppApplyProfileChange(repairCodexAppCatalogAuthVisibility, true, restartConfirmed, nil, codexAppExitTimeout)
 }
 
 func (c *CodexApp) OllamaRequestCount() uint64 {
 	return codexAppRegularProfileRequestCount()
 }
 
-func stopLegacyCodexAppOllamaProfile() error {
+func stopLegacyCodexAppOllamaProfile(cancel <-chan struct{}, exitTimeout time.Duration) error {
 	if codexAppGOOS != "darwin" || !codexAppProfileIsRunning() {
 		return nil
 	}
-	if err := codexAppStopProfile(); err != nil {
+	ctx, stop := codexAppExitContext(exitTimeout, cancel)
+	defer stop()
+	if err := codexAppStopProfile(ctx); err != nil {
+		if contextErr := codexAppExitContextError(ctx); contextErr != nil {
+			return contextErr
+		}
 		return fmt.Errorf("close the previous ChatGPT · Ollama profile: %w", err)
 	}
 	return nil
 }
 
 func (c *CodexApp) Restore() error {
-	if err := codexAppSupported(); err != nil {
+	err := c.RestoreFromDesktop(false)
+	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
 		return err
 	}
-	if err := restoreCodexAppProfile(); err != nil {
+	restart, err := ConfirmPrompt("Restart ChatGPT to use your usual profile?")
+	if err != nil {
 		return err
 	}
-	return codexAppLaunchOrRestart("Restart ChatGPT to use your usual profile?", nil)
+	if !restart {
+		return ErrCancelled
+	}
+	sp := StartSpinner(codexAppRestartMessage)
+	defer sp.Stop()
+	return c.restore(true, sp.Cancelled(), codexAppCLIExitTimeout())
 }
 
 func restoreCodexAppProfile() error {
@@ -1800,29 +1829,13 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	sp := StartSpinner(codexAppRestartMessage)
 	defer sp.Stop()
 	cancelled := sp.Cancelled()
-	isCancelled := func() bool {
-		if cancelled == nil {
-			return false
-		}
-		select {
-		case <-cancelled:
-			return true
-		default:
-			return false
-		}
-	}
-
-	if err := codexAppQuitApp(); err != nil {
-		return fmt.Errorf("quit ChatGPT: %w", err)
-	}
-	if isCancelled() {
-		return ErrCancelled
-	}
-	if err := waitForCodexAppGracefulExit(codexAppExitTimeout, cancelled); err != nil {
+	if err := codexAppStopForRestart(cancelled, codexAppCLIExitTimeout()); err != nil {
 		return err
 	}
-	if isCancelled() {
+	select {
+	case <-cancelled:
 		return ErrCancelled
+	default:
 	}
 	if sp != nil {
 		sp.Stop()
@@ -1830,7 +1843,12 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	return codexAppOpenAfterRestart(restartAppID, restartAppPath, launchArgs)
 }
 
-func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped, restartConfirmed bool) error {
+func codexAppApplyProfileChange(change func() error, openWhenStopped, restartConfirmed bool, cancel <-chan struct{}, exitTimeout time.Duration) error {
+	select {
+	case <-cancel:
+		return ErrCancelled
+	default:
+	}
 	if !codexAppIsRunning() {
 		if err := change(); err != nil {
 			return err
@@ -1845,17 +1863,29 @@ func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped, resta
 	}
 
 	restartAppID, restartAppPath := codexAppRestartTarget()
-	if err := codexAppStopForRestart(nil); err != nil {
+	if err := codexAppStopForRestart(cancel, exitTimeout); err != nil {
 		return err
 	}
+	select {
+	case <-cancel:
+		return ErrCancelled
+	default:
+	}
+	return codexAppChangeAndReopen(change, func() error {
+		return codexAppOpenAfterRestart(restartAppID, restartAppPath, nil)
+	})
+}
+
+// Finish reopening after an attempted change, including profile errors or late cancellation.
+func codexAppChangeAndReopen(change, reopen func() error) error {
 	if err := change(); err != nil {
 		changeErr := fmt.Errorf("change ChatGPT profile: %w", err)
-		if openErr := codexAppOpenAfterRestart(restartAppID, restartAppPath, nil); openErr != nil {
+		if openErr := reopen(); openErr != nil {
 			return errors.Join(changeErr, fmt.Errorf("reopen ChatGPT after profile failure: %w", openErr))
 		}
 		return changeErr
 	}
-	return codexAppOpenAfterRestart(restartAppID, restartAppPath, nil)
+	return reopen()
 }
 
 func codexAppRestartTarget() (appID, appPath string) {
@@ -1868,11 +1898,62 @@ func codexAppRestartTarget() (appID, appPath string) {
 	return appID, appPath
 }
 
-func codexAppStopForRestart(cancel <-chan struct{}) error {
-	if err := codexAppQuitApp(); err != nil {
+func codexAppStopForRestart(cancel <-chan struct{}, exitTimeout time.Duration) error {
+	ctx, stop := codexAppExitContext(exitTimeout, cancel)
+	defer stop()
+	if err := codexAppQuitApp(ctx); err != nil {
+		if contextErr := codexAppExitContextError(ctx); contextErr != nil {
+			return contextErr
+		}
 		return fmt.Errorf("quit ChatGPT: %w", err)
 	}
-	return waitForCodexAppGracefulExit(codexAppExitTimeout, cancel)
+	return waitForCodexAppCondition(ctx, func() bool { return !codexAppIsRunning() })
+}
+
+// One context covers both the quit request and waiting for the app to exit.
+func codexAppExitContext(timeout time.Duration, cancelled <-chan struct{}) (context.Context, context.CancelFunc) {
+	var ctx context.Context
+	var stop context.CancelFunc
+	if timeout < 0 {
+		ctx, stop = context.WithCancel(context.Background())
+	} else {
+		ctx, stop = context.WithTimeout(context.Background(), timeout)
+	}
+	if cancelled != nil {
+		select {
+		case <-cancelled:
+			stop()
+		default:
+			go func() {
+				select {
+				case <-cancelled:
+					stop()
+				case <-ctx.Done():
+				}
+			}()
+		}
+	}
+	return ctx, stop
+}
+
+func codexAppExitContextError(ctx context.Context) error {
+	switch ctx.Err() {
+	case context.Canceled:
+		return ErrCancelled
+	case context.DeadlineExceeded:
+		return errors.New("ChatGPT did not quit. Confirm its quit prompt or quit it manually, then try again")
+	default:
+		return nil
+	}
+}
+
+// Interactive CLI users may need time to confirm ChatGPT's own quit prompt.
+// Headless commands and desktop operations keep a bounded exit wait.
+func codexAppCLIExitTimeout() time.Duration {
+	if isInteractiveSession() {
+		return -1
+	}
+	return codexAppExitTimeout
 }
 
 func codexAppOpenAfterRestart(appID, appPath string, launchArgs []string) error {
@@ -1885,41 +1966,21 @@ func codexAppOpenAfterRestart(appID, appPath string, launchArgs []string) error 
 	return codexAppOpenApp(launchArgs)
 }
 
-func waitForCodexAppGracefulExit(timeout time.Duration, cancel <-chan struct{}) error {
-	return waitForCodexAppCondition(timeout, cancel, func() bool {
-		return !codexAppIsRunning()
-	})
-}
-
 // codexAppRestartMessage is the label shown next to the animated spinner while
 // the ChatGPT desktop app is quitting before being reopened.
-const codexAppRestartMessage = "Restarting ChatGPT..."
+const codexAppRestartMessage = "Waiting for ChatGPT to quit. Confirm its prompt; Ctrl+C cancels."
 
-// waitForCodexAppCondition polls done at a 200ms cadence until it reports the
-// app has exited or timeout elapses. It watches cancel (closed by the spinner
-// when the user hits Ctrl+C) and returns ErrCancelled if the flow is aborted.
-// The spinner itself is owned by the caller so a single spinner spans the
-// whole restart sequence. Timing out never escalates to a forced termination;
-// the profile remains unchanged and the user can retry after closing ChatGPT.
-func waitForCodexAppCondition(timeout time.Duration, cancel <-chan struct{}, done func() bool) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cancel != nil {
-			select {
-			case <-cancel:
-				return ErrCancelled
-			default:
-			}
+// Wait until graceful exit, cancellation or the quit deadline. Never force quit.
+func waitForCodexAppCondition(ctx context.Context, done func() bool) error {
+	for {
+		if err := codexAppExitContextError(ctx); err != nil {
+			return err
 		}
 		if done() {
 			return nil
 		}
 		codexAppSleep(200 * time.Millisecond)
 	}
-	if done() {
-		return nil
-	}
-	return fmt.Errorf("ChatGPT did not quit. Close it manually, then try again")
 }
 
 func defaultCodexAppOllamaProfileApplication() (string, error) {
@@ -2082,7 +2143,7 @@ func removeCodexAppOllamaProfilePID() error {
 	return nil
 }
 
-func defaultCodexAppStopOllamaProfile() error {
+func defaultCodexAppStopOllamaProfile(ctx context.Context) error {
 	pid, ok := codexAppOllamaProfilePID()
 	if !ok {
 		return removeCodexAppOllamaProfilePID()
@@ -2095,21 +2156,19 @@ func defaultCodexAppStopOllamaProfile() error {
 		_ = removeCodexAppOllamaProfilePID()
 		return fmt.Errorf("ChatGPT · Ollama process identity could not be verified")
 	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
+	// Address only the verified legacy instance, allowing its normal quit prompt.
+	script := fmt.Sprintf(`use framework "AppKit"
+set targetApp to current application's NSRunningApplication's runningApplicationWithProcessIdentifier:%d
+if targetApp is not missing value then
+    if not (targetApp's terminate()) then error "Could not request ChatGPT quit"
+end if`, pid)
+	if err := exec.CommandContext(ctx, "osascript", "-e", script).Run(); err != nil {
+		return fmt.Errorf("request ChatGPT · Ollama quit: %w", err)
+	}
+	if err := waitForCodexAppCondition(ctx, func() bool { return !codexAppOllamaProfileProcessMatches(pid) }); err != nil {
 		return err
 	}
-	if err := process.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("stop ChatGPT · Ollama: %w", err)
-	}
-	deadline := time.Now().Add(codexAppExitTimeout)
-	for time.Now().Before(deadline) {
-		if !codexAppOllamaProfileProcessMatches(pid) {
-			return removeCodexAppOllamaProfilePID()
-		}
-		codexAppSleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("ChatGPT · Ollama did not close; quit that window and try again")
+	return removeCodexAppOllamaProfilePID()
 }
 
 func defaultCodexAppOpenApp(args []string) error {
@@ -2175,18 +2234,18 @@ func defaultCodexAppOpenStartAppID(appID string) error {
 	return exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process "+quotePowerShellString(`shell:AppsFolder\`+appID)).Run()
 }
 
-func defaultCodexAppQuitApp() error {
+func defaultCodexAppQuitApp(ctx context.Context) error {
 	if codexAppGOOS == "windows" {
 		script := `Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
-		return exec.Command("powershell.exe", "-NoProfile", "-Command", script).Run()
+		return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Run()
 	}
 
-	scriptErr := exec.Command("osascript", "-e", `tell application "ChatGPT" to quit`).Run()
-	if scriptErr != nil {
-		scriptErr = exec.Command("osascript", "-e", `tell application id "`+codexAppBundleID+`" to quit`).Run()
+	scriptErr := exec.CommandContext(ctx, "osascript", "-e", `tell application "ChatGPT" to quit`).Run()
+	if scriptErr != nil && ctx.Err() == nil {
+		scriptErr = exec.CommandContext(ctx, "osascript", "-e", `tell application id "`+codexAppBundleID+`" to quit`).Run()
 	}
-	if scriptErr != nil {
-		scriptErr = exec.Command("osascript", "-e", `tell application "Codex" to quit`).Run()
+	if scriptErr != nil && ctx.Err() == nil {
+		scriptErr = exec.CommandContext(ctx, "osascript", "-e", `tell application "Codex" to quit`).Run()
 	}
 	return scriptErr
 }
