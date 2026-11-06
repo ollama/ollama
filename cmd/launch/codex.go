@@ -71,6 +71,8 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 		return fmt.Errorf("failed to configure codex: %w", err)
 	}
 
+	warnCodexThinking(codexCatalogModel(model, models), codexArgs)
+
 	cmd := exec.Command("codex", codexArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
