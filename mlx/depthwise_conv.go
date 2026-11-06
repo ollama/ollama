@@ -134,8 +134,11 @@ func DepthwiseConvSiLU(x, w, bias *Array, outLen int) *Array {
 	if bias != nil && (bias.NumDims() != 1 || bias.Dim(0) != Cdim) {
 		panic(fmt.Sprintf("mlx.DepthwiseConvSiLU: bias %v does not match %d channels", bias.Dims(), Cdim))
 	}
-	if x.DType() != w.DType() || (x.DType() != DTypeBFloat16 && x.DType() != DTypeFloat32) ||
-		(bias != nil && bias.DType() != x.DType()) {
+	// The kernel is generic over the input dtype; float16 runs only where it
+	// is validated, on Metal.
+	in := x.DType()
+	supported := in == DTypeBFloat16 || in == DTypeFloat32 || (in == DTypeFloat16 && MetalIsAvailable())
+	if !supported || w.DType() != in || (bias != nil && bias.DType() != in) {
 		return depthwiseConvSiLUGraph(x, w, bias)
 	}
 
