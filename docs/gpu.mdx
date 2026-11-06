@@ -62,8 +62,8 @@ Ollama supports the following AMD GPUs via the ROCm library:
 
 ### Linux Support
 
-Ollama requires the AMD ROCm v7 driver on Linux. You can install or upgrade
-using the `amdgpu-install` utility from
+Ollama bundles ROCm 10 libraries and requires a compatible AMD GPU driver on
+Linux. You can install or upgrade using the `amdgpu-install` utility from
 [AMD's ROCm documentation](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
 
 | Family         | Cards and accelerators                                                                                                                                         |
@@ -76,24 +76,25 @@ using the `amdgpu-install` utility from
 
 ### Windows Support
 
-Ollama requires an AMD ROCm v7 / HIP7-capable driver stack on Windows.
+Ollama bundles ROCm 10 libraries and requires a HIP 7-capable AMD driver stack
+on Windows.
 
 | Family         | Cards and accelerators                                                                                               |
 | -------------- | -------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600`  |
+| AMD Radeon RX  | `9070 XT` `9070 GRE` `9070` `9060 XT` `9060 XT LP` `9060` `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600`  |
+| AMD Radeon AI PRO | `R9700` `R9600D` |
 | AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500`                                |
+| AMD Ryzen AI   | `Ryzen AI Max+ 395` `Ryzen AI Max 390` `Ryzen AI Max 385` `Ryzen AI 9 HX 475` `Ryzen AI 9 HX 470` `Ryzen AI 9 465` `Ryzen AI 9 HX 375` `Ryzen AI 9 HX 370` `Ryzen AI 9 365` |
 
 ### Overrides on Linux
 
 Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In
 some cases you can force the system to try to use a similar LLVM target that is
-close. For example The Radeon RX 5400 is `gfx1034` (also known as 10.3.4)
-however, ROCm does not currently support this target. The closest support is
-`gfx1030`. You can use the environment variable `HSA_OVERRIDE_GFX_VERSION` with
-`x.y.z` syntax. So for example, to force the system to run on the RX 5400, you
+close. You can use the environment variable `HSA_OVERRIDE_GFX_VERSION` with
+`x.y.z` syntax. For example, to force ROCm to try the `gfx1030` target, you
 would set `HSA_OVERRIDE_GFX_VERSION="10.3.0"` as an environment variable for the
 server. If you have an unsupported AMD GPU you can experiment using the list of
-supported types below.
+supported types below, but unsupported hardware may fail to run.
 
 If you have multiple GPUs with different GFX versions, append the numeric device
 number to the environment variable to set them individually. For example,
@@ -107,12 +108,24 @@ This table shows some example GPUs that map to these LLVM targets:
 | gfx90a | Radeon Instinct MI210/MI250 |
 | gfx942 | Radeon Instinct MI300X/MI300A |
 | gfx950 | Radeon Instinct MI350X |
+| gfx1010 | Radeon RX 5700 XT |
+| gfx1011 | Radeon PRO V520 |
+| gfx1012 | Radeon RX 5500 XT |
 | gfx1030 | Radeon PRO V620 |
+| gfx1031 | Radeon RX 6700 XT |
+| gfx1032 | Radeon RX 6600 XT |
+| gfx1033 | Van Gogh iGPU |
+| gfx1034 | Radeon RX 6500 XT |
+| gfx1035 | Radeon 680M |
+| gfx1036 | Raphael iGPU |
 | gfx1100 | Radeon PRO W7900 |
 | gfx1101 | Radeon PRO W7700 |
 | gfx1102 | Radeon RX 7600 |
+| gfx1103 | Radeon 780M |
 | gfx1150 | Ryzen AI 9 HX 375 |
 | gfx1151 | Ryzen AI Max+ 395 |
+| gfx1152 | Ryzen AI 5 435 |
+| gfx1153 | Radeon 820M |
 | gfx1200 | Radeon RX 9070 |
 | gfx1201 | Radeon RX 9070 XT |
 
