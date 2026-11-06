@@ -191,8 +191,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 			switch multiline {
 			case MultilineSystem:
-				opts.System = sb.String()
-				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
+				opts.setSystem(sb.String())
 				fmt.Println("Set system message.")
 				sb.Reset()
 			}
@@ -404,15 +403,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						continue
 					}
 
-					opts.System = sb.String() // for display in modelfile
-					newMessage := api.Message{Role: "system", Content: sb.String()}
-					// Check if the slice is not empty and the last message is from 'system'
-					if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
-						// Replace the last message
-						opts.Messages[len(opts.Messages)-1] = newMessage
-					} else {
-						opts.Messages = append(opts.Messages, newMessage)
-					}
+					opts.setSystem(sb.String())
 					fmt.Println("Set system message.")
 					sb.Reset()
 					continue
@@ -778,4 +769,16 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	return buf, nil
+}
+
+// setSystem sets the system message, replacing the last message if it is
+// already a system message.
+func (opts *runOptions) setSystem(system string) {
+	opts.System = system // for display in modelfile
+	newMessage := api.Message{Role: "system", Content: system}
+	if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
+		opts.Messages[len(opts.Messages)-1] = newMessage
+	} else {
+		opts.Messages = append(opts.Messages, newMessage)
+	}
 }

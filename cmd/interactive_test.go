@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/ollama/ollama/api"
 )
 
 func TestExtractFilenames(t *testing.T) {
@@ -146,4 +148,21 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
+}
+
+func TestRunOptionsSetSystem(t *testing.T) {
+	var opts runOptions
+	opts.setSystem("You are a pirate.")
+	opts.setSystem("You are a lawyer.")
+	assert.Equal(t, []api.Message{{Role: "system", Content: "You are a lawyer."}}, opts.Messages)
+	assert.Equal(t, "You are a lawyer.", opts.System)
+
+	// A system message set after the conversation started is appended.
+	opts.Messages = append(opts.Messages, api.Message{Role: "user", Content: "hi"})
+	opts.setSystem("You are a poet.")
+	assert.Equal(t, []api.Message{
+		{Role: "system", Content: "You are a lawyer."},
+		{Role: "user", Content: "hi"},
+		{Role: "system", Content: "You are a poet."},
+	}, opts.Messages)
 }
