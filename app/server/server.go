@@ -52,10 +52,14 @@ func New(s *store.Store, devMode bool) *Server {
 }
 
 func resolvePath(name string) string {
+	windows := runtime.GOOS == "windows"
+	if windows && !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		name += ".exe"
+	}
 	// look in the app bundle first
 	if exe, _ := os.Executable(); exe != "" {
 		var dir string
-		if runtime.GOOS == "windows" {
+		if windows {
 			dir = filepath.Dir(exe)
 		} else {
 			dir = filepath.Join(filepath.Dir(exe), "..", "Resources")

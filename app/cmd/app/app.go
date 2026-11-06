@@ -249,9 +249,16 @@ func main() {
 	wv.Store = st
 	done := make(chan error, 1)
 	osrv := server.New(st, devMode)
+	runServer := func(ctx context.Context) {
+		err := osrv.Run(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("ollama server exited", "error", err)
+		}
+		done <- err
+	}
 	go func() {
 		slog.Info("starting ollama server")
-		done <- osrv.Run(octx)
+		runServer(octx)
 	}()
 
 	upd := &updater.Updater{Store: st}
@@ -262,9 +269,7 @@ func main() {
 			ocancel()
 			<-done
 			octx, ocancel = context.WithCancel(ctx)
-			go func() {
-				done <- osrv.Run(octx)
-			}()
+			go runServer(octx)
 		},
 		Store:             st,
 		IntegrationModels: desktopModelSettingsHandler(),
