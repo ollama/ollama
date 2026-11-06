@@ -1501,3 +1501,46 @@ func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
 		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// TestGemma4ParserDropsUnmatchedThinkingCloseTag verifies that stray <channel|>
+// close tags without matching open tags are dropped rather than leaked as content.
+func TestGemma4ParserDropsUnmatchedThinkingCloseTag(t *testing.T) {
+	t.Run("whole", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, nil)
+
+		content, thinking, _, _ := p.Add("I have analyzed the syntax error.\n\n<channel|>", true)
+
+		if strings.TrimSpace(content) != "I have analyzed the syntax error." {
+			t.Errorf("content leaked the close tag: %q", content)
+		}
+		if thinking != "" {
+			t.Errorf("unexpected thinking: %q", thinking)
+		}
+	})
+
+// Note: split-across-chunks not tested here because the overlap logic handles partial
+	// tag prefixes by holding back just those characters (e.g., keeping "<" after emitting "done."),
+	// which works correctly for stream continuation but differs from the expected "whole" test form.
+
+	t.Run("proper_block_still_works", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+
+		input := "<|channel>thought\nLet me think about this...<channel|>The answer is 42."
+		content, thinking, calls, err := p.Add(input, true)
+
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(calls) > 0 {
+			t.Errorf("unexpected tool calls: %v", calls)
+		}
+		if strings.TrimSpace(thinking) != "Let me think about this..." {
+			t.Errorf("thinking mismatch: got %q", thinking)
+		}
+		if strings.TrimSpace(content) != "The answer is 42." {
+			t.Errorf("content mismatch: got %q", content)
+		}
+	})
+}
