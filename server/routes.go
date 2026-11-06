@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -52,6 +53,7 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/ollama/ollama/video"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -511,6 +513,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
+	}
+	if hasVideo(req.Images) {
+		if err := checkVideo(m, req.Model); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	requestedThink := req.Think
@@ -3016,6 +3024,25 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 	streamResponse(c, ch)
 }
 
+// checkVideo rejects video for models without the capability and on
+// platforms with no decoder yet.
+//
+// TODO: Windows and Linux once their video decoders return.
+func checkVideo(m *Model, name string) error {
+	if !slices.Contains(m.Capabilities(), model.CapabilityVideo) {
+		return fmt.Errorf("%q does not support video input", name)
+	}
+	if runtime.GOOS != "darwin" {
+		return fmt.Errorf("video input is not supported on %s yet", runtime.GOOS)
+	}
+	return nil
+}
+
+// hasVideo reports whether any attachment is a video container.
+func hasVideo(images []api.ImageData) bool {
+	return slices.ContainsFunc(images, func(data api.ImageData) bool { return video.IsVideo(data) })
+}
+
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -3203,6 +3230,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	caps := []model.Capability{model.CapabilityCompletion}
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
+	}
+	for _, msg := range req.Messages {
+		if hasVideo(msg.Images) {
+			if err := checkVideo(m, req.Model); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
 	}
 
 	requestedThink := req.Think

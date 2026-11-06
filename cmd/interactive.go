@@ -21,6 +21,7 @@ import (
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/video"
 )
 
 type MultilineState int
@@ -650,7 +651,7 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav|mp4|m4v|mov)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -673,6 +674,8 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		switch ext {
 		case ".wav":
 			fmt.Fprintf(os.Stderr, "Added audio '%s'\n", nfp)
+		case ".mp4", ".m4v", ".mov":
+			fmt.Fprintf(os.Stderr, "Added video '%s'\n", nfp)
 		default:
 			fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
 		}
@@ -752,7 +755,8 @@ func getImageData(filePath string) ([]byte, error) {
 
 	contentType := http.DetectContentType(buf)
 	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp", "audio/wave"}
-	if !slices.Contains(allowedTypes, contentType) {
+	isVideo := video.IsVideo(buf)
+	if !isVideo && !slices.Contains(allowedTypes, contentType) {
 		return nil, fmt.Errorf("invalid file type: %s", contentType)
 	}
 
@@ -762,8 +766,13 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	var maxSize int64 = 100 * 1024 * 1024 // 100MB
+	limit := "100MB"
+	if isVideo {
+		// Clips run far larger than images.
+		maxSize, limit = 500*1024*1024, "500MB"
+	}
 	if info.Size() > maxSize {
-		return nil, errors.New("file size exceeds maximum limit (100MB)")
+		return nil, fmt.Errorf("file size exceeds maximum limit (%s)", limit)
 	}
 
 	buf = make([]byte, info.Size())

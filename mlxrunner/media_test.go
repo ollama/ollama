@@ -1,6 +1,8 @@
 package mlxrunner
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -65,10 +67,15 @@ func TestExtendChunk(t *testing.T) {
 type encodeCountingModel struct {
 	stubMediaModel
 	calls *int
+	// nilData counts encodes that got no pixels; nil means none are expected.
+	nilData *int
 }
 
 func (m encodeCountingModel) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	*m.calls++
+	if data == nil && m.nilData != nil {
+		*m.nilData++
+	}
 	return mlx.Zeros(mlx.DTypeFloat32, item.Range[1]-item.Range[0], 4)
 }
 
@@ -95,13 +102,14 @@ func TestBatchMediaLifecycle(t *testing.T) {
 			t.Fatalf("manifest = %+v", m.manifest[0])
 		}
 
-		if items := m.batchMedia(0, 2); items[0].Features != nil || calls != 0 {
+		ctx := context.Background()
+		if items, _ := m.batchMedia(ctx, 0, 2); items[0].Features != nil || calls != 0 {
 			t.Fatal("non-overlapping chunk encoded features")
 		}
-		if items := m.batchMedia(0, 4); items[0].Features == nil || calls != 1 {
+		if items, _ := m.batchMedia(ctx, 0, 4); items[0].Features == nil || calls != 1 {
 			t.Fatalf("overlap did not encode once (calls=%d)", calls)
 		}
-		if items := m.batchMedia(4, 2); items[0].Features == nil || calls != 1 {
+		if items, _ := m.batchMedia(ctx, 4, 2); items[0].Features == nil || calls != 1 {
 			t.Fatalf("second overlap re-encoded (calls=%d)", calls)
 		}
 
@@ -117,6 +125,58 @@ func TestBatchMediaLifecycle(t *testing.T) {
 
 		if r.openMedia(Request{Tokens: make([]int32, 8)}) != nil {
 			t.Fatal("openMedia returned non-nil for a text-only request")
+		}
+	})
+}
+
+// TestBatchMediaLazyPixels checks that a Pixels producer runs only when its
+// item is first encoded, and that its error stops the chunk.
+func TestBatchMediaLazyPixels(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		calls, produced := 0, 0
+		lazy := &model.PreparedItem{
+			Range: [2]int{2, 6},
+			Dims:  []int{2},
+			Pixels: func(context.Context) ([]float32, error) {
+				produced++
+				return []float32{1, 2}, nil
+			},
+		}
+		broken := &model.PreparedItem{
+			Range:  [2]int{6, 8},
+			Dims:   []int{2},
+			Pixels: func(context.Context) ([]float32, error) { return nil, errors.New("decode failed") },
+		}
+		// A producer with nothing to upload: the item encodes from shared
+		// model state.
+		shared := &model.PreparedItem{
+			Range:  [2]int{8, 9},
+			Dims:   []int{0, 1},
+			Pixels: func(context.Context) ([]float32, error) { return nil, nil },
+		}
+		nilData := 0
+		r := &Runner{Model: encodeCountingModel{calls: &calls, nilData: &nilData}}
+		m := r.openMedia(Request{
+			Tokens:     make([]int32, 10),
+			MediaItems: []mediaItem{{pos: 2, length: 4, item: lazy}, {pos: 6, length: 2, item: broken}, {pos: 8, length: 1, item: shared}},
+		})
+		defer m.close()
+
+		ctx := context.Background()
+		if _, err := m.batchMedia(ctx, 0, 2); err != nil || produced != 0 {
+			t.Fatalf("pixels produced before the item was reached (produced=%d, err=%v)", produced, err)
+		}
+		if items, err := m.batchMedia(ctx, 0, 5); err != nil || items[0].Features == nil || produced != 1 || calls != 1 {
+			t.Fatalf("first overlap: produced=%d calls=%d err=%v", produced, calls, err)
+		}
+		if _, err := m.batchMedia(ctx, 5, 1); err != nil || produced != 1 {
+			t.Fatalf("pixels produced again (produced=%d, err=%v)", produced, err)
+		}
+		if _, err := m.batchMedia(ctx, 5, 3); err == nil || err.Error() != "decode failed" {
+			t.Fatalf("producer error = %v, want decode failed", err)
+		}
+		if items, err := m.batchMedia(ctx, 8, 1); err != nil || items[2].Features == nil || nilData != 1 {
+			t.Fatalf("shared item: features=%v nilData=%d err=%v", items != nil && items[2].Features != nil, nilData, err)
 		}
 	})
 }

@@ -222,17 +222,25 @@ func (r *Runner) scoreForward(ctx context.Context, tokens []int32, offset int, c
 			return err
 		}
 		n := media.extendChunk(offset, min(prefillChunkSize(), len(tokens)))
+		var mediaErr error
 		mlx.Scoped(func() {
 			mlx.Scoped(func() {
+				var chunkMedia []batch.MediaItem
+				if chunkMedia, mediaErr = media.batchMedia(ctx, offset, n); mediaErr != nil {
+					return
+				}
 				hidden, _ := r.Model.Forward(&batch.Batch{
 					InputIDs:     mlx.FromValues(tokens[:n], 1, n),
 					SeqOffsets:   []int32{int32(offset)},
 					SeqQueryLens: []int32{int32(n)},
-					Media:        media.batchMedia(offset, n),
+					Media:        chunkMedia,
 					Layout:       media.rowLayout(),
 				}, caches[:len(caches)-1])
 				r.scoreHidden.Append(hidden)
 			})
+			if mediaErr != nil {
+				return
+			}
 			var state []*mlx.Array
 			for _, c := range caches {
 				if c != nil {
@@ -241,6 +249,9 @@ func (r *Runner) scoreForward(ctx context.Context, tokens []int32, offset int, c
 			}
 			mlx.Eval(state...)
 		})
+		if mediaErr != nil {
+			return mediaErr
+		}
 		tokens = tokens[n:]
 		offset += n
 		media.free(offset)
