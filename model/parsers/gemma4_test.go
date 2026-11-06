@@ -1252,6 +1252,19 @@ func TestGemma4RepairCandidates(t *testing.T) {
 				`{ref:<|"|>01A2B3:Base.esm<|"|>,mode:<|"|>Fast<|"|>}`,
 			},
 		},
+		{
+			name:     "fenced_value_candidate_comes_last",
+			input:    "{content:---\nA: 'x'\n---\n,mode:Fast,}",
+			toolName: "set",
+			expected: []string{
+				"{content:---\nA: <|\"|>x<|\"|>\n---\n,mode:Fast,}",
+				"{content:---\nA: <|\"|>x<|\"|>\n---\n,mode:<|\"|>Fast<|\"|>,}",
+				"{content:---\nA: <|\"|>x<|\"|>\n---\n,mode:Fast}",
+				"{content:---\nA: <|\"|>x<|\"|>\n---\n,mode:<|\"|>Fast<|\"|>}",
+				"{content:<|\"|>A: 'x'<|\"|>\n,mode:<|\"|>Fast<|\"|>,}",
+				"{content:<|\"|>A: 'x'<|\"|>\n,mode:<|\"|>Fast<|\"|>}",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2173,6 +2186,164 @@ func TestGemma4Parser_ColonTokenValueInFinishedToolCall(t *testing.T) {
 		t.Fatalf("expected no content, got %q", content)
 	}
 	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4ColonTokenEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRepairGemma4FencedValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "value_before_the_next_key",
+			input:    "{content:---\nEditorID: A\nName: 'B'\n---\n,path:<|\"|>A.yaml<|\"|>}",
+			expected: "{content:<|\"|>EditorID: A\nName: 'B'<|\"|>\n,path:<|\"|>A.yaml<|\"|>}",
+		},
+		{
+			name:     "value_before_the_close",
+			input:    "{content:---\nA: 1\n---}",
+			expected: "{content:<|\"|>A: 1<|\"|>}",
+		},
+		{
+			name:     "line_ends_of_a_return_and_a_newline_and_spaces_after_the_fences",
+			input:    "{content:--- \r\nA: {b: c}, d\r\n---  \r\n,path:x}",
+			expected: "{content:<|\"|>A: {b: c}, d<|\"|>  \r\n,path:x}",
+		},
+		{
+			name:     "a_fence_line_inside_the_text",
+			input:    "{content:---\nA: 1\n---\nB: 2\n---\n,path:x}",
+			expected: "{content:<|\"|>A: 1\n---\nB: 2<|\"|>\n,path:x}",
+		},
+		{
+			name:     "no_text",
+			input:    "{content:---\n---\n,path:x}",
+			expected: "{content:<|\"|><|\"|>\n,path:x}",
+		},
+		{
+			name:     "keeps_values_that_are_not_fenced",
+			input:    "{a:---,b:1}",
+			expected: "{a:---,b:1}",
+		},
+		{
+			name:     "keeps_text_with_no_closing_fence",
+			input:    "{a:---\nb\n----\n,c:1}",
+			expected: "{a:---\nb\n----\n,c:1}",
+		},
+		{
+			name:     "keeps_a_fence_followed_by_more_text",
+			input:    "{a:---\nb\n--- c\n}",
+			expected: "{a:---\nb\n--- c\n}",
+		},
+		{
+			name:     "keeps_a_fence_followed_by_no_key",
+			input:    "{a:---\nb\n---\n,c}",
+			expected: "{a:---\nb\n---\n,c}",
+		},
+		{
+			name:     "keeps_fences_in_strings",
+			input:    "{a:<|\"|>---\nb\n---<|\"|>}",
+			expected: "{a:<|\"|>---\nb\n---<|\"|>}",
+		},
+		{
+			name:     "keeps_text_holding_a_delimiter",
+			input:    "{a:---\nb <|\"|>c<|\"|>\n---\n,d:1}",
+			expected: "{a:---\nb <|\"|>c<|\"|>\n---\n,d:1}",
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    "{a:---\nb\n---\n,c:<|\"|>d}",
+			expected: "{a:---\nb\n---\n,c:<|\"|>d}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4FencedValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4FencedValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4FencedWriteText is a record file's text, with quotes, colons, braces and
+// list items among its lines.
+const gemma4FencedWriteText = "EditorID: SteadyAim\nName:\n  TargetLanguage: English\n  Value: Steady Aim\nDescription:\n  TargetLanguage: English\n  Value: 'Bows deal 30% more damage while you sneak.'\nLevel: {MutagenObjectType: PcLevelMult, LevelMult: 1}\nEffects:\n- MutagenObjectType: PerkEntryPointModifyValue\n  EntryPoint: ModAttackDamage\n  Modification: Multiply\n  Value: 1.3"
+
+// gemma4FencedWriteCall writes a file whose text is fenced by two `---` lines
+// for its delimiters.
+const gemma4FencedWriteCall = "call:write{content:---\n" + gemma4FencedWriteText + "\n---\n,path:<|\"|>Perks/SteadyAim.yaml<|\"|>}"
+
+var gemma4FencedWriteArgs = map[string]any{
+	"content": gemma4FencedWriteText,
+	"path":    "Perks/SteadyAim.yaml",
+}
+
+func TestParseGemma4ClosedToolCall_FencedValues(t *testing.T) {
+	writeTool := []api.Tool{gemma4TestStringTool("write", "content", "path")}
+	tests := []struct {
+		name    string
+		content string
+		tools   []api.Tool
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "a_file_text_with_no_tools",
+			content: gemma4FencedWriteCall,
+			want:    gemma4FencedWriteArgs,
+		},
+		{
+			name:    "a_file_text_with_the_tool",
+			content: gemma4FencedWriteCall,
+			tools:   writeTool,
+			want:    gemma4FencedWriteArgs,
+		},
+		{
+			name:    "beside_a_bare_word_and_a_trailing_comma",
+			content: "call:set{text:---\nA: 'b'\n---\n,mode:Fast,}",
+			want:    map[string]any{"text": "A: 'b'", "mode": "Fast"},
+		},
+		{
+			name:    "a_fence_never_closed",
+			content: "call:write{content:---\nA: 1\n,path:<|\"|>x<|\"|>}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tt.tools)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_FencedValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init([]api.Tool{gemma4TestStringTool("write", "content", "path")}, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4FencedWriteCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "write", Arguments: testArgs(gemma4FencedWriteArgs)}}}
 	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
 		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}

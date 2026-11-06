@@ -816,6 +816,17 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 			addCandidate(trimmed, false)
 		}
 	}
+	// A value fenced by two `---` lines holds text of its own, quotes and colons
+	// among it: read from the arguments as written, so no repair above changes
+	// its text, after every candidate above, with the other value repairs beside
+	// it, and once more with its trailing commas dropped.
+	if fenced := repairGemma4FencedValues(argsStr); fenced != argsStr {
+		candidate := repairGemma4BareWordValues(repairGemma4HexNumberValues(repairGemma4EscapedQuoteValues(repairGemma4SingleQuotedValues(fenced))))
+		addCandidate(candidate, false)
+		if trimmed := repairGemma4TrailingCommas(candidate); trimmed != candidate {
+			addCandidate(trimmed, false)
+		}
+	}
 
 	return candidates
 }
@@ -1034,6 +1045,65 @@ func gemma4ColonTokenValue(s string, i int) (string, int, bool) {
 		return "", 0, false
 	}
 	return s[i:end], end, true
+}
+
+// gemma4Fence is the line a value is fenced by where the model wrote a YAML
+// document's start and end for a string's delimiters.
+const gemma4Fence = "---"
+
+// repairGemma4FencedValues reads a value the model wrote between two `---`
+// lines for its delimiters as a string, the text between the two lines, as in
+// call:write{content:---\nEditorID: Name\n---\n,path:<|"|>Name.yaml<|"|>}.
+// Only an even count of delimiters is repaired, and only a value that is all of
+// the lines between the two fences, after an object's key and its colon: the
+// opening `---` and any spaces or tabs end their line, the closing `---` starts
+// one, a `}`, or a `,` and an object's key and its colon, follows it after any
+// whitespace, and the text holds no delimiter. The
+// delimiters are written for the two fences and the line ends beside them.
+// Strings are copied as they are. Where the strings or brackets are unclear,
+// nothing is repaired.
+func repairGemma4FencedValues(s string) string {
+	return repairGemma4Values(s, gemma4FencedValue)
+}
+
+// gemma4FencedValue returns the text and the end of a value fenced by `---`
+// lines at s[i], as repairGemma4FencedValues reads one.
+func gemma4FencedValue(s string, i int) (string, int, bool) {
+	if !strings.HasPrefix(s[i:], gemma4Fence) {
+		return "", 0, false
+	}
+	start := i + len(gemma4Fence)
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	switch {
+	case strings.HasPrefix(s[start:], "\r\n"):
+		start += 2
+	case strings.HasPrefix(s[start:], "\n"):
+		start++
+	default:
+		return "", 0, false
+	}
+
+	for line := start; line < len(s); {
+		if strings.HasPrefix(s[line:], gemma4Fence) {
+			end := line + len(gemma4Fence)
+			next := gemma4SkipSpace(s, end)
+			if next < len(s) && (s[next] == '}' || s[next] == ',' && gemma4KeyFollows(s, next+1)) {
+				text := strings.TrimSuffix(strings.TrimSuffix(s[start:line], "\n"), "\r")
+				if strings.Contains(text, gemma4StringDelimiter) {
+					return "", 0, false
+				}
+				return text, end, true
+			}
+		}
+		newline := strings.IndexByte(s[line:], '\n')
+		if newline == -1 {
+			break
+		}
+		line += newline + 1
+	}
+	return "", 0, false
 }
 
 // repairGemma4Values writes the delimiters around each value that value reads
