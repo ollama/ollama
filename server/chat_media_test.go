@@ -3,9 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"net/http"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -75,5 +79,114 @@ func TestMessageMediaCapabilitiesKeepsImages(t *testing.T) {
 		Images:  []api.ImageData{[]byte("\x89PNG\r\n\x1a\n"), clipBytes},
 	}})...); err != nil {
 		t.Fatalf("image and audio on a model that takes both: %v", err)
+	}
+}
+
+// A vision projector with an audio encoder is the case where the model can
+// take a clip; the text-only fixture above is what /v1/audio and /api/chat
+// were letting through. /api/generate built its media list straight from
+// req.Images without asking for the encoder, so a clip sat in the same
+// field an image would and got dropped after the model was already loaded.
+func TestGenerateRejectsAudioOnTextModelBeforeLoading(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	loads := 0
+	mock := mockRunner{}
+	s := &Server{
+		modelCaches: &modelCaches{show: newModelShowCache()},
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loads++
+				req.successCh <- &runnerRef{llama: &mock}
+				return false
+			},
+		},
+	}
+	createMinimalGGUFModel(t, s, "text-only", gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, "{{ .Prompt }}", map[string]any{"capabilities": []any{"completion"}})
+
+	go s.sched.Run(t.Context())
+
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "text-only",
+		Prompt: "Transcribe this.",
+		Images: []api.ImageData{clipBytes},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("clip on a text-only model: status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("audio")) {
+		t.Fatalf("body = %s, want the audio capability error", w.Body.String())
+	}
+	if loads != 0 {
+		t.Fatalf("runner loaded %d times, want 0: the request should be rejected before scheduling", loads)
+	}
+}
+
+func TestGenerateKeepsImagesForVisionModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	mock := mockRunner{}
+	s := &Server{
+		modelCaches: &modelCaches{show: newModelShowCache()},
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				req.successCh <- &runnerRef{llama: &mock}
+				return false
+			},
+		},
+	}
+	go s.sched.Run(t.Context())
+
+	createMinimalGGUFModel(t, s, "vlm", gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, "{{ .Prompt }}", map[string]any{"capabilities": []any{"completion", "vision"}})
+
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "vlm",
+		Prompt: "What is this?",
+		Images: []api.ImageData{[]byte("\x89PNG\r\n\x1a\n")},
+		Stream: &stream,
+	})
+	if w.Code == http.StatusBadRequest && bytes.Contains(w.Body.Bytes(), []byte("vision")) {
+		t.Fatalf("image on a vision model was rejected: %s", w.Body.String())
 	}
 }

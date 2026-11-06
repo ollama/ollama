@@ -309,6 +309,33 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV
 	}
 }
 
+// createMinimalVisionModel is createMinimalGGUFModel plus a clip projector, so
+// the model reports vision and /api/generate accepts images for it.
+func createMinimalVisionModel(t *testing.T, s *Server, name string, kv gguftest.KV, tmpl string, info map[string]any) {
+	t.Helper()
+
+	createMinimalGGUFModel(t, s, name, kv, tmpl, info)
+
+	_, projector := createBinFile(t, gguftest.KV{
+		"general.architecture":             "clip",
+		"clip.vision.block_count":          uint32(1),
+		"clip.vision.embedding_length":     uint32(8),
+		"clip.vision.attention.head_count": uint32(1),
+	}, nil)
+	projectorLayer, err := manifest.NewLayer(strings.NewReader(projector), "application/vnd.ollama.image.projector")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName(name))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if err := manifest.WriteManifestWithMetadata(model.ParseName(name), mf.Config, append(mf.Layers, projectorLayer), mf.Runner, mf.Format); err != nil {
+		t.Fatalf("write manifest with projector: %v", err)
+	}
+}
+
 func TestChatModeForModel(t *testing.T) {
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
 	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeRendered {
@@ -769,7 +796,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-chat-template-images", gguftest.KV{
+		createMinimalVisionModel(t, s, "generate-chat-template-images", gguftest.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 		}, "", nil)
 
@@ -3017,6 +3044,26 @@ func TestGenerateWithImages(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	// /api/generate asks the scheduler for the encoders the media needs, so the
+	// fixture has to carry a projector for the image to reach the runner.
+	_, projector := createBinFile(t, gguftest.KV{
+		"general.architecture":             "clip",
+		"clip.vision.block_count":          uint32(1),
+		"clip.vision.embedding_length":     uint32(8),
+		"clip.vision.attention.head_count": uint32(1),
+	}, nil)
+	projectorLayer, err := manifest.NewLayer(strings.NewReader(projector), "application/vnd.ollama.image.projector")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestWithMetadata(model.ParseName("test"), mf.Config, append(mf.Layers, projectorLayer), mf.Runner, mf.Format); err != nil {
+		t.Fatal(err)
 	}
 
 	t.Run("images passed to completion request", func(t *testing.T) {

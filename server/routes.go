@@ -512,6 +512,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
 	}
+	// A debug-render request only returns the templated prompt, so the model
+	// never sees the media and its encoders don't matter.
+	if !req.DebugRenderOnly {
+		caps = append(caps, messageMediaCapabilities([]api.Message{{Images: req.Images}})...)
+	}
 
 	requestedThink := req.Think
 	think := renderers.ResolveThinking(requestedThink, thinking)
@@ -1037,15 +1042,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		compiled.Request.System = m.System
 	}
 	caps := []model.Capability{model.CapabilityDecision}
-	for _, data := range req.Images {
-		media := model.CapabilityVision
-		if llm.DetectMediaKind(data) == llm.MediaKindAudio {
-			media = model.CapabilityAudio
-		}
-		if !slices.Contains(caps, media) {
-			caps = append(caps, media)
-		}
-	}
+	caps = append(caps, messageMediaCapabilities([]api.Message{{Images: req.Images}})...)
 	r, _, _, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
