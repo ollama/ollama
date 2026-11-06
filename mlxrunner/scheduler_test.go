@@ -727,3 +727,67 @@ func TestBatchSchedulerMaterializesParkedState(t *testing.T) {
 		}
 	})
 }
+
+func TestGenerationReusesBusyPeer(t *testing.T) {
+	ctx := t.Context()
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		tok := newTestTokenizer(t, []int32{7})
+		m := &schedulingModel{fakeMTPModel: fakeMTPModel{tok: tok}}
+		r := &Runner{Model: m, Tokenizer: tok, Sampler: sample.New(4096), parallel: 2}
+		defer r.Sampler.Free()
+		s := &batchScheduler{r: r, slots: make([]*batchSlot, 2)}
+		defer func() {
+			for _, slot := range s.slots {
+				if slot != nil && slot.cache != nil {
+					slot.cache.close()
+				}
+			}
+		}()
+		makeRequest := func(ctx context.Context, count int) request {
+			return request{
+				Ctx: ctx, Tokens: slices.Repeat([]int32{1}, 32), Responses: make(chan CompletionResponse, 64),
+				CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: count}}, SamplerOpts: sample.Options{Temperature: 0},
+			}
+		}
+		sourceCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		source := makeRequest(sourceCtx, 32)
+		s.admitGeneration(source)
+		for range 8 {
+			s.step()
+			if len(source.Responses) > 0 {
+				break
+			}
+		}
+		if len(source.Responses) == 0 {
+			t.Fatal("source never started streaming")
+		}
+		fork := makeRequest(ctx, 2)
+		s.admitGeneration(fork)
+		if got := len(fork.Tokens) - len(s.slots[1].request.session.remaining); got != 28 {
+			t.Fatalf("busy-peer reuse %d, want pre-thinking snapshot28", got)
+		}
+		cancel()
+		var final CompletionResponse
+		var text string
+		for i := 0; i < 16 && !final.Done; i++ {
+			s.step()
+			for len(fork.Responses) > 0 {
+				response := <-fork.Responses
+				if response.Error != nil {
+					t.Fatal(response.Error)
+				}
+				text += response.Content
+				if response.Done {
+					final = response
+				}
+			}
+		}
+		if !final.Done || final.EvalCount != 2 || final.PromptEvalCachedCount == nil || *final.PromptEvalCachedCount != 28 {
+			t.Fatalf("fork completion: %+v", final)
+		}
+		if want := tok.Decode([]int32{1, 1}); text != want {
+			t.Fatalf("fork output %q, want %q", text, want)
+		}
+	})
+}

@@ -246,13 +246,17 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 		return true
 	}
 
-	// Own the data before feeding it: appendKV mutates the buffer a lazy snapshot
-	// may still index into, so copy out first (no-op if already owned).
-	snap.copyOut()
-
-	// Rewind to snapshot start, then feed snapshot.
+	// Copy into this cache directly. A lazy peer snapshot can remain lazy:
+	// the slice holds its source arrays until our write has evaluated.
 	c.offset = snap.fromOffset
-	mlx.Scoped(func() { c.appendKV(snap.keys, snap.values) })
+	mlx.Scoped(func() {
+		keys, values := snap.keys, snap.values
+		if snap.cache != nil {
+			keys = snap.cache.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.fromOffset, snap.toOffset), mlx.Slice())
+			values = snap.cache.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(snap.fromOffset, snap.toOffset), mlx.Slice())
+		}
+		c.appendKV(keys, values)
+	})
 
 	// Clamp to target if needed (target may be less than full snapshot).
 	if target < c.offset {
