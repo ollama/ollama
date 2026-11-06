@@ -2211,14 +2211,16 @@ func (s *Server) CopyHandler(c *gin.Context) {
 }
 
 func (s *Server) HeadBlobHandler(c *gin.Context) {
-	path, err := manifest.BlobsPath(c.Param("digest"))
+	// Blobs are stored under the lowercase sha256:<hex> spelling.
+	digest := manifest.NormalizeDigest(c.Param("digest"))
+	path, err := manifest.BlobsPath(digest)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("blob %q not found", c.Param("digest"))})
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("blob %q not found", digest)})
 		return
 	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -2229,7 +2231,8 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 }
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
-	path, err := manifest.BlobsPath(c.Param("digest"))
+	digest := manifest.NormalizeDigest(c.Param("digest"))
+	path, err := manifest.BlobsPath(digest)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -2253,8 +2256,8 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	if layer.Digest != c.Param("digest") {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("digest mismatch, expected %q, got %q", c.Param("digest"), layer.Digest)})
+	if layer.Digest != digest {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("digest mismatch, expected %q, got %q", digest, layer.Digest)})
 		return
 	}
 
