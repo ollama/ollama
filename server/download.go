@@ -218,7 +218,6 @@ func newBackoff(maxBackoff time.Duration) func(ctx context.Context) error {
 
 func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
 	defer blobDownloadManager.Delete(b.Digest)
-	ctx, b.CancelFunc = context.WithCancel(ctx)
 
 	file, err := os.OpenFile(b.Name+"-partial", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -533,18 +532,24 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return true, nil
 	}
 
-	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
+	// The cancel func is set before the download is shared so that a waiter
+	// that leaves before Run starts can still cancel it.
+	runCtx, cancel := context.WithCancel(context.Background())
+	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest, CancelFunc: cancel})
 	download := data.(*blobDownload)
-	if !ok {
+	if ok {
+		cancel()
+	} else {
 		requestURL := opts.n.BaseURL()
 		requestURL = requestURL.JoinPath("v2", opts.n.DisplayNamespaceModel(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
+			cancel()
 			blobDownloadManager.Delete(opts.digest)
 			return false, err
 		}
 
 		//nolint:contextcheck
-		go download.Run(context.Background(), requestURL, opts.regOpts)
+		go download.Run(runCtx, requestURL, opts.regOpts)
 	}
 
 	return false, download.Wait(ctx, opts.fn)
