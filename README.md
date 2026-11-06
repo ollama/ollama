@@ -336,6 +336,7 @@ console.log(response.message.content);
 - [MindsDB](https://docs.mindsdb.com/integrations/ai-engines/ollama) - Connect Ollama with 200+ data platforms
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) - Embeddable vector database for Go ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) - AI-powered SQL client
+- [Pixeltable](https://github.com/pixeltable/pixeltable) - Multimodal data infrastructure with Ollama-powered computed columns and embedding indexes ([guide](https://docs.pixeltable.com/howto/providers/working-with-ollama))
 
 ### Infrastructure & Deployment
 
