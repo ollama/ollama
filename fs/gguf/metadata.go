@@ -42,7 +42,12 @@ func ReadFileMetadata(path string, maxArraySize int) (_ *Metadata, err error) {
 			m.omitted = append(m.omitted, kv.Key)
 		}
 	}
+	tensorNames := make(map[string]struct{})
 	for _, tensor := range f.TensorInfos() {
+		if _, ok := tensorNames[tensor.Name]; ok {
+			return nil, fmt.Errorf("%w GGUF contains duplicate tensor %q", ErrUnsupported, tensor.Name)
+		}
+		tensorNames[tensor.Name] = struct{}{}
 		m.tensors = append(m.tensors, tensor)
 		n := tensor.NumValues()
 		if n < 0 || uint64(n) > math.MaxUint64-m.parameterCount {
