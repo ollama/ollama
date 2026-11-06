@@ -1248,10 +1248,24 @@ func TestSchedUnload(t *testing.T) {
 	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, numParallel: 1}
 	r2 := withModel(&runnerRef{numParallel: 1}, &Model{AdapterPaths: []string{"A"}})
-	r1.unload()
+	require.NoError(t, r1.unload())
 	require.True(t, llm1.closeCalled.Load())
-	r2.unload()
+	require.NoError(t, r2.unload())
 	require.Nil(t, r2.model.Load())
+}
+
+func TestSchedUnloadReportsSurvivingProcess(t *testing.T) {
+	llm1 := &mockLlm{
+		vramByGPU: map[ml.DeviceID]uint64{},
+		closeResp: errors.New("signal: permission denied"),
+	}
+	r := withModel(&runnerRef{llama: llm1, numParallel: 1}, &Model{AdapterPaths: []string{"A"}})
+
+	// A runner whose process is still around must not be handed back to a
+	// later request, and must keep its bookkeeping so the memory still counts.
+	require.Error(t, r.unload())
+	require.NotNil(t, r.model.Load())
+	require.True(t, r.needsReload(t.Context(), &LlmRequest{model: &Model{AdapterPaths: []string{"A"}}}))
 }
 
 func TestSchedAlreadyCanceled(t *testing.T) {
