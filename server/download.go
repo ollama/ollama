@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"math"
@@ -275,6 +277,27 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	defer client.CloseIdleConnections()
 
 	g, inner := errgroup.WithContext(ctx)
+
+	// Hash completed parts from the page cache while Range downloads continue,
+	// so PullModel can skip a full post-download re-read of the blob.
+	// Use a child of ctx (not the errgroup context): errgroup cancels when Wait
+	// returns, which would race the hasher finishing the final parts.
+	type hashResult struct {
+		digest string
+		err    error
+	}
+	hashCtx, hashCancel := context.WithCancel(ctx)
+	defer hashCancel()
+	hashCh := make(chan hashResult, 1)
+	go func() {
+		sum, err := b.hashCompletedParts(hashCtx, file)
+		if err != nil {
+			hashCh <- hashResult{err: err}
+			return
+		}
+		hashCh <- hashResult{digest: fmt.Sprintf("sha256:%x", sum)}
+	}()
+
 	g.SetLimit(numDownloadParts)
 	for i := range b.Parts {
 		part := b.Parts[i]
@@ -308,8 +331,19 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		return err
+	dlErr := g.Wait()
+	if dlErr != nil {
+		hashCancel()
+		<-hashCh
+		return dlErr
+	}
+	hr := <-hashCh
+	if hr.err != nil {
+		return hr.err
+	}
+	if hr.digest != b.Digest {
+		b.removePartialFiles(file.Name())
+		return fmt.Errorf("%w: want %s, got %s", errDigestMismatch, b.Digest, hr.digest)
 	}
 
 	// explicitly close the file so we can rename it
@@ -328,6 +362,52 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	}
 
 	return nil
+}
+
+// hashCompletedParts advances a SHA-256 over blob parts in offset order as each
+// part becomes fully complete. Partially downloaded parts from a prior attempt
+// are hashed only after they finish, matching resume behavior.
+func (b *blobDownload) hashCompletedParts(ctx context.Context, r io.ReaderAt) ([]byte, error) {
+	h := sha256.New()
+	for _, part := range b.Parts {
+		if err := waitPartComplete(ctx, part); err != nil {
+			return nil, err
+		}
+		if err := hashPart(h, r, part); err != nil {
+			return nil, err
+		}
+	}
+	return h.Sum(nil), nil
+}
+
+func waitPartComplete(ctx context.Context, part *blobDownloadPart) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if part.Completed.Load() == part.Size {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func hashPart(h hash.Hash, r io.ReaderAt, part *blobDownloadPart) error {
+	sr := io.NewSectionReader(r, part.Offset, part.Size)
+	if _, err := io.Copy(h, sr); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (b *blobDownload) removePartialFiles(partialName string) {
+	_ = os.Remove(partialName)
+	for i := range b.Parts {
+		_ = os.Remove(partialName + "-" + strconv.Itoa(i))
+	}
 }
 
 // downloadDiscoveryRedirect follows only redirects within the original
@@ -506,22 +586,24 @@ type downloadOpts struct {
 	fn      func(api.ProgressResponse)
 }
 
-// downloadBlob downloads a blob from the registry and stores it in the blobs directory
-func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
+// downloadBlob downloads a blob from the registry and stores it in the blobs directory.
+// verified is true when the blob was hashed during download and matches opts.digest,
+// so callers can skip a redundant post-download verifyBlob pass.
+func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, verified bool, _ error) {
 	if opts.digest == "" {
-		return false, fmt.Errorf("%s: %s", opts.n.DisplayNamespaceModel(), "digest is empty")
+		return false, false, fmt.Errorf("%s: %s", opts.n.DisplayNamespaceModel(), "digest is empty")
 	}
 
 	fp, err := manifest.BlobsPath(opts.digest)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	fi, err := os.Stat(fp)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
-		return false, err
+		return false, false, err
 	default:
 		opts.fn(api.ProgressResponse{
 			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
@@ -530,7 +612,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 			Completed: fi.Size(),
 		})
 
-		return true, nil
+		return true, false, nil
 	}
 
 	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
@@ -540,12 +622,15 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		requestURL = requestURL.JoinPath("v2", opts.n.DisplayNamespaceModel(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
 			blobDownloadManager.Delete(opts.digest)
-			return false, err
+			return false, false, err
 		}
 
 		//nolint:contextcheck
 		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 
-	return false, download.Wait(ctx, opts.fn)
+	if err := download.Wait(ctx, opts.fn); err != nil {
+		return false, false, err
+	}
+	return false, true, nil
 }
