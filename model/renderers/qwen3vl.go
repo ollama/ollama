@@ -98,7 +98,9 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 			if isThinking && i > lastQueryIndex {
 				if i == len(messages)-1 || contentReasoning != "" {
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n")) // do we want to add a new line here?
-					if content != "" {
+					// Leave <think> open only for an assistant prefill that has
+					// nothing after the reasoning, so the model can continue it.
+					if !prefill || content != "" || len(message.ToolCalls) > 0 {
 						sb.WriteString("\n</think>\n\n" + strings.TrimLeft(content, "\n"))
 					}
 				} else {
