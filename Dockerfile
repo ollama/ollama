@@ -210,7 +210,7 @@ COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/
 # MLX stage
 #
 
-FROM base AS mlx
+FROM base AS mlx-server-cuda_v13
 ARG CUDA13VERSION=13.0
 ARG OLLAMA_MLX_BUILD_JOBS=
 ARG OLLAMA_MLX_NVCC_THREADS=2
@@ -248,7 +248,7 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build build/mlx_cuda_v13 --target ollama-mlx-cuda_v13 -- -l $(nproc) ${OLLAMA_MLX_BUILD_JOBS:+-j ${OLLAMA_MLX_BUILD_JOBS}}
 
 FROM scratch AS publish-mlx
-COPY --from=mlx /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
+COPY --from=mlx-server-cuda_v13 /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 
 #
 # Go build
@@ -290,7 +290,7 @@ COPY --from=llama-server-cpu      dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-vulkan   dist/lib/ollama /lib/ollama/
-COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
+COPY --from=mlx-server-cuda_v13   /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
@@ -300,8 +300,32 @@ COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
+COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama
+COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama
+
+FROM scratch AS cuda
+COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
+COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
+
+FROM scratch AS cpu
+COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama
+
+FROM scratch AS vulkan
+COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama
+COPY --from=llama-server-vulkan dist/lib/ollama /lib/ollama/
+
+FROM scratch AS mlx
+COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
+COPY --from=mlx-server-cuda_v13   /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
+
+FROM scratch AS full
 COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
 COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama
+COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-vulkan   dist/lib/ollama /lib/ollama/
+COPY --from=mlx-server-cuda_v13   /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/amd64 scratch AS amd64-archive
 COPY --from=amd64 /lib/ollama /lib/ollama/
@@ -321,23 +345,28 @@ COPY --from=build /go/src/github.com/ollama/ollama/build/go-license/lib/ollama/G
 FROM ubuntu:24.04
 ARG APT_MIRROR=http://archive.ubuntu.com/ubuntu
 ARG APT_PORTS_MIRROR=http://ports.ubuntu.com/ubuntu-ports
+COPY --from=image-archive /bin /usr/bin
+COPY --from=image-archive /lib/ollama /usr/lib/ollama
 RUN sed -i \
         -e "s|http://archive.ubuntu.com/ubuntu|$APT_MIRROR|g" \
         -e "s|http://ports.ubuntu.com/ubuntu-ports|$APT_PORTS_MIRROR|g" \
         /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
-    && apt-get install -y ca-certificates libvulkan1 libopenblas0 \
+    && apt-get install -y ca-certificates $([ -d /usr/lib/ollama/vulkan ] && echo libvulkan1 libegl1 libxext6) \
+                                          $([ -d /usr/lib/ollama/cuda_v13 ] && echo libopenblas0) \
+                                          $([ -d /usr/lib/ollama/mlx_cuda_v13 ] && echo libquadmath0) \
+    && ( [ -d /usr/lib/ollama/vulkan ] && { \
+      echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.0.0"}}' | install -D /dev/stdin /etc/vulkan/icd.d/nvidia_icd.json ; \
+      echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' | install -D /dev/stdin /usr/share/glvnd/egl_vendor.d/10_nvidia.json ; } ; true ) \
     && sed -i \
         -e "s|$APT_MIRROR|http://archive.ubuntu.com/ubuntu|g" \
         -e "s|$APT_PORTS_MIRROR|http://ports.ubuntu.com/ubuntu-ports|g" \
         /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=image-archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-COPY --from=image-archive /lib/ollama /usr/lib/ollama
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV LD_LIBRARY_PATH=/usr/lib/ollama/mlx_cuda_v13:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
