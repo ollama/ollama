@@ -3272,6 +3272,7 @@ func TestIsLocalhost(t *testing.T) {
 		{"::1 no port", "::1", true},
 		{"[::1] with port", "[::1]:11434", true},
 		{"loopback with scheme", "http://localhost:11434", true},
+		{"Unix socket", "unix:///tmp/ollama.sock", true},
 		{"remote hostname", "example.com", false},
 		{"remote hostname with port", "example.com:11434", false},
 		{"remote IP", "192.168.1.1", false},

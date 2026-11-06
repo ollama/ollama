@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -126,9 +127,11 @@ func benchmarkDecision(opts flagOptions, models []string, out io.Writer) error {
 func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, corpus decisiontest.Corpus, mode string, out io.Writer, csvOut *csv.Writer) error {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
-	endpoint := envconfig.Host().JoinPath("v1/systemone").String()
+	host, httpClient := api.HTTPClientForHost(envconfig.Host(), http.DefaultClient)
+	endpoint := host.JoinPath("v1/systemone").String()
 	if opts.decisionURL != nil && *opts.decisionURL != "" {
 		endpoint = *opts.decisionURL
+		httpClient = http.DefaultClient
 	}
 	keepAlive := benchmarkKeepAlive(opts)
 	one := func(index int) decisionSample {
@@ -144,7 +147,7 @@ func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, c
 		req.Model, req.KeepAlive = name, keepAlive
 		requestCtx, cancel := context.WithTimeout(ctx, time.Duration(*opts.timeout)*time.Second)
 		defer cancel()
-		response, duration, err := decisiontest.Do(requestCtx, endpoint, req)
+		response, duration, err := decisiontest.DoWithClient(requestCtx, endpoint, req, httpClient)
 		if err == nil {
 			err = c.CheckCache(response)
 		}

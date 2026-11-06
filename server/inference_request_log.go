@@ -92,14 +92,22 @@ func (l *inferenceRequestLogger) log(route, method, scheme, host, contentType st
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	if host == "" || scheme == "" {
-		base := envconfig.Host()
-		if host == "" {
-			host = base.Host
+	base := envconfig.Host()
+	socketOption := ""
+	var url string
+	if base.Scheme == "unix" {
+		socketOption = fmt.Sprintf("--unix-socket %q ", base.Path)
+		url = "http://localhost" + route
+	} else {
+		if host == "" || scheme == "" {
+			if host == "" {
+				host = base.Host
+			}
+			if scheme == "" {
+				scheme = base.Scheme
+			}
 		}
-		if scheme == "" {
-			scheme = base.Scheme
-		}
+		url = fmt.Sprintf("%s://%s%s", scheme, host, route)
 	}
 
 	routeForFilename := sanitizeRouteForFilename(route)
@@ -114,8 +122,7 @@ func (l *inferenceRequestLogger) log(route, method, scheme, host, contentType st
 		return
 	}
 
-	url := fmt.Sprintf("%s://%s%s", scheme, host, route)
-	curl := fmt.Sprintf("#!/bin/sh\nSCRIPT_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\ncurl --request %s --url %q --header %q --data-binary @\"${SCRIPT_DIR}/%s\"\n", method, url, "Content-Type: "+contentType, bodyFilename)
+	curl := fmt.Sprintf("#!/bin/sh\nSCRIPT_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\"\ncurl %s--request %s --url %q --header %q --data-binary @\"${SCRIPT_DIR}/%s\"\n", socketOption, method, url, "Content-Type: "+contentType, bodyFilename)
 	if err := os.WriteFile(curlPath, []byte(curl), 0o600); err != nil {
 		slog.Warn("failed to write debug request replay command", "route", route, "error", err)
 		return

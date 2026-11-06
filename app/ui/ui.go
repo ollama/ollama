@@ -433,10 +433,15 @@ func (s *Server) inferenceClient() *api.Client {
 }
 
 func userAgentHTTPClient(timeout time.Duration) *http.Client {
+	_, client := api.HTTPClientForHost(envconfig.Host(), http.DefaultClient)
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &userAgentTransport{
-			base: http.DefaultTransport,
+			base: transport,
 		},
 	}
 }
