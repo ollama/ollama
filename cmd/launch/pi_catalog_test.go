@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	modelpkg "github.com/ollama/ollama/types/model"
@@ -335,125 +338,139 @@ func TestPiRemoteAliasAuthAndPayment(t *testing.T) {
 	}
 }
 
+type piMetadataTestTransport struct {
+	handler http.Handler
+}
+
+func (transport piMetadataTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if err := r.Context().Err(); err != nil {
+		return nil, err
+	}
+	w := httptest.NewRecorder()
+	transport.handler.ServeHTTP(w, r)
+	return w.Result(), nil
+}
+
 func TestPiMetadataAfterSlowSignIn(t *testing.T) {
 	for _, outcome := range []string{"success", "partial metadata", "inventory fallback", "cancelled", "deadline"} {
 		t.Run(outcome, func(t *testing.T) {
-			home := t.TempDir()
-			setLaunchTestHome(t, home)
-			withLauncherHooks(t)
-			oldTimeout := piModelDiscoveryTimeout
-			piModelDiscoveryTimeout = 50 * time.Millisecond
-			t.Cleanup(func() { piModelDiscoveryTimeout = oldTimeout })
-			ctx, cancel := context.WithCancel(t.Context())
-			if outcome == "deadline" {
-				cancel()
-				ctx, cancel = context.WithTimeout(t.Context(), 3*piModelDiscoveryTimeout)
-			}
-			defer cancel()
-			var authenticated atomic.Bool
-			var authenticatedShows atomic.Int32
-			signIns := 0
-			DefaultSignIn = func(string, string) (string, error) {
-				signIns++
-				// Expire the discovery window while the caller can still sign in.
+			synctest.Test(t, func(t *testing.T) {
+				home := t.TempDir()
+				setLaunchTestHome(t, home)
+				withLauncherHooks(t)
+				ctx, cancel := context.WithCancel(t.Context())
 				if outcome == "deadline" {
-					<-ctx.Done()
-				} else {
-					waitCtx, stop := context.WithTimeout(ctx, 2*piModelDiscoveryTimeout)
-					defer stop()
-					<-waitCtx.Done()
-					if outcome == "cancelled" {
-						cancel()
-					}
+					cancel()
+					ctx, cancel = context.WithTimeout(t.Context(), 3*piModelDiscoveryTimeout)
 				}
-				authenticated.Store(true)
-				return "fixture", nil
-			}
-			DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) {
-				return "vision:cloud", nil
-			}
-			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/status":
-					fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
-				case "/api/tags":
-					if outcome == "partial metadata" {
-						fmt.Fprint(w, `{"models":[{"name":"vision:cloud","capabilities":["completion"]}]}`)
-					} else if outcome == "inventory fallback" {
-						fmt.Fprint(w, `{"models":[{"name":"vision:cloud","details":{"context_length":8192},"capabilities":["completion"]}]}`)
+				defer cancel()
+				var authenticated atomic.Bool
+				var authenticatedShows atomic.Int32
+				signIns := 0
+				DefaultSignIn = func(string, string) (string, error) {
+					signIns++
+					// Expire the discovery window while the caller can still sign in.
+					if outcome == "deadline" {
+						<-ctx.Done()
 					} else {
-						fmt.Fprint(w, `{"models":[]}`)
+						waitCtx, stop := context.WithTimeout(ctx, 2*piModelDiscoveryTimeout)
+						defer stop()
+						<-waitCtx.Done()
+						if outcome == "cancelled" {
+							cancel()
+						}
 					}
-				case "/api/experimental/model-recommendations":
-					fmt.Fprint(w, `{"recommendations":[]}`)
-				case "/api/me":
-					w.WriteHeader(http.StatusUnauthorized)
-					fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
-				case "/api/show":
-					if !authenticated.Load() {
+					authenticated.Store(true)
+					return "fixture", nil
+				}
+				DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) {
+					return "vision:cloud", nil
+				}
+				DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/status":
+						fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+					case "/api/tags":
+						if outcome == "partial metadata" {
+							fmt.Fprint(w, `{"models":[{"name":"vision:cloud","capabilities":["completion"]}]}`)
+						} else if outcome == "inventory fallback" {
+							fmt.Fprint(w, `{"models":[{"name":"vision:cloud","details":{"context_length":8192},"capabilities":["completion"]}]}`)
+						} else {
+							fmt.Fprint(w, `{"models":[]}`)
+						}
+					case "/api/experimental/model-recommendations":
+						fmt.Fprint(w, `{"recommendations":[]}`)
+					case "/api/me":
 						w.WriteHeader(http.StatusUnauthorized)
-						fmt.Fprint(w, `{"error":"unauthorized"}`)
-						return
+						fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+					case "/api/show":
+						if !authenticated.Load() {
+							w.WriteHeader(http.StatusUnauthorized)
+							fmt.Fprint(w, `{"error":"unauthorized"}`)
+							return
+						}
+						var req apiShowRequest
+						_ = json.NewDecoder(r.Body).Decode(&req)
+						if req.Model == "vision:cloud" {
+							authenticatedShows.Add(1)
+						}
+						fmt.Fprint(w, `{"capabilities":["completion","vision","thinking"],"model_info":{"fixture.context_length":262144}}`)
+					default:
+						t.Errorf("unexpected request: %s", r.URL.Path)
+						http.NotFound(w, r)
 					}
-					var req apiShowRequest
-					_ = json.NewDecoder(r.Body).Decode(&req)
-					if req.Model == "vision:cloud" {
-						authenticatedShows.Add(1)
+				})
+				t.Setenv("OLLAMA_HOST", "http://pi.test")
+				c, err := newLauncherClient(defaultLaunchPolicy(true, false))
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Keep HTTP in-process so only the simulated sign-in advances time.
+				c.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "pi.test"}, &http.Client{Transport: piMetadataTestTransport{handler: handler}})
+				c.inventory = newModelInventory(c.apiClient)
+				if outcome == "inventory fallback" {
+					t.Setenv("PATH", t.TempDir())
+					err = c.launchPiIntegration(ctx, &Pi{}, nil, IntegrationLaunchRequest{ModelOverride: "vision:cloud"})
+					if err == nil || !strings.Contains(err.Error(), "npm") {
+						t.Fatalf("launch error = %v, want missing npm dependency", err)
 					}
-					fmt.Fprint(w, `{"capabilities":["completion","vision","thinking"],"model_info":{"fixture.context_length":262144}}`)
-				default:
-					t.Errorf("unexpected request: %s", r.URL.Path)
-					http.NotFound(w, r)
+					err = nil
+				} else {
+					err = c.launchPiIntegration(ctx, &Pi{}, nil, IntegrationLaunchRequest{ConfigureOnly: true})
 				}
-			}))
-			defer srv.Close()
-			t.Setenv("OLLAMA_HOST", srv.URL)
-			c, err := newLauncherClient(defaultLaunchPolicy(true, false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if outcome == "inventory fallback" {
-				t.Setenv("PATH", t.TempDir())
-				err = c.launchPiIntegration(ctx, &Pi{}, nil, IntegrationLaunchRequest{ModelOverride: "vision:cloud"})
-				if err == nil || !strings.Contains(err.Error(), "npm") {
-					t.Fatalf("launch error = %v, want missing npm dependency", err)
+				if signIns != 1 {
+					t.Fatalf("sign-ins = %d, want 1", signIns)
 				}
-				err = nil
-			} else {
-				err = c.launchPiIntegration(ctx, &Pi{}, nil, IntegrationLaunchRequest{ConfigureOnly: true})
-			}
-			if signIns != 1 {
-				t.Fatalf("sign-ins = %d, want 1", signIns)
-			}
-			if outcome == "cancelled" || outcome == "deadline" {
-				want := context.Canceled
-				if outcome == "deadline" {
-					want = context.DeadlineExceeded
+				if outcome == "cancelled" || outcome == "deadline" {
+					want := context.Canceled
+					if outcome == "deadline" {
+						want = context.DeadlineExceeded
+					}
+					if !errors.Is(err, want) {
+						t.Fatalf("launch error = %v, want %v", err, want)
+					}
+					if authenticatedShows.Load() != 0 {
+						t.Fatal("metadata requested after caller cancellation")
+					}
+					if _, err := os.Stat(filepath.Join(home, ".pi")); !os.IsNotExist(err) {
+						t.Fatalf("Pi config written after caller cancellation: %v", err)
+					}
+					return
 				}
-				if !errors.Is(err, want) {
-					t.Fatalf("launch error = %v, want %v", err, want)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if authenticatedShows.Load() != 0 {
-					t.Fatal("metadata requested after caller cancellation")
+				data, err := fileutil.ReadJSON(filepath.Join(home, ".pi", "agent", "models.json"))
+				if err != nil {
+					t.Fatal(err)
 				}
-				if _, err := os.Stat(filepath.Join(home, ".pi")); !os.IsNotExist(err) {
-					t.Fatalf("Pi config written after caller cancellation: %v", err)
+				models := data["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
+				entry := models[0].(map[string]any)
+				if authenticatedShows.Load() != 1 || fmt.Sprint(entry["input"]) != "[text image]" || entry["reasoning"] != true || entry["contextWindow"] != float64(262144) {
+					t.Fatalf("authenticated /show calls = %d; model config = %v", authenticatedShows.Load(), entry)
 				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			data, err := fileutil.ReadJSON(filepath.Join(home, ".pi", "agent", "models.json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			models := data["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
-			entry := models[0].(map[string]any)
-			if authenticatedShows.Load() != 1 || fmt.Sprint(entry["input"]) != "[text image]" || entry["reasoning"] != true || entry["contextWindow"] != float64(262144) {
-				t.Fatalf("authenticated /show calls = %d; model config = %v", authenticatedShows.Load(), entry)
-			}
+			})
 		})
 	}
 }
