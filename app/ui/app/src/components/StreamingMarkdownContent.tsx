@@ -6,8 +6,12 @@ import {
 } from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
-import type { BundledLanguage, Highlighter } from "shiki";
-import { loadHighlighter } from "@/lib/highlighter";
+import type { BundledLanguage } from "shiki";
+import {
+  getLoadedHighlighter,
+  loadHighlighter,
+  subscribeHighlighter,
+} from "@/lib/highlighter";
 
 interface StreamingMarkdownContentProps {
   content: string;
@@ -46,25 +50,17 @@ const CodeBlock = React.memo(
       codeElement.props.className?.replace(/language-/, "") || "";
     const codeText = extractText(codeElement.props.children);
 
-    const [highlighter, setHighlighter] = React.useState<Highlighter | null>(
-      null,
+    const highlighter = React.useSyncExternalStore(
+      subscribeHighlighter,
+      getLoadedHighlighter,
+      () => null,
     );
 
     React.useEffect(() => {
       if (!language) return;
-      let active = true;
-      void loadHighlighter().then(
-        (loaded) => {
-          if (active) setHighlighter(loaded);
-        },
-        (error) => {
-          if (active)
-            console.error("Failed to initialize syntax highlighting:", error);
-        },
-      );
-      return () => {
-        active = false;
-      };
+      void loadHighlighter().catch((error) => {
+        console.error("Failed to initialize syntax highlighting:", error);
+      });
     }, [language]);
 
     const tokens = React.useMemo(() => {

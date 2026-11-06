@@ -126,6 +126,19 @@ const oneDarkTheme: ThemeRegistration = {
 };
 
 let highlighterPromise: Promise<Highlighter> | null = null;
+let loadedHighlighter: Highlighter | null = null;
+const listeners = new Set<() => void>();
+
+export function getLoadedHighlighter(): Highlighter | null {
+  return loadedHighlighter;
+}
+
+export function subscribeHighlighter(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 
 export function loadHighlighter(): Promise<Highlighter> {
   highlighterPromise ??= createHighlighter({
@@ -151,9 +164,15 @@ export function loadHighlighter(): Promise<Highlighter> {
       "yaml",
       "markdown",
     ],
-  }).catch((error) => {
-    highlighterPromise = null;
-    throw error;
-  });
+  })
+    .then((highlighter) => {
+      loadedHighlighter = highlighter;
+      listeners.forEach((listener) => listener());
+      return highlighter;
+    })
+    .catch((error) => {
+      highlighterPromise = null;
+      throw error;
+    });
   return highlighterPromise;
 }

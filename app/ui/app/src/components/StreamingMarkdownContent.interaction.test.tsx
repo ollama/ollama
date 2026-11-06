@@ -4,12 +4,12 @@ import type { Highlighter } from "shiki";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  loadHighlighter: vi.fn(),
+  createHighlighter: vi.fn(),
   language: "javascript" as string | null,
 }));
 
-vi.mock("@/lib/highlighter", () => ({
-  loadHighlighter: mocks.loadHighlighter,
+vi.mock("shiki", () => ({
+  createHighlighter: mocks.createHighlighter,
 }));
 vi.mock("streamdown", () => ({
   Streamdown: ({
@@ -37,15 +37,18 @@ vi.mock("streamdown", () => ({
   defaultRemarkPlugins: { gfm: "gfm", math: "math" },
 }));
 
-import StreamingMarkdownContent from "./StreamingMarkdownContent";
+let StreamingMarkdownContent: (typeof import("./StreamingMarkdownContent"))["default"];
 
 describe("lazy code highlighting", () => {
   let renderer: ReactTestRenderer | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    mocks.loadHighlighter.mockReset();
+    vi.resetModules();
+    mocks.createHighlighter.mockReset();
     mocks.language = "javascript";
+    StreamingMarkdownContent = (await import("./StreamingMarkdownContent"))
+      .default;
   });
 
   afterEach(async () => {
@@ -63,7 +66,7 @@ describe("lazy code highlighting", () => {
     await act(async () => {
       renderer!.update(<StreamingMarkdownContent content="unlabelled code" />);
     });
-    expect(mocks.loadHighlighter).not.toHaveBeenCalled();
+    expect(mocks.createHighlighter).not.toHaveBeenCalled();
     expect(renderer!.root.findAllByType("code")[0].children).toEqual([
       "unlabelled code",
     ]);
@@ -71,7 +74,7 @@ describe("lazy code highlighting", () => {
 
   it("renders plain code immediately, then highlights both themes and streamed updates", async () => {
     let resolve!: (value: Highlighter) => void;
-    mocks.loadHighlighter.mockReturnValue(
+    mocks.createHighlighter.mockReturnValue(
       new Promise<Highlighter>((done) => {
         resolve = done;
       }),
@@ -110,12 +113,12 @@ describe("lazy code highlighting", () => {
     expect(
       renderer!.root.findAllByType("code")[0].findByType("span").children,
     ).toEqual(["const answer = 43;"]);
-    expect(mocks.loadHighlighter).toHaveBeenCalledOnce();
+    expect(mocks.createHighlighter).toHaveBeenCalledOnce();
   });
 
   it("keeps code readable when initialization fails", async () => {
     const error = new Error("grammar unavailable");
-    mocks.loadHighlighter.mockRejectedValue(error);
+    mocks.createHighlighter.mockRejectedValue(error);
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     await act(async () => {
       renderer = create(
@@ -129,5 +132,43 @@ describe("lazy code highlighting", () => {
       "Failed to initialize syntax highlighting:",
       error,
     );
+  });
+
+  it("highlights mounted blocks when a later block retries a failed load", async () => {
+    const error = new Error("grammar unavailable");
+    const codeToTokensBase = vi.fn((content: string) => [
+      [{ content, color: "#a626a4" }],
+    ]);
+    mocks.createHighlighter
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce({ codeToTokensBase } as unknown as Highlighter);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await act(async () => {
+      renderer = create(
+        <StreamingMarkdownContent key="first" content="const first = 1;" />,
+      );
+    });
+    expect(renderer!.root.findAllByType("code")[0].children).toEqual([
+      "const first = 1;",
+    ]);
+
+    await act(async () => {
+      renderer!.update(
+        <>
+          <StreamingMarkdownContent key="first" content="const first = 1;" />
+          <StreamingMarkdownContent key="second" content="const second = 2;" />
+        </>,
+      );
+    });
+    expect(mocks.createHighlighter).toHaveBeenCalledTimes(2);
+    const blocks = renderer!.root.findAllByType("code");
+    expect(blocks).toHaveLength(4);
+    expect(blocks.map((block) => block.findByType("span").children)).toEqual([
+      ["const first = 1;"],
+      ["const first = 1;"],
+      ["const second = 2;"],
+      ["const second = 2;"],
+    ]);
   });
 });
