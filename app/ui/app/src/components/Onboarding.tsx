@@ -1029,10 +1029,10 @@ export function ConnectAppsScreen({
     claudeError,
   );
   const launchIntegrationRow = (item: IntegrationStatus) => {
-    const command =
-      item.id === "chatgpt"
-        ? `ollama launch chatgpt${chatgptCommand === "Disconnect" ? " --restore" : ""}`
-        : (item.command ?? "");
+    const isChatGPT = item.id === "chatgpt";
+    const command = isChatGPT
+      ? `ollama launch chatgpt${chatgptCommand === "Disconnect" ? " --restore" : ""}`
+      : (item.command ?? "");
     const copied =
       copyNotice?.id === item.id &&
       copyNotice.command === command &&
@@ -1040,10 +1040,40 @@ export function ConnectAppsScreen({
       copyNotice.visible;
     const copying =
       copyPending?.id === item.id && copyPending.command === command;
-    const actionName =
-      item.id === "chatgpt"
-        ? `${item.name} ${chatgptCommand.toLowerCase()}`
-        : item.name;
+    const actionName = isChatGPT
+      ? `${item.name} ${chatgptCommand.toLowerCase()}`
+      : item.name;
+    const copyButton = (
+      <button
+        type="button"
+        className={
+          isChatGPT
+            ? "flex min-w-0 flex-1 items-center rounded-l-lg py-2 pl-3 pr-2 text-left hover:bg-neutral-200/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 dark:hover:bg-neutral-700/60"
+            : "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100"
+        }
+        onClick={() => copyLaunchCommand({ ...item, command })}
+        disabled={Boolean(copyPending)}
+        aria-busy={copying || undefined}
+        aria-label={
+          copying
+            ? `Copying ${actionName} command`
+            : copied
+              ? `${actionName} command copied`
+              : `Copy ${actionName} command`
+        }
+        title={copying ? "Copying…" : copied ? "Copied" : "Copy command"}
+      >
+        {isChatGPT ? (
+          <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
+            {command}
+          </code>
+        ) : copied ? (
+          <CheckIcon className="h-4 w-4 text-green-600" />
+        ) : (
+          <Square2StackIcon className="h-4 w-4" />
+        )}
+      </button>
+    );
     return (
       <div
         key={item.id}
@@ -1062,7 +1092,7 @@ export function ConnectAppsScreen({
           </div>
         </div>
         <div className="ml-auto flex min-w-0 max-w-full items-center overflow-hidden rounded-lg bg-neutral-100 dark:bg-neutral-800">
-          {item.id === "chatgpt" ? (
+          {isChatGPT ? (
             <Listbox
               value={chatgptCommand}
               onChange={(action) => {
@@ -1076,14 +1106,12 @@ export function ConnectAppsScreen({
                 );
               }}
             >
+              {copyButton}
               <ListboxButton
                 aria-label="Choose ChatGPT command"
                 title="Choose command"
-                className="flex min-w-0 flex-1 items-center gap-2 rounded-l-lg py-2 pl-3 pr-2 text-left hover:bg-neutral-200/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-neutral-500 dark:hover:bg-neutral-700/60"
+                className="inline-flex w-8 shrink-0 self-stretch items-center justify-center rounded-r-lg text-neutral-500 hover:bg-neutral-200/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:hover:bg-neutral-700/60"
               >
-                <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
-                  {command}
-                </code>
                 <ChevronDownIcon
                   aria-hidden="true"
                   className="h-3.5 w-3.5 shrink-0 text-neutral-500 dark:text-neutral-400"
@@ -1115,31 +1143,13 @@ export function ConnectAppsScreen({
               </ListboxOptions>
             </Listbox>
           ) : (
-            <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-2 pl-3 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
-              {command}
-            </code>
+            <>
+              <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-2 pl-3 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
+                {command}
+              </code>
+              {copyButton}
+            </>
           )}
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100"
-            onClick={() => copyLaunchCommand({ ...item, command })}
-            disabled={Boolean(copyPending)}
-            aria-busy={copying || undefined}
-            aria-label={
-              copying
-                ? `Copying ${actionName} command`
-                : copied
-                  ? `${actionName} command copied`
-                  : `Copy ${actionName} command`
-            }
-            title={copying ? "Copying…" : copied ? "Copied" : "Copy command"}
-          >
-            {copied ? (
-              <CheckIcon className="h-4 w-4 text-green-600" />
-            ) : (
-              <Square2StackIcon className="h-4 w-4" />
-            )}
-          </button>
         </div>
       </div>
     );
