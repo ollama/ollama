@@ -205,7 +205,11 @@ func maybeMoveAndRestart() appMove {
 		return CannotMove
 	}
 	// Respect users intent if they chose "keep" vs. "replace" when dragging to Applications
-	if strings.HasPrefix(updater.BundlePath, strings.TrimSuffix(updater.SystemWidePath, filepath.Ext(updater.SystemWidePath))) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		slog.Debug("failed to get user home directory", "error", err)
+	}
+	if bundleInApplications(updater.BundlePath, updater.SystemWidePath, homeDir) {
 		return AlreadyMoved
 	}
 
