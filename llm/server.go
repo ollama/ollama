@@ -55,6 +55,16 @@ func filteredEnvLogValue(key, value string) string {
 	return value
 }
 
+// Tokenizer converts between text and a model's token IDs. With addSpecial,
+// TokenizePrompt returns the tokens the model receives for content as a raw
+// prompt, including any special tokens the model adds. Invalid input, such as
+// a token ID outside the vocabulary, returns an [api.StatusError] with a 4xx
+// status.
+type Tokenizer interface {
+	TokenizePrompt(ctx context.Context, content string, addSpecial bool) ([]int, error)
+	Detokenize(ctx context.Context, tokens []int) (string, error)
+}
+
 type LlamaServer interface {
 	ModelPath() string
 	Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error)
