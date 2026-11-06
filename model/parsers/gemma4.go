@@ -806,6 +806,16 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 			addCandidate(trimmed, false)
 		}
 	}
+	// A token with a colon inside is no bare word, and the colon may be a key's:
+	// read as a string only after every candidate above, with the other value
+	// repairs beside it, and once more with its trailing commas dropped.
+	if tokens := repairGemma4ColonTokenValues(quoted); tokens != quoted {
+		candidate := repairGemma4BareWordValues(repairGemma4HexNumberValues(repairGemma4EscapedQuoteValues(tokens)))
+		addCandidate(candidate, false)
+		if trimmed := repairGemma4TrailingCommas(candidate); trimmed != candidate {
+			addCandidate(trimmed, false)
+		}
+	}
 
 	return candidates
 }
@@ -970,6 +980,52 @@ func gemma4HexNumberValue(s string, i int) (string, int, bool) {
 		end++
 	}
 	if end == i+2 {
+		return "", 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return "", 0, false
+	}
+	return s[i:end], end, true
+}
+
+// repairGemma4ColonTokenValues reads a token with a colon inside that the model
+// wrote bare for a value as a string, its text kept as written, as in
+// call:editRecord{set:[{path:<|"|>Entries<|"|>,value:[{Data:{Reference:037C18:Skyrim.esm,Count:1}}]}]}.
+// Only an even count of delimiters is repaired, and only a token that is all of a
+// value, after an object's key and its colon or as a list's item: letters, digits,
+// `_` and `.`, from a digit, with a `:` between two of them once or more and a
+// letter among them, and a `,`, `}` or `]` follows it after any whitespace. From a
+// digit, its text before a colon is no bare key: b in {a:b:c} may be one. The
+// delimiters are written around it. Strings are copied as they are. Where the
+// strings or brackets are unclear, nothing is repaired.
+func repairGemma4ColonTokenValues(s string) string {
+	return repairGemma4Values(s, gemma4ColonTokenValue)
+}
+
+// gemma4ColonTokenValue returns the text and the end of a token with a colon
+// inside written bare at s[i], as repairGemma4ColonTokenValues reads one.
+func gemma4ColonTokenValue(s string, i int) (string, int, bool) {
+	if i >= len(s) || s[i] < '0' || s[i] > '9' {
+		return "", 0, false
+	}
+	end, colons, letters := i, 0, false
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if r == ':' {
+			if end == i || s[end-1] == ':' || s[end-1] == '.' {
+				return "", 0, false
+			}
+			colons++
+		} else if r == '_' || unicode.IsLetter(r) {
+			letters = true
+		} else if !unicode.IsDigit(r) && !(r == '.' && end > i && s[end-1] != ':') {
+			break
+		}
+		end += size
+	}
+	if colons == 0 || !letters || s[end-1] == ':' {
 		return "", 0, false
 	}
 

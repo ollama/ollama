@@ -1239,6 +1239,19 @@ func TestGemma4RepairCandidates(t *testing.T) {
 				`{flags:<|"|>0x0100<|"|>,n:1}`,
 			},
 		},
+		{
+			name:     "colon_token_candidate_comes_after_trailing_commas",
+			input:    `{ref:01A2B3:Base.esm,mode:Fast,}`,
+			toolName: "set",
+			expected: []string{
+				`{ref:01A2B3:Base.esm,mode:Fast,}`,
+				`{ref:01A2B3:Base.esm,mode:<|"|>Fast<|"|>,}`,
+				`{ref:01A2B3:Base.esm,mode:Fast}`,
+				`{ref:01A2B3:Base.esm,mode:<|"|>Fast<|"|>}`,
+				`{ref:<|"|>01A2B3:Base.esm<|"|>,mode:<|"|>Fast<|"|>,}`,
+				`{ref:<|"|>01A2B3:Base.esm<|"|>,mode:<|"|>Fast<|"|>}`,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2031,6 +2044,135 @@ func TestGemma4Parser_HexNumberValueInFinishedToolCall(t *testing.T) {
 		t.Fatalf("expected no content, got %q", content)
 	}
 	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4HexNumberEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRepairGemma4ColonTokenValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "value_after_a_key",
+			input:    `{ref:01A2B3:Base.esm}`,
+			expected: `{ref:<|"|>01A2B3:Base.esm<|"|>}`,
+		},
+		{
+			name:     "values_in_objects_in_a_list",
+			input:    `{value:[{Data:{Level:1,Reference:037C18:Skyrim.esm,Count:1}},{Data:{Reference:2a:b,Count:2}}]}`,
+			expected: `{value:[{Data:{Level:1,Reference:<|"|>037C18:Skyrim.esm<|"|>,Count:1}},{Data:{Reference:<|"|>2a:b<|"|>,Count:2}}]}`,
+		},
+		{
+			name:     "values_as_list_items_and_with_spaces",
+			input:    `{refs:[1x:y, 0A:B.esp ],"mode" : 9:Name ,n:1}`,
+			expected: `{refs:[<|"|>1x:y<|"|>, <|"|>0A:B.esp<|"|> ],"mode" : <|"|>9:Name<|"|> ,n:1}`,
+		},
+		{
+			name:     "keeps_tokens_in_strings",
+			input:    `{note:<|"|>0a:b<|"|>,raw:"0a:b"}`,
+			expected: `{note:<|"|>0a:b<|"|>,raw:"0a:b"}`,
+		},
+		{
+			name:     "keeps_text_that_is_not_one_token",
+			input:    `{a:0b c:d,e:0f::g,h:0i:,j:0k:{l:1},m:12:30,o:0p.:q,r:0s:t u,v:x:y}`,
+			expected: `{a:0b c:d,e:0f::g,h:0i:,j:0k:{l:1},m:12:30,o:0p.:q,r:0s:t u,v:x:y}`,
+		},
+		{
+			name:     "keeps_bare_words_and_numbers",
+			input:    `{a:Fast,b:12,c:[1, 2]}`,
+			expected: `{a:Fast,b:12,c:[1, 2]}`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{a:0x:y,b:<|"|>y}`,
+			expected: `{a:0x:y,b:<|"|>y}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4ColonTokenValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4ColonTokenValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4ColonTokenEditRecordCall sets a list's entries whole, each naming a
+// record by a token with colons inside, written bare, beside bare words.
+const gemma4ColonTokenEditRecordCall = `call:editRecord{build:true,project:<|"|>BanditSilver<|"|>,record:<|"|>LItemBanditWeapon1H<|"|>,set:[{path:<|"|>Entries<|"|>,value:[{Data:{Level:1,Reference:037C18:Skyrim.esm,Count:1}},{Data:{Level:1,Reference:037C19:Skyrim.esm,Count:1}},{Data:{Level:1,Reference:SilverSword,Count:1}}]}]}`
+
+var gemma4ColonTokenEditRecordArgs = map[string]any{
+	"build":   true,
+	"project": "BanditSilver",
+	"record":  "LItemBanditWeapon1H",
+	"set": []any{
+		map[string]any{"path": "Entries", "value": []any{
+			map[string]any{"Data": map[string]any{"Level": 1.0, "Reference": "037C18:Skyrim.esm", "Count": 1.0}},
+			map[string]any{"Data": map[string]any{"Level": 1.0, "Reference": "037C19:Skyrim.esm", "Count": 1.0}},
+			map[string]any{"Data": map[string]any{"Level": 1.0, "Reference": "SilverSword", "Count": 1.0}},
+		}},
+	},
+}
+
+func TestParseGemma4ClosedToolCall_ColonTokenValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "values_in_a_list_of_objects",
+			content: gemma4ColonTokenEditRecordCall,
+			want:    gemma4ColonTokenEditRecordArgs,
+		},
+		{
+			name:    "beside_a_hex_number_a_trailing_comma_and_a_single_quoted_value",
+			content: `call:set{a:01:B.esm,b:0x0F,c:'y z',n:5,}`,
+			want:    map[string]any{"a": "01:B.esm", "b": "0x0F", "c": "y z", "n": 5.0},
+		},
+		{
+			name:    "a_token_from_a_letter",
+			content: `call:set{a:b:c.esm}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_ColonTokenValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4ColonTokenEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4ColonTokenEditRecordArgs)}}}
 	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
 		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}
