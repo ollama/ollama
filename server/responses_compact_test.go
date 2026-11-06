@@ -32,6 +32,7 @@ func TestIsCompactionContextLimit(t *testing.T) {
 	}{
 		{"reported cloud error", 400, `{"error":{"message":"The prompt is too long: 1068408, model maximum context length: 1048576 (ref: 00000000-0000-4000-8000-000000000001)","code":null}}`, true},
 		{"without reference", 400, `{"error":{"message":"The prompt is too long: 100, model maximum context length: 90"}}`, true},
+		{"local runner error", 400, `{"error":{"message":"request (887 tokens) exceeds the available context size (300 tokens), try increasing it","code":null}}`, true},
 		{"structured code", 400, `{"error":{"message":"input too large","code":"context_length_exceeded"}}`, true},
 		{"structured 413", 413, `{"error":{"code":"context_length_exceeded"}}`, true},
 		{"wrong status", 500, `{"error":{"code":"context_length_exceeded"}}`, false},
@@ -39,6 +40,7 @@ func TestIsCompactionContextLimit(t *testing.T) {
 		{"other 413", 413, `{"error":{"message":"request body too large"}}`, false},
 		{"other invalid request", 400, `{"error":{"message":"invalid tool schema","code":"invalid_request_error"}}`, false},
 		{"untrusted embedded phrase", 400, `{"error":{"message":"Invalid input contains: The prompt is too long: 100, model maximum context length: 90"}}`, false},
+		{"untrusted local phrase", 400, `{"error":{"message":"Invalid input contains: request (887 tokens) exceeds the available context size (300 tokens), try increasing it"}}`, false},
 		{"missing counts", 400, `{"error":{"message":"The prompt is too long: unknown, model maximum context length: unknown"}}`, false},
 		{"invalid JSON", 400, `upstream failed`, false},
 	} {
