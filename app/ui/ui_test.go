@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
@@ -21,6 +23,57 @@ import (
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/cmd/launch"
 )
+
+func TestWaitForServerReturnsWhenContextIsCanceled(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:0")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	start := time.Now()
+	err := WaitForServer(ctx, 50*time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitForServer error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 25*time.Millisecond {
+		t.Fatalf("WaitForServer took %s to observe cancellation", elapsed)
+	}
+}
+
+func TestOllamaProxyCanceledRequestDoesNotSkipReadiness(t *testing.T) {
+	var readinessChecks atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/version" {
+			readinessChecks.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"version":"test"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+	t.Setenv("OLLAMA_HOST", upstream.URL)
+
+	proxy := (&Server{}).ollamaProxy()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	canceled := httptest.NewRecorder()
+	proxy.ServeHTTP(canceled, httptest.NewRequest(http.MethodGet, "/api/tags", nil).WithContext(ctx))
+	if canceled.Code != http.StatusServiceUnavailable {
+		t.Errorf("canceled request status = %d, want %d", canceled.Code, http.StatusServiceUnavailable)
+	}
+	if got := readinessChecks.Load(); got != 0 {
+		t.Errorf("canceled request made %d readiness checks, want 0", got)
+	}
+
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/tags", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("live request status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := readinessChecks.Load(); got != 1 {
+		t.Errorf("live request made %d readiness checks, want 1", got)
+	}
+}
 
 func TestHandlePostApiSettings(t *testing.T) {
 	tests := []struct {
