@@ -1006,7 +1006,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	textLimit := 64 << 10
-	if m.Config.Renderer == "kev" || m.Config.Renderer == "d1" {
+	if m.Config.Renderer == "kev" || m.Config.Renderer == "d1" || m.Config.Renderer == "hindsight" {
 		// Kev and d1 share the state across question rows and admit long
 		// states, which can exceed the generic decision prompt cap.
 		textLimit = 1 << 20
@@ -1021,7 +1021,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	}
 	var encoding string
 	switch m.Config.Renderer {
-	case "tev1", "clef", "strands", "kev", "pplx", "d3", "autotrust-decision", "d1":
+	case "tev1", "clef", "strands", "kev", "pplx", "d3", "autotrust-decision", "d1", "hindsight":
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)

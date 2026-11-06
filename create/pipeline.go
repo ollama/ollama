@@ -63,9 +63,12 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 		if formatErr != nil {
 			return formatErr
 		}
-		if format == d3FormatID {
+		switch format {
+		case d3FormatID:
 			inv, err = prepareD3Inventory(inv)
-		} else {
+		case hindsightFormatID:
+			inv, err = prepareHindsightInventory(inv)
+		default:
 			inv, err = preparePplxInventory(inv)
 		}
 		if err != nil {
