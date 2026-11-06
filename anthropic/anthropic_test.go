@@ -2170,3 +2170,129 @@ func TestCitation(t *testing.T) {
 		t.Errorf("cited_text mismatch: expected 'Some cited text...', got %q", unmarshaled.CitedText)
 	}
 }
+
+func TestStreamConverter_ThinkingAfterTextOrToolCallOpensNewBlock(t *testing.T) {
+	collect := func(conv *StreamConverter, responses []api.ChatResponse) []string {
+		var got []string
+		for _, response := range responses {
+			for _, event := range conv.Process(response) {
+				switch data := event.Data.(type) {
+				case ContentBlockStartEvent:
+					got = append(got, fmt.Sprintf("%s:%s:%d", event.Event, data.ContentBlock.Type, data.Index))
+				case ContentBlockDeltaEvent:
+					got = append(got, fmt.Sprintf("%s:%s:%d", event.Event, data.Delta.Type, data.Index))
+				case ContentBlockStopEvent:
+					got = append(got, fmt.Sprintf("%s:%d", event.Event, data.Index))
+				default:
+					got = append(got, event.Event)
+				}
+			}
+		}
+		return got
+	}
+
+	done := api.ChatResponse{
+		Message:    api.Message{Role: "assistant", Content: "The answer."},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+	}
+
+	t.Run("thinking after text", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model", 0)
+		got := collect(conv, []api.ChatResponse{
+			{Message: api.Message{Role: "assistant", Thinking: "First thought."}},
+			{Message: api.Message{Role: "assistant", Content: "Partial answer."}},
+			{Message: api.Message{Role: "assistant", Thinking: "Second thought."}},
+			done,
+		})
+
+		want := []string{
+			"message_start",
+			"content_block_start:thinking:0",
+			"content_block_delta:thinking_delta:0",
+			"content_block_stop:0",
+			"content_block_start:text:1",
+			"content_block_delta:text_delta:1",
+			"content_block_stop:1",
+			"content_block_start:thinking:2",
+			"content_block_delta:thinking_delta:2",
+			"content_block_stop:2",
+			"content_block_start:text:3",
+			"content_block_delta:text_delta:3",
+			"content_block_stop:3",
+			"message_delta",
+			"message_stop",
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("unexpected stream events (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("stream ends right after the second thinking block", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model", 0)
+		got := collect(conv, []api.ChatResponse{
+			{Message: api.Message{Role: "assistant", Thinking: "First thought."}},
+			{Message: api.Message{Role: "assistant", Content: "Partial answer."}},
+			{Message: api.Message{Role: "assistant", Thinking: "Second thought."}},
+			{
+				Message:    api.Message{Role: "assistant"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			},
+		})
+
+		want := []string{
+			"message_start",
+			"content_block_start:thinking:0",
+			"content_block_delta:thinking_delta:0",
+			"content_block_stop:0",
+			"content_block_start:text:1",
+			"content_block_delta:text_delta:1",
+			"content_block_stop:1",
+			"content_block_start:thinking:2",
+			"content_block_delta:thinking_delta:2",
+			"content_block_stop:2",
+			"message_delta",
+			"message_stop",
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("unexpected stream events (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("thinking after tool call", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model", 0)
+		got := collect(conv, []api.ChatResponse{
+			{Message: api.Message{Role: "assistant", Thinking: "First thought."}},
+			{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+				ID:       "call_1",
+				Function: api.ToolCallFunction{Name: "get_weather", Arguments: api.NewToolCallFunctionArguments()},
+			}}}},
+			{Message: api.Message{Role: "assistant", Thinking: "Second thought."}},
+			done,
+		})
+
+		want := []string{
+			"message_start",
+			"content_block_start:thinking:0",
+			"content_block_delta:thinking_delta:0",
+			"content_block_stop:0",
+			"content_block_start:tool_use:1",
+			"content_block_delta:input_json_delta:1",
+			"content_block_stop:1",
+			"content_block_start:thinking:2",
+			"content_block_delta:thinking_delta:2",
+			"content_block_stop:2",
+			"content_block_start:text:3",
+			"content_block_delta:text_delta:3",
+			"content_block_stop:3",
+			"message_delta",
+			"message_stop",
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("unexpected stream events (-want +got):\n%s", diff)
+		}
+	})
+}
