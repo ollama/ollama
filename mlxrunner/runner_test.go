@@ -16,10 +16,10 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 )
 
-func TestLoadTensorsExcludesHostStorage(t *testing.T) {
+func TestLoadTensorsSkipsNamedTensors(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	var data []*safetensors.TensorData
-	for _, name := range []string{"host.weight", "host.weight.scale", "host.weight.global_scale", "target.weight", "draft.weight"} {
+	for _, name := range []string{"skipped.weight", "skipped.weight.scale", "skipped.weight.global_scale", "target.weight", "draft.weight"} {
 		data = append(data, safetensors.NewTensorDataFromBytes(name, "F32", []int32{1}, binary.LittleEndian.AppendUint32(nil, math.Float32bits(2))))
 	}
 	layer, err := manifest.NewLayer(safetensors.BuildPackedSafetensorsReader(data), manifest.MediaTypeImageTensor)
@@ -29,15 +29,15 @@ func TestLoadTensorsExcludesHostStorage(t *testing.T) {
 	root := &model.Root{Manifest: &manifest.Manifest{Layers: []manifest.Layer{layer, layer}}}
 	for _, tc := range []struct {
 		name string
-		host []string
+		skip []string
 		want []string
 	}{
-		{"resident", nil, []string{"draft.weight", "host.weight", "host.weight.global_scale", "host.weight_scale", "target.weight"}},
-		{"host backed", []string{"host.weight", "host.weight.scale", "host.weight.global_scale"}, []string{"draft.weight", "target.weight"}},
+		{"all tensors", nil, []string{"draft.weight", "skipped.weight", "skipped.weight.global_scale", "skipped.weight_scale", "target.weight"}},
+		{"skip named tensors", []string{"skipped.weight", "skipped.weight.scale", "skipped.weight.global_scale"}, []string{"draft.weight", "target.weight"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mlxtest.Run(t, func(t *mlxtest.T) {
-				tensors, err := loadTensorsFromManifest(root, tc.host)
+				tensors, err := loadTensorsFromManifest(root, tc.skip)
 				if err != nil {
 					t.Fatal(err)
 				}

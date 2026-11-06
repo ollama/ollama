@@ -91,11 +91,11 @@ func TestHostPLELookupMatchesResidentEmbedding(t *testing.T) {
 			for _, layer := range layers {
 				wantNames = append(wantNames, layer.Name, layer.Name+".scale", layer.Name+".global_scale")
 			}
-			gotNames := m.HostTensorNames()
+			gotNames := m.SkippedTensorNames()
 			slices.Sort(gotNames)
 			slices.Sort(wantNames)
 			if !slices.Equal(gotNames, wantNames) {
-				t.Fatalf("host tensor names = %v, want %v", gotNames, wantNames)
+				t.Fatalf("skipped tensor names = %v, want %v", gotNames, wantNames)
 			}
 
 			mlxtest.Run(t, func(t *mlxtest.T) {
@@ -125,9 +125,9 @@ func TestHostPLELookupMatchesResidentEmbedding(t *testing.T) {
 	}
 }
 
-func TestResidentPLEDoesNotExcludeTensors(t *testing.T) {
-	if got := (&Model{}).HostTensorNames(); len(got) != 0 {
-		t.Fatalf("host tensor names = %v, want none", got)
+func TestResidentPLEDoesNotSkipTensors(t *testing.T) {
+	if got := (&Model{}).SkippedTensorNames(); len(got) != 0 {
+		t.Fatalf("skipped tensor names = %v, want none", got)
 	}
 }
 

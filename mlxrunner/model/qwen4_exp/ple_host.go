@@ -37,7 +37,7 @@ type hostPLETable struct {
 	hasGlobalScale bool
 }
 
-func (m *Model) HostTensorNames() []string {
+func (m *Model) SkippedTensorNames() []string {
 	var names []string
 	for prefix, table := range m.hostPLE {
 		for i := range table.shards {
