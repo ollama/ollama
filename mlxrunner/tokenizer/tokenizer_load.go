@@ -151,6 +151,19 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		t.typ = TokenizerBPE
 	}
 
+	if raw.Normalizer.Type == "Sequence" {
+		var doc struct {
+			Normalizer json.RawMessage `json:"normalizer"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return nil, err
+		}
+		stages, err := loadNormalizerSequence(doc.Normalizer)
+		if err != nil {
+			return nil, err
+		}
+		t.normalizerStages = stages
+	}
 	t.normalizeNFC = raw.Normalizer.Type == "NFC"
 	t.normalizeSpaces = raw.Normalizer.Type == "Replace" && raw.Normalizer.Pattern.String != nil && *raw.Normalizer.Pattern.String == " " && raw.Normalizer.Content == "▁"
 	t.ignoreMerges = raw.Model.IgnoreMerges
@@ -175,6 +188,12 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		t.pretokenizer, err = loadPretokenizers(raw.PreTokenizer)
 		if err != nil {
 			return nil, err
+		}
+		for _, stage := range t.pretokenizer {
+			if stage.metaspace != nil {
+				t.pipelineMetaspace = stage.metaspace
+				t.typ = TokenizerSentencePiece
+			}
 		}
 	}
 

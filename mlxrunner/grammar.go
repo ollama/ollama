@@ -64,7 +64,7 @@ func newGrammarEngine(logitsWidth int, tokenizer *tokenizer.Tokenizer) *grammarE
 	}
 	pieces := make([]string, logitsWidth)
 	for id := range logitsWidth {
-		pieces[id] = tokenizer.Decode([]int32{int32(id)})
+		pieces[id] = tokenizer.DecodeRaw([]int32{int32(id)})
 	}
 	stops := slices.DeleteFunc(slices.Clone(tokenizer.EOSTokens()), func(id int32) bool {
 		return id < 0 || int(id) >= logitsWidth
