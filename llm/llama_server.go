@@ -2887,6 +2887,7 @@ type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+	pending []byte
 }
 
 type memoryBufferKey struct {
@@ -2951,13 +2952,25 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			w.runner.memoryMu.Lock()
 			defer w.runner.memoryMu.Unlock()
 
-			if match := deviceFreeRegex.FindSubmatch(b); match != nil {
+			data := append(w.pending, b...)
+			lastNewline := bytes.LastIndexByte(data, '\n')
+
+			if lastNewline == -1 {
+				w.pending = data
+				return
+			}
+
+			complete := data[:lastNewline+1]
+			w.pending = append([]byte(nil), data[lastNewline+1:]...)
+
+			if match := deviceFreeRegex.FindSubmatch(complete); match != nil {
 				devName := string(match[1])
 				if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
 					w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
 				}
 			}
-			for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
+
+			for _, match := range offloadedLayersRegex.FindAllSubmatch(complete, -1) {
 				loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
 				total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
 				if loadedErr == nil && totalErr == nil {
@@ -2965,13 +2978,15 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					w.runner.totalLayers = total
 				}
 			}
-			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
+
+			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(complete, -1) {
 				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
 				if err == nil && overflowing > 0 {
 					w.runner.gpuLayerOverflow += int(overflowing)
 				}
 			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
+
+			for _, match := range bufferSizeRegex.FindAllSubmatch(complete, -1) {
 				backendName := string(match[2])
 				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
 					if w.buffers == nil {
@@ -2987,6 +3002,7 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			}
 		}()
 	}
+
 	return w.inner.Write(b)
 }
 
