@@ -13,6 +13,7 @@ import (
 const defaultBPEPattern = `'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`
 
 type pretokenizer struct {
+	metaspace       *metaspace
 	re              *regexp.Regexp
 	whitespaceGroup int
 	rightDigits     bool
@@ -43,6 +44,7 @@ func loadPretokenizers(data json.RawMessage) ([]pretokenizer, error) {
 			Invert         bool   `json:"invert"`
 			UseRegex       *bool  `json:"use_regex"`
 			AddPrefixSpace bool   `json:"add_prefix_space"`
+			metaspace
 		}
 		if err := json.Unmarshal(data, &raw); err != nil {
 			return nil, fmt.Errorf("invalid pretokenizer: %w", err)
@@ -62,6 +64,11 @@ func loadPretokenizers(data json.RawMessage) ([]pretokenizer, error) {
 				pattern = regexp.QuoteMeta(*raw.Pattern.String)
 			}
 			pt, err = compileSplit(pattern, raw.Behavior, raw.Invert)
+		case "Metaspace":
+			if raw.Replacement != "▁" || raw.PrependScheme != "first" || raw.Split {
+				return nil, fmt.Errorf("unsupported pipeline Metaspace: %s", data)
+			}
+			pt.metaspace = &raw.metaspace
 		case "ByteLevel":
 			if raw.UseRegex == nil || *raw.UseRegex {
 				pt, err = compileSplit(defaultBPEPattern, "Isolated", false)
@@ -77,6 +84,9 @@ func loadPretokenizers(data json.RawMessage) ([]pretokenizer, error) {
 		all = append(all, pt)
 	}
 	for i, pt := range all {
+		if pt.metaspace != nil && i != len(all)-1 {
+			return nil, fmt.Errorf("Metaspace must be the final pretokenizer")
+		}
 		// Byte mapping happens in encodeChunkInto, after the splitting pipeline.
 		if pt.byteLevel {
 			if i != len(all)-1 {
@@ -126,7 +136,11 @@ func compileSplit(pattern, behavior string, invert bool) (pretokenizer, error) {
 	// supported here. Oniguruma's other flag groups can differ from RE2:
 	// full case folding matches ss to ß, and m changes dot/newline behavior.
 	const contractions = `(?i:'s|'t|'re|'ve|'m|'ll|'d)`
-	groups := strings.ReplaceAll(strings.ReplaceAll(pattern, contractions, ""), "(?:", "")
+	// Luciole uses only literal ASCII French/English elision alternatives.
+	// Their case folding has no multi-character folds that differ from RE2.
+	const lucioleContractions = `(?i: ?(?:[jtmslndcy]['’]|qu['’]|jusqu['’]|lorsqu['’]|puisqu['’]|quoiqu['’]|aujourd['’]hui)|['’][stmd]|['’][rv]e|['’]ll)`
+	groups := strings.ReplaceAll(pattern, lucioleContractions, "")
+	groups = strings.ReplaceAll(strings.ReplaceAll(groups, contractions, ""), "(?:", "")
 	if strings.Contains(groups, "(?") {
 		return pt, fmt.Errorf("unsupported pretokenizer group in %q", pattern)
 	}

@@ -39,6 +39,8 @@ type Tokenizer struct {
 	specialTokenMatcher    addedTokenMatcher
 	normalizedTokenMatcher addedTokenMatcher
 	typ                    TokenizerType // Algorithm type
+	normalizerStages       []normalizerStage
+	pipelineMetaspace      *metaspace
 	normalizeNFC           bool
 	normalizeSpaces        bool
 	ignoreMerges           bool
