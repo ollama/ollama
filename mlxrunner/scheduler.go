@@ -43,6 +43,9 @@ type batchRequest struct {
 	output    *generationOutput
 	responses []CompletionResponse
 	finished  bool
+
+	// Captured before waiting for grammar compilation.
+	promptEval time.Duration
 }
 
 type batchScheduler struct {
@@ -326,6 +329,9 @@ func (s *batchScheduler) step() bool {
 			break
 		}
 		if ready {
+			if req.promptEval == 0 {
+				req.promptEval = time.Since(req.prefill.started)
+			}
 			// Compilation runs concurrently; do not block the MLX worker waiting on it.
 			compiled := true
 			if c := req.request.Grammar; c != nil {
@@ -344,15 +350,17 @@ func (s *batchScheduler) step() bool {
 				s.finish(slot, err)
 				break
 			}
+			// Include final cache settlement, but exclude the grammar wait.
+			started := time.Now()
 			seed := req.prefill.seed()
-			promptEval := time.Since(req.prefill.started)
+			req.promptEval += time.Since(started)
 			s.r.Sampler.Add(slot.id, req.request.SamplerOpts, req.request.Tokens)
 			if req.spec != nil {
 				req.decoder = req.spec.decoder(seed, req.prefill.position, req.grammar)
 			} else {
 				req.decoder = s.r.pipelinedDecoder(slot.id, nil, slot.targets, seed.ExpandDims(-1), req.prefill.position, req.media.rowLayout(), req.grammar)
 			}
-			req.output = newGenerationOutput(s.r, req.request, req.session, promptEval)
+			req.output = newGenerationOutput(s.r, req.request, req.session, req.promptEval)
 			req.prefill = nil
 		}
 		break

@@ -93,6 +93,38 @@ func TestRowKVHistoryAttention(t *testing.T) {
 	})
 }
 
+func TestRowKVHistoryMaskMemoization(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		q := mlx.Zeros(mlx.DTypeFloat32, 2, 1, 2, 2)
+		k := mlx.Zeros(mlx.DTypeFloat32, 1, 1, 4, 2)
+		array := mlx.Zeros(mlx.DTypeFloat32, 2, 1, 2, 4)
+		for _, tc := range []struct {
+			name string
+			mask AttentionMask
+		}{
+			{"causal", CausalMask()},
+			{"relaxed", CausalMask().Relax(1, 2, 3, 3, 4)},
+			{"array", ArrayMask(array)},
+			{"relaxed array", CausalMask().Relax(0, 2, 3, 3, 4).Intersect(ArrayMask(array))},
+		} {
+			b := newBatch([]int32{2, 2}, 2, nil)
+			var calls [2]int
+			rows := make([]*KVHistory, len(calls))
+			for i := range rows {
+				rows[i] = NewKVHistory(k, k, recordingApplier{l: 2, K: 4, calls: &calls[i]})
+			}
+			for range 4 {
+				mlx.Eval(ScaledDotProductAttention(b, q, 1, WithKVHistory(NewRowKVHistory(rows)), WithMask(tc.mask)))
+			}
+			for row, n := range calls {
+				if n != 1 {
+					t.Fatalf("%s: row %d prepared its mask %d times, want once", tc.name, row, n)
+				}
+			}
+		}
+	})
+}
+
 func TestAttentionMaskZero(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		var m AttentionMask
@@ -839,7 +871,7 @@ type recordingApplier struct {
 	w        int
 	l        int
 	K        int
-	applied  *bool
+	calls    *int
 	collapse bool
 }
 
@@ -851,7 +883,7 @@ func (r recordingApplier) NativeWindow() int {
 }
 
 func (r recordingApplier) ApplyMask(logical AttentionMask) AttentionMask {
-	*r.applied = true
+	*r.calls++
 	if r.collapse && (logical.IsZero() || logical.IsCausal()) {
 		return AttentionMask{}
 	}
@@ -927,8 +959,8 @@ func TestSDPANativeWindowDispatch(t *testing.T) {
 		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			q, k, v := sdpaInputs(tc.L, K)
 			b := newBatch([]int32{int32(K - tc.L)}, tc.L, tc.qLens)
-			applied := false
-			applier := recordingApplier{w: tc.w, l: tc.L, K: K, applied: &applied, collapse: tc.collapse}
+			calls := 0
+			applier := recordingApplier{w: tc.w, l: tc.L, K: K, calls: &calls, collapse: tc.collapse}
 			history := NewKVHistory(k, v, applier)
 
 			ScaledDotProductAttention(b, q, 1.0, WithKVHistory(history), WithMask(tc.mask))
@@ -943,8 +975,8 @@ func TestSDPANativeWindowDispatch(t *testing.T) {
 				t.Fatalf("dispatch = {mode:%q window:%d arr:%v}, want {mode:%q window:%d arr-set:%v}",
 					d.mode, d.window, d.arr != nil, tc.wantMode, tc.wantWindow, tc.wantArr)
 			}
-			if applied != tc.wantApplied {
-				t.Fatalf("ApplyMask called = %v, want %v", applied, tc.wantApplied)
+			if (calls > 0) != tc.wantApplied {
+				t.Fatalf("ApplyMask calls = %d, want called=%v", calls, tc.wantApplied)
 			}
 		})
 	}
