@@ -1037,6 +1037,16 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityAudio, model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
+			name: "explicit capabilities retain unsupported audio guard",
+			model: Model{
+				ModelPath: nemotronOmniModelPath,
+				Config: model.ConfigV2{
+					Capabilities: []string{"completion", "audio"}, CapabilitiesExplicit: true,
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion},
+		},
+		{
 			name: "nemotron3 gguf suppresses audio capability",
 			model: Model{
 				ModelPath: nemotronOmniModelPath,

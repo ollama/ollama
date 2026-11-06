@@ -65,7 +65,7 @@ func NewSafetensorsManifestWriter(opts SafetensorsManifestOptions) ManifestWrite
 		}
 
 		config := info.ModelConfig
-		config.AddCapabilities(opts.Capabilities...)
+		config.SetCapabilities(opts.Capabilities...)
 		config.ModelFormat = "safetensors"
 		if config.Requires == "" {
 			config.Requires = opts.MinVersion
