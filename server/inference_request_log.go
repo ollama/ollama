@@ -79,12 +79,34 @@ func (l *inferenceRequestLogger) middleware(route string) gin.HandlerFunc {
 			}
 		}
 
+		capture := &responseCapture{ResponseWriter: c.Writer}
+		c.Writer = capture
+
 		c.Next()
-		l.log(route, method, scheme, host, contentType, body)
+		l.log(route, method, scheme, host, contentType, body, capture.buf.Bytes(), capture.Header().Get("Content-Type"))
 	}
 }
 
-func (l *inferenceRequestLogger) log(route, method, scheme, host, contentType string, body []byte) {
+// responseCapture tees everything written to the client into a buffer so the
+// debug logger can persist the response after the handler completes. Streaming
+// handlers call Write per chunk, so the capture works for both streamed and
+// non-streamed responses without changing flush behavior.
+type responseCapture struct {
+	gin.ResponseWriter
+	buf bytes.Buffer
+}
+
+func (w *responseCapture) Write(b []byte) (int, error) {
+	w.buf.Write(b)
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *responseCapture) WriteString(s string) (int, error) {
+	w.buf.WriteString(s)
+	return w.ResponseWriter.WriteString(s)
+}
+
+func (l *inferenceRequestLogger) log(route, method, scheme, host, contentType string, body, response []byte, responseContentType string) {
 	if l == nil || l.dir == "" {
 		return
 	}
@@ -121,7 +143,20 @@ func (l *inferenceRequestLogger) log(route, method, scheme, host, contentType st
 		return
 	}
 
-	slog.Info(fmt.Sprintf("logged to %s, replay using curl with `sh %s`", bodyPath, curlPath))
+	// Streamed responses (NDJSON, SSE) are concatenated chunks rather than a
+	// single JSON document, so only use a .json extension for application/json.
+	responseExt := "txt"
+	if responseContentType == "application/json" || strings.HasPrefix(responseContentType, "application/json;") {
+		responseExt = "json"
+	}
+	responseFilename := fmt.Sprintf("%s_%s_response.%s", timestamp, routeForFilename, responseExt)
+	responsePath := filepath.Join(l.dir, responseFilename)
+	if err := os.WriteFile(responsePath, response, 0o600); err != nil {
+		slog.Warn("failed to write debug response body", "route", route, "error", err)
+		return
+	}
+
+	slog.Info(fmt.Sprintf("logged to %s with response in %s, replay using curl with `sh %s`", bodyPath, responsePath, curlPath))
 }
 
 func sanitizeRouteForFilename(route string) string {
