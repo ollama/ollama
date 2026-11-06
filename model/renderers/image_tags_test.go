@@ -65,3 +65,13 @@ func TestRenderContentWithImageTags(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderContentWithImageTagSeparator(t *testing.T) {
+	content, offset := renderContentWithImageTagSeparator("describe these images", 2, 0, " ")
+	if content != "[img-0] [img-1] describe these images" {
+		t.Fatalf("content = %q", content)
+	}
+	if offset != 2 {
+		t.Fatalf("offset = %d, want 2", offset)
+	}
+}
