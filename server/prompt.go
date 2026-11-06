@@ -17,6 +17,12 @@ import (
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
+// OpenAI multipart content is split into adjacent user messages. Keep an
+// image-only part with the user message immediately before it.
+func isMultipartImagePart(msg, previous api.Message) bool {
+	return msg.Role == "user" && msg.Content == "" && len(msg.Images) > 0 && previous.Role == "user"
+}
+
 // chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
@@ -30,11 +36,19 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	imageNumTokens := 768
 
 	lastMsgIdx := len(msgs) - 1
+	lastMsgStart := lastMsgIdx
+	for lastMsgStart > 0 && isMultipartImagePart(msgs[lastMsgStart], msgs[lastMsgStart-1]) {
+		lastMsgStart--
+	}
 	currMsgIdx := 0
 
 	if truncate {
 		// Start with all messages and remove from the front until it fits in context
 		for i := 0; i <= lastMsgIdx; i++ {
+			if i > 0 && isMultipartImagePart(msgs[i], msgs[i-1]) {
+				continue
+			}
+
 			// Collect system messages from the portion we're about to skip
 			system = make([]api.Message, 0)
 			for j := range i {
@@ -65,9 +79,9 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 				break
 			}
 
-			// Must always include at least the last message
-			if i == lastMsgIdx {
-				currMsgIdx = lastMsgIdx
+			// Must always include at least the last message and its multipart group
+			if i == lastMsgStart {
+				currMsgIdx = lastMsgStart
 				break
 			}
 		}
