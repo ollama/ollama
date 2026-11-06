@@ -42,10 +42,13 @@ var (
 func piHasModelArgs(args []string) bool {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--":
+			return false
 		case "--provider", "--model":
 			return i+1 < len(args)
 		case "--mode", "--api-key", "--system-prompt", "--append-system-prompt",
-			"--session", "--fork", "--session-dir", "--models", "--tools", "-t",
+			"--name", "-n", "--session", "--session-id", "--fork", "--session-dir",
+			"--models", "--tools", "-t", "--exclude-tools", "-xt",
 			"--thinking", "--export", "--extension", "-e", "--skill", "--prompt-template", "--theme":
 			// These Pi options consume a value, even when it looks like a flag.
 			i++
@@ -157,7 +160,11 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 				return err
 			}
 			if len(model.Capabilities) == 0 {
-				// Authentication may make previously unavailable metadata readable.
+				// Sign-in may outlive discovery; retry with a fresh bounded window.
+				cancelDiscovery()
+				discoveryCtx, cancelDiscovery = context.WithTimeout(ctx, piModelDiscoveryTimeout)
+				defer cancelDiscovery()
+				remaining = piModelDiscoveryTimeout
 				model, err = c.piTargetModel(discoveryCtx, target, &remaining)
 				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 					err = nil
