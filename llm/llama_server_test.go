@@ -884,9 +884,9 @@ func TestLlamaServerCompletionWithMediaUsesRunnerMarker(t *testing.T) {
 
 	opts := api.DefaultOptions()
 	err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:  "look [img-7] now",
+		Prompt:  "look [img-7] then [img-8] now",
 		Options: &opts,
-		Media:   []MediaData{NewMediaData(7, []byte("media-bytes"))},
+		Media:   []MediaData{NewMediaData(7, []byte("media-bytes")), {ID: 8, Kind: MediaKindVideo, Data: []byte("video-bytes")}},
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -896,18 +896,21 @@ func TestLlamaServerCompletionWithMediaUsesRunnerMarker(t *testing.T) {
 	if !ok {
 		t.Fatalf("prompt = %T, want multimodal prompt object", capturedReq.Prompt)
 	}
-	if got, want := promptObj["prompt_string"], "look "+mediaMarker+" now"; got != want {
+	if got, want := promptObj["prompt_string"], "look "+mediaMarker+" then "+mediaMarker+" now"; got != want {
 		t.Fatalf("prompt_string = %q, want %q", got, want)
 	}
 	data, ok := promptObj["multimodal_data"].([]any)
 	if !ok {
 		t.Fatalf("multimodal_data = %T, want array", promptObj["multimodal_data"])
 	}
-	if len(data) != 1 {
-		t.Fatalf("multimodal_data len = %d, want 1", len(data))
+	if len(data) != 2 {
+		t.Fatalf("multimodal_data len = %d, want 2", len(data))
 	}
 	if got, want := data[0], base64.StdEncoding.EncodeToString([]byte("media-bytes")); got != want {
 		t.Fatalf("multimodal_data[0] = %q, want %q", got, want)
+	}
+	if got, want := data[1], base64.StdEncoding.EncodeToString([]byte("video-bytes")); got != want {
+		t.Fatalf("multimodal_data[1] = %q, want %q", got, want)
 	}
 }
 
@@ -3857,18 +3860,19 @@ func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 	wav := []byte("RIFF\x00\x00\x00\x00WAVE")
 	mp3 := []byte("ID3\x04\x00\x00")
 
-	msg, err := llamaServerChatMessage(Message{
+	msg, err := llamaServerChatMessage(MessageFromAPI(api.Message{
 		Role:    "user",
 		Content: "describe these",
-		Media:   []MediaData{NewMediaData(0, png), NewMediaData(1, webp), NewMediaData(2, wav), NewMediaData(3, mp3)},
-	})
+		Images:  []api.ImageData{png, webp, wav, mp3},
+		Videos:  []api.VideoData{[]byte("video-bytes")},
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	parts, ok := msg["content"].([]map[string]any)
-	if !ok || len(parts) != 5 {
-		t.Fatalf("expected five content parts, got %#v", msg["content"])
+	if !ok || len(parts) != 6 {
+		t.Fatalf("expected six content parts, got %#v", msg["content"])
 	}
 	if parts[1]["type"] != "image_url" {
 		t.Fatalf("expected image_url for PNG, got %#v", parts[1])
@@ -3894,6 +3898,12 @@ func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 		if audio["data"] == "" {
 			t.Fatalf("expected base64 audio data for %s", want)
 		}
+	}
+	if parts[5]["type"] != "video_url" {
+		t.Fatalf("expected video_url, got %#v", parts[5])
+	}
+	if got := parts[5]["video_url"].(map[string]any)["url"]; got != "data:video/mp4;base64,"+base64.StdEncoding.EncodeToString([]byte("video-bytes")) {
+		t.Fatalf("video payload = %#v", got)
 	}
 }
 

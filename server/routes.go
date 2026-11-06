@@ -548,6 +548,15 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
+	videoMessages := []api.Message{{Videos: req.Videos}}
+	if !req.Raw && req.Context == nil && req.Suffix == "" {
+		videoMessages = append(videoMessages, m.Messages...)
+	}
+	if err := validateVideoInput(m, videoMessages); err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
 	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
@@ -559,8 +568,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	// load the model
-	if req.Prompt == "" {
+	// A media-only request still requires inference.
+	if req.Prompt == "" && len(req.Images)+len(req.Videos) == 0 {
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
 			CreatedAt:  time.Now().UTC(),
@@ -575,10 +584,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	media := make([]llm.MediaData, len(req.Images))
-	for i := range req.Images {
-		media[i] = llm.NewMediaData(i, req.Images[i])
-	}
+	media := llm.MessageFromAPI(api.Message{Images: req.Images, Videos: req.Videos}).Media
 
 	prompt := req.Prompt
 	var leadingBOS string
@@ -608,10 +614,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				msgs = append(msgs, m.Messages...)
 			}
 
-			userMsg := api.Message{Role: "user", Content: req.Prompt}
-			for _, m := range media {
-				userMsg.Images = append(userMsg.Images, m.Data)
-			}
+			userMsg := api.Message{Role: "user", Content: req.Prompt, Images: req.Images, Videos: req.Videos}
 			values.Messages = append(msgs, userMsg)
 		}
 
@@ -660,7 +663,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					return
 				}
-				nativeReq.Messages, media, err = imageTaggedMessages(m, nativeReq.Messages, 0, true)
+				// Match native Chat's text-then-media ordering without sending the
+				// binary payload twice. Explicit markers retain their positions.
+				nativeReq.Messages, media, err = mediaTaggedMessages(m, nativeReq.Messages, 0, true, mediaTagsAfterText)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
@@ -694,14 +699,29 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				leadingBOS = leadingBOSForModel(m)
 			}
 		} else {
-			// Direct template execution flow.
+			// This branch bypasses renderers: tag each source message before
+			// templating so media stays inside its role/system delimiters.
+			if len(req.Videos) > 0 || slices.ContainsFunc(values.Messages, func(msg api.Message) bool { return len(msg.Videos) > 0 }) {
+				if len(values.Messages) > 0 {
+					values.Messages, media, err = mediaTaggedMessages(m, values.Messages, 0, true, mediaTagsDefault)
+					if err != nil {
+						c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+						return
+					}
+				} else {
+					values.Prompt = mediaTaggedContent(values.Prompt, media, mediaTagsDefault)
+				}
+			}
 			if err := tmpl.Execute(&b, values); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-
 			prompt = b.String()
 		}
+	}
+
+	if req.Raw && len(req.Videos) > 0 {
+		prompt = mediaTaggedContent(prompt, media, mediaTagsDefault)
 	}
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
@@ -3227,6 +3247,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
+	if err := validateVideoInput(m, chatMessagesForRequest(m, req.Messages)); err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
 	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
@@ -3589,7 +3614,7 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 		ctxLen := len(tokens)
 		if m != nil && m.ProjectorPaths != nil {
 			for _, msg := range renderReq.Messages {
-				ctxLen += 768 * len(msg.Images)
+				ctxLen += 768 * (len(msg.Images) + len(msg.Videos))
 			}
 		}
 
@@ -3619,7 +3644,7 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 func countChatImages(msgs []api.Message) int {
 	var count int
 	for _, msg := range msgs {
-		count += len(msg.Images)
+		count += len(msg.Images) + len(msg.Videos)
 	}
 	return count
 }

@@ -176,7 +176,9 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
-set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
+set(LLAMA_SUBPROCESS ON CACHE BOOL "" FORCE)
+# Earlier builds cached video support OFF when subprocesses were disabled.
+set(MTMD_VIDEO ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     llama_cpp

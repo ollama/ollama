@@ -82,3 +82,47 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
     ```
   </Tab>
 </Tabs>
+
+## Video input
+
+Local multimodal GGUF models with video support, such as `qwen3-vl` and
+`qwen2.5vl`, accept base64-encoded files in `videos`. The runner samples frames
+and preserves their temporal order. Start with a short clip and allow enough
+context for the sampled frames. MLX models do not support this input.
+
+Install FFmpeg on the machine running Ollama. Both `ffmpeg` and `ffprobe`
+must be available on the Ollama server process's `PATH`; restart the app or
+service after installing them or changing its `PATH`. Ollama does not bundle
+these tools. Supported containers and codecs depend on that FFmpeg installation.
+On Windows, use the `ffmpeg.exe` and `ffprobe.exe` binaries.
+
+In the desktop app, attach a video file as you would an image. If decoding fails,
+check the Ollama server logs for missing-tool or codec errors.
+
+```python
+import base64
+import json
+import urllib.request
+
+with open("clip.mp4", "rb") as clip:
+    video = base64.b64encode(clip.read()).decode("ascii")
+
+request = urllib.request.Request(
+    "http://localhost:11434/api/chat",
+    data=json.dumps({
+        "model": "qwen3-vl:2b",
+        "messages": [{"role": "user", "content": "Describe what changes in this clip.", "videos": [video]}],
+        "stream": False,
+    }).encode(),
+    headers={"Content-Type": "application/json"},
+)
+with urllib.request.urlopen(request) as response:
+    print(json.load(response)["message"]["content"])
+```
+
+`/api/generate` accepts the same `videos` array alongside `prompt`.
+`/v1/chat/completions` accepts a content part with
+`{"type": "video_url", "video_url": {"url": "data:video/mp4;base64,..."}}`.
+Video URLs must be inline base64 data URLs; download remote videos before sending
+them to Ollama. Images and videos can be combined in the same message; images
+precede videos when both arrays are supplied.

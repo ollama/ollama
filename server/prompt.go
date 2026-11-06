@@ -7,15 +7,23 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/types/model"
 )
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
+
+type mediaTagPlacement uint8
+
+const (
+	mediaTagsOmitted mediaTagPlacement = iota
+	mediaTagsDefault
+	mediaTagsAfterText
+)
 
 // chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
@@ -56,7 +64,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			ctxLen := len(s)
 			if m.ProjectorPaths != nil {
 				for _, msg := range msgs[i:] {
-					ctxLen += imageNumTokens * len(msg.Images)
+					ctxLen += imageNumTokens * (len(msg.Images) + len(msg.Videos))
 				}
 			}
 
@@ -77,7 +85,11 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
 	}
 
-	renderMsgs, media, err := imageTaggedMessages(m, msgs, currMsgIdx, false)
+	placement := mediaTagsDefault
+	if m.Config.Renderer != "" {
+		placement = mediaTagsOmitted
+	}
+	renderMsgs, media, err := mediaTaggedMessages(m, msgs, currMsgIdx, false, placement)
 	if err != nil {
 		return "", nil, err
 	}
@@ -91,7 +103,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	return p, media, nil
 }
 
-func imageTaggedMessages(m *Model, msgs []api.Message, start int, clearImages bool) ([]api.Message, []llm.MediaData, error) {
+func mediaTaggedMessages(m *Model, msgs []api.Message, start int, clearMedia bool, placement mediaTagPlacement) ([]api.Message, []llm.MediaData, error) {
 	renderMsgs := slices.Clone(msgs)
 	var media []llm.MediaData
 
@@ -100,32 +112,18 @@ func imageTaggedMessages(m *Model, msgs []api.Message, start int, clearImages bo
 			return nil, nil, errors.New("this model only supports one image while more than one image requested")
 		}
 
-		var prefix string
-		prompt := msg.Content
-
-		for _, i := range msg.Images {
-			mediaData := llm.NewMediaData(len(media), i)
-			media = append(media, mediaData)
-
-			if m.Config.Renderer != "" {
-				continue
-			}
-
-			// The prompt marker is still image-named for compatibility with
-			// existing templates and llama-server media marker replacement.
-			imgTag := fmt.Sprintf("[img-%d]", mediaData.ID)
-			if !strings.Contains(prompt, "[img]") {
-				prefix += imgTag
-			} else {
-				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
-			}
+		messageMedia := llm.MessageFromAPI(msg).Media
+		for i := range messageMedia {
+			messageMedia[i].ID = len(media)
+			media = append(media, messageMedia[i])
+		}
+		if placement != mediaTagsOmitted {
+			renderMsgs[start+cnt].Content = mediaTaggedContent(msg.Content, messageMedia, placement)
 		}
 
-		if m.Config.Renderer == "" {
-			renderMsgs[start+cnt].Content = prefix + prompt
-		}
-		if clearImages {
+		if clearMedia {
 			renderMsgs[start+cnt].Images = nil
+			renderMsgs[start+cnt].Videos = nil
 		}
 	}
 
@@ -153,4 +151,29 @@ func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.Thi
 		return "", err
 	}
 	return b.String(), nil
+}
+
+// Keep the existing image-named markers for every media kind. The runner expands
+// a video slot into timed frames; Go renderers must never expand it themselves.
+func mediaTaggedContent(content string, media []llm.MediaData, placement mediaTagPlacement) string {
+	if len(media) == 0 {
+		return content
+	}
+	content, unplaced := renderers.PrepareMediaTags(content, len(media), media[0].ID)
+	// Native Chat places media after text. Preserve that ordering for videos
+	// across renderers, raw prompts, and custom templates as well.
+	if placement == mediaTagsAfterText || slices.ContainsFunc(media, func(m llm.MediaData) bool { return m.Kind == llm.MediaKindVideo }) {
+		return content + unplaced
+	}
+	return unplaced + content
+}
+
+func validateVideoInput(m *Model, messages []api.Message) error {
+	if !slices.ContainsFunc(messages, func(msg api.Message) bool { return len(msg.Videos) > 0 }) {
+		return nil
+	}
+	if m.IsMLX() || slices.Contains(m.Config.ModelFamilies, "mllama") {
+		return fmt.Errorf("%w: video input requires a supported multimodal GGUF model, such as qwen3-vl or qwen2.5vl", errCapabilities)
+	}
+	return m.CheckCapabilities(model.CapabilityVision)
 }

@@ -56,6 +56,9 @@ func (e AuthorizationError) Error() string {
 // ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
+// VideoData represents the raw binary data of a video file.
+type VideoData []byte
+
 // GenerateRequest describes a request sent by [Client.Generate]. While you
 // have to specify the Model and Prompt fields, all the other fields have
 // reasonable defaults for basic uses.
@@ -99,6 +102,9 @@ type GenerateRequest struct {
 	// Images is an optional list of raw image bytes accompanying this
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
+
+	// Videos is an optional list of raw video bytes for multimodal GGUF models.
+	Videos []VideoData `json:"videos,omitempty"`
 
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
@@ -198,7 +204,7 @@ func (t Tool) String() string {
 
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
-// of images.
+// of images and videos.
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -206,6 +212,7 @@ type Message struct {
 	// original model output when ChatRequest.Think is enabled.
 	Thinking   string      `json:"thinking,omitempty"`
 	Images     []ImageData `json:"images,omitempty"`
+	Videos     []VideoData `json:"videos,omitempty"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolName   string      `json:"tool_name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
