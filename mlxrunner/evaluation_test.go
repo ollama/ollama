@@ -58,7 +58,7 @@ func TestWholeForwardRows(t *testing.T) {
 					}
 				}
 				done[id] = make(chan error, 1)
-				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*evaluationState, error) {
+				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 					return r.openEvaluation(slot, input, items, func(h *mlx.Array) error { result[id] = h.Floats(); return nil }), nil
 				}}
 			}
@@ -95,7 +95,7 @@ func TestEvaluationCancellationAndSlotReuse(t *testing.T) {
 			if i == 0 {
 				requestCtx = ctx
 			}
-			requests[i] = &evaluationRequest{ctx: requestCtx, done: make(chan error, 1), open: func(slot *batchSlot) (*evaluationState, error) {
+			requests[i] = &evaluationRequest{ctx: requestCtx, done: make(chan error, 1), open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 				input := &model.PreparedRequest{Tokens: []int32{int32(i + 1)}, Layout: float32(10)}
 				return r.openEvaluation(slot, input, nil, func(h *mlx.Array) error {
 					results[i] = h.Floats()
@@ -185,7 +185,7 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 			cached := make([]int, 2)
 			for id, tokens := range prompts {
 				done[id] = make(chan error, 1)
-				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*evaluationState, error) {
+				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 					p := r.openEvaluation(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 2 - id}, nil, func(h *mlx.Array) error { got[id] = h.Floats(); return nil })
 					cached[id] = p.position
 					return p, nil
@@ -254,4 +254,59 @@ func TestCachedForwardChunkBoundaries(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCachedEvaluationReusesBusyPeer(t *testing.T) {
+	ctx := t.Context()
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m := &cachedRowTestModel{}
+		r := &Runner{Model: m, parallel: 2}
+		s := &batchScheduler{r: r, slots: make([]*batchSlot, 2)}
+		defer func() {
+			for _, slot := range s.slots {
+				if slot != nil && slot.scoreCache != nil {
+					slot.scoreCache.close()
+				}
+			}
+		}()
+		var got []float32
+		open := func(tokens []int32) *evaluationRequest {
+			return &evaluationRequest{ctx: ctx, done: make(chan error, 1), open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+				return r.openEvaluation(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 4}, nil, func(h *mlx.Array) error {
+					got = h.Floats()
+					return nil
+				}, peers...), nil
+			}}
+		}
+		prefix := []int32{1, 2, 3, 4, 5, 6, 7, 8}
+		warm := open(prefix)
+		s.admitEvaluation(warm)
+		s.stepEvaluation(s.slots[0])
+		if err := <-warm.done; err != nil {
+			t.Fatal(err)
+		}
+		// Slot zero is occupied by another request before the fork arrives.
+		s.admitEvaluation(open(append(slices.Clone(prefix), 30)))
+		fork := open(append(slices.Clone(prefix), 20))
+		s.admitEvaluation(fork)
+		if got := s.slots[1].evaluation.state.position; got != len(prefix) {
+			t.Fatalf("busy-peer cached tokens %d, want %d", got, len(prefix))
+		}
+		s.finishEvaluation(s.slots[0], context.Canceled)
+		s.slots[0].scoreCache.close()
+		s.stepEvaluation(s.slots[1])
+		if err := <-fork.done; err != nil {
+			t.Fatal(err)
+		}
+		var sum, squares float32
+		var want []float32
+		for _, n := range append(slices.Clone(prefix), 20) {
+			sum += float32(n)
+			squares += float32(n * n)
+			want = append(want, sum+squares)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("shared evaluation %v, want cumulative result %v", got, want)
+		}
+	})
 }

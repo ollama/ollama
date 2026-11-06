@@ -60,7 +60,7 @@ func TestSchedulerMixedRequests(t *testing.T) {
 				generation := request{Ctx: ctx, Tokens: []int32{1, 1, 1}, Responses: make(chan CompletionResponse, 16), CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 8}}}
 				var embedding []float32
 				evaluations := 0
-				evaluation := &evaluationRequest{ctx: ctx, done: make(chan error, 1), open: func(slot *batchSlot) (*evaluationState, error) {
+				evaluation := &evaluationRequest{ctx: ctx, done: make(chan error, 1), open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 					return r.openEvaluation(slot, &model.PreparedRequest{Tokens: []int32{2, 2}}, nil, func(hidden *mlx.Array) error {
 						evaluations++
 						embedding = meanPoolAndNormalize(hidden.Reshape(2, mtpTestVocab), 2)
