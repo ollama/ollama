@@ -1608,6 +1608,7 @@ type llamaServerCompletionResponse struct {
 	StopType                string                 `json:"stop_type"`
 	Timings                 llamaServerTimings     `json:"timings"`
 	CompletionProbabilities []llamaServerTokenProb `json:"completion_probabilities"`
+	Error                   any                    `json:"error"`
 }
 
 type llamaServerChatChoice struct {
@@ -1837,6 +1838,11 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			var lsResp llamaServerCompletionResponse
 			if err := json.Unmarshal(evt, &lsResp); err != nil {
 				return fmt.Errorf("error unmarshalling llama-server response: %v", err)
+			}
+			// llama-server sends HTTP 200 before it starts decoding, so a later
+			// failure arrives here rather than as an error status.
+			if lsResp.Error != nil {
+				return errors.New(s.statusErrorMessage(evt))
 			}
 
 			// Token repeat detection
