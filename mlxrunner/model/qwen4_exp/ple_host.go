@@ -37,6 +37,17 @@ type hostPLETable struct {
 	hasGlobalScale bool
 }
 
+func (m *Model) HostTensorNames() []string {
+	var names []string
+	for prefix, table := range m.hostPLE {
+		for i := range table.shards {
+			name := fmt.Sprintf("%s.ple_embedding.ngram_embedding.shard_%d.weight", prefix, i)
+			names = append(names, name, name+".scale", name+".global_scale")
+		}
+	}
+	return names
+}
+
 func openHostPLETables(root *model.Root, cfg *Config) (map[string]*hostPLETable, error) {
 	headCount := (cfg.NGramSize - 1) * cfg.HeadsPerNGram
 	if headCount <= 0 || cfg.PLEEmbedDim%headCount != 0 {

@@ -18,10 +18,11 @@ func init() {
 }
 
 var (
-	_ model.Model      = (*Model)(nil)
-	_ model.SelfDraft  = (*Model)(nil)
-	_ model.DraftModel = (*mtpDraft)(nil)
-	_ model.MediaModel = (*Model)(nil)
+	_ model.Model           = (*Model)(nil)
+	_ model.HostTensorModel = (*Model)(nil)
+	_ model.SelfDraft       = (*Model)(nil)
+	_ model.DraftModel      = (*mtpDraft)(nil)
+	_ model.MediaModel      = (*Model)(nil)
 )
 
 // Model carries the validated architecture and tokenizer.
