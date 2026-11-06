@@ -7,12 +7,9 @@ import (
 	"unicode"
 )
 
-// thinkingGrammar returns a grammar that leaves the text before any of the
-// closings unconstrained, then constrains what follows the first complete
-// closing to the root of the format grammar. The response may end before any
-// closing. A closing that is a prefix of another ends the thinking as soon
-// as it is complete.
-func thinkingGrammar(closings []string, format string) string {
+// thinkingGrammar requires a closing before the format grammar. If a response
+// can start in content, it may also start directly with the format grammar.
+func thinkingGrammar(openings, closings []string, format string) string {
 	// The rules added here take a prefix no rule of the format grammar starts
 	// with.
 	prefix := "ollama-"
@@ -23,7 +20,19 @@ func thinkingGrammar(closings []string, format string) string {
 
 	a := newClosingAutomaton(closings)
 	var b strings.Builder
-	fmt.Fprintf(&b, "root ::= %s0\n", thinking)
+	if len(openings) > 0 {
+		opening := prefix + "thinking-open"
+		fmt.Fprintf(&b, "root ::= %s | %s\n%s ::=", formatted, opening, opening)
+		for i, value := range openings {
+			if i > 0 {
+				b.WriteString(" |")
+			}
+			fmt.Fprintf(&b, " %q %s0", value, thinking)
+		}
+		b.WriteByte('\n')
+	} else {
+		fmt.Fprintf(&b, "root ::= %s0\n", thinking)
+	}
 	for state := range a.states {
 		fmt.Fprintf(&b, "%s%d ::=", thinking, state)
 		var matching, terminal []rune
@@ -40,7 +49,7 @@ func thinkingGrammar(closings []string, format string) string {
 			}
 		}
 		// Any other character restarts the search from the empty prefix.
-		fmt.Fprintf(&b, " | %s %s0", gbnfCharClass(matching, true), thinking)
+		fmt.Fprintf(&b, " %s %s0", gbnfCharClass(matching, true), thinking)
 		for to := range a.states {
 			if rs := next[to]; len(rs) > 0 {
 				fmt.Fprintf(&b, " | %s %s%d", gbnfCharClass(rs, false), thinking, to)

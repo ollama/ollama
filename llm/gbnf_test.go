@@ -54,26 +54,47 @@ func TestClosingAutomatonNext(t *testing.T) {
 	}
 }
 
-// TestThinkingGrammarRules checks the emitted rules: every prefix state may
-// end the response, completing the closing leads to the renamed format root,
-// the format grammar's other rules keep their names, and the added rules
-// avoid a prefix the format grammar already uses.
+// TestThinkingGrammarRules checks the emitted rules: prefix states cannot end
+// before a closing, completing the closing leads to the renamed format root,
+// the format grammar's other rules keep their names, and the added rules avoid
+// a prefix the format grammar already uses.
 func TestThinkingGrammarRules(t *testing.T) {
 	format := "root ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
-	grammar := thinkingGrammar([]string{"</think>"}, format)
-	for _, want := range []string{
-		"root ::= ollama-thinking-0\n",
-		"ollama-thinking-0 ::= | [^<] ollama-thinking-0 | [<] ollama-thinking-1\n",
-		"ollama-thinking-7 ::= | [^<>] ollama-thinking-0 | [<] ollama-thinking-1 | [>] ollama-format\n",
-		"ollama-format ::= \"{\" space \"}\"\nspace ::= | \" \"\n",
-	} {
-		if !strings.Contains(grammar, want) {
-			t.Errorf("grammar lacks %q:\n%s", want, grammar)
-		}
+	grammar := thinkingGrammar(nil, []string{"</think>"}, format)
+	want := "root ::= ollama-thinking-0\n" +
+		"ollama-thinking-0 ::= [^<] ollama-thinking-0 | [<] ollama-thinking-1\n" +
+		"ollama-thinking-1 ::= [^/<] ollama-thinking-0 | [<] ollama-thinking-1 | [/] ollama-thinking-2\n" +
+		"ollama-thinking-2 ::= [^<t] ollama-thinking-0 | [<] ollama-thinking-1 | [t] ollama-thinking-3\n" +
+		"ollama-thinking-3 ::= [^<h] ollama-thinking-0 | [<] ollama-thinking-1 | [h] ollama-thinking-4\n" +
+		"ollama-thinking-4 ::= [^<i] ollama-thinking-0 | [<] ollama-thinking-1 | [i] ollama-thinking-5\n" +
+		"ollama-thinking-5 ::= [^<n] ollama-thinking-0 | [<] ollama-thinking-1 | [n] ollama-thinking-6\n" +
+		"ollama-thinking-6 ::= [^<k] ollama-thinking-0 | [<] ollama-thinking-1 | [k] ollama-thinking-7\n" +
+		"ollama-thinking-7 ::= [^<>] ollama-thinking-0 | [<] ollama-thinking-1 | [>] ollama-format\n" +
+		"ollama-format ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
+	if grammar != want {
+		t.Errorf("thinking grammar =\n%s\nwant:\n%s", grammar, want)
 	}
 
-	grammar = thinkingGrammar([]string{"</think>"}, "root ::= ollama-x\nollama-x ::= \"{}\"\n")
+	grammar = thinkingGrammar(nil, []string{"</think>"}, "root ::= ollama-x\nollama-x ::= \"{}\"\n")
 	if !strings.HasPrefix(grammar, "root ::= ollama-ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-ollama-format ::= ollama-x\n") {
 		t.Errorf("grammar does not avoid the format's rule prefix:\n%s", grammar)
+	}
+}
+
+func TestThinkingGrammarAllowsDirectFormatOrOpenedThinking(t *testing.T) {
+	grammar := thinkingGrammar([]string{"<|channel>"}, []string{"<channel|>"}, "root ::= object\nobject ::= \"{}\"\n")
+	for _, want := range []string{
+		"root ::= ollama-format | ollama-thinking-open\n",
+		"ollama-thinking-open ::= \"<|channel>\" ollama-thinking-0\n",
+		"ollama-format ::= object\n",
+	} {
+		if !strings.Contains(grammar, want) {
+			t.Errorf("thinking grammar lacks %q:\n%s", want, grammar)
+		}
+	}
+	for _, line := range strings.Split(grammar, "\n") {
+		if strings.HasPrefix(line, "ollama-thinking-") && strings.Contains(line, " ::= |") {
+			t.Errorf("opened-thinking grammar permits an empty alternative: %s", line)
+		}
 	}
 }
