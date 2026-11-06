@@ -750,6 +750,10 @@ type CreateRequest struct {
 	// System is the system prompt for the model.
 	System string `json:"system,omitempty"`
 
+	// SystemSet distinguishes an explicitly empty system prompt from an omitted one.
+	// Nonempty System values are applied regardless of SystemSet.
+	SystemSet bool `json:"-"`
+
 	// Parameters is a map of hyper-parameters which are applied to the model.
 	Parameters map[string]any `json:"parameters,omitempty"`
 
@@ -775,6 +779,34 @@ type CreateRequest struct {
 	Name string `json:"name"`
 	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
+}
+
+// MarshalJSON preserves an explicitly empty system prompt on the wire.
+func (r CreateRequest) MarshalJSON() ([]byte, error) {
+	type createRequest CreateRequest
+	if r.SystemSet && r.System == "" {
+		return json.Marshal(struct {
+			createRequest
+			System string `json:"system"`
+		}{createRequest(r), r.System})
+	}
+	return json.Marshal(createRequest(r))
+}
+
+// UnmarshalJSON records system presence without changing the public string field.
+func (r *CreateRequest) UnmarshalJSON(data []byte) error {
+	type createRequest CreateRequest
+	if err := json.Unmarshal(data, (*createRequest)(r)); err != nil {
+		return err
+	}
+	var fields struct {
+		System json.RawMessage `json:"system"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	r.SystemSet = len(fields.System) > 0 && string(fields.System) != "null"
+	return nil
 }
 
 // DeleteRequest is the request passed to [Client.Delete].

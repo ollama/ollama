@@ -127,6 +127,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			req.Template = c.Args
 		case "system":
 			req.System = c.Args
+			req.SystemSet = true
 		case "license":
 			licenses = append(licenses, c.Args)
 		case "renderer":
