@@ -320,6 +320,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [On My Chat](https://github.com/alexeyvolkoff/onmychat) - Self-hosted RAG over local files, mobile/PWA remote access, and creative studio with prompt assistant
 
 ### Observability & Monitoring
 
