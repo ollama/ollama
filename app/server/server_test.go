@@ -4,6 +4,8 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +28,128 @@ func TestNew(t *testing.T) {
 
 	if s.bin == "" {
 		t.Error("expected non-empty bin path")
+	}
+}
+
+func TestServerRunning(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{
+			name:   "healthy Ollama server",
+			status: http.StatusOK,
+			body:   `{"version":"0.1.0"}`,
+			want:   true,
+		},
+		{
+			name:   "server error",
+			status: http.StatusServiceUnavailable,
+			body:   `{"error":"unavailable"}`,
+		},
+		{
+			name:   "missing version",
+			status: http.StatusOK,
+			body:   `{}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/version" {
+					http.NotFound(w, r)
+					return
+				}
+
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			t.Setenv("OLLAMA_HOST", server.URL)
+
+			if got := serverRunning(t.Context()); got != tt.want {
+				t.Errorf("serverRunning() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextRestartDelay(t *testing.T) {
+	tests := []struct {
+		name        string
+		current     time.Duration
+		runDuration time.Duration
+		want        time.Duration
+	}{
+		{
+			name:        "first quick failure doubles the initial delay",
+			current:     restartDelay,
+			runDuration: time.Millisecond,
+			want:        2 * time.Second,
+		},
+		{
+			name:        "subsequent quick failure doubles again",
+			current:     2 * time.Second,
+			runDuration: time.Second,
+			want:        4 * time.Second,
+		},
+		{
+			name:        "delay is capped",
+			current:     maxRestartDelay / 2,
+			runDuration: time.Second,
+			want:        maxRestartDelay,
+		},
+		{
+			name:        "stable process resets the delay",
+			current:     8 * time.Second,
+			runDuration: restartDelayResetThreshold,
+			want:        restartDelay,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nextRestartDelay(tt.current, tt.runDuration); got != tt.want {
+				t.Errorf("nextRestartDelay(%s, %s) = %s, want %s", tt.current, tt.runDuration, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextRestartCheckDelay(t *testing.T) {
+	now := time.Unix(0, 0)
+	tests := []struct {
+		name string
+		at   time.Time
+		want time.Duration
+	}{
+		{
+			name: "probe again at the health-check interval before a long restart delay",
+			at:   now.Add(10 * time.Second),
+			want: serverCheckInterval,
+		},
+		{
+			name: "probe at the next restart when it is sooner",
+			at:   now.Add(2 * time.Second),
+			want: 2 * time.Second,
+		},
+		{
+			name: "try again when the restart time has arrived",
+			at:   now,
+			want: restartDelay,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nextRestartCheckDelay(tt.at, now); got != tt.want {
+				t.Errorf("nextRestartCheckDelay(%s, %s) = %s, want %s", tt.at, now, got, tt.want)
+			}
+		})
 	}
 }
 
