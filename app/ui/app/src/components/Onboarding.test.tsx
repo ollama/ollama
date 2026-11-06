@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vitest";
+import { Listbox } from "@headlessui/react";
 import {
   ClaudeConnectedIntro,
   FIRST_MODEL_COMMAND,
@@ -25,11 +26,16 @@ import {
 import type { IntegrationStatuses } from "@/api";
 import * as clipboard from "@/utils/clipboard";
 
-// Transition timing is checked in the browser; these tests cover copy-notice
-// lifetimes with the real component logic.
+// Headless UI portals, keyboard behavior, and transitions are checked in the
+// browser; these node tests cover command changes and copy-notice lifetimes.
 vi.mock("@headlessui/react", async (importOriginal) => {
   const original = await importOriginal<typeof import("@headlessui/react")>();
   return Object.assign({}, original, {
+    Listbox: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    ListboxButton: (props: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+      <button {...props} />
+    ),
+    ListboxOptions: () => null,
     Transition: ({
       show,
       children,
@@ -924,16 +930,11 @@ describe("ConnectAppsScreen interactions", () => {
           expect(
             chatgpt.findAllByType("code").map((node) => node.children.join("")),
           ).toEqual(["ollama launch chatgpt"]);
-          const connect = chatgpt.findByProps({
-            "aria-label": "Show ChatGPT connect command",
-          });
-          const disconnect = chatgpt.findByProps({
-            "aria-label": "Show ChatGPT disconnect command",
-          });
+          const commandPicker = chatgpt.findByType(Listbox);
           const copy = chatgpt.findByProps({
             "aria-label": "Copy ChatGPT connect command",
           });
-          expect(connect.props["aria-pressed"]).toBe(true);
+          expect(commandPicker.props.value).toBe("Connect");
           await act(async () => {
             await copy.props.onClick();
           });
@@ -942,13 +943,12 @@ describe("ConnectAppsScreen interactions", () => {
             "ChatGPT connect command copied",
           );
           await act(async () => {
-            disconnect.props.onClick();
+            commandPicker.props.onChange("Disconnect");
           });
           expect(
             chatgpt.findAllByType("code").map((node) => node.children.join("")),
           ).toEqual(["ollama launch chatgpt --restore"]);
-          expect(connect.props["aria-pressed"]).toBe(false);
-          expect(disconnect.props["aria-pressed"]).toBe(true);
+          expect(commandPicker.props.value).toBe("Disconnect");
           expect(copyCommand).toHaveBeenCalledTimes(launchers.length + 1);
           expect(copy.props["aria-label"]).toBe(
             "Copy ChatGPT disconnect command",
@@ -963,7 +963,7 @@ describe("ConnectAppsScreen interactions", () => {
             "ChatGPT disconnect command copied",
           );
           await act(async () => {
-            connect.props.onClick();
+            commandPicker.props.onChange("Connect");
           });
           expect(
             chatgpt.findAllByType("code").map((node) => node.children.join("")),
@@ -1020,9 +1020,7 @@ describe("ConnectAppsScreen interactions", () => {
           node.props.title === "Copying…",
       );
       await act(async () => {
-        chatgpt
-          .findByProps({ "aria-label": "Show ChatGPT disconnect command" })
-          .props.onClick();
+        chatgpt.findByType(Listbox).props.onChange("Disconnect");
       });
       const disabledAfterSwitch = copy.props.disabled;
       expect(copy.props["aria-busy"]).toBeUndefined();

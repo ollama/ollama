@@ -2,7 +2,13 @@ import CopyButton from "@/components/CopyButton";
 import Logo from "@/components/Logo";
 import type { OnboardingStep } from "@/lib/onboarding";
 import { IntegrationConnectButton } from "@/components/IntegrationConnectButton";
-import { Transition } from "@headlessui/react";
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOption,
+  ListboxOptions,
+  Transition,
+} from "@headlessui/react";
 import {
   getIntegrationStatuses,
   type IntegrationStatus,
@@ -28,6 +34,7 @@ import type {
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   ArrowsRightLeftIcon,
+  ChevronDownIcon,
   CommandLineIcon,
   ShieldCheckIcon,
   Square2StackIcon,
@@ -1054,62 +1061,85 @@ export function ConnectAppsScreen({
             </p>
           </div>
         </div>
-        <div className="ml-auto flex max-w-full items-center gap-2">
-          {item.id === "chatgpt" && (
-            <div
-              role="group"
-              aria-label="ChatGPT command"
-              className="inline-flex shrink-0 rounded-lg bg-neutral-100 p-0.5 dark:bg-neutral-800"
+        <div className="ml-auto flex min-w-0 max-w-full items-center overflow-hidden rounded-lg bg-neutral-100 dark:bg-neutral-800">
+          {item.id === "chatgpt" ? (
+            <Listbox
+              value={chatgptCommand}
+              onChange={(action) => {
+                if (chatgptCommand === action) return;
+                setChatgptCommand(action);
+                if (copyInFlight.current === "chatgpt") {
+                  ++copySequence.current;
+                }
+                setCopyNotice((current) =>
+                  current?.id === "chatgpt" ? null : current,
+                );
+              }}
             >
-              {(["Connect", "Disconnect"] as const).map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  aria-label={`Show ChatGPT ${action.toLowerCase()} command`}
-                  aria-pressed={chatgptCommand === action}
-                  onClick={() => {
-                    if (chatgptCommand === action) return;
-                    setChatgptCommand(action);
-                    if (copyInFlight.current === "chatgpt") {
-                      ++copySequence.current;
-                    }
-                    setCopyNotice((current) =>
-                      current?.id === "chatgpt" ? null : current,
-                    );
-                  }}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 ${chatgptCommand === action ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100" : "text-neutral-500 hover:text-neutral-950 dark:text-neutral-400 dark:hover:text-neutral-100"}`}
-                >
-                  {action}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="flex min-w-0 max-w-full items-center overflow-hidden rounded-lg bg-neutral-100 pl-3 dark:bg-neutral-800">
-            <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
+              <ListboxButton
+                aria-label="Choose ChatGPT command"
+                title="Choose command"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-l-lg py-2 pl-3 pr-2 text-left hover:bg-neutral-200/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-neutral-500 dark:hover:bg-neutral-700/60"
+              >
+                <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
+                  {command}
+                </code>
+                <ChevronDownIcon
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 shrink-0 text-neutral-500 dark:text-neutral-400"
+                />
+              </ListboxButton>
+              <ListboxOptions
+                anchor={{ to: "bottom end", gap: 6, padding: 8 }}
+                modal={false}
+                aria-label="ChatGPT commands"
+                className="z-50 w-52 rounded-xl border border-neutral-200 bg-white p-1 text-sm shadow-lg focus:outline-none dark:border-neutral-700 dark:bg-neutral-800"
+              >
+                {(["Connect", "Disconnect"] as const).map((action) => (
+                  <ListboxOption
+                    key={action}
+                    value={action}
+                    className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-3 py-2 text-neutral-900 data-focus:bg-neutral-100 dark:text-neutral-100 dark:data-focus:bg-neutral-700"
+                  >
+                    {({ selected }) => (
+                      <>
+                        <span>{action} command</span>
+                        <CheckIcon
+                          aria-hidden="true"
+                          className={`h-4 w-4 shrink-0 ${selected ? "" : "invisible"}`}
+                        />
+                      </>
+                    )}
+                  </ListboxOption>
+                ))}
+              </ListboxOptions>
+            </Listbox>
+          ) : (
+            <code className="block min-w-0 flex-1 overflow-x-auto whitespace-nowrap py-2 pl-3 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
               {command}
             </code>
-            <button
-              type="button"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100"
-              onClick={() => copyLaunchCommand({ ...item, command })}
-              disabled={Boolean(copyPending)}
-              aria-busy={copying || undefined}
-              aria-label={
-                copying
-                  ? `Copying ${actionName} command`
-                  : copied
-                    ? `${actionName} command copied`
-                    : `Copy ${actionName} command`
-              }
-              title={copying ? "Copying…" : copied ? "Copied" : "Copy command"}
-            >
-              {copied ? (
-                <CheckIcon className="h-4 w-4 text-green-600" />
-              ) : (
-                <Square2StackIcon className="h-4 w-4" />
-              )}
-            </button>
-          </div>
+          )}
+          <button
+            type="button"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100"
+            onClick={() => copyLaunchCommand({ ...item, command })}
+            disabled={Boolean(copyPending)}
+            aria-busy={copying || undefined}
+            aria-label={
+              copying
+                ? `Copying ${actionName} command`
+                : copied
+                  ? `${actionName} command copied`
+                  : `Copy ${actionName} command`
+            }
+            title={copying ? "Copying…" : copied ? "Copied" : "Copy command"}
+          >
+            {copied ? (
+              <CheckIcon className="h-4 w-4 text-green-600" />
+            ) : (
+              <Square2StackIcon className="h-4 w-4" />
+            )}
+          </button>
         </div>
       </div>
     );
