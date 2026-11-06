@@ -174,3 +174,16 @@ On mixed iGPU/dGPU systems where the Vulkan iGPU is unstable, keep Vulkan
 enabled and set `GGML_VK_VISIBLE_DEVICES` to the discrete GPU index. For
 example, use `GGML_VK_VISIBLE_DEVICES=1` when `Vulkan1` is the discrete
 GPU.
+
+### Intel Integrated GPUs
+
+Integrated GPUs are disabled by default on Vulkan. Intel integrated GPUs are
+enabled automatically when all of the following are true:
+
+- The Intel graphics driver supports the `VK_INTEL_device_info` Vulkan extension
+  and reports a Meteor Lake (Intel Core Ultra Series 1) or newer GPU
+- No discrete GPU is present
+- The system has at least 16 GB of memory
+
+Set `OLLAMA_IGPU_ENABLE=1` to always enable integrated GPUs, or
+`OLLAMA_IGPU_ENABLE=0` to always disable them.
