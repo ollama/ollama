@@ -540,12 +540,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	if !req.Raw && parserName != "" {
+	if parserName != "" {
 		builtinParser = parsers.ParserForName(parserName)
 		if builtinParser != nil {
 			// no tools or last message for generate endpoint
 			builtinParser.Init(nil, nil, req.Think)
 		}
+	}
+
+	// A raw prompt skips response parsing but the runner still has to render the
+	// parser's structural tokens, or they are missing from the raw output.
+	preservedTokens := preservedTokensForCompletion(builtinParser)
+	if req.Raw {
+		builtinParser = nil
 	}
 
 	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
@@ -757,7 +764,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Truncate:        req.Truncate == nil || *req.Truncate,
 			Logprobs:        req.Logprobs,
 			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
+			PreservedTokens: preservedTokens,
 			LeadingBOS:      leadingBOS,
 			ThinkingClose:   thinkingClose,
 		}, func(cr llm.CompletionResponse) {
