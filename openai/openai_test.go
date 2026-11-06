@@ -727,6 +727,33 @@ func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	}
 }
 
+func TestToListCompletionEmptyData(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		models []api.ListModelResponse
+	}{
+		{name: "nil"},
+		{name: "empty", models: []api.ListModelResponse{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ToListCompletion(api.ListResponse{Models: tc.models})
+			if result.Data == nil {
+				t.Fatal("data is nil; expected an empty slice")
+			}
+
+			got, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			const want = `{"object":"list","data":[]}`
+			if string(got) != want {
+				t.Errorf("got %s, want %s", got, want)
+			}
+		})
+	}
+}
+
 func TestToChatCompletion_WithLogprobs(t *testing.T) {
 	createdAt := time.Unix(1234567890, 0)
 	resp := api.ChatResponse{
