@@ -20,6 +20,51 @@ import (
 	"github.com/ollama/ollama/transfer"
 )
 
+func TestBlobDownloadRetriesStalledDirectURLRequest(t *testing.T) {
+	// Use the same public fixture range as the redirect tests, without DNS.
+	directURL, err := url.Parse("https://203.0.113.2/blob")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			<-r.Context().Done()
+			return
+		}
+
+		w.Header().Set("Location", directURL.String())
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(server.Close)
+
+	requestURL, err := url.Parse(server.URL + "/v2/library/test/blobs/sha256:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	originalAttemptTimeout := directURLAttemptTimeout
+	directURLAttemptTimeout = 50 * time.Millisecond
+	t.Cleanup(func() {
+		directURLAttemptTimeout = originalAttemptTimeout
+	})
+
+	download := &blobDownload{
+		Name:   filepath.Join(t.TempDir(), "blob"),
+		Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	if err := download.run(ctx, requestURL, &registryOptions{}); err != nil {
+		t.Fatalf("blobDownload.run() error = %v, want retry to succeed", err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("blobDownload.run() made %d direct URL requests, want 2", attempts.Load())
+	}
+}
+
 func TestDownloadChunkRedirects(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
