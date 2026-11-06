@@ -70,6 +70,9 @@ func TestMambaIndependentCacheRows(t *testing.T) {
 				e := expectations[i].AsType(mlx.DTypeFloat32)
 				mlx.Eval(a, e)
 				av, ev := a.Floats(), e.Floats()
+				if len(av) == 0 || len(av) != len(ev) {
+					t.Fatalf("rows %v array %d value count = %d, want %d", rows, i, len(av), len(ev))
+				}
 				for j, v := range ev {
 					if d := math.Abs(float64(av[j] - v)); math.IsNaN(d) || d > .004 {
 						t.Fatalf("rows %v array %d element %d got %g want %g", rows, i, j, av[j], v)

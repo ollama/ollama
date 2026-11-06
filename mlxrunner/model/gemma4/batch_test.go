@@ -95,11 +95,14 @@ func TestAttentionIndependentCacheRows(t *testing.T) {
 					expected := mlx.Concatenate([][]*mlx.Array{want, wantShared}[i], 0).AsType(mlx.DTypeFloat32)
 					mlx.Eval(actual, expected)
 					a, b := actual.Floats(), expected.Floats()
+					if len(a) == 0 || len(a) != len(b) {
+						t.Fatalf("rows %v donor=%v value count=%d want %d", rows, i == 1, len(a), len(b))
+					}
 					for j := range b {
 						// B=1 and B>1 projections select different matrix
 						// kernels; compare with BF16 arithmetic tolerance.
 						tolerance := .02 * math.Max(math.Abs(float64(b[j])), 1)
-						if math.IsNaN(float64(a[j])) || math.Abs(float64(a[j]-b[j])) > tolerance {
+						if delta := math.Abs(float64(a[j] - b[j])); math.IsNaN(delta) || math.IsInf(float64(a[j]), 0) || math.IsInf(float64(b[j]), 0) || delta > tolerance {
 							t.Fatalf("rows %v donor=%v element %d = %g, want %g", rows, i == 1, j, a[j], b[j])
 						}
 					}

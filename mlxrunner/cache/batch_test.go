@@ -18,12 +18,44 @@ func compareRowArrays(got, want *mlx.Array) error {
 	}
 	mlx.Eval(got, want)
 	g, w := got.Floats(), want.Floats()
+	if len(g) == 0 || len(g) != len(w) {
+		return fmt.Errorf("value count = %d, want %d", len(g), len(w))
+	}
 	for i := range w {
-		if math.IsNaN(float64(g[i])) || math.Abs(float64(g[i]-w[i])) > 1e-5 {
+		if delta := math.Abs(float64(g[i] - w[i])); math.IsNaN(delta) || delta > 1e-5 {
 			return fmt.Errorf("element %d = %g, want %g", i, g[i], w[i])
 		}
 	}
 	return nil
+}
+
+func TestCompareRowArraysRejectsInvalidComparisons(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		got     []float32
+		want    []float32
+		wantErr bool
+	}{
+		{name: "valid", got: []float32{1, 2}, want: []float32{1, 2}},
+		{name: "actual nan", got: []float32{float32(math.NaN())}, want: []float32{0}, wantErr: true},
+		{name: "expected nan", got: []float32{0}, want: []float32{float32(math.NaN())}, wantErr: true},
+		{name: "matching infinity", got: []float32{float32(math.Inf(1))}, want: []float32{float32(math.Inf(1))}, wantErr: true},
+		{name: "empty", wantErr: true},
+		{name: "shape mismatch", got: []float32{1}, want: []float32{1, 2}, wantErr: true},
+	} {
+		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
+			array := func(values []float32) *mlx.Array {
+				if len(values) == 0 {
+					return mlx.Zeros(mlx.DTypeFloat32, 0)
+				}
+				return mlx.FromValues(values, len(values))
+			}
+			err := compareRowArrays(array(tt.got), array(tt.want))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("comparison error = %v, want error %t", err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestBatchAttentionRows(t *testing.T) {
@@ -184,20 +216,31 @@ func TestBatchRejectsIncompatibleCaches(t *testing.T) {
 }
 
 func TestBatchPrefillAttention(t *testing.T) {
-	for _, rotating := range []bool{false, true} {
-		mlxtest.RunSubtest(t, fmt.Sprint(rotating), func(t *mlxtest.T) {
+	for _, tt := range []struct {
+		name     string
+		rotating bool
+		seeded   bool
+	}{
+		{name: "full/empty"},
+		{name: "full/populated", seeded: true},
+		{name: "rotating/empty", rotating: true},
+		{name: "rotating/populated", rotating: true, seeded: true},
+	} {
+		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			var owners, refs [2]Cache
 			for i := range owners {
-				if rotating {
+				if tt.rotating {
 					owners[i], refs[i] = NewRotatingKVCache(4), NewRotatingKVCache(4)
 				} else {
 					owners[i], refs[i] = NewKVCache(), NewKVCache()
 				}
 				defer owners[i].Free()
 				defer refs[i].Free()
-				seed := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, 1, i+2, 2), float32(i+1))
-				for _, c := range []Cache{owners[i], refs[i]} {
-					c.(Attention).Update(newKVBatch(0, i+2), seed, seed)
+				if tt.seeded {
+					seed := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, 1, i+2, 2), float32(i+1))
+					for _, c := range []Cache{owners[i], refs[i]} {
+						c.(Attention).Update(newKVBatch(0, i+2), seed, seed)
+					}
 				}
 			}
 			for _, n := range []int{3, 1, 5} {
@@ -274,4 +317,87 @@ func TestBatchRecurrentIndependentSplits(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A snapshot of one request must not retain the allocations for its batch peers.
+func TestBatchAttentionSnapshotOwnsRow(t *testing.T) {
+	for _, kind := range []string{"full", "rotating"} {
+		for _, scheduled := range []bool{false, true} {
+			mlxtest.RunSubtest(t, fmt.Sprintf("%s/scheduled=%t", kind, scheduled), func(t *mlxtest.T) {
+				const rows, heads, tokens, dims, keep = 8, 4, 256, 64, 3
+				const rowElements = heads * tokens * dims
+				const rowBytes = 2 * rowElements * 4
+				newCache := func() Cache {
+					if kind == "rotating" {
+						return NewRotatingKVCache(512)
+					}
+					return NewKVCache()
+				}
+				mlx.DefaultStream().Synchronize()
+				baseline := settledActiveMemory()
+				var snapshot Snapshot
+				defer func() {
+					if snapshot != nil {
+						snapshot.Close()
+					}
+				}()
+				mlx.Scoped(func() {
+					owners := make([][]Cache, rows)
+					b := &batch.Batch{
+						InputIDs:   mlx.Zeros(mlx.DTypeInt32, rows, tokens),
+						SeqOffsets: make([]int32, rows), SeqQueryLens: make([]int32, rows),
+					}
+					data := make([]float32, rows*rowElements)
+					for i := range rows {
+						owners[i] = []Cache{newCache()}
+						defer owners[i][0].Free()
+						b.SeqQueryLens[i] = tokens
+						for j := range rowElements {
+							data[i*rowElements+j] = float32(i + 1)
+						}
+					}
+					if scheduled {
+						owners[keep][0].PrepareSnapshots([]int{tokens})
+					}
+					layers, err := Batch(owners)
+					if err != nil {
+						t.Fatal(err)
+					}
+					keys := mlx.FromValues(data, rows, heads, tokens, dims)
+					values := mlx.Neg(keys)
+					layers[0].(Attention).Update(b, keys, values)
+					mlx.Eval(layers[0].State()...)
+					if scheduled {
+						snapshot = owners[keep][0].TakeSnapshots()[0]
+					} else {
+						snapshot = owners[keep][0].Snapshot(0)
+					}
+				})
+				mlx.DefaultStream().Synchronize()
+				if got := snapshot.Size(); got != rowBytes {
+					t.Fatalf("snapshot accounts for %d bytes, want one row (%d)", got, rowBytes)
+				}
+				// Allow allocator rounding, but not another row's allocation.
+				if retained := settledActiveMemory() - baseline; retained > rowBytes+64*1024 {
+					t.Fatalf("one %d-byte snapshot retains %d bytes after freeing all batch owners", rowBytes, retained)
+				}
+				restored := newCache()
+				defer restored.Free()
+				if !restored.Restore(snapshot, tokens) {
+					t.Fatal("could not restore the surviving row")
+				}
+				for i, state := range restored.State() {
+					mlx.Eval(state)
+					want := float32(keep + 1)
+					if i == 1 {
+						want = -want
+					}
+					matches := state.Equal(mlx.FromValue(want)).AsType(mlx.DTypeInt32).Reshape(-1)
+					if got := mlx.Sum(matches, 0, false).Int(); got != int32(state.Size()) {
+						t.Fatalf("restored state %d has %d matching elements, want %d", i, got, state.Size())
+					}
+				}
+			})
+		}
+	}
 }

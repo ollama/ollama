@@ -70,8 +70,11 @@ func TestGatedDeltaIndependentCacheRows(t *testing.T) {
 			want := mlx.Concatenate(single, 0).AsType(mlx.DTypeFloat32)
 			mlx.Eval(got, want)
 			gv, wv := got.Floats(), want.Floats()
+			if len(gv) == 0 || len(gv) != len(wv) {
+				t.Fatalf("rows %v value count = %d, want %d", rows, len(gv), len(wv))
+			}
 			for j := range wv {
-				if math.IsNaN(float64(gv[j])) || math.Abs(float64(gv[j]-wv[j])) > .004 {
+				if delta := math.Abs(float64(gv[j] - wv[j])); math.IsNaN(delta) || delta > .004 {
 					t.Fatalf("rows %v element %d = %g, want %g", rows, j, gv[j], wv[j])
 				}
 			}
@@ -83,8 +86,11 @@ func TestGatedDeltaIndependentCacheRows(t *testing.T) {
 					a, b := state.AsType(mlx.DTypeFloat32), refs[row].State()[j].AsType(mlx.DTypeFloat32)
 					mlx.Eval(a, b)
 					av, bv := a.Floats(), b.Floats()
+					if len(av) == 0 || len(av) != len(bv) {
+						t.Fatalf("row %d state %d value count = %d, want %d", row, j, len(av), len(bv))
+					}
 					for k := range bv {
-						if math.IsNaN(float64(av[k])) || math.Abs(float64(av[k]-bv[k])) > .004 {
+						if delta := math.Abs(float64(av[k] - bv[k])); math.IsNaN(delta) || delta > .004 {
 							t.Fatalf("row %d state %d element %d = %g, want %g", row, j, k, av[k], bv[k])
 						}
 					}

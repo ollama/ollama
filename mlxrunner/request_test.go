@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -146,7 +147,7 @@ func TestSchedulerRejectsUnadmittedRequests(t *testing.T) {
 				defer cancel()
 				requestCtx, cancelRequest := context.WithCancel(ctx)
 				defer cancelRequest()
-				responses := make(chan CompletionResponse)
+				responses := make(chan CompletionResponse, 1)
 				completed := make(chan error, 1)
 				grammar := &grammarCompilation{done: make(chan struct{})}
 				var pending queuedRequest
@@ -194,9 +195,21 @@ func TestSchedulerRejectsUnadmittedRequests(t *testing.T) {
 				}
 				if kind == "generation" {
 					select {
-					case _, open := <-responses:
-						if open || !grammar.abandoned {
-							t.Fatal("rejected generation retained its response or grammar")
+					case response, open := <-responses:
+						if reason == "canceled" {
+							if open {
+								t.Fatalf("canceled generation produced a response: %+v", response)
+							}
+						} else {
+							if !open || response.Error == nil || response.Error.StatusCode != http.StatusInternalServerError || response.Error.ErrorMessage != wantErr.Error() {
+								t.Fatalf("rejected generation response = %+v, want internal error %v", response, wantErr)
+							}
+							if _, open := <-responses; open {
+								t.Fatal("rejected generation left its response stream open")
+							}
+						}
+						if !grammar.abandoned {
+							t.Fatal("rejected generation retained its grammar")
 						}
 					default:
 						t.Fatal("rejected generation left its caller waiting")

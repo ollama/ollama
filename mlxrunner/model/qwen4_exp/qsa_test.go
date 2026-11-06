@@ -160,9 +160,13 @@ func TestQSAIndependentHistories(t *testing.T) {
 			}
 			want := mlx.Concatenate(separate, 0)
 			mlx.Eval(got, want)
-			for i, v := range want.Floats() {
-				if delta := math.Abs(float64(got.Floats()[i] - v)); math.IsNaN(delta) || delta > 1e-4 {
-					t.Fatalf("rows %v element %d got %g want %g", rows, i, got.Floats()[i], v)
+			actual, expected := got.Floats(), want.Floats()
+			if len(actual) == 0 || len(actual) != len(expected) {
+				t.Fatalf("rows %v value count = %d, want %d", rows, len(actual), len(expected))
+			}
+			for i, v := range expected {
+				if delta := math.Abs(float64(actual[i] - v)); math.IsNaN(delta) || delta > 1e-4 {
+					t.Fatalf("rows %v element %d got %g want %g", rows, i, actual[i], v)
 				}
 			}
 		}

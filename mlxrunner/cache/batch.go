@@ -121,9 +121,17 @@ func (c *attentionBatch) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVH
 	}
 	histories := make([]*nn.KVHistory, len(c.rows))
 	for i, row := range c.rows {
-		histories[i] = row.(Attention).Update(b.Row(i),
-			keys.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
-			values.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()))
+		var k, v *mlx.Array
+		if row.Offset() == 0 && keys.Dim(2) > 1 {
+			// An empty cache may retain its first prompt directly. Give it
+			// its own row so a snapshot cannot pin the entire batch.
+			index := mlx.FromValues([]int32{int32(i)}, 1)
+			k, v = keys.TakeAxis(index, 0), values.TakeAxis(index, 0)
+		} else {
+			k = keys.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+			v = values.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+		}
+		histories[i] = row.(Attention).Update(b.Row(i), k, v)
 	}
 	return nn.NewRowKVHistory(histories)
 }

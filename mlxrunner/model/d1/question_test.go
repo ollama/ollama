@@ -162,8 +162,11 @@ func TestBatchSetAttentionKeepsQuestionSetsSeparate(t *testing.T) {
 				}
 				want := setAttention(layout, 2)(rowSlice(q), rowSlice(k), rowSlice(v), 0.125, sliding)
 				have, w := mlx.Contiguous(rowSlice(got), false).Floats(), mlx.Contiguous(want, false).Floats()
+				if len(have) == 0 || len(have) != len(w) {
+					t.Fatalf("sliding=%t row=%d value count=%d want %d", sliding, i, len(have), len(w))
+				}
 				for j := range w {
-					if math.IsNaN(float64(have[j])) || math.Abs(float64(have[j]-w[j])) > 1e-5 {
+					if delta := math.Abs(float64(have[j] - w[j])); math.IsNaN(delta) || delta > 1e-5 {
 						t.Fatalf("sliding=%t row=%d value=%d got=%g want=%g", sliding, i, j, have[j], w[j])
 					}
 				}

@@ -1,6 +1,7 @@
 package phonon
 
 import (
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -35,6 +36,72 @@ func tinySpeechModel() *Model {
 	}
 	m.sample = mlx.Compile("phonon_sample", m.sampleFrame)
 	return m
+}
+
+func TestSpeechSampleCompiledMatchesEager(t *testing.T) {
+	// Keep the package's float32 comparisons independent of TF32 setup order.
+	t.Setenv("MLX_ENABLE_TF32", "0")
+	for _, rows := range []int{1, 2} {
+		mlxtest.RunSubtest(t, fmt.Sprintf("rows=%d", rows), func(t *mlxtest.T) {
+			m := tinySpeechModel()
+			hiddenValues := make([]float32, rows*4)
+			noiseValues := make([]float32, rows*2)
+			for i := range hiddenValues {
+				hiddenValues[i] = float32(i%7-3) / 16
+			}
+			for i := range noiseValues {
+				noiseValues[i] = float32(i%5-2) / 8
+			}
+			hidden := mlx.FromValues(hiddenValues, rows, 1, 4)
+			noise := mlx.FromValues(noiseValues, rows, 2)
+			got, want := m.sample(hidden, noise), m.sampleFrame(hidden, noise)
+			for i := range want {
+				actual, expected := got[i].AsType(mlx.DTypeFloat32), want[i].AsType(mlx.DTypeFloat32)
+				mlx.Eval(actual, expected)
+				a, b := actual.Floats(), expected.Floats()
+				if len(a) == 0 || len(a) != len(b) {
+					t.Fatalf("output %d value count = %d, want %d", i, len(a), len(b))
+				}
+				for j := range b {
+					if delta := math.Abs(float64(a[j] - b[j])); math.IsNaN(delta) || delta > 1e-5 {
+						t.Fatalf("output %d element %d = %g, want %g", i, j, a[j], b[j])
+					}
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkSpeechSampleEager(b *testing.B) {
+	benchmarkSpeechSample(b, false)
+}
+
+func BenchmarkSpeechSampleCompiled(b *testing.B) {
+	benchmarkSpeechSample(b, true)
+}
+
+func benchmarkSpeechSample(b *testing.B, compiled bool) {
+	thread := mlxtest.Worker(b)
+	if err := thread.Do(b.Context(), func() error {
+		defer b.StopTimer()
+		mlx.Scoped(func() {
+			m := tinySpeechModel()
+			hidden := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 2, 1, 4), .25)
+			noise := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 2, 2), .125)
+			sample := m.sampleFrame
+			if compiled {
+				sample = m.sample
+			}
+			mlx.Scoped(func() { mlx.Eval(sample(hidden, noise)...) })
+			b.ResetTimer()
+			for range b.N {
+				mlx.Scoped(func() { mlx.Eval(sample(hidden, noise)...) })
+			}
+		})
+		return nil
+	}); err != nil {
+		b.Fatal(err)
+	}
 }
 
 func TestSpeechFrameBatchMatchesIndependent(t *testing.T) {
@@ -77,8 +144,12 @@ func TestSpeechFrameBatchMatchesIndependent(t *testing.T) {
 				t.Fatal("speech computation lost batch dimension")
 			}
 			for j, a := range out {
-				for k, got := range a.Floats() {
-					if math.IsNaN(float64(got)) || math.Abs(float64(got-want[j][k])) > 1e-5 {
+				actual := a.Floats()
+				if len(actual) == 0 || len(actual) != len(want[j]) {
+					t.Fatalf("step %d output %d value count = %d, want %d", step, j, len(actual), len(want[j]))
+				}
+				for k, got := range actual {
+					if delta := math.Abs(float64(got - want[j][k])); math.IsNaN(delta) || delta > 1e-5 {
 						t.Fatalf("step %d output %d[%d]=%g, want %g", step, j, k, got, want[j][k])
 					}
 				}
@@ -132,7 +203,7 @@ func TestSpeechBatchPreservesFrameGroups(t *testing.T) {
 						t.Fatalf("round %d row %d completion or sample length differs", round, i)
 					}
 					for j, value := range got[i].Samples {
-						if math.IsNaN(float64(value)) || math.Abs(float64(value-want[0].Samples[j])) > 1e-5 {
+						if delta := math.Abs(float64(value - want[0].Samples[j])); math.IsNaN(delta) || delta > 1e-5 {
 							t.Fatalf("round %d row %d sample %d differs", round, i, j)
 						}
 					}

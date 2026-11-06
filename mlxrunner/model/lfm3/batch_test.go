@@ -63,8 +63,11 @@ func TestShortConvBatchedDecode(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := conv.Forward(mlx.FromValues(values, len(order), n, 2), b, layers[0], int32(len(order)), int32(n), cfg).Floats()
+			if len(got) == 0 || len(got) != len(want) {
+				t.Fatalf("step %d order %v value count = %d, want %d", step, order, len(got), len(want))
+			}
 			for i := range want {
-				if math.Abs(float64(got[i]-want[i])) > 1e-5 || math.IsNaN(float64(got[i])) {
+				if delta := math.Abs(float64(got[i] - want[i])); math.IsNaN(delta) || delta > 1e-5 {
 					t.Fatalf("step %d order %v output %d = %g, want %g", step, order, i, got[i], want[i])
 				}
 			}

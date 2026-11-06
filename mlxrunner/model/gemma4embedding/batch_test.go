@@ -54,8 +54,12 @@ func TestPaddedForwardMatchesIndependent(t *testing.T) {
 		for i, row := range rows {
 			want, _ := m.Forward(&batch.Batch{InputIDs: mlx.FromValues(row, 1, len(row)), SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(len(row))}}, nil)
 			actual := got.Slice(mlx.Slice(i, i+1), mlx.Slice(0, len(row)), mlx.Slice()).Floats()
-			for j, v := range want.Floats() {
-				if math.IsNaN(float64(actual[j])) || math.Abs(float64(actual[j]-v)) > 1e-4 {
+			expected := want.Floats()
+			if len(actual) == 0 || len(actual) != len(expected) {
+				t.Fatalf("row %d value count = %d, want %d", i, len(actual), len(expected))
+			}
+			for j, v := range expected {
+				if delta := math.Abs(float64(actual[j] - v)); math.IsNaN(delta) || delta > 1e-4 {
 					t.Fatalf("row %d value %d = %g, independent %g", i, j, actual[j], v)
 				}
 			}

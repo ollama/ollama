@@ -91,7 +91,7 @@ func ScaledDotProductAttention(b *batch.Batch, q *mlx.Array, scale float32, opts
 		output := make([]*mlx.Array, len(cfg.history.rows))
 		for i, history := range cfg.history.rows {
 			output[i] = ScaledDotProductAttention(b.Row(i), q.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()), scale,
-				WithKVHistory(history), WithMask(cfg.mask.row(i)), WithSinks(cfg.sinks))
+				WithKVHistory(history), WithMask(cfg.mask.row(b, i)), WithSinks(cfg.sinks))
 		}
 		// Only the attention outputs are joined. Histories retain their
 		// request's length and storage layout without full-history packing.
@@ -383,9 +383,21 @@ type AttentionMask struct {
 	array        *mlx.Array
 }
 
+type maskRowKey struct {
+	mask AttentionMask
+	row  int
+}
+
 // row keeps logical sequence coordinates while selecting a single request.
-// Lower-rank additive tensors broadcast over B and need no row selection.
-func (m AttentionMask) row(i int) AttentionMask {
+// Memoization preserves the selected mask's identity across layers.
+func (m AttentionMask) row(b *batch.Batch, i int) AttentionMask {
+	if m.relaxations == nil && (m.array == nil || m.array.NumDims() != 4 || m.array.Dim(0) <= 1) {
+		return m
+	}
+	key := maskRowKey{mask: m, row: i}
+	if cached, ok := b.Memo.Get(key); ok {
+		return cached.(AttentionMask)
+	}
 	out := AttentionMask{causal: m.causal, deviceCausal: m.deviceCausal, array: m.array}
 	if out.array != nil && out.array.NumDims() == 4 && out.array.Dim(0) > 1 {
 		out.array = out.array.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
@@ -397,6 +409,7 @@ func (m AttentionMask) row(i int) AttentionMask {
 			out.relaxations = &relaxNode{rect: r, next: out.relaxations}
 		}
 	}
+	b.Memo.Put(key, out)
 	return out
 }
 

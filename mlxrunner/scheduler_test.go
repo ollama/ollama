@@ -242,6 +242,58 @@ func TestBatchSchedulerWaitingGrammarDoesNotBlockDecode(t *testing.T) {
 	})
 }
 
+func TestBatchSchedulerGrammarWaitPromptTiming(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		tok := newTestTokenizer(t, []int32{7})
+		m := &schedulingModel{fakeMTPModel: fakeMTPModel{tok: tok}}
+		r := &Runner{Model: m, Tokenizer: tok, Sampler: sample.New(4096)}
+		defer r.Sampler.Free()
+		s := &batchScheduler{r: r, slots: make([]*batchSlot, 1)}
+		compilation := &grammarCompilation{done: make(chan struct{})}
+		req := request{
+			Ctx: context.Background(), Tokens: []int32{1, 1, 1}, Responses: make(chan CompletionResponse, 8), Grammar: compilation,
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 2}},
+		}
+		mlx.Scoped(func() { s.admit(req); s.step() })
+		defer s.slots[0].cache.close()
+		p := s.slots[0].request.prefill
+		if p == nil || p.processed != len(req.Tokens)-1 {
+			t.Fatal("prompt did not finish while grammar compilation was pending")
+		}
+		// Simulate a long wait after prefill without sleeping or imposing
+		// a tight wall-clock assertion on the test machine.
+		p.started = p.started.Add(-time.Hour)
+		for range 3 {
+			mlx.Scoped(func() { s.step() })
+		}
+		if len(req.Responses) != 0 {
+			t.Fatal("generation started before grammar compilation finished")
+		}
+		close(compilation.done)
+		for range 10 {
+			mlx.Scoped(func() { s.step() })
+		}
+		if s.slots[0].request != nil {
+			t.Fatal("request did not finish after grammar compilation")
+		}
+		var final CompletionResponse
+		for response := range req.Responses {
+			if response.Error != nil {
+				t.Fatal(response.Error)
+			}
+			if response.Done {
+				final = response
+			}
+		}
+		if !final.Done || final.EvalCount != 2 {
+			t.Fatalf("request did not finish: %+v", final)
+		}
+		if final.PromptEvalDuration <= 0 || final.PromptEvalDuration >= time.Minute {
+			t.Fatalf("prompt duration includes grammar wait: %v", final.PromptEvalDuration)
+		}
+	})
+}
+
 // This head uses ordinary KV storage so the test checks real snapshot rollback
 // and the draft's look-ahead pairing across repeated mode transitions.
 type schedulingDraft struct {

@@ -70,8 +70,11 @@ func TestRowKVHistoryAttention(t *testing.T) {
 			want := mlx.Concatenate(outputs, 0)
 			mlx.Eval(got, want)
 			g, w := got.Floats(), want.Floats()
+			if len(g) == 0 || len(g) != len(w) {
+				t.Fatalf("mask %d value count = %d, want %d", i, len(g), len(w))
+			}
 			for j := range w {
-				if math.IsNaN(float64(g[j])) || math.Abs(float64(g[j]-w[j])) > 1e-5 {
+				if delta := math.Abs(float64(g[j] - w[j])); math.IsNaN(delta) || delta > 1e-5 {
 					t.Fatalf("mask %d element %d = %g, want %g", i, j, g[j], w[j])
 				}
 			}
@@ -85,9 +88,45 @@ func TestRowKVHistoryAttention(t *testing.T) {
 		}
 		want := mlx.Concatenate(outputs, 0)
 		mlx.Eval(got, want)
-		for i, value := range want.Floats() {
-			if math.Abs(float64(got.Floats()[i]-value)) > 1e-5 {
-				t.Fatalf("MLA element %d mismatch", i)
+		actual, expected := got.Floats(), want.Floats()
+		if len(actual) == 0 || len(actual) != len(expected) {
+			t.Fatalf("MLA value count = %d, want %d", len(actual), len(expected))
+		}
+		for i, value := range expected {
+			if delta := math.Abs(float64(actual[i] - value)); math.IsNaN(delta) || delta > 1e-5 {
+				t.Fatalf("MLA element %d = %g, want %g", i, actual[i], value)
+			}
+		}
+	})
+}
+
+func TestRowKVHistoryMaskMemoization(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		q := mlx.Zeros(mlx.DTypeFloat32, 2, 1, 2, 2)
+		k := mlx.Zeros(mlx.DTypeFloat32, 1, 1, 4, 2)
+		array := mlx.Zeros(mlx.DTypeFloat32, 2, 1, 2, 4)
+		for _, tc := range []struct {
+			name string
+			mask AttentionMask
+		}{
+			{"causal", CausalMask()},
+			{"relaxed", CausalMask().Relax(1, 2, 3, 3, 4)},
+			{"array", ArrayMask(array)},
+			{"relaxed array", CausalMask().Relax(0, 2, 3, 3, 4).Intersect(ArrayMask(array))},
+		} {
+			b := newBatch([]int32{2, 2}, 2, nil)
+			var calls [2]int
+			rows := make([]*KVHistory, len(calls))
+			for i := range rows {
+				rows[i] = NewKVHistory(k, k, recordingApplier{l: 2, K: 4, calls: &calls[i]})
+			}
+			for range 4 {
+				mlx.Eval(ScaledDotProductAttention(b, q, 1, WithKVHistory(NewRowKVHistory(rows)), WithMask(tc.mask)))
+			}
+			for row, n := range calls {
+				if n != 1 {
+					t.Fatalf("%s: row %d prepared its mask %d times, want once", tc.name, row, n)
+				}
 			}
 		}
 	})
@@ -839,7 +878,7 @@ type recordingApplier struct {
 	w        int
 	l        int
 	K        int
-	applied  *bool
+	calls    *int
 	collapse bool
 }
 
@@ -851,7 +890,7 @@ func (r recordingApplier) NativeWindow() int {
 }
 
 func (r recordingApplier) ApplyMask(logical AttentionMask) AttentionMask {
-	*r.applied = true
+	*r.calls++
 	if r.collapse && (logical.IsZero() || logical.IsCausal()) {
 		return AttentionMask{}
 	}
@@ -927,8 +966,8 @@ func TestSDPANativeWindowDispatch(t *testing.T) {
 		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			q, k, v := sdpaInputs(tc.L, K)
 			b := newBatch([]int32{int32(K - tc.L)}, tc.L, tc.qLens)
-			applied := false
-			applier := recordingApplier{w: tc.w, l: tc.L, K: K, applied: &applied, collapse: tc.collapse}
+			calls := 0
+			applier := recordingApplier{w: tc.w, l: tc.L, K: K, calls: &calls, collapse: tc.collapse}
 			history := NewKVHistory(k, v, applier)
 
 			ScaledDotProductAttention(b, q, 1.0, WithKVHistory(history), WithMask(tc.mask))
@@ -943,8 +982,8 @@ func TestSDPANativeWindowDispatch(t *testing.T) {
 				t.Fatalf("dispatch = {mode:%q window:%d arr:%v}, want {mode:%q window:%d arr-set:%v}",
 					d.mode, d.window, d.arr != nil, tc.wantMode, tc.wantWindow, tc.wantArr)
 			}
-			if applied != tc.wantApplied {
-				t.Fatalf("ApplyMask called = %v, want %v", applied, tc.wantApplied)
+			if (calls > 0) != tc.wantApplied {
+				t.Fatalf("ApplyMask calls = %d, want called=%v", calls, tc.wantApplied)
 			}
 		})
 	}
@@ -1044,8 +1083,11 @@ func TestSDPARowHistoryPreservesSinks(t *testing.T) {
 		b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 2, 1), SeqOffsets: []int32{1, 4}, SeqQueryLens: []int32{1, 1}}
 		got := ScaledDotProductAttention(b, q, 1, WithKVHistory(NewRowKVHistory(histories)), WithSinks(sinks))
 		values, expected := got.Floats(), mlx.Concatenate(want, 0).Floats()
+		if len(values) == 0 || len(values) != len(expected) {
+			t.Fatalf("sink value count = %d, want %d", len(values), len(expected))
+		}
 		for i, v := range values {
-			if math.IsNaN(float64(v)) || math.Abs(float64(v-expected[i])) > 1e-6 {
+			if delta := math.Abs(float64(v - expected[i])); math.IsNaN(delta) || delta > 1e-6 {
 				t.Fatalf("value %d = %g, want %g (sink logits lost)", i, v, expected[i])
 			}
 		}

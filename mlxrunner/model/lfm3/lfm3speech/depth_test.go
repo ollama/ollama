@@ -78,11 +78,36 @@ func floats(a *mlx.Array) []float32 {
 }
 
 func maxDiff(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return math.NaN()
+	}
 	var m float64
 	for i := range a {
 		m = math.Max(m, math.Abs(float64(a[i]-b[i])))
 	}
 	return m
+}
+
+func TestMaxDiffRejectsInvalidComparisons(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		a, b []float32
+	}{
+		{name: "empty"},
+		{name: "length mismatch", a: []float32{1}, b: []float32{1, 2}},
+		{name: "actual nan", a: []float32{float32(math.NaN())}, b: []float32{0}},
+		{name: "expected nan", a: []float32{0}, b: []float32{float32(math.NaN())}},
+		{name: "matching infinity", a: []float32{float32(math.Inf(1))}, b: []float32{float32(math.Inf(1))}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := maxDiff(tt.a, tt.b); !math.IsNaN(got) {
+				t.Fatalf("maxDiff = %g, want NaN for invalid comparison", got)
+			}
+		})
+	}
+	if got := maxDiff([]float32{1, 2}, []float32{1, 2}); got != 0 {
+		t.Fatalf("valid maxDiff = %g, want 0", got)
+	}
 }
 
 func TestDepthDecoderMasking(t *testing.T) {
@@ -99,7 +124,7 @@ func TestDepthDecoderMasking(t *testing.T) {
 		// Revealing the last slot changes the first slot's logits: the trunk
 		// attends both ways.
 		c := floats(d.Logits(h, []int32{0, 0, 3}, []bool{true, true, false}))
-		if maxDiff(a[:5], c[:5]) < 1e-4 {
+		if delta := maxDiff(a[:5], c[:5]); math.IsNaN(delta) || delta < 1e-4 {
 			t.Fatal("slot 0 ignores a later slot; attention is not bidirectional")
 		}
 	})

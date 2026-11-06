@@ -2,6 +2,7 @@ package mlxrunner
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"net"
@@ -11,6 +12,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
@@ -39,9 +41,28 @@ type request struct {
 	Grammar     *grammarCompilation
 }
 
-func (r request) reject(error) {
+func (r request) reject(err error) {
 	r.Grammar.close()
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// An unadmitted request has no queued responses, so the production
+		// buffer accepts this error without blocking scheduler teardown.
+		select {
+		case r.Responses <- CompletionResponse{Error: completionStatusError(err)}:
+		default:
+		}
+	}
 	close(r.Responses)
+}
+
+func completionStatusError(err error) *api.StatusError {
+	var statusErr api.StatusError
+	if !errors.As(err, &statusErr) {
+		statusErr = api.StatusError{
+			StatusCode:   http.StatusInternalServerError,
+			ErrorMessage: err.Error(),
+		}
+	}
+	return &statusErr
 }
 
 // A readout evaluates the supplied input and consumes its hidden states without
