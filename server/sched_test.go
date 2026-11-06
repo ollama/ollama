@@ -2302,3 +2302,74 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }
+
+func TestWaitForVRAMRecoverySharedMemory(t *testing.T) {
+	metal := []ml.DeviceID{{Library: "Metal"}}
+
+	// systemFree returns before for the baseline read, then after.
+	systemFree := func(before, after uint64) (func() ml.SystemInfo, *atomic.Int32) {
+		var calls atomic.Int32
+		return func() ml.SystemInfo {
+			if calls.Add(1) == 1 {
+				return ml.SystemInfo{FreeMemory: before}
+			}
+			return ml.SystemInfo{FreeMemory: after}
+		}, &calls
+	}
+
+	waitTime := func(s *Scheduler, runner *runnerRef) time.Duration {
+		start := time.Now()
+		select {
+		case <-s.waitForVRAMRecovery(runner, nil):
+		case <-time.After(5 * time.Second):
+			t.Fatal("wait never finished")
+		}
+		return time.Since(start)
+	}
+
+	t.Run("metal waits for system memory to come back", func(t *testing.T) {
+		fn, calls := systemFree(10*format.GibiByte, 20*format.GibiByte)
+		s := &Scheduler{getSystemInfoFn: fn, waitForRecovery: 5 * time.Second}
+		runner := &runnerRef{gpus: metal, discreteGPUs: true, vramSize: 10 * format.GibiByte}
+
+		if took := waitTime(s, runner); took >= time.Second {
+			t.Errorf("took %v to see memory that came back on the first poll", took)
+		}
+		if calls.Load() < 2 {
+			t.Errorf("system memory read %d times, want a baseline and at least one poll", calls.Load())
+		}
+	})
+
+	t.Run("metal waits out the timeout when memory never comes back", func(t *testing.T) {
+		fn, _ := systemFree(10*format.GibiByte, 10*format.GibiByte)
+		s := &Scheduler{getSystemInfoFn: fn, waitForRecovery: 300 * time.Millisecond}
+		runner := &runnerRef{gpus: metal, discreteGPUs: true, vramSize: 10 * format.GibiByte}
+
+		if took := waitTime(s, runner); took < 300*time.Millisecond {
+			t.Errorf("finished after %v, before the 300ms timeout", took)
+		}
+	})
+
+	t.Run("a drop in free memory is not recovery", func(t *testing.T) {
+		fn, _ := systemFree(20*format.GibiByte, 5*format.GibiByte)
+		s := &Scheduler{getSystemInfoFn: fn, waitForRecovery: 300 * time.Millisecond}
+		runner := &runnerRef{gpus: metal, discreteGPUs: true, vramSize: 10 * format.GibiByte}
+
+		if took := waitTime(s, runner); took < 300*time.Millisecond {
+			t.Errorf("finished after %v; a drop in free memory counted as recovery", took)
+		}
+	})
+
+	t.Run("cpu runners do not wait", func(t *testing.T) {
+		fn, calls := systemFree(10*format.GibiByte, 10*format.GibiByte)
+		s := &Scheduler{getSystemInfoFn: fn, waitForRecovery: 5 * time.Second}
+		runner := &runnerRef{vramSize: 10 * format.GibiByte}
+
+		if took := waitTime(s, runner); took >= 100*time.Millisecond {
+			t.Errorf("cpu runner waited %v", took)
+		}
+		if calls.Load() != 0 {
+			t.Errorf("cpu runner read system memory %d times", calls.Load())
+		}
+	})
+}
