@@ -14,6 +14,7 @@ type olmo3ThinkParserState int
 
 const (
 	olmo3CollectingThink olmo3ThinkParserState = iota
+	olmo3ThinkDoneEatingWhitespace
 	olmo3CollectingContent
 )
 
@@ -135,7 +136,10 @@ func (p *Olmo3ThinkParser) eat() ([]olmo3Event, bool) {
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
-			p.state = olmo3CollectingContent
+			// </think> is a preserved token and is delivered on its own, so the
+			// whitespace the model puts after it arrives in the next chunk;
+			// keep eating it.
+			p.state = olmo3ThinkDoneEatingWhitespace
 
 			if len(thinking) > 0 {
 				events = append(events, olmo3EventThinkContent{content: thinking})
@@ -169,6 +173,16 @@ func (p *Olmo3ThinkParser) eat() ([]olmo3Event, bool) {
 			}
 			return events, false
 		}
+
+	case olmo3ThinkDoneEatingWhitespace:
+		trimmed := strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+		p.buffer.Reset()
+		if trimmed == "" {
+			return events, false
+		}
+		p.buffer.WriteString(trimmed)
+		p.state = olmo3CollectingContent
+		return events, true
 
 	case olmo3CollectingContent:
 		// Emit all content directly
