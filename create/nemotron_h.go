@@ -12,9 +12,11 @@ type nemotronHImportTransform struct {
 
 func newNemotronHImportTransform(rawConfig json.RawMessage) (quantizePolicy, error) {
 	var cfg struct {
-		NumHiddenLayers int `json:"num_hidden_layers"`
+		NumHiddenLayers int      `json:"num_hidden_layers"`
+		LayersBlockType []string `json:"layers_block_type"`
 		LLMConfig       struct {
-			NumHiddenLayers int `json:"num_hidden_layers"`
+			NumHiddenLayers int      `json:"num_hidden_layers"`
+			LayersBlockType []string `json:"layers_block_type"`
 		} `json:"llm_config"`
 	}
 	if err := json.Unmarshal(rawConfig, &cfg); err != nil {
@@ -24,12 +26,19 @@ func newNemotronHImportTransform(rawConfig json.RawMessage) (quantizePolicy, err
 	if numLayers == 0 {
 		numLayers = cfg.LLMConfig.NumHiddenLayers
 	}
+	if numLayers == 0 {
+		numLayers = len(cfg.LayersBlockType)
+	}
+	if numLayers == 0 {
+		numLayers = len(cfg.LLMConfig.LayersBlockType)
+	}
 	return nemotronHImportTransform{numLayers: numLayers}, nil
 }
 
 // Nemotron's modality tower names do not match the shared predicates.
 func nemotronHIsVisionTower(name string) bool {
 	return strings.HasPrefix(name, "vision_model.") ||
+		strings.HasPrefix(name, "vision_projector.") ||
 		strings.HasPrefix(name, "mlp1.")
 }
 
@@ -43,6 +52,8 @@ func nemotronHShouldKeepBF16ForDirectNonAffine(name string) bool {
 	case strings.HasSuffix(name, ".mixer.gate.weight"):
 		return true
 	case strings.HasSuffix(name, ".mixer.conv1d.weight"):
+		return true
+	case strings.HasSuffix(name, ".mixer.fc1_latent_proj.weight"), strings.HasSuffix(name, ".mixer.fc2_latent_proj.weight"):
 		return true
 	default:
 		return false
@@ -63,6 +74,12 @@ func nemotronHIsAttentionProjection(name string) bool {
 func (t nemotronHImportTransform) promoteSensitive(name string) bool {
 	if nemotronHIsAttentionProjection(name) {
 		return true
+	}
+	// The detached MTP module is a one-layer assistant, not layer zero of the
+	// target stack. Do not apply the target's early/late promotion schedule to
+	// its expert projections.
+	if strings.HasPrefix(name, "mtp.") || strings.HasPrefix(name, "language_model.mtp.") {
+		return false
 	}
 	layerIdx := layerIndex(name)
 	return layerIdx < 0 || useMoreBits(layerIdx, t.numLayers)

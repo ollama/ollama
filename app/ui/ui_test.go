@@ -475,6 +475,94 @@ func TestAuthenticationMiddleware(t *testing.T) {
 	}
 }
 
+func TestGetErrorServerResponse(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		message   string
+		wantError string
+		wantCode  string
+	}{
+		{
+			name:      "model not included in free usage",
+			status:    http.StatusPaymentRequired,
+			message:   "this model is not included in your free usage, add usage credits to pay as you go: https://ollama.com/settings or upgrade for included usage: https://ollama.com/upgrade",
+			wantError: "This model is not included in your free usage. Upgrade your plan: https://ollama.com/upgrade or add usage credits to pay as you go: https://ollama.com/settings",
+		},
+		{
+			name:      "model not included in free usage with reference",
+			status:    http.StatusPaymentRequired,
+			message:   "this model is not included in your free usage, add usage credits to pay as you go: https://ollama.com/settings or upgrade for included usage: https://ollama.com/upgrade (ref: test-request)",
+			wantError: "This model is not included in your free usage. Upgrade your plan: https://ollama.com/upgrade or add usage credits to pay as you go: https://ollama.com/settings",
+		},
+		{
+			name:    "free usage text in an unrelated error",
+			status:  http.StatusBadRequest,
+			message: "this model is not included in your free usage",
+		},
+		{
+			name:    "empty usage credit balance",
+			status:  http.StatusPaymentRequired,
+			message: "this model uses usage credits only (not included plan usage) and your usage credit balance is empty, add usage credits or turn on auto reload at https://ollama.com/settings",
+		},
+		{
+			name:    "credit auto reload payment failed",
+			status:  http.StatusPaymentRequired,
+			message: "usage credits auto reload payment failed, update your payment method or add usage credits at https://ollama.com/settings",
+		},
+		{
+			name:    "usage limit",
+			status:  http.StatusTooManyRequests,
+			message: "you've reached your session usage limit, please wait or upgrade to continue",
+		},
+		{
+			name:    "unrelated error containing 402",
+			status:  http.StatusBadRequest,
+			message: "invalid request (ref: request-402)",
+		},
+		{
+			name:      "sign in required",
+			status:    http.StatusUnauthorized,
+			message:   "unauthorized",
+			wantError: "Could not verify you are signed in. Please sign in and try again.",
+			wantCode:  "cloud_unauthorized",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				json.NewEncoder(w).Encode(map[string]string{"error": tt.message})
+			}))
+			defer ts.Close()
+			t.Setenv("OLLAMA_HOST", ts.URL)
+
+			server := &Server{}
+			client := server.inferenceClient()
+			err := client.Chat(context.Background(), &api.ChatRequest{Model: "test"}, func(api.ChatResponse) error {
+				return nil
+			})
+			if err == nil {
+				t.Fatal("chat request succeeded, want an error")
+			}
+
+			want := responses.ErrorEvent{
+				EventName: "error",
+				Error:     err.Error(),
+				Code:      tt.wantCode,
+			}
+			if tt.wantError != "" {
+				want.Error = tt.wantError
+			}
+			if got := server.getError(err); got != want {
+				t.Errorf("getError() = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
 func TestUserAgent(t *testing.T) {
 	ua := userAgent()
 

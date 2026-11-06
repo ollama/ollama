@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/ollama/ollama/api"
 )
@@ -14,6 +15,9 @@ type Scorer interface {
 
 // ScoreRequest carries prompt rows or model-native decision head inputs.
 type ScoreRequest struct {
+	// System is the Modelfile instruction for scorers that assemble a native prompt.
+	// Generic candidate rows already include it in their rendered prompts.
+	System        string            `json:"system,omitempty"`
 	PointerRows   []ScorePointerRow `json:"pointer_rows,omitempty"`
 	State         string            `json:"state,omitempty"`
 	Rows          []ScoreRow        `json:"rows,omitempty"`
@@ -22,6 +26,21 @@ type ScoreRequest struct {
 	MaxTokens     int               `json:"max_tokens"`
 	Images        []api.ImageData   `json:"images,omitempty"`
 	ImagePosition int               `json:"image_position,omitempty"` // Segment boundary at which images are inserted.
+	// Native carries a whole System One request to a model that renders and
+	// answers it itself; Images are its media in order.
+	Native *NativeDecision `json:"native,omitempty"`
+}
+
+// NativeDecision is a System One request as its caller wrote it.
+type NativeDecision struct {
+	State     json.RawMessage  `json:"state,omitempty"`
+	Questions []NativeQuestion `json:"questions"`
+}
+
+// NativeQuestion keeps one question's JSON in request order.
+type NativeQuestion struct {
+	Name     string          `json:"name"`
+	Question json.RawMessage `json:"question"`
 }
 
 type ScoreRow struct {
@@ -44,6 +63,8 @@ type ScoreResponse struct {
 	InputTokens  int         `json:"input_tokens"`            // Sum of complete prompt lengths, including shared tokens.
 	OutputTokens int         `json:"output_tokens,omitempty"` // Tokens generated internally to obtain candidate scores.
 	CachedTokens *int        `json:"cached_tokens,omitempty"` // Subset of InputTokens restored instead of evaluated; nil when unavailable.
+	// Answers are complete System One answers, one per NativeDecision question.
+	Answers []json.RawMessage `json:"answers,omitempty"`
 }
 
 // ScoreField identifies a question and its allowed options for a decision head.

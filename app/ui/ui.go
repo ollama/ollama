@@ -629,15 +629,17 @@ func (s *Server) getError(err error) responses.ErrorEvent {
 		}
 	}
 
+	var statusErr api.StatusError
+	if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusPaymentRequired && strings.HasPrefix(statusErr.ErrorMessage, "this model is not included in your free usage") {
+		return responses.ErrorEvent{
+			EventName: "error",
+			Error:     "This model is not included in your free usage. Upgrade your plan: https://ollama.com/upgrade or add usage credits to pay as you go: https://ollama.com/settings",
+		}
+	}
+
 	errStr := err.Error()
 
 	switch {
-	case strings.Contains(errStr, "402"):
-		return responses.ErrorEvent{
-			EventName: "error",
-			Error:     "You've reached your usage limit, please upgrade to continue",
-			Code:      "usage_limit_upgrade",
-		}
 	case strings.HasPrefix(errStr, "pull model manifest") && isNetworkError(errStr):
 		return responses.ErrorEvent{
 			EventName: "error",

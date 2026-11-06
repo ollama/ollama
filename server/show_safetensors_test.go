@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/manifest"
@@ -1296,5 +1297,37 @@ func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 	}
 	if got != "nvfp4" {
 		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want nvfp4", got)
+	}
+
+	draft := lowerPrecision
+	draft.Name = "draft.model.layers.0.mlp.up_proj.weight"
+
+	name = model.ParseName("mixed-target-and-draft-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, quantized, draft}); err != nil {
+		t.Fatalf("failed to write target/draft manifest: %v", err)
+	}
+	got, err = getSafetensorsDtypeForRunner(name, "")
+	if err != nil {
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
+	}
+	if got != "mxfp8" {
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want target mxfp8", got)
+	}
+
+	configJSON, err := manifest.NewLayer(strings.NewReader(`{"dtype":"bfloat16"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatalf("failed to create model config layer: %v", err)
+	}
+	configJSON.Name = "config.json"
+	name = model.ParseName("bf16-target-and-nvfp4-draft-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, draft, configJSON}); err != nil {
+		t.Fatalf("failed to write BF16 target/draft manifest: %v", err)
+	}
+	got, err = getSafetensorsDtypeForRunner(name, "")
+	if err != nil {
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
+	}
+	if got != "bfloat16" {
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want target bfloat16", got)
 	}
 }

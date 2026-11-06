@@ -36,9 +36,12 @@ func TestDecisionBenchmarkPolicies(t *testing.T) {
 		{"unload failure", "score", `"noul":1`, true, false, http.StatusInternalServerError},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var requests, unloads atomic.Int32
+			var requests, unloads, psReads atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
+				case "/api/ps":
+					psReads.Add(1)
+					writeJSON(w, api.ProcessResponse{Models: []api.ProcessModelResponse{{Name: "test-model", Size: 5_000_000_000, SizeVRAM: 4_500_000_000, ContextLength: 4096}}})
 				case "/api/generate":
 					unloads.Add(1)
 					if test.unloadStatus != 0 {
@@ -95,6 +98,9 @@ func TestDecisionBenchmarkPolicies(t *testing.T) {
 			if unloads.Load() != wantUnloads || len(rows) != int(requests.Load())-*opts.warmup+1 {
 				t.Fatalf("unloads=%d requests=%d csv rows=%d", unloads.Load(), requests.Load(), len(rows))
 			}
+			if test.cold && psReads.Load() != 0 || !test.cold && psReads.Load() != 2 {
+				t.Fatalf("cold=%t running-model reads=%d, want 0 for cold or 2 for warm size/context", test.cold, psReads.Load())
+			}
 			if rows[1][3] != "test,case" || rows[1][6] != "42" {
 				t.Fatalf("missing per-request metadata or CSV escaping: %v", rows[1])
 			}
@@ -107,6 +113,10 @@ func TestDecisionBenchmarkPolicies(t *testing.T) {
 
 func TestDecisionBenchmarkOutputError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/ps" {
+			writeJSON(w, api.ProcessResponse{Models: []api.ProcessModelResponse{{Name: "test-model", Size: 5_000_000_000, SizeVRAM: 4_500_000_000, ContextLength: 4096}}})
+			return
+		}
 		if r.URL.Path == "/api/generate" {
 			writeJSON(w, api.GenerateResponse{Done: true})
 			return
@@ -172,7 +182,7 @@ func TestDecisionSummaryPartialRun(t *testing.T) {
 		{Case: decisiontest.Case{Dataset: "b", Expected: map[string]decisiontest.Expected{"one": {}}}, Err: errors.New("HTTP 500")},
 	}
 	var out bytes.Buffer
-	writeDecisionSummary(&out, "test", samples, 5, time.Second)
+	writeDecisionSummary(&out, "test", samples, 5, time.Second, ModelInfo{SizeBytes: 5_000_000_000, VRAMBytes: 4_500_000_000, NumCtx: 4096})
 	var got struct {
 		decisiontest.Tally
 		Expected         int                           `json:"expected_requests"`
@@ -182,12 +192,15 @@ func TestDecisionSummaryPartialRun(t *testing.T) {
 		P95              float64                       `json:"p95_ms"`
 		Rate             float64                       `json:"requests_per_second"`
 		QuestionsRate    float64                       `json:"questions_per_second"`
+		SizeBytes        int64                         `json:"size_bytes"`
+		VRAMBytes        int64                         `json:"vram_bytes"`
+		NumCtx           int64                         `json:"num_ctx"`
 		Datasets         map[string]decisiontest.Tally `json:"datasets"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Complete || got.Expected != 5 || got.Requests != 3 || got.Errors != 1 || got.Questions != 5 || got.CorrectQuestions != 3 || got.QuestionAccuracy != 60 || got.P50 != 10 || got.P95 != 30 || got.Rate != 2 || got.QuestionsRate != 4 || got.Datasets["a"].CorrectCases != 1 || got.Datasets["b"].Errors != 1 {
+	if got.Complete || got.Expected != 5 || got.Requests != 3 || got.Errors != 1 || got.Questions != 5 || got.CorrectQuestions != 3 || got.QuestionAccuracy != 60 || got.P50 != 10 || got.P95 != 30 || got.Rate != 2 || got.QuestionsRate != 4 || got.SizeBytes != 5_000_000_000 || got.VRAMBytes != 4_500_000_000 || got.NumCtx != 4096 || got.Datasets["a"].CorrectCases != 1 || got.Datasets["b"].Errors != 1 {
 		t.Fatalf("incorrect partial-run summary: %s", out.String())
 	}
 }
@@ -197,6 +210,8 @@ func TestDecisionBenchmarkConcurrency(t *testing.T) {
 	both := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/ps":
+			writeJSON(w, api.ProcessResponse{Models: []api.ProcessModelResponse{{Name: "test-model", Size: 5_000_000_000, SizeVRAM: 4_500_000_000, ContextLength: 4096}}})
 		case "/api/generate":
 			writeJSON(w, api.GenerateResponse{Done: true})
 		case "/v1/systemone":
@@ -238,6 +253,8 @@ func TestDecisionBenchmarkCancelsPeers(t *testing.T) {
 	started, canceled := make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/ps":
+			writeJSON(w, api.ProcessResponse{Models: []api.ProcessModelResponse{{Name: "test-model", Size: 5_000_000_000, SizeVRAM: 4_500_000_000, ContextLength: 4096}}})
 		case "/api/generate":
 			writeJSON(w, api.GenerateResponse{Done: true})
 		case "/v1/systemone":

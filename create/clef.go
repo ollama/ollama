@@ -78,23 +78,3 @@ func prepareClefInventory(inv Inventory) (Inventory, error) {
 	inv.Config.Architectures = []string{"ClefForDecision"}
 	return inv, nil
 }
-
-// The publisher's head is not in the shard index. Transfer it without using
-// its presence to select a model architecture.
-func clefWeightFiles(dir string, files []string) ([]string, error) {
-	info, err := os.Stat(filepath.Join(dir, "joint_head.safetensors"))
-	if os.IsNotExist(err) {
-		return files, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("Clef joint_head.safetensors must be a regular file")
-	}
-	if !slices.Contains(files, "joint_head.safetensors") {
-		files = append(files, "joint_head.safetensors")
-		slices.Sort(files)
-	}
-	return files, nil
-}

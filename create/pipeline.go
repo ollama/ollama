@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -40,8 +42,32 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if err != nil {
 		return fmt.Errorf("read model: %w", err)
 	}
+	if inv.Config.Architecture() == gradiumPhononArchitecture {
+		inv, err = prepareGradiumPhononInventory(inv)
+		if err != nil {
+			return err
+		}
+	}
+	inv, err = prepareLFM3SpeechInventory(inv)
+	if err != nil {
+		return err
+	}
 	if opts.Renderer == "clef" {
 		inv, err = prepareClefInventory(inv)
+		if err != nil {
+			return err
+		}
+	}
+	if inv.Config.Architecture() == "Qwen3_5Model" {
+		format, formatErr := qwenDecisionFormat(modelDir)
+		if formatErr != nil {
+			return formatErr
+		}
+		if format == d3FormatID {
+			inv, err = prepareD3Inventory(inv)
+		} else {
+			inv, err = preparePplxInventory(inv)
+		}
 		if err != nil {
 			return err
 		}
@@ -56,6 +82,10 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 			return err
 		}
 	}
+	// Older releases can't run Phonon, whatever the Modelfile or client says.
+	if isPhononArchitecture(inv.Config.Architecture()) && semver.Compare("v"+modelConfig.Requires, "v"+phononMinOllamaVersion) < 0 {
+		modelConfig.Requires = phononMinOllamaVersion
+	}
 	if err := validateMLXSource(inv.Config, false, opts.Validation); err != nil {
 		return err
 	}
@@ -64,6 +94,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	}
 	if inv.Config.Architecture() == "LayaForDecision" && opts.Quantize != "" {
 		return fmt.Errorf("Laya currently requires unquantized weights")
+	}
+	if isPhononArchitecture(inv.Config.Architecture()) && opts.Quantize != "" {
+		return fmt.Errorf("Phonon currently requires unquantized weights")
 	}
 	class, err := Classify(inv, opts.Quantize)
 	if err != nil {
@@ -74,6 +107,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 		if err != nil {
 			return err
 		}
+	}
+	if class.Kind == SourceFloat && class.Quantize == "" && modelConfig.FileType == "" {
+		modelConfig.FileType = sourceFloatFileType(inv)
 	}
 	policy, err := newTensorImportTransform(inv)
 	if err != nil {

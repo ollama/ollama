@@ -61,9 +61,14 @@ func visionTargetSize(height, width int, patchSize, poolingKernel, budget int32)
 
 // dynamicVisionTargetSize chooses the smallest publisher-supported mode that
 // preserves both source dimensions, or the largest mode when none fits.
-func dynamicVisionTargetSize(height, width int, patch, pool int32) (int32, int32, error) {
+func dynamicVisionTargetSize(height, width int, cfg *VisionConfig) (int32, int32, error) {
+	patch, pool := cfg.PatchSize, cfg.PoolingKernelSize
+	// The compact tower used by E2B, E4B, and Bolt needs the smallest mode's
+	// rounded-up grid for small-image detail. Larger and unified towers keep
+	// the reference processor's floor-rounded grid.
+	compactTower := cfg.ModelType == "gemma4_vision" && cfg.HiddenSize == 768 && cfg.NumHiddenLayers == 16
 	var targetH, targetW int32
-	for _, budget := range [...]int32{70, 140, 280, 560, 1120} {
+	for _, budget := range visionSoftTokenBudgets {
 		var err error
 		targetH, targetW, err = visionTargetSize(height, width, patch, pool, budget)
 		if err != nil {
@@ -72,6 +77,21 @@ func dynamicVisionTargetSize(height, width int, patch, pool int32) (int32, int32
 		// Compare the rounded grid: choosing the nearest area can discard
 		// detail even when a larger supported mode preserves it.
 		if int(targetH) >= height && int(targetW) >= width {
+			if compactTower && budget == visionSoftTokenBudgets[0] && height >= int(2*patch*pool) && width >= int(2*patch*pool) {
+				// The reference floors both grid dimensions, so its smallest
+				// mode can use fewer than 70 image tokens even for a small input.
+				// Round this mode up only after it already covers the source;
+				// source axes shorter than two pooled cells, larger modes, and
+				// explicit budgets retain reference sizing.
+				side := float64(patch) * float64(pool)
+				scale := math.Sqrt(float64(budget) * side * side / (float64(height) * float64(width)))
+				h := math.Ceil(scale * float64(height) / side)
+				w := math.Ceil(scale * float64(width) / side)
+				// Keep the rounded grid within the next supported mode.
+				if h >= 1 && w >= 1 && h <= float64(budget) && w <= float64(budget) && h*w <= float64(visionSoftTokenBudgets[1]) {
+					return int32(h) * patch * pool, int32(w) * patch * pool, nil
+				}
+			}
 			return targetH, targetW, nil
 		}
 	}
@@ -107,7 +127,7 @@ func ProcessImage(data []byte, cfg *VisionConfig, softTokenBudget int32) (pixels
 	if softTokenBudget > 0 {
 		targetH, targetW, err = visionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool, softTokenBudget)
 	} else {
-		targetH, targetW, err = dynamicVisionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool)
+		targetH, targetW, err = dynamicVisionTargetSize(bounds.Dy(), bounds.Dx(), cfg)
 	}
 	if err != nil {
 		return nil, nil, ImageGeometry{}, err

@@ -38,8 +38,16 @@ func (w *AnthropicWriter) writeError(data []byte) (int, error) {
 		errData.Error = string(data)
 	}
 
+	response := anthropic.NewError(w.Status(), errData.Error)
+	if w.stream && w.Written() {
+		if err := w.writeEvent("error", anthropic.StreamErrorEvent{Type: response.Type, Error: response.Error}); err != nil {
+			return 0, err
+		}
+		return len(data), nil
+	}
+
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error)); err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(response); err != nil {
 		return 0, err
 	}
 
@@ -51,11 +59,17 @@ func (w *AnthropicWriter) writeEvent(eventType string, data any) error {
 }
 
 func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
-	var chatResponse api.ChatResponse
-	err := json.Unmarshal(data, &chatResponse)
-	if err != nil {
+	var chunk struct {
+		api.ChatResponse
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &chunk); err != nil {
 		return 0, err
 	}
+	if w.stream && chunk.Error != "" {
+		return w.writeError(data)
+	}
+	chatResponse := chunk.ChatResponse
 
 	if w.stream {
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
@@ -116,6 +130,11 @@ type WebSearchAnthropicWriter struct {
 	streamNextIndex      int
 }
 
+// SetThinking keeps web-search follow-ups aligned with the resolved chat request.
+func (w *WebSearchAnthropicWriter) SetThinking(think *api.ThinkValue) {
+	w.chatReq.Think = think
+}
+
 type webSearchLoopResult struct {
 	response anthropic.MessagesResponse
 	loopErr  *webSearchLoopError
@@ -145,10 +164,18 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		return w.inner.writeError(data)
 	}
 
-	var chatResponse api.ChatResponse
-	if err := json.Unmarshal(data, &chatResponse); err != nil {
+	var chunk struct {
+		api.ChatResponse
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &chunk); err != nil {
 		return 0, err
 	}
+	if w.stream && chunk.Error != "" {
+		w.terminalSent = true
+		return w.inner.writeError(data)
+	}
+	chatResponse := chunk.ChatResponse
 	w.recordObservedUsage(chatResponse.Metrics)
 
 	if w.stream && w.loopInFlight {
@@ -528,6 +555,7 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, message
 }
 
 func (w *WebSearchAnthropicWriter) writePassthroughStreamChunk(chatResponse api.ChatResponse) error {
+	w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 	events := w.inner.converter.Process(chatResponse)
 	for _, event := range events {
 		switch e := event.Data.(type) {

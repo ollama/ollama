@@ -121,7 +121,7 @@ func normalizeRequested(requested string) (string, error) {
 // missing (e.g. a ModelOpt checkpoint without hf_quant_config.json) is still
 // recognized as already-quantized and not mistaken for a float model.
 func detectKind(inv Inventory) SourceKind {
-	var hasMLXScales, hasPacked, hasNVFP4Scale, hasFP8Weight bool
+	var hasMLXScales, hasPacked, hasPrequantScale, hasFP8Weight bool
 	for name, t := range inv.Tensors {
 		switch {
 		case strings.HasSuffix(name, ".scales"):
@@ -129,11 +129,12 @@ func detectKind(inv Inventory) SourceKind {
 		case strings.HasSuffix(name, ".weight_packed"):
 			hasPacked = true
 		case strings.HasSuffix(name, ".weight_scale"):
-			// An NVFP4 per-block scale sits on a packed (U8) weight. A
-			// block-FP8 source also has a scale companion, but its weight is
-			// F8_E4M3 — so the base weight's dtype disambiguates the two.
-			if bt, ok := inv.Tensors[strings.TrimSuffix(name, "_scale")]; ok && isPackedDtype(bt.Dtype) {
-				hasNVFP4Scale = true
+			// ModelOpt NVFP4 uses a packed weight with an FP8 scale; its
+			// MXFP8 uses an FP8 weight with a U8 scale. HF block-FP8 also
+			// has a scale companion but is decoded through a separate path.
+			if bt, ok := inv.Tensors[strings.TrimSuffix(name, "_scale")]; ok &&
+				(isPackedDtype(bt.Dtype) || isE4M3Dtype(bt.Dtype) && strings.EqualFold(t.Dtype, "U8")) {
+				hasPrequantScale = true
 			}
 		}
 		if strings.HasSuffix(name, ".weight") && isE4M3Dtype(t.Dtype) {
@@ -142,7 +143,7 @@ func detectKind(inv Inventory) SourceKind {
 	}
 
 	switch {
-	case hasMLXScales || hasPacked || hasNVFP4Scale:
+	case hasMLXScales || hasPacked || hasPrequantScale:
 		return SourcePrequantized
 	case hasFP8Weight:
 		return SourceBlockFP8

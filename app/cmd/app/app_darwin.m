@@ -715,6 +715,7 @@ static NSImage *ollamaApplicationIcon(void) {
 - (void)refreshCodexAppState {
     BOOL installed = IsCodexDesktopInstalled();
     BOOL connected = IsCodexDesktopConnected();
+    BOOL disconnectPending = IsCodexDesktopDisconnectPending();
     unsigned long long requests = connected ? CodexDesktopRequestCount() : 0;
     NSString *activeStatus = requests == 1
         ? @"1 request this session"
@@ -722,9 +723,12 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.codexAppRow setActiveStatusText:connected
         ? activeStatus
         : nil];
-    [self.codexAppRow setInactiveStatusText:installed
-        ? @"Use Ollama models in ChatGPT"
-        : @"Not installed"];
+    [self.codexAppRow setInactiveStatusText:disconnectPending
+        ? @"Try disconnecting again"
+        : (installed ? @"Use Ollama models in ChatGPT" : @"Not installed")];
+    [self.codexAppRow.integrationSwitch setAccessibilityLabel:disconnectPending
+        ? @"Retry disconnecting ChatGPT"
+        : @"Use Ollama with ChatGPT"];
     [self.codexAppRow setIntegrationActive:connected];
     [self.codexAppRow setIntegrationReady:installed && connected];
     [self applyShowAppsInMenu:shouldShowAppsInMenu()];
@@ -1353,7 +1357,11 @@ didCompleteWithError:(NSError *)error {
 }
 
 - (void)toggleCodexApp:(NSButton *)sender {
-    BOOL enabled = sender.state == NSControlStateValueOn;
+    BOOL disconnectPending = IsCodexDesktopDisconnectPending();
+    BOOL enabled = sender.state == NSControlStateValueOn && !disconnectPending;
+    if (disconnectPending) {
+        sender.state = NSControlStateValueOff;
+    }
     if (enabled && !IsCodexDesktopInstalled()) {
         [self refreshCodexAppState];
         NSAlert *installAlert = [[NSAlert alloc] init];
@@ -1399,10 +1407,18 @@ didCompleteWithError:(NSError *)error {
                 [alert setAlertStyle:NSAlertStyleWarning];
                 [alert setIcon:ollamaApplicationIcon()];
                 [alert setMessageText:enabled
-                    ? @"Unable to add Ollama models to ChatGPT"
-                    : @"Unable to remove Ollama models from ChatGPT"];
-                [alert setInformativeText:
-                    @"ChatGPT could not complete the model update. Check the Ollama log for details, then try again."];
+                    ? @"Couldn’t connect ChatGPT"
+                    : @"Couldn’t disconnect ChatGPT"];
+                [alert setInformativeText:@"Please try again."];
+                if (!enabled && (IsCodexDesktopConnected() || IsCodexDesktopDisconnectPending())) {
+                    [alert addButtonWithTitle:@"Retry"];
+                    [alert addButtonWithTitle:@"Not Now"];
+                    if ([alert runModal] == NSAlertFirstButtonReturn) {
+                        sender.state = NSControlStateValueOff;
+                        [self toggleCodexApp:sender];
+                    }
+                    return;
+                }
                 [alert runModal];
                 return;
             }

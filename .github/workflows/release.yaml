@@ -131,18 +131,21 @@ jobs:
             arch: amd64
             preset: 'CUDA 13 ARM64'
             build-steps: cuda13Arm64Cross
-            install: https://packages.nvidia.com/prerelease/cuda/13.4.0/local_installers/cuda_13.4.0_windows_x86_64.exe
+            # CUDA 13.5 ships the ARM64 cross libraries in a separate installer.
+            install: https://developer.download.nvidia.com/compute/cuda/13.5.0/local_installers/cuda_13.5.0_windows_x86_64.exe
+            cuda-cross-install: https://developer.download.nvidia.com/compute/cuda/13.5.0/local_installers/cuda_cross_arm64_13.5.0_windows.exe
             cuda-components:
               - '"cudart"'
-              - '"cudart_cross"'
               - '"nvcc"'
-              - '"nvcc_cross"'
-              - '"cublas_cross"'
               - '"cublas_dev"'
               - '"crt"'
               - '"nvvm"'
               - '"nvptxcompiler"'
-            cuda-version: '13.4'
+            cuda-cross-components:
+              - '"cudart_cross"'
+              - '"nvcc_cross"'
+              - '"cublas_cross"'
+            cuda-version: '13.5'
           - os: windows
             arch: amd64
             preset: 'ROCm 7'
@@ -218,17 +221,28 @@ jobs:
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
-          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}${{ matrix.cuda-cross-install }}
       - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'MLX ')
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
           $ProgressPreference = 'SilentlyContinue'
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
+            curl.exe --fail --location --retry 3 --retry-all-errors --retry-delay 10 --remove-on-error --silent --show-error --output install.exe "${{ matrix.install }}"
+            if ($LASTEXITCODE -ne 0) { throw "CUDA download failed: $LASTEXITCODE" }
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
-            Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+            $installer = Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait -PassThru
+            if ($installer.ExitCode -notin @(0, 3010)) { throw "CUDA install failed: $($installer.ExitCode)" }
             Remove-Item install.exe
+
+            if ("${{ matrix.cuda-cross-install }}") {
+              curl.exe --fail --location --retry 3 --retry-all-errors --retry-delay 10 --remove-on-error --silent --show-error --output install-cross.exe "${{ matrix.cuda-cross-install }}"
+              if ($LASTEXITCODE -ne 0) { throw "CUDA cross download failed: $LASTEXITCODE" }
+              $subpackages = @(${{ join(matrix.cuda-cross-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
+              $installer = Start-Process -FilePath .\install-cross.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait -PassThru
+              if ($installer.ExitCode -notin @(0, 3010)) { throw "CUDA cross install failed: $($installer.ExitCode)" }
+              Remove-Item install-cross.exe
+            }
           }
 
           $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
@@ -286,7 +300,7 @@ jobs:
           echo "CUDNN_INCLUDE_PATH=$cudnnRoot\include" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CUDNN_LIBRARY_PATH=$cudnnRoot\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "$cudnnRoot\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
+      - if: ${{ success() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
@@ -294,7 +308,7 @@ jobs:
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
-          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}${{ matrix.cuda-cross-install }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
@@ -624,7 +638,12 @@ jobs:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
+      # Pin: v0.38.x deadlocks on the ~7.5GB type=local archive export
+      # (moby/buildkit#2950, grpc/grpc-go#9330). Unpin once a buildx release
+      # vendors grpc-go >= v1.85.0.
       - uses: docker/setup-buildx-action@v3
+        with:
+          version: v0.37.2
       - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
@@ -659,9 +678,6 @@ jobs:
           build-args: ${{ matrix.build-args }}
           outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
           cache-from: ${{ matrix.cache-from }}
-      - name: Deduplicate CUDA libraries
-        run: |
-          ./scripts/deduplicate_cuda_libs.sh dist/${{ matrix.os }}-${{ matrix.arch }}
       - name: Verify Linux build payloads
         shell: bash
         run: |
@@ -673,6 +689,24 @@ jobs:
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
+          if [ "${{ matrix.arch }}" = "amd64" ] && [ "${{ matrix.suffix }}" != "-rocm" ]; then
+            for payload in \
+              "$base/lib/ollama/mlx_cuda_v13/libopenblas.so.0" \
+              "$base/lib/ollama/mlx_cuda_v13/libgfortran.so.5" \
+              "$base/lib/ollama/mlx_cuda_v13/libquadmath.so.0"
+            do
+              [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+            done
+            mlx_deps="$(ldd "$base/lib/ollama/mlx_cuda_v13/libmlxc.so")"
+            echo "$mlx_deps"
+            for dependency in libgfortran.so.5 libquadmath.so.0
+            do
+              echo "$mlx_deps" | grep -E "^[[:space:]]*$dependency => .*mlx_cuda_v13/" >/dev/null || {
+                echo "$dependency does not resolve from the MLX payload"
+                exit 1
+              }
+            done
+          fi
       - run: |
           for COMPONENT in bin/* lib/ollama/*; do
             case "$COMPONENT" in

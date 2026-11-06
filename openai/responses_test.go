@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -453,7 +454,8 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 			{"type": "function_call_output", "call_id": "call_spawn", "output": "{\"task_name\":\"/root/worker\"}"},
 			{"type": "agent_message", "id": "amsg_1", "author": "/root", "recipient": "/root/worker", "content": [
 				{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n"},
-				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."}
+				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."},
+				{"type": "input_image", "file_id": "file_stale", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 			]}
 		]
 	}`), &req)
@@ -470,10 +472,14 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 	}
 
 	agentMsg := chat.Messages[3]
-	want := "Agent message from \"/root\" to \"/root/worker\":\n" +
-		"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
-		"Analyze the parser module and report issues."
-	if agentMsg.Role != "user" || agentMsg.Content != want {
+	want := api.Message{
+		Role: "user",
+		Content: "Agent message from \"/root\" to \"/root/worker\":\n" +
+			"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
+			"Analyze the parser module and report issues.",
+		Images: []api.ImageData{[]byte("fixture")},
+	}
+	if !reflect.DeepEqual(agentMsg, want) {
 		t.Fatalf("agent message = %#v", agentMsg)
 	}
 }
@@ -1716,7 +1722,7 @@ func TestFromResponsesRequest_FunctionCallMerge(t *testing.T) {
 			"model": "gpt-oss:20b",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "think and act"}]},
-				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Let me think...", "summary": []},
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Let me think...", "summary": [{"type":"summary_text","text":"Let me think..."}]},
 				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I thought about it."}]},
 				{"type": "function_call", "call_id": "call_1", "name": "do_thing", "arguments": "{}"}
 			]
@@ -1761,7 +1767,7 @@ func TestFromResponsesRequest_FunctionCallMerge(t *testing.T) {
 			"model": "gpt-oss:20b",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "complex task"}]},
-				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Thinking first...", "summary": []},
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Thinking first...", "summary": [{"type":"summary_text","text":"Thinking first..."}]},
 				{"type": "message", "role": "assistant", "content": ""},
 				{"type": "function_call", "call_id": "call_1", "name": "think_action", "arguments": "{}"},
 				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Now doing more."}]},
@@ -2016,6 +2022,52 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamConverter_EmitFunctionCallItems(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{Message: api.Message{Thinking: "Check both cities."}})
+	events = append(events, converter.EmitFunctionCallItems([]api.ToolCall{
+		{ID: "call_paris", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+		{ID: "call_london", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
+	})...)
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Content: "The weather is ready."}, Done: true})...)
+
+	var addedIDs, completed, output []any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.added":
+			if data["output_index"] != len(addedIDs) {
+				t.Errorf("added output_index = %v, want %d", data["output_index"], len(addedIDs))
+			}
+			addedIDs = append(addedIDs, data["item"].(map[string]any)["id"])
+		case "response.output_item.done":
+			item := data["item"].(map[string]any)
+			index := len(completed)
+			if data["output_index"] != index || index >= len(addedIDs) || item["id"] != addedIDs[index] {
+				t.Errorf("item completed out of order or at the wrong index: %#v", data)
+			}
+			completed = append(completed, item)
+		case "response.completed":
+			output = data["response"].(map[string]any)["output"].([]any)
+		}
+	}
+	wantTypes := []string{"reasoning", "function_call", "function_call", "message"}
+	if len(addedIDs) != len(wantTypes) || len(completed) != len(wantTypes) {
+		t.Fatalf("added %d and completed %d items, want %d", len(addedIDs), len(completed), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if got := completed[i].(map[string]any)["type"]; got != want {
+			t.Errorf("completed item %d type = %v, want %s", i, got, want)
+		}
+	}
+	if !reflect.DeepEqual(output, completed) {
+		t.Fatalf("final output = %#v, want completed items %#v", output, completed)
+	}
+	if got := output[3].(map[string]any)["content"].([]map[string]any)[0]["text"]; got != "The weather is ready." {
+		t.Errorf("text after client calls = %v", got)
+	}
+}
+
 func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
 	request := ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}}
 	converter := NewResponsesStreamConverter("resp_123", "msg_456", "test", request)
@@ -2116,6 +2168,73 @@ func TestResponsesStreamConverter_Reasoning(t *testing.T) {
 }
 
 func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
+	t.Run("web search carries consecutive reasoning into the answer", func(t *testing.T) {
+		for _, encrypted := range []string{"first thought", "opaque-provider-reasoning"} {
+			request := ResponsesRequest{Input: ResponsesInput{Items: []ResponsesInputItem{
+				ResponsesInputMessage{Role: "user", Content: []ResponsesContent{ResponsesTextContent{Type: "input_text", Text: "search"}}},
+				ResponsesReasoningInput{EncryptedContent: encrypted, Summary: []ResponsesReasoningSummary{{Type: "summary_text", Text: "first thought"}}},
+				ResponsesWebSearchCall{Type: "web_search_call"},
+				ResponsesReasoningInput{Summary: []ResponsesReasoningSummary{{Type: "summary_text", Text: "second thought"}, {Type: "summary_text", Text: "third thought"}}},
+				ResponsesReasoningInput{EncryptedContent: "opaque-without-summary"},
+				ResponsesInputMessage{Role: "assistant", Content: []ResponsesContent{ResponsesTextContent{Type: "input_text", Text: "the answer"}}},
+			}}}
+			chat, err := FromResponsesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []api.Message{{Role: "user", Content: "search"}, {Role: "assistant", Content: "the answer", Thinking: "first thought\nsecond thought\nthird thought"}}
+			if !reflect.DeepEqual(chat.Messages, want) {
+				t.Fatalf("messages=%+v, want=%+v", chat.Messages, want)
+			}
+		}
+	})
+
+	t.Run("reasoning preserves a pending tool pair", func(t *testing.T) {
+		for _, assistant := range []string{"", `,{"role":"assistant","content":"Checking the result"}`} {
+			var req ResponsesRequest
+			body := `{"model":"test","input":[
+				{"type":"reasoning","encrypted_content":"first native thought","summary":[{"type":"summary_text","text":"first native thought"}]},
+				{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},
+				{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque"}` + assistant + `,
+				{"type":"function_call_output","call_id":"call_1","output":"done"}
+			]}`
+			if err := json.Unmarshal([]byte(body), &req); err != nil {
+				t.Fatal(err)
+			}
+			chat, err := FromResponsesRequest(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chat.Messages) != 2 || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[0].ToolCalls[0].ID != "call_1" || chat.Messages[1].ToolCallID != "call_1" {
+				t.Fatalf("tool pair split: %+v", chat.Messages)
+			}
+			if strings.Contains(chat.Messages[0].Content, "Remember kiwi-42") || chat.Messages[0].Thinking != "first native thought\nRemember kiwi-42" {
+				t.Fatalf("reasoning lost: %+v", chat.Messages[0])
+			}
+			if assistant != "" && !strings.Contains(chat.Messages[0].Content, "Checking the result") {
+				t.Fatalf("assistant text lost: %+v", chat.Messages[0])
+			}
+		}
+	})
+	t.Run("successive calls preserve both reasoning items", func(t *testing.T) {
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(`{"model":"test","input":[
+			{"type":"reasoning","encrypted_content":"first native thought","summary":[{"type":"summary_text","text":"first native thought"}]},
+			{"type":"function_call","call_id":"call_1","name":"first","arguments":"{}"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"second readable thought"}]},
+			{"type":"function_call","call_id":"call_2","name":"second","arguments":"{}"}
+		]}`), &req); err != nil {
+			t.Fatal(err)
+		}
+		chat, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chat.Messages) != 1 || len(chat.Messages[0].ToolCalls) != 2 || chat.Messages[0].Thinking != "first native thought\nsecond readable thought" || chat.Messages[0].Content != "" {
+			t.Fatalf("reasoning or tool calls lost: %+v", chat.Messages)
+		}
+	})
+
 	t.Run("reasoning merged with following message", func(t *testing.T) {
 		reqJSON := `{
 			"model": "qwen3",
@@ -2154,8 +2273,8 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		if assistantMsg.Content != "The answer is 4" {
 			t.Errorf("Messages[1].Content = %q, want %q", assistantMsg.Content, "The answer is 4")
 		}
-		if assistantMsg.Thinking != "Let me think about this math problem..." {
-			t.Errorf("Messages[1].Thinking = %q, want %q", assistantMsg.Thinking, "Let me think about this math problem...")
+		if assistantMsg.Thinking != "Thinking about math" {
+			t.Errorf("Messages[1].Thinking = %q, want %q", assistantMsg.Thinking, "Thinking about math")
 		}
 	})
 
@@ -2164,7 +2283,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			"model": "qwen3",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
-				{"type": "reasoning", "id": "rs_123", "encrypted_content": "I need to call a tool for this...", "summary": []},
+				{"type": "reasoning", "id": "rs_123", "encrypted_content": "I need to call a tool for this...", "summary": [{"type":"summary_text","text":"I need to call a tool for this..."}]},
 				{"type": "function_call", "call_id": "call_abc", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}
 			]
 		}`
@@ -2243,8 +2362,8 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		if chatReq.Messages[1].Content != "The answer is 4." {
 			t.Errorf("Messages[1].Content = %q, want \"The answer is 4.\"", chatReq.Messages[1].Content)
 		}
-		if chatReq.Messages[1].Thinking != "This is a simple arithmetic problem. 2+2=4." {
-			t.Errorf("Messages[1].Thinking = %q, want \"This is a simple arithmetic problem. 2+2=4.\"",
+		if chatReq.Messages[1].Thinking != "Calculating 2+2" {
+			t.Errorf("Messages[1].Thinking = %q, want \"Calculating 2+2\"",
 				chatReq.Messages[1].Thinking)
 		}
 
@@ -2261,10 +2380,10 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			"model": "qwen3",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What is the weather in Paris?"}]},
-				{"type": "reasoning", "id": "rs_001", "encrypted_content": "I need to call the weather API for Paris.", "summary": []},
+				{"type": "reasoning", "id": "rs_001", "encrypted_content": "I need to call the weather API for Paris.", "summary": [{"type":"summary_text","text":"I need to call the weather API for Paris."}]},
 				{"type": "function_call", "call_id": "call_abc", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
 				{"type": "function_call_output", "call_id": "call_abc", "output": "Sunny, 72°F"},
-				{"type": "reasoning", "id": "rs_002", "encrypted_content": "The weather API returned sunny and 72°F. I should format this nicely.", "summary": []},
+				{"type": "reasoning", "id": "rs_002", "encrypted_content": "The weather API returned sunny and 72°F. I should format this nicely.", "summary": [{"type":"summary_text","text":"The weather API returned sunny and 72°F. I should format this nicely."}]},
 				{"type": "message", "role": "assistant", "content": [{"type": "input_text", "text": "It's sunny and 72°F in Paris!"}]},
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What about London?"}]}
 			]
@@ -2335,7 +2454,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			"model": "qwen3",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "think about this"}]},
-				{"type": "reasoning", "id": "rs_123", "encrypted_content": "Still thinking...", "summary": []}
+				{"type": "reasoning", "id": "rs_123", "encrypted_content": "Still thinking...", "summary": [{"type":"summary_text","text":"Still thinking..."}]}
 			]
 		}`
 
@@ -2497,6 +2616,79 @@ func TestFromResponsesRequest_MaxOutputTokens(t *testing.T) {
 	}
 	if numPredict != 100 {
 		t.Errorf("num_predict = %v, want 100", numPredict)
+	}
+}
+
+func TestFromResponsesRequest_Truncation(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name      string
+		reqJSON   string
+		wantTrunc *bool
+		wantErr   bool
+	}{
+		{
+			name: "default is disabled",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello"
+			}`,
+			wantTrunc: boolPtr(false),
+		},
+		{
+			name: "explicitly disabled",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello",
+				"truncation": "disabled"
+			}`,
+			wantTrunc: boolPtr(false),
+		},
+		{
+			name: "explicitly auto",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello",
+				"truncation": "auto"
+			}`,
+			wantTrunc: boolPtr(true),
+		},
+		{
+			name: "unknown truncation strategy",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello",
+				"truncation": "invalid_strategy"
+			}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ResponsesRequest
+			if err := json.Unmarshal([]byte(tt.reqJSON), &req); err != nil {
+				t.Fatalf("failed to unmarshal request: %v", err)
+			}
+
+			chatReq, err := FromResponsesRequest(req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if chatReq.Truncate == nil {
+				t.Fatal("expected Truncate to be set, got nil")
+			}
+			if *chatReq.Truncate != *tt.wantTrunc {
+				t.Errorf("Truncate = %v, want %v", *chatReq.Truncate, *tt.wantTrunc)
+			}
+		})
 	}
 }
 
@@ -3144,6 +3336,40 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 	}
 }
 
+func TestResponsesStreamConverter_TextThenToolCompletion(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{Message: api.Message{Content: "checking weather"}})
+	events = append(events, converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "weather", Arguments: testArgs(map[string]any{"city": "SF"})}}}},
+		Done:    true,
+	})...)
+	done := map[int]any{}
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		if event.Event == "response.output_item.done" {
+			index := data["output_index"].(int)
+			if _, exists := done[index]; exists {
+				t.Fatalf("output index %d closed twice", index)
+			}
+			done[index] = data["item"]
+		}
+	}
+	last := events[len(events)-1]
+	if last.Event != "response.completed" {
+		t.Fatalf("last event=%s", last.Event)
+	}
+	output := last.Data.(map[string]any)["response"].(map[string]any)["output"].([]any)
+	if len(output) != 2 || !reflect.DeepEqual(output[0], done[0]) || !reflect.DeepEqual(output[1], done[1]) {
+		t.Fatalf("terminal output disagrees with streamed items: output=%#v done=%#v", output, done)
+	}
+	if events := converter.ResponseFailed(map[string]any{"error": ResponsesError{Code: "server_error", Message: "late error"}}); len(events) != 0 {
+		t.Fatalf("failure emitted after completion: %#v", events)
+	}
+	if events := converter.Process(api.ChatResponse{Done: true}); len(events) != 0 {
+		t.Fatalf("completion emitted twice: %#v", events)
+	}
+}
+
 func TestFromResponsesRequestAgentMessageWithoutRouting(t *testing.T) {
 	var req ResponsesRequest
 	err := json.Unmarshal([]byte(`{
@@ -3188,5 +3414,44 @@ func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
 	}
 	if len(chat.Messages) != 1 || chat.Messages[0].Content != "prefix opaque to us" {
 		t.Fatalf("messages = %#v", chat.Messages)
+	}
+}
+
+func TestResponsesReportRequestedSampling(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	tests := []struct {
+		name              string
+		temperature, topP *float64
+		want              map[string]any
+	}{
+		// The model's defaults applied; the response must not claim others.
+		{"omitted", nil, nil, map[string]any{"temperature": nil, "top_p": nil}},
+		{"explicit", value(0.3), value(0.7), map[string]any{"temperature": 0.3, "top_p": 0.7}},
+		{"explicit zero", value(0), value(0), map[string]any{"temperature": 0.0, "top_p": 0.0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := ResponsesRequest{Model: "m", Temperature: tt.temperature, TopP: tt.topP}
+			chat := api.ChatResponse{Message: api.Message{Content: "hi"}, Done: true}
+			created := NewResponsesStreamConverter("resp_1", "item_1", "m", request).Process(chat)[0]
+			for builder, response := range map[string]any{
+				"ToResponse": ToResponse("m", "resp_1", "item_1", chat, request),
+				"stream":     created.Data.(map[string]any)["response"],
+			} {
+				data, err := json.Marshal(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]any
+				if err := json.Unmarshal(data, &fields); err != nil {
+					t.Fatal(err)
+				}
+				for key, want := range tt.want {
+					if got, ok := fields[key]; !ok || got != want {
+						t.Errorf("%s %s = %v (present %v), want %v", builder, key, got, ok, want)
+					}
+				}
+			}
+		})
 	}
 }

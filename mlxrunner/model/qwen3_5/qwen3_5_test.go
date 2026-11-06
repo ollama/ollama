@@ -2,11 +2,14 @@ package qwen3_5
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
 func TestSanitizeConvWeight(t *testing.T) {
@@ -329,6 +332,66 @@ func TestNewCachesLayout(t *testing.T) {
 	if _, ok := caches[2].(*cache.RecurrentCache); !ok {
 		t.Fatalf("cache[2] = %T, want *cache.RecurrentCache", caches[2])
 	}
+}
+
+// Forward's output and aux taps must keep the bits of a plain Layer.Forward
+// loop that taps the listed layers' outputs.
+func TestForwardTapsMatchLayerLoop(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m := hybridTestModel()
+		tapIDs := []int{0}
+		m.SetAuxHiddenLayers(tapIDs)
+		ids := []int32{3, 1, 4, 1, 5}
+		b := &batch.Batch{InputIDs: mlx.FromValues(ids, 1, len(ids)), SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(len(ids))}}
+		caches, loopCaches := m.NewCaches(), m.NewCaches()
+		defer func() {
+			for _, c := range append(caches, loopCaches...) {
+				c.Free()
+			}
+		}()
+		hidden, aux := m.Forward(b, caches)
+		h := m.EmbedTokens.Forward(b.InputIDs)
+		positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
+		var taps []*mlx.Array
+		for i, layer := range m.Layers {
+			h = layer.Forward(h, b, loopCaches[i], positions, 1, int32(len(ids)), m.Config, nil, nil)
+			if slices.Contains(tapIDs, i) {
+				taps = append(taps, h)
+			}
+		}
+		assertBitEqual(t, "hidden", hidden, m.Norm.Forward(h, m.RMSNormEps))
+		assertBitEqual(t, "aux", aux, mlx.Concatenate(taps, -1))
+	})
+}
+
+func hybridTestModel() *Model {
+	const width, heads, keyHeads, headDim, tail = 32, 2, 1, 32, 3
+	const values, packed = heads * headDim, (2*keyHeads + heads) * headDim
+	weight := func(rows, cols int) *mlx.Array {
+		return mlx.MulScalar(patternArray(rows, cols).AsType(mlx.DTypeBFloat16), .1)
+	}
+	norm := func(n int) *nn.RMSNorm { return nn.NewRMSNorm(mlx.AddScalar(mlx.Zeros(mlx.DTypeBFloat16, n), 1), 1e-6) }
+	mlp := func() *DenseMLP {
+		return &DenseMLP{GateProj: nn.NewLinear(weight(width*2, width), nil), UpProj: nn.NewLinear(weight(width*2, width), nil), DownProj: nn.NewLinear(weight(width, width*2), nil)}
+	}
+	m := &Model{
+		Config: &Config{
+			HiddenSize: width, NumHiddenLayers: 2, NumAttentionHeads: 2, NumKeyValueHeads: 1, HeadDim: 16, RMSNormEps: 1e-6, RopeDim: 16, RopeTheta: 10000, Scale: .25,
+			LinearNumKeyHeads: keyHeads, LinearNumValueHeads: heads, LinearKeyHeadDim: headDim, LinearValueHeadDim: headDim, LinearConvKernelDim: tail + 1,
+		},
+		EmbedTokens: nn.NewEmbedding(weight(16, width)), Norm: norm(width),
+	}
+	m.Layers = []*Layer{
+		{IsLinear: true, InputNorm: norm(width), PostAttentionNorm: norm(width), MLP: mlp(), Linear: &GatedDeltaNet{
+			InProjQKVZ: nn.NewLinear(weight(packed+values, width), nil), InProjBA: nn.NewLinear(weight(2*heads, width), nil), OutProj: nn.NewLinear(weight(width, values), nil),
+			Conv1D: nn.NewConv1d(weight(packed, tail+1).ExpandDims(2), nil, 1, 0, 1, packed), NormWeight: norm(headDim).Weight,
+			DtBias: mlx.Zeros(mlx.DTypeBFloat16, heads), AExp: mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, heads), 1),
+		}},
+		{InputNorm: norm(width), PostAttentionNorm: norm(width), MLP: mlp(), FullAttn: &FullAttention{
+			QProj: nn.NewLinear(weight(64, width), nil), KProj: nn.NewLinear(weight(16, width), nil), VProj: nn.NewLinear(weight(16, width), nil), OProj: nn.NewLinear(weight(width, 32), nil), QNorm: norm(16), KNorm: norm(16),
+		}},
+	}
+	return m
 }
 
 func TestLoadWeightsPreservesLinearAttentionNormWeightDType(t *testing.T) {

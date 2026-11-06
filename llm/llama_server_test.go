@@ -469,7 +469,9 @@ func writeLargeLlamaServerEvent(t *testing.T, w io.Writer, chat bool, payload st
 	}
 }
 
-func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
+// repeat_last_n reaches llama-server unchanged, except Ollama's -1 (the whole
+// context), which llama-server rejects and so becomes the context size.
+func TestLlamaServerForwardsRepeatLastN(t *testing.T) {
 	var completionBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -505,21 +507,27 @@ func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
 		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 	}
 
-	opts := api.DefaultOptions()
-	opts.RepeatLastN = 0
-	if err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:  "test prompt",
-		Options: &opts,
-	}, func(CompletionResponse) {}); err != nil {
-		t.Fatalf("Completion error: %v", err)
-	}
+	for _, tt := range []struct{ repeatLastN, want int }{{0, 0}, {64, 64}, {-1, 2048}} {
+		t.Run(fmt.Sprint(tt.repeatLastN), func(t *testing.T) {
+			opts := api.DefaultOptions()
+			opts.RepeatLastN = tt.repeatLastN
 
-	value, ok := completionBody["repeat_last_n"]
-	if !ok {
-		t.Fatal("repeat_last_n missing from llama-server completion request")
-	}
-	if value != float64(0) {
-		t.Fatalf("repeat_last_n = %v, want 0", value)
+			completionBody = nil
+			if err := runner.Completion(t.Context(), CompletionRequest{Prompt: "test prompt", Options: &opts}, func(CompletionResponse) {}); err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+			if value, ok := completionBody["repeat_last_n"]; !ok || value != float64(tt.want) {
+				t.Errorf("completion repeat_last_n = %v (present %v), want %d", value, ok, tt.want)
+			}
+
+			chat, err := runner.llamaServerChatRequest(ChatRequest{Options: &opts}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if chat["repeat_last_n"] != tt.want {
+				t.Errorf("chat repeat_last_n = %v, want %d", chat["repeat_last_n"], tt.want)
+			}
+		})
 	}
 }
 
@@ -1477,13 +1485,28 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 			wantPrompt: "<|turn>user\nhello<turn|>\n<|turn>model\n",
 		},
 		{
-			name:       "lfm2 strips renderer bos",
+			// llama.cpp honors an explicit add_bos_token=false for lfm2, so the
+			// renderer's BOS is the only one.
+			name:       "lfm2 explicit add_bos false keeps renderer bos",
 			leadingBOS: "<|startoftext|>",
 			ggufKV: gguftest.KV{
 				"general.architecture":         "lfm2",
 				"tokenizer.ggml.model":         "gpt2",
 				"tokenizer.ggml.pre":           "lfm2",
 				"tokenizer.ggml.add_bos_token": false,
+				"tokenizer.ggml.bos_token_id":  uint32(0),
+			},
+			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+			wantPrompt: "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:       "lfm2 explicit add_bos true strips renderer bos",
+			leadingBOS: "<|startoftext|>",
+			ggufKV: gguftest.KV{
+				"general.architecture":         "lfm2",
+				"tokenizer.ggml.model":         "gpt2",
+				"tokenizer.ggml.pre":           "lfm2",
+				"tokenizer.ggml.add_bos_token": true,
 				"tokenizer.ggml.bos_token_id":  uint32(0),
 			},
 			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
@@ -2610,15 +2633,20 @@ func TestAppendDraftArgs(t *testing.T) {
 			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
-			name:      "DFlash draft omits MTP backend sampling",
-			draftType: draftTypeDFlash,
+			name:      "Eagle3 draft passes its type without MTP backend sampling",
+			draftType: draftTypeEagle3,
 			draftPath: "draft.gguf",
 			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
-			want:      []string{"base", "--spec-type", "draft-dflash", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+			want:      []string{"base", "--spec-type", "draft-eagle3", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+		},
+		{
+			name:      "untyped draft leaves the type to llama-server",
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
 		},
 		{
 			name:      "zero draft depth disables speculative decoding",
-			draftType: draftTypeDFlash,
 			draftPath: "draft.gguf",
 			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 0}},
 			want:      []string{"base"},
@@ -2637,17 +2665,46 @@ func TestAppendDraftArgs(t *testing.T) {
 
 func TestExternalDraftType(t *testing.T) {
 	tests := []struct {
-		architecture string
-		want         string
+		name    string
+		kv      gguftest.KV
+		tensors []*gguftest.Tensor
+		want    string
 	}{
-		{architecture: "dflash", want: draftTypeDFlash},
-		{architecture: "qwen35", want: draftTypeMTP},
-		{architecture: "unknown", want: draftTypeMTP},
+		{
+			name: "dflash family is inferred by llama-server",
+			kv:   gguftest.KV{"general.architecture": "dflash"},
+		},
+		{
+			name: "eagle3",
+			kv:   gguftest.KV{"general.architecture": "eagle3"},
+			want: draftTypeEagle3,
+		},
+		{
+			name: "MTP sidecar by nextn key",
+			kv:   gguftest.KV{"general.architecture": "gemma4-assistant", "gemma4-assistant.nextn_predict_layers": uint32(4)},
+			want: draftTypeMTP,
+		},
+		{
+			name: "legacy qwen35 MTP sidecar",
+			kv:   gguftest.KV{"general.architecture": "qwen35"},
+			tensors: []*gguftest.Tensor{
+				testGGUFTensor("mtp.fc.weight", gguf.TensorTypeF32, []uint64{1}),
+			},
+			want: draftTypeMTP,
+		},
+		{
+			name: "qwen35 without MTP markers is inferred by llama-server",
+			kv:   gguftest.KV{"general.architecture": "qwen35"},
+		},
+		{
+			name: "unknown",
+			kv:   gguftest.KV{"general.architecture": "unknown"},
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.architecture, func(t *testing.T) {
-			path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": tt.architecture}, nil)
+		t.Run(tt.name, func(t *testing.T) {
+			path, _ := writeTestGGUF(t, tt.kv, tt.tensors)
 			got, err := externalDraftType(path)
 			if err != nil {
 				t.Fatal(err)
@@ -2657,6 +2714,20 @@ func TestExternalDraftType(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("MTP marker in a later shard", func(t *testing.T) {
+		path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, nil)
+		shard, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+			testGGUFTensor("mtp.fc.weight", gguf.TensorTypeF32, []uint64{1}),
+		})
+		got, err := externalDraftType(path, shard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != draftTypeMTP {
+			t.Fatalf("externalDraftType = %q, want %q", got, draftTypeMTP)
+		}
+	})
 }
 
 func TestHasLegacyQwenMTPDraft(t *testing.T) {
@@ -3066,6 +3137,16 @@ func TestMemoryParsingWriter(t *testing.T) {
 			lines:     []string{"some random log line\n"},
 			wantGPU:   0,
 			wantTotal: 0,
+		},
+		{
+			name: "new b12111 kinds: layer input + rotation",
+			lines: []string{
+				"llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)\n",
+				"init_rotation:         CUDA0 rotation buffer size =    23.04 MiB\n",
+				"init_rotation:     CUDA_Host rotation buffer size =     2.00 MiB\n",
+			},
+			wantGPU:   4.00 + 23.04,
+			wantTotal: 4.00 + 23.04 + 2.00,
 		},
 		{
 			name: "fit probe buffers are replaced by final load",

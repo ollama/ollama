@@ -93,19 +93,55 @@ func TestInferSafetensorsConfigIncludesGenerationDefaults(t *testing.T) {
 
 func TestInferSafetensorsConfigFamilies(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       string
-		chatTemplate string
-		standalone   bool
-		wantParser   string
-		wantRenderer string
-		wantCaps     []string
+		name            string
+		config          string
+		chatTemplate    string
+		standalone      bool
+		decisionSidecar bool
+		wantParser      string
+		wantRenderer    string
+		wantCaps        []string
 	}{
 		{
 			name:         "qwen3",
 			config:       `{"architectures":["Qwen3ForCausalLM"]}`,
 			wantParser:   "qwen3",
 			wantRenderer: "qwen3-coder",
+		},
+		{
+			name:         "lfm3 text architecture",
+			config:       `{"architectures":["Lfm3ForCausalLM"],"model_type":"lfm3"}`,
+			wantParser:   "lfm3",
+			wantRenderer: "lfm3",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:         "lfm3 vision architecture",
+			config:       `{"architectures":["Lfm3VlForConditionalGeneration"],"model_type":"lfm3_vl","vision_config":{}}`,
+			wantParser:   "lfm3",
+			wantRenderer: "lfm3",
+			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
+		},
+		{
+			name:         "lfm3 omni architecture",
+			config:       `{"architectures":["Lfm3OmniForConditionalGeneration"],"model_type":"lfm3_omni","vision_config":{}}`,
+			wantParser:   "lfm3-omni",
+			wantRenderer: "lfm3-omni",
+			wantCaps:     []string{"completion", "vision", "tools", "audio", "speech"},
+		},
+		{
+			name:         "lfm3 audio architecture",
+			config:       `{"architectures":["Lfm3AudioForConditionalGeneration"],"model_type":"lfm3_audio"}`,
+			wantParser:   "lfm3-audio",
+			wantRenderer: "lfm3-audio",
+			wantCaps:     []string{"completion", "tools", "audio", "speech"},
+		},
+		{
+			name:         "lfm3 model type fallback",
+			config:       `{"model_type":"lfm3"}`,
+			wantParser:   "lfm3",
+			wantRenderer: "lfm3",
+			wantCaps:     []string{"completion", "tools", "thinking"},
 		},
 		{
 			name:         "qwen3.5 text",
@@ -120,6 +156,20 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantParser:   "qwen3.5",
 			wantRenderer: "qwen3.5",
 			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
+		},
+		{
+			name:            "pplx decision text",
+			config:          `{"architectures":["Qwen3_5Model"]}`,
+			decisionSidecar: true,
+			wantRenderer:    "pplx",
+			wantCaps:        []string{"decision"},
+		},
+		{
+			name:            "pplx decision vision",
+			config:          `{"architectures":["Qwen3_5Model"],"vision_config":{}}`,
+			decisionSidecar: true,
+			wantRenderer:    "pplx",
+			wantCaps:        []string{"decision", "vision"},
 		},
 		{
 			name:         "qwen3.8 embedded template",
@@ -182,7 +232,7 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config:       `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`,
 			chatTemplate: "{reasoning effort: efficient}",
 			standalone:   true,
-			wantParser:   "nemotron-3.5-nano",
+			wantParser:   "nemotron-3-nano",
 			wantRenderer: "nemotron-3.5-nano",
 		},
 		{
@@ -191,6 +241,13 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantParser:   "nemotron-3-nano",
 			wantRenderer: "nemotron-3-nano",
 			wantCaps:     []string{"completion", "vision", "audio", "tools", "thinking"},
+		},
+		{
+			name:         "nemotron super published architecture",
+			config:       `{"architectures":["NemotronH_Omni_Reasoning_V3"],"model_type":"nemotron_h_omni","vision_config":{},"sound_config":null,"llm_config":{"model_type":"nemotron_h"}}`,
+			wantParser:   "nemotron-3-nano",
+			wantRenderer: "nemotron-3.5-super",
+			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
 		},
 		{
 			name:         "deepseek",
@@ -209,6 +266,18 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config: `{"architectures":["LlamaForCausalLM"]}`,
 		},
 		{
+			name:         "flint",
+			config:       `{"architectures":["FlintForCausalLM"],"model_type":"flint"}`,
+			wantParser:   "flint",
+			wantRenderer: "flint",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:     "phonon",
+			config:   `{"architectures":["GradiumPhononTTSForConditionalGeneration"],"model_type":"gradium_phonon_tts"}`,
+			wantCaps: []string{"speech"},
+		},
+		{
 			name:         "nested llm config",
 			config:       `{"model_type":"nemotron_h_omni","llm_config":{"model_type":"nemotron_h"}}`,
 			wantParser:   "nemotron-3-nano",
@@ -221,6 +290,11 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.config), 0o600); err != nil {
 				t.Fatal(err)
+			}
+			if tt.decisionSidecar {
+				if err := os.WriteFile(filepath.Join(dir, "decision_config.json"), []byte(`{}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tt.chatTemplate != "" {
 				name := "tokenizer_config.json"
@@ -293,5 +367,24 @@ func TestStrandsDecisionMetadata(t *testing.T) {
 	}
 	if got.Parser != "" || got.Renderer != "strands" || len(got.Capabilities) != 1 || got.Capabilities[0] != "decision" {
 		t.Fatalf("unexpected Strands metadata: %+v", got)
+	}
+}
+
+func TestD1DecisionMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		modelType string
+		want      []string
+	}{
+		{"lfm3_vl", []string{"decision", "vision"}},
+		{"lfm3_omni", []string{"decision", "vision", "audio"}},
+	} {
+		cfg := sourceModelConfig{Architectures: []string{"D1Model"}, ModelType: tc.modelType}
+		got, err := inferSafetensorsConfig(t.TempDir(), cfg, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Parser != "" || got.Renderer != "d1" || !slices.Equal(got.Capabilities, tc.want) {
+			t.Fatalf("%s: unexpected d1 metadata: %+v", tc.modelType, got)
+		}
 	}
 }

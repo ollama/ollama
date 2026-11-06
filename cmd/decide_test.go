@@ -61,7 +61,7 @@ func runDecide(t *testing.T, stdin string, handler http.HandlerFunc, args ...str
 }
 
 func TestRunDecisionModel(t *testing.T) {
-	const refund = `{"Is a refund being requested?":{"type":"noul","instructions":"Is a refund being requested?"}}`
+	const refund = `{"q1":{"type":"noul","instructions":"Is a refund being requested?"}}`
 	for _, tt := range []struct {
 		name, stdin string
 		args        []string
@@ -75,14 +75,14 @@ func TestRunDecisionModel(t *testing.T) {
 			stdin:     "I was charged twice\n",
 			args:      []string{"--ask", "Is a refund being requested?"},
 			questions: refund,
-			answers:   `{"Is a refund being requested?":{"type":"noul","noul":0.97}}`,
+			answers:   `{"q1":{"type":"noul","noul":0.97}}`,
 			want:      "yes  97%\n",
 		},
 		{
 			name:      "state as an argument",
 			args:      []string{"I was charged twice", "--ask", "Is a refund being requested?"},
 			questions: refund,
-			answers:   `{"Is a refund being requested?":{"type":"noul","noul":0.2}}`,
+			answers:   `{"q1":{"type":"noul","noul":0.2}}`,
 			want:      "no  80%\n",
 		},
 		{
@@ -90,31 +90,31 @@ func TestRunDecisionModel(t *testing.T) {
 			args:      []string{"--ask", "Is a refund being requested?", `{"ticket": "I was charged twice"}`},
 			state:     `{"ticket":"I was charged twice"}`,
 			questions: refund,
-			answers:   `{"Is a refund being requested?":{"type":"noul","noul":0.97}}`,
+			answers:   `{"q1":{"type":"noul","noul":0.97}}`,
 			want:      "yes  97%\n",
 		},
 		{
 			name:      "labels",
 			stdin:     "I was charged twice",
 			args:      []string{"--ask", "Which team should handle this?", "--choice", "billing=Payments and refunds", "--choice", "technical"},
-			questions: `{"Which team should handle this?":{"type":"choice","instructions":"Which team should handle this?","criteria":{"billing":"Payments and refunds","technical":null}}}`,
-			answers:   `{"Which team should handle this?":{"type":"choice","choice":"billing","probabilities":{"billing":0.91,"technical":0.09},"confidence":0.6}}`,
+			questions: `{"q1":{"type":"choice","instructions":"Which team should handle this?","criteria":{"billing":"Payments and refunds","technical":null}}}`,
+			answers:   `{"q1":{"type":"choice","choice":"billing","probabilities":{"billing":0.91,"technical":0.09},"confidence":0.6}}`,
 			want:      "billing  91%\n",
 		},
 		{
 			name:      "levels",
 			stdin:     "I was charged twice",
 			args:      []string{"--ask", "How urgent is this?", "--level", "Routine", "--level", "Soon", "--level", "Immediate"},
-			questions: `{"How urgent is this?":{"type":"score","instructions":"How urgent is this?","criteria":["Routine","Soon","Immediate"]}}`,
-			answers:   `{"How urgent is this?":{"type":"score","score":1.83,"legend":{"0":"Routine","1":"Soon","2":"Immediate"},"probabilities":{"0":0.04,"1":0.09,"2":0.87},"confidence":0.7}}`,
+			questions: `{"q1":{"type":"score","instructions":"How urgent is this?","criteria":["Routine","Soon","Immediate"]}}`,
+			answers:   `{"q1":{"type":"score","score":1.83,"legend":{"0":"Routine","1":"Soon","2":"Immediate"},"probabilities":{"0":0.04,"1":0.09,"2":0.87},"confidence":0.7}}`,
 			want:      "Immediate  87%  1.8 / 2\n",
 		},
 		{
 			name:      "most likely level, not the nearest",
 			stdin:     "I was charged twice",
 			args:      []string{"--ask", "How urgent is this?", "--level", "Routine", "--level", "Soon", "--level", "Immediate"},
-			questions: `{"How urgent is this?":{"type":"score","instructions":"How urgent is this?","criteria":["Routine","Soon","Immediate"]}}`,
-			answers:   `{"How urgent is this?":{"type":"score","score":1.1,"legend":{"0":"Routine","1":"Soon","2":"Immediate"},"probabilities":{"0":0.45,"1":0,"2":0.55}}}`,
+			questions: `{"q1":{"type":"score","instructions":"How urgent is this?","criteria":["Routine","Soon","Immediate"]}}`,
+			answers:   `{"q1":{"type":"score","score":1.1,"legend":{"0":"Routine","1":"Soon","2":"Immediate"},"probabilities":{"0":0.45,"1":0,"2":0.55}}}`,
 			want:      "Immediate  55%  1.1 / 2\n",
 		},
 		{
@@ -125,8 +125,8 @@ func TestRunDecisionModel(t *testing.T) {
 				"--ask", "Which team?", "--choice", "billing", "--choice", "technical",
 				"--ask", "How urgent?", "--level", "routine", "--level", "soon", "--level", "immediate",
 			},
-			questions: `{"Is a refund being requested?":{"type":"noul","instructions":"Is a refund being requested?"},"Which team?":{"type":"choice","instructions":"Which team?","criteria":{"billing":null,"technical":null}},"How urgent?":{"type":"score","instructions":"How urgent?","criteria":["routine","soon","immediate"]}}`,
-			answers:   `{"How urgent?":{"type":"score","score":1.2,"legend":{"0":"routine","1":"soon","2":"immediate"},"probabilities":{"0":0.1,"1":0.6,"2":0.3}},"Which team?":{"type":"choice","choice":"billing","probabilities":{"billing":0.91,"technical":0.09}},"Is a refund being requested?":{"type":"noul","noul":0.97}}`,
+			questions: `{"q1":{"type":"noul","instructions":"Is a refund being requested?"},"q2":{"type":"choice","instructions":"Which team?","criteria":{"billing":null,"technical":null}},"q3":{"type":"score","instructions":"How urgent?","criteria":["routine","soon","immediate"]}}`,
+			answers:   `{"q3":{"type":"score","score":1.2,"legend":{"0":"routine","1":"soon","2":"immediate"},"probabilities":{"0":0.1,"1":0.6,"2":0.3}},"q2":{"type":"choice","choice":"billing","probabilities":{"billing":0.91,"technical":0.09}},"q1":{"type":"noul","noul":0.97}}`,
 			want:      "Is a refund being requested?  yes      97%\nWhich team?                   billing  91%\nHow urgent?                   soon     60%  1.2 / 2\n",
 		},
 	} {
@@ -158,12 +158,23 @@ func TestRunDecisionModel(t *testing.T) {
 		})
 	}
 
-	const response = `{"model":"nimble","answers":{"Is this urgent?":{"type":"noul","noul":0.9}},"usage":{"input_tokens":12,"output_tokens":1}}`
+	const response = `{"model":"nimble","answers":{"q1":{"type":"noul","noul":0.9}},"usage":{"input_tokens":12,"output_tokens":1}}`
 	out, err := runDecide(t, "", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, response)
 	}, "nimble", "hello", "--ask", "Is this urgent?", "--format", "json")
 	if err != nil || out != response+"\n" {
 		t.Fatalf("json output = %q, %v", out, err)
+	}
+}
+
+func TestYesNoQuestions(t *testing.T) {
+	got, err := json.Marshal(yesNoQuestions("Is this spam?", "Is it urgent?"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"q1":{"type":"noul","instructions":"Is this spam?"},"q2":{"type":"noul","instructions":"Is it urgent?"}}`
+	if string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 func init() {
 	model.Register("NemotronH_Nano_VL_V2", newModel)
 	model.Register("NemotronH_Nano_Omni_Reasoning_V3", newModel)
+	model.Register("NemotronH_Omni_Reasoning_V3", newModel)
 	model.Register("NemotronHForCausalLM", newModel)
 }
 
@@ -48,6 +49,7 @@ type Config struct {
 	AttentionBias         bool     `json:"attention_bias"`
 	MLPBias               bool     `json:"mlp_bias"`
 	UseBias               bool     `json:"use_bias"`
+	NumNextNPredictLayers int32    `json:"num_nextn_predict_layers"`
 
 	ConvKernel     int32 `json:"conv_kernel"`
 	SSMStateSize   int32 `json:"ssm_state_size"`
@@ -56,10 +58,15 @@ type Config struct {
 	NGroups        int32 `json:"n_groups"`
 	MambaChunkSize int32 `json:"chunk_size"`
 
+	// Round scan output before gating and normalized activations before scaling.
+	// The first cast intentionally discards precision before resuming in FP32.
+	MambaRoundIntermediates bool `json:"-"`
+
 	NRoutedExperts                  int32   `json:"n_routed_experts"`
 	NSharedExperts                  int32   `json:"n_shared_experts"`
 	NumExpertsPerTok                int32   `json:"num_experts_per_tok"`
 	MoEIntermediateSize             int32   `json:"moe_intermediate_size"`
+	MoELatentSize                   int32   `json:"moe_latent_size"`
 	MoESharedExpertIntermediateSize int32   `json:"moe_shared_expert_intermediate_size"`
 	RoutedScalingFactor             float32 `json:"routed_scaling_factor"`
 	ExpertGroupCount                int32   `json:"n_group"`
@@ -165,6 +172,8 @@ type SparseMoE struct {
 
 	SharedUp   nn.LinearLayer
 	SharedDown nn.LinearLayer
+	LatentIn   nn.LinearLayer
+	LatentOut  nn.LinearLayer
 
 	FoldedSharedExperts int32
 }
@@ -180,7 +189,8 @@ type stackedExpertWeights struct {
 }
 
 type configEnvelope struct {
-	LLMConfig *Config `json:"llm_config"`
+	Architectures []string `json:"architectures"`
+	LLMConfig     *Config  `json:"llm_config"`
 }
 
 func parseConfig(data []byte) (Config, error) {
@@ -196,16 +206,25 @@ func parseConfig(data []byte) (Config, error) {
 	if env.LLMConfig != nil {
 		cfg = *env.LLMConfig
 	}
+	for _, architecture := range env.Architectures {
+		if architecture == "NemotronH_Omni_Reasoning_V3" {
+			cfg.MambaRoundIntermediates = true
+		}
+	}
 	if cfg.HybridOverridePattern == "" && len(cfg.LayersBlockType) > 0 {
 		pattern := make([]byte, len(cfg.LayersBlockType))
 		for i, layerType := range cfg.LayersBlockType {
+			// linear_attention and full_attention are legacy aliases retained
+			// for models published before the upstream names were supported.
 			switch layerType {
-			case "linear_attention":
+			case "mamba", "linear_attention":
 				pattern[i] = 'M'
-			case "full_attention":
+			case "attention", "full_attention":
 				pattern[i] = '*'
 			case "moe":
 				pattern[i] = 'E'
+			case "mlp":
+				pattern[i] = '-'
 			default:
 				return Config{}, fmt.Errorf("unsupported layers_block_type %q at layer %d", layerType, i)
 			}
@@ -263,6 +282,12 @@ func parseConfig(data []byte) (Config, error) {
 	}
 	if cfg.RoutedScalingFactor == 0 {
 		cfg.RoutedScalingFactor = 1
+	}
+	if cfg.MoELatentSize < 0 {
+		return Config{}, fmt.Errorf("invalid moe_latent_size: %d", cfg.MoELatentSize)
+	}
+	if cfg.NumNextNPredictLayers < 0 || cfg.NumNextNPredictLayers > 1 {
+		return Config{}, fmt.Errorf("unsupported num_nextn_predict_layers: %d (at most one MTP stage is supported)", cfg.NumNextNPredictLayers)
 	}
 	if cfg.ExpertGroupCount <= 0 {
 		cfg.ExpertGroupCount = 1
@@ -497,7 +522,7 @@ func stackSlicesAndClone(slices []*mlx.Array) *mlx.Array {
 }
 
 func foldSharedExperts(m *SparseMoE, cfg *Config) bool {
-	if m == nil || cfg == nil || cfg.NSharedExperts != 1 {
+	if m == nil || cfg == nil || cfg.NSharedExperts != 1 || cfg.MoELatentSize > 0 {
 		return false
 	}
 	if cfg.MoEIntermediateSize <= 0 || cfg.MoESharedExpertIntermediateSize <= 0 {
@@ -866,12 +891,12 @@ func hasTensorByBase(tensors map[string]*mlx.Array, base string) bool {
 	return t != nil
 }
 
-func hasMTPHeadTensors(tensors map[string]*mlx.Array) bool {
-	if hasTensorByBase(tensors, "mtp.fc") {
+func hasMTPHeadTensors(tensors map[string]*mlx.Array, prefix string) bool {
+	if hasTensorByBase(tensors, prefix+"fc") {
 		return true
 	}
 	for name, tensor := range tensors {
-		if tensor != nil && strings.HasPrefix(name, "mtp.layers.") && strings.HasSuffix(name, ".eh_proj.weight") {
+		if tensor != nil && strings.HasPrefix(name, prefix+"layers.") && strings.HasSuffix(name, ".eh_proj.weight") {
 			return true
 		}
 	}
@@ -901,8 +926,8 @@ func detectMTPLayerType(tensors map[string]*mlx.Array, layerPrefix string) (byte
 	}
 }
 
-func mtpLayerPrefixes(tensors map[string]*mlx.Array) ([]string, error) {
-	const prefix = "mtp.layers."
+func mtpLayerPrefixes(tensors map[string]*mlx.Array, mtpPrefix string) ([]string, error) {
+	prefix := mtpPrefix + "layers."
 	indices := map[int]struct{}{}
 
 	for name, tensor := range tensors {
@@ -932,7 +957,7 @@ func mtpLayerPrefixes(tensors map[string]*mlx.Array) ([]string, error) {
 
 	prefixes := make([]string, len(sorted))
 	for i, index := range sorted {
-		prefixes[i] = fmt.Sprintf("mtp.layers.%d", index)
+		prefixes[i] = fmt.Sprintf("%s%d", prefix, index)
 	}
 	return prefixes, nil
 }
@@ -1009,6 +1034,34 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 		if cfg.NRoutedExperts <= 0 || cfg.NumExpertsPerTok <= 0 {
 			return nil, fmt.Errorf("invalid moe config")
 		}
+		if cfg.MoELatentSize > 0 {
+			moe.LatentIn = linears.Make(mixerPrefix + ".fc1_latent_proj")
+			moe.LatentOut = linears.Make(mixerPrefix + ".fc2_latent_proj")
+			if moe.LatentIn == nil || moe.LatentOut == nil {
+				return nil, fmt.Errorf("missing moe latent projections")
+			}
+			for _, projection := range []struct {
+				name          string
+				input, output int32
+			}{
+				{"fc1_latent_proj", cfg.HiddenSize, cfg.MoELatentSize},
+				{"fc2_latent_proj", cfg.MoELatentSize, cfg.HiddenSize},
+			} {
+				key := mixerPrefix + "." + projection.name + ".weight"
+				weight := tensors[key]
+				if weight.NumDims() != 2 || weight.Dim(0) != int(projection.output) {
+					return nil, fmt.Errorf("invalid %s dimensions: %v", projection.name, weight.Dims())
+				}
+				input := weight.Dim(1)
+				if scales := tensors[key+"_scale"]; scales != nil {
+					groupSize, _, _ := model.ResolveLinearQuantParams(cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, weight, scales)
+					input = scales.Dim(1) * groupSize
+				}
+				if input != int(projection.input) {
+					return nil, fmt.Errorf("%s input width = %d, want %d", projection.name, input, projection.input)
+				}
+			}
+		}
 		up := loadStackedExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj")
 		if up == nil {
 			up = collectExpertProjection(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj", cfg.NRoutedExperts)
@@ -1019,6 +1072,28 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 		}
 		if up == nil || down == nil {
 			return nil, fmt.Errorf("missing routed expert weights")
+		}
+		if cfg.MoELatentSize > 0 {
+			for _, projection := range []struct {
+				name          string
+				bank          *stackedExpertWeights
+				input, output int32
+			}{
+				{"up_proj", up, cfg.MoELatentSize, cfg.MoEIntermediateSize},
+				{"down_proj", down, cfg.MoEIntermediateSize, cfg.MoELatentSize},
+			} {
+				bank := projection.bank
+				if bank.Weight.NumDims() != 3 || bank.Weight.Dim(0) != int(cfg.NRoutedExperts) || bank.Weight.Dim(1) != int(projection.output) {
+					return nil, fmt.Errorf("invalid latent expert %s dimensions: %v", projection.name, bank.Weight.Dims())
+				}
+				input := bank.Weight.Dim(2)
+				if bank.Scales != nil {
+					input = bank.Scales.Dim(2) * bank.GroupSize
+				}
+				if input != int(projection.input) {
+					return nil, fmt.Errorf("latent expert %s input width = %d, want %d", projection.name, input, projection.input)
+				}
+			}
 		}
 		if up.Scales != nil {
 			moe.UpWeightQ = up.Weight
@@ -1054,9 +1129,9 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 	return layer, nil
 }
 
-func (m *Model) loadMTPHead(linears model.LinearFactory, tensors map[string]*mlx.Array, useQuantizedExperts bool) error {
+func (m *Model) loadMTPHead(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix string, useQuantizedExperts bool) error {
 	cfg := m.Config
-	layerPrefixes, err := mtpLayerPrefixes(tensors)
+	layerPrefixes, err := mtpLayerPrefixes(tensors, prefix)
 	if err != nil {
 		return fmt.Errorf("mtp head: %w", err)
 	}
@@ -1065,20 +1140,20 @@ func (m *Model) loadMTPHead(linears model.LinearFactory, tensors map[string]*mlx
 
 	head := &MTPHead{
 		Enorm: loadRMSNormAny(tensors, cfg.LayerNormEpsilon,
-			"mtp.pre_fc_norm_embedding.weight",
+			prefix+"pre_fc_norm_embedding.weight",
 			firstPrefix+".enorm.weight",
 		),
 		Hnorm: loadRMSNormAny(tensors, cfg.LayerNormEpsilon,
-			"mtp.pre_fc_norm_hidden.weight",
+			prefix+"pre_fc_norm_hidden.weight",
 			firstPrefix+".hnorm.weight",
 		),
 		FC: makeLinearAny(linears,
-			"mtp.fc",
+			prefix+"fc",
 			firstPrefix+".eh_proj",
 		),
 		Norm: loadRMSNormAny(tensors, cfg.LayerNormEpsilon,
-			"mtp.norm.weight",
-			"mtp.shared_head.norm.weight",
+			prefix+"norm.weight",
+			prefix+"shared_head.norm.weight",
 			lastPrefix+".final_layernorm.weight",
 		),
 	}
@@ -1157,10 +1232,16 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		}
 		m.Layers[i] = layer
 	}
-	if hasMTPHeadTensors(tensors) {
-		if err := m.loadMTPHead(linears, tensors, useQuantizedExperts); err != nil {
-			return err
+	for _, prefix := range []string{layout.containerPrefix + "mtp.", "mtp."} {
+		if hasMTPHeadTensors(tensors, prefix) {
+			if err := m.loadMTPHead(linears, tensors, prefix, useQuantizedExperts); err != nil {
+				return err
+			}
+			break
 		}
+	}
+	if cfg.NumNextNPredictLayers > 0 && m.MTP == nil {
+		return fmt.Errorf("config declares MTP but its head tensors are missing")
 	}
 	return nil
 }
@@ -1219,6 +1300,20 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 	return out
 }
 
+var mambaGate = mlx.Compile2("NemotronMambaGate", func(y, gate *mlx.Array) *mlx.Array {
+	return mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
+}, mlx.Shapeless())
+
+var mambaRoundedGate = mlx.Compile2("NemotronMambaRoundedGate", func(y, gate *mlx.Array) *mlx.Array {
+	// Super rounds the scan to the projection dtype before gating in FP32.
+	y = y.AsType(gate.DType()).AsType(mlx.DTypeFloat32)
+	return mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
+}, mlx.Shapeless())
+
+var mambaNormScale = mlx.Compile2("NemotronMambaNormScale", func(y, weight *mlx.Array) *mlx.Array {
+	return mlx.Mul(y.AsType(weight.DType()), weight)
+}, mlx.Shapeless())
+
 // gatedGroupRMSNorm computes RMSNorm(y * SiLU(gate), groups) * weight. The
 // weight varies across groups while the norm reduces within one, so it is a
 // separate multiply rather than the norm's own weight argument.
@@ -1228,9 +1323,17 @@ func gatedGroupRMSNorm(y, gate, weight *mlx.Array, cfg *Config, dtype mlx.DType)
 	B, L := int32(dims[0]), int32(dims[1])
 	groupSize := inner / cfg.NGroups
 
-	y = mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
+	if cfg.MambaRoundIntermediates {
+		y = mambaRoundedGate(y, gate)
+	} else {
+		y = mambaGate(y, gate)
+	}
 	y = mlx.RMSNormFn(mlx.Reshape(y, B, L, cfg.NGroups, groupSize), nil, cfg.LayerNormEpsilon)
-	y = mlx.Mul(y, mlx.Reshape(weight.AsType(y.DType()), 1, 1, cfg.NGroups, groupSize))
+	scaleType := y.DType()
+	if cfg.MambaRoundIntermediates {
+		scaleType = dtype
+	}
+	y = mambaNormScale(y, mlx.Reshape(weight.AsType(scaleType), 1, 1, cfg.NGroups, groupSize))
 	return mlx.Reshape(y, B, L, inner).AsType(dtype)
 }
 
@@ -1312,13 +1415,16 @@ func (m *SparseMoE) gatherExpertDown(hidden, idxFlat *mlx.Array, doSort bool) *m
 	return mlx.GatherMM(hidden, m.DownWeight, nil, idxFlat, doSort)
 }
 
-func (m *SparseMoE) expertForward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
+// expertForward returns individual expert outputs unless scores is supplied,
+// in which case it gathers and accumulates the latent outputs in FP32.
+func (m *SparseMoE) expertForward(x, indices, scores *mlx.Array) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	width := int32(dims[2])
 	topK := int32(indices.Dim(2))
 
 	xExpanded := mlx.ExpandDims(mlx.ExpandDims(x, -2), -2)
-	xFlat := mlx.Reshape(xExpanded, B*L, 1, 1, cfg.HiddenSize)
+	xFlat := mlx.Reshape(xExpanded, B*L, 1, 1, width)
 	idxFlat := mlx.Reshape(indices, B*L, topK)
 
 	doSort := shouldSortMoEExperts(B * L)
@@ -1343,12 +1449,16 @@ func (m *SparseMoE) expertForward(x *mlx.Array, indices *mlx.Array, cfg *Config)
 	}
 	down := m.gatherExpertDown(hidden, idxFlat, doSort)
 
+	if scores != nil {
+		y := mlx.GatherWeightedSum(mlx.Reshape(down, n, width), mlx.Reshape(scores, B*L, topK), invOrder)
+		return mlx.Reshape(y, B, L, width)
+	}
 	if doSort {
-		down = mlx.Reshape(mlx.Take(mlx.Squeeze(mlx.Squeeze(down, 2), 1), invOrder, 0), B*L, topK, cfg.HiddenSize)
+		down = mlx.Reshape(mlx.Take(mlx.Squeeze(mlx.Squeeze(down, 2), 1), invOrder, 0), B*L, topK, width)
 	} else {
 		down = mlx.Squeeze(down, 2)
 	}
-	return mlx.Reshape(down, B, L, topK, cfg.HiddenSize)
+	return mlx.Reshape(down, B, L, topK, width)
 }
 
 func appendFoldedSharedExperts(inds, scores *mlx.Array, cfg *Config, folded int32) (*mlx.Array, *mlx.Array) {
@@ -1381,8 +1491,19 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	inds, scores := m.route(x, cfg, B, L)
 	inds, scores = appendFoldedSharedExperts(inds, scores, cfg, m.FoldedSharedExperts)
 
-	expertOut := m.expertForward(x, inds, cfg)
-	y := moeWeightedSum(expertOut, scores, x.DType())
+	routed := x
+	if m.LatentIn != nil {
+		routed = m.LatentIn.Forward(routed)
+	}
+	var y *mlx.Array
+	if m.LatentIn != nil {
+		// The latent reference weights and accumulates expert outputs in FP32,
+		// then casts back before projecting to the model's hidden width.
+		y = m.expertForward(routed, inds, scores).AsType(routed.DType())
+		y = m.LatentOut.Forward(y)
+	} else {
+		y = moeWeightedSum(m.expertForward(routed, inds, nil), scores, x.DType())
+	}
 	if m.FoldedSharedExperts > 0 {
 		return mlx.Reshape(y, B, L, cfg.HiddenSize)
 	}

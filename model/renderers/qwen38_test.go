@@ -604,6 +604,10 @@ type qwen38JinjaContentPart struct {
 }
 
 func renderQwen38Jinja(t *testing.T, messages []api.Message, tools []api.Tool, think *api.ThinkValue, effort string) string {
+	return renderQwenJinja(t, qwen38Template, messages, tools, think, effort)
+}
+
+func renderQwenJinja(t *testing.T, template string, messages []api.Message, tools []api.Tool, think *api.ThinkValue, effort string) string {
 	t.Helper()
 
 	jinjaMessages := make([]qwen38JinjaMessage, 0, len(messages))
@@ -636,7 +640,7 @@ func renderQwen38Jinja(t *testing.T, messages []api.Message, tools []api.Tool, t
 		t.Fatal(err)
 	}
 
-	templatePath, err := filepath.Abs(qwen38Template)
+	templatePath, err := filepath.Abs(template)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,6 +702,9 @@ func qwen38PythonCommand(t *testing.T, args ...string) *exec.Cmd {
 }
 
 func findQwen38VenvPython() (string, bool) {
+	if python := os.Getenv("JINJA_PYTHON"); python != "" {
+		return python, true
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", false

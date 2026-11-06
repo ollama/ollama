@@ -135,6 +135,15 @@ func boundedNumPredict(numPredict, numCtx int) int {
 	return numPredict
 }
 
+// llamaServerRepeatLastN maps Ollama's repeat_last_n=-1 (the whole context)
+// to the context size; llama-server rejects negative values.
+func llamaServerRepeatLastN(repeatLastN, numCtx int) int {
+	if repeatLastN < 0 {
+		return numCtx
+	}
+	return repeatLastN
+}
+
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
@@ -281,10 +290,6 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 
 	kv := s.metadata.KV()
 
-	if kv.String("tokenizer.ggml.pre") == "lfm2" {
-		return true
-	}
-
 	// llama.cpp forces add_bos on for Gemma4 at load time, even for GGUFs
 	// whose tokenizer.ggml.add_bos_token metadata is explicitly false. Some
 	// GGUFs omit tokenizer.ggml.pre and are still treated as Gemma4 from
@@ -293,7 +298,12 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 		return true
 	}
 
-	return kv.Bool("tokenizer.ggml.add_bos_token")
+	// Elsewhere an explicit add_bos_token wins; the lfm2 pre-tokenizer only
+	// changes llama.cpp's default when the GGUF does not set it.
+	if kv.Has("tokenizer.ggml.add_bos_token") {
+		return kv.Bool("tokenizer.ggml.add_bos_token")
+	}
+	return kv.String("tokenizer.ggml.pre") == "lfm2"
 }
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
@@ -459,6 +469,12 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	if err = cmd.Start(); err != nil {
 		return nil, 0, err
+	}
+
+	if err = AddRunnerToJob(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, 0, fmt.Errorf("assign llama-server to runner job: %w", err)
 	}
 	return cmd, port, nil
 }
@@ -821,18 +837,20 @@ func appendContextShiftArgs(params []string, opts api.Options, enabled bool) []s
 
 const (
 	draftTypeMTP    = "draft-mtp"
-	draftTypeDFlash = "draft-dflash"
+	draftTypeEagle3 = "draft-eagle3"
 )
 
 func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options) []string {
-	if draftType == "" {
+	if draftType == "" && draftModelPath == "" {
 		return params
 	}
 	if opts.DraftNumPredict <= 0 {
 		return params
 	}
 
-	params = append(params, "--spec-type", draftType)
+	if draftType != "" {
+		params = append(params, "--spec-type", draftType)
+	}
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
 	if draftType == draftTypeMTP {
 		params = append(params, "--spec-draft-backend-sampling")
@@ -843,15 +861,18 @@ func appendDraftArgs(params []string, draftType, draftModelPath string, opts api
 	return params
 }
 
-func externalDraftType(path string) (string, error) {
-	f, err := LoadModel(path, 1)
+func externalDraftType(path string, shards ...string) (string, error) {
+	f, err := LoadModel(path, 1, shards...)
 	if err != nil {
 		return "", fmt.Errorf("load draft model metadata: %w", err)
 	}
-	if f.KV().Architecture() == "dflash" {
-		return draftTypeDFlash, nil
+	if hasMTPDraft(f) {
+		return draftTypeMTP, nil
 	}
-	return draftTypeMTP, nil
+	if f.KV().Architecture() == "eagle3" {
+		return draftTypeEagle3, nil
+	}
+	return "", nil
 }
 
 func hasMTPDraft(f *gguf.Model) bool {
@@ -928,7 +949,7 @@ func NewLlamaServerRunner(
 		draftType = draftTypeMTP
 	}
 	if config.DraftModelPath != "" {
-		draftType, err = externalDraftType(config.DraftModelPath)
+		draftType, err = externalDraftType(config.DraftModelPath, config.DraftModelShardPaths...)
 		if err != nil {
 			return nil, err
 		}
@@ -1686,7 +1707,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		MinP:            req.Options.MinP,
 		Stop:            req.Options.Stop,
 		RepeatPenalty:   req.Options.RepeatPenalty,
-		RepeatLastN:     req.Options.RepeatLastN,
+		RepeatLastN:     llamaServerRepeatLastN(req.Options.RepeatLastN, s.options.NumCtx),
 		FreqPenalty:     req.Options.FrequencyPenalty,
 		PresPenalty:     req.Options.PresencePenalty,
 		TypicalP:        req.Options.TypicalP,
@@ -2294,7 +2315,7 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 		"min_p":             req.Options.MinP,
 		"stop":              req.Options.Stop,
 		"repeat_penalty":    req.Options.RepeatPenalty,
-		"repeat_last_n":     req.Options.RepeatLastN,
+		"repeat_last_n":     llamaServerRepeatLastN(req.Options.RepeatLastN, s.options.NumCtx),
 		"frequency_penalty": req.Options.FrequencyPenalty,
 		"presence_penalty":  req.Options.PresencePenalty,
 		"typical_p":         req.Options.TypicalP,
@@ -2860,6 +2881,8 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	CUDA_Host compute buffer size =   268.05 MiB
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
+//	llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)
+//	init_rotation:         CUDA0 rotation buffer size =    23.04 MiB
 type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
@@ -2885,7 +2908,7 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
-var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(layer input|rotation|model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)

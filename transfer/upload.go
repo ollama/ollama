@@ -661,9 +661,22 @@ func (u *uploader) uploadOnePart(ctx context.Context, sessionURL *url.URL, part 
 	}
 	var next *url.URL
 	if loc != "" {
-		next, _ = url.Parse(loc)
+		var parseErr error
+		next, parseErr = url.Parse(loc)
+		if parseErr != nil {
+			return nil, nil, pr.bytes(), fmt.Errorf("patch part %d: invalid next URL: %w", part.n, parseErr)
+		}
 		if next != nil && !next.IsAbs() {
 			next = sessionURL.ResolveReference(next)
+		}
+		if err := ValidateRedirectScheme(next, u.baseURL); err != nil {
+			return nil, nil, pr.bytes(), err
+		}
+		base, _ := url.Parse(u.baseURL)
+		if !sameOrigin(next, base) {
+			if err := ValidateRedirectTarget(ctx, next, u.baseURL, u.allowPrivate); err != nil {
+				return nil, nil, pr.bytes(), err
+			}
 		}
 	}
 
