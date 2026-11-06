@@ -55,6 +55,31 @@ func TestFunctionGemmaParser(t *testing.T) {
 			expectedText: "",
 		},
 		{
+			name: "multiline_string_argument",
+			chunks: []string{
+				"<start_function_call>call:write_file{content:<escape>first line\nsecond line<escape>}<end_function_call>",
+			},
+			expectedCalls: []api.ToolCall{
+				{Function: api.ToolCallFunction{
+					Name:      "write_file",
+					Arguments: testArgs(map[string]any{"content": "first line\nsecond line"}),
+				}},
+			},
+		},
+		{
+			name: "chunked_multiline_string_argument",
+			chunks: []string{
+				"<start_function_call>call:write_file{content:<escape>first line\r",
+				"\nsecond line<escape>}<end_function_call>",
+			},
+			expectedCalls: []api.ToolCall{
+				{Function: api.ToolCallFunction{
+					Name:      "write_file",
+					Arguments: testArgs(map[string]any{"content": "first line\r\nsecond line"}),
+				}},
+			},
+		},
+		{
 			name: "content_before_tool_call",
 			chunks: []string{
 				"L", "et", " ", "me", " ", "check", ".",
