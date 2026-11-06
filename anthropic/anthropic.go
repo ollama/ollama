@@ -519,7 +519,10 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		case "thinking":
 			thinkingBlocks++
 			if block.Thinking != nil {
-				thinking = *block.Thinking
+				if thinking != "" {
+					thinking += "\n"
+				}
+				thinking += *block.Thinking
 			}
 
 		case "server_tool_use":
