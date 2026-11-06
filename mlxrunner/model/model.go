@@ -31,6 +31,13 @@ type Model interface {
 	MaxContextLength() int
 }
 
+// SkippedTensorsModel identifies checkpoint tensors to exclude from MLX loading.
+// Names use the original safetensors namespace, including any quantization
+// companions. The model is responsible for accessing any required skipped tensors.
+type SkippedTensorsModel interface {
+	SkippedTensorNames() []string
+}
+
 // DraftModel is an auxiliary model alongside a target that proposes speculative
 // tokens.
 type DraftModel interface {

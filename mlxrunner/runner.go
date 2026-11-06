@@ -88,8 +88,11 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 			return nil
 		}
 
-		// Load all tensor blobs from manifest
-		tensors, e := loadTensorsFromManifest(root)
+		var skippedTensors []string
+		if s, ok := m.(model.SkippedTensorsModel); ok {
+			skippedTensors = s.SkippedTensorNames()
+		}
+		tensors, e := loadTensorsFromManifest(root, skippedTensors)
 		if e != nil {
 			err = e
 			return nil
@@ -236,14 +239,19 @@ func configureWiredMemory() {
 		"previous", mlx.PrettyBytes(previous))
 }
 
-// loadTensorsFromManifest loads all tensor blobs from the manifest into a
-// flat map, deduplicating by digest and remapping safetensors key suffixes.
+// loadTensorsFromManifest loads tensor blobs into a flat map, excluding specified
+// tensors, deduplicating by digest and remapping key suffixes.
 //
 // Uses a two-phase approach: first loads all raw tensors, then remaps
 // .bias → _qbias with complete knowledge of which base names have .scale
 // entries. This avoids a race condition where Go map iteration order could
 // cause .bias to be processed before .scale within the same blob.
-func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
+func loadTensorsFromManifest(root *model.Root, skippedTensors []string) (map[string]*mlx.Array, error) {
+	skip := make(map[string]bool, len(skippedTensors))
+	for _, name := range skippedTensors {
+		skip[name] = true
+	}
+	skipped, skippedBytes := 0, 0
 	// Phase 1: Load all tensors raw from all blobs
 	rawTensors := make(map[string]*mlx.Array)
 	seen := make(map[string]bool)
@@ -257,6 +265,14 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 			return nil, err
 		}
 		for name, arr := range mlx.Load(blobPath) {
+			// Native safetensors loads are lazy. Filter excluded arrays before
+			// the Metal pre-pass materializes their payloads, including when a
+			// blob also contains tensors needed by the target or draft model.
+			if skip[name] {
+				skipped++
+				skippedBytes += arr.NumBytes()
+				continue
+			}
 			rawTensors[name] = arr
 		}
 	}
@@ -290,6 +306,9 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 	}
 
 	slog.Info("Loaded tensors from manifest", "count", len(allTensors))
+	if skipped > 0 {
+		slog.Debug("Skipped tensors from manifest", "count", skipped, "bytes", skippedBytes)
+	}
 	return allTensors, nil
 }
 

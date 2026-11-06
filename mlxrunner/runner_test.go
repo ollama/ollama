@@ -1,13 +1,58 @@
 package mlxrunner
 
 import (
+	"encoding/binary"
+	"maps"
+	"math"
+	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/fs/safetensors"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
+
+func TestLoadTensorsSkipsNamedTensors(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var data []*safetensors.TensorData
+	for _, name := range []string{"skipped.weight", "skipped.weight.scale", "skipped.weight.global_scale", "target.weight", "draft.weight"} {
+		data = append(data, safetensors.NewTensorDataFromBytes(name, "F32", []int32{1}, binary.LittleEndian.AppendUint32(nil, math.Float32bits(2))))
+	}
+	layer, err := manifest.NewLayer(safetensors.BuildPackedSafetensorsReader(data), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := &model.Root{Manifest: &manifest.Manifest{Layers: []manifest.Layer{layer, layer}}}
+	for _, tc := range []struct {
+		name string
+		skip []string
+		want []string
+	}{
+		{"all tensors", nil, []string{"draft.weight", "skipped.weight", "skipped.weight.global_scale", "skipped.weight_scale", "target.weight"}},
+		{"skip named tensors", []string{"skipped.weight", "skipped.weight.scale", "skipped.weight.global_scale"}, []string{"draft.weight", "target.weight"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mlxtest.Run(t, func(t *mlxtest.T) {
+				tensors, err := loadTensorsFromManifest(root, tc.skip)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := slices.Sorted(maps.Keys(tensors)); !slices.Equal(got, tc.want) {
+					t.Fatalf("loaded tensors = %v, want %v", got, tc.want)
+				}
+				for name, arr := range tensors {
+					if got := arr.Floats(); !slices.Equal(got, []float32{2}) {
+						t.Errorf("%s = %v, want [2]", name, got)
+					}
+				}
+			})
+		})
+	}
+}
 
 func TestRunnerCloseReleasesGenerationCache(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
