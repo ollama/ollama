@@ -107,6 +107,9 @@ func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.Response
 			repair = validationErr.Error()
 		}
 		request, err := plan.SummaryRequest(repair)
+		if err == nil && validationErr != nil {
+			request, err = addCompactionRepairReminder(request)
+		}
 		if err != nil {
 			writeResponsesCompactionError(c, http.StatusInternalServerError, "compaction_failed", "compaction failed; the original conversation is unchanged")
 			return
