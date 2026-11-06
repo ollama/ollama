@@ -68,3 +68,66 @@ else()
     set(OLLAMA_HAVE_LLAMA_SERVER FALSE)
 endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/local.cmake)
+
+# Ollama binary and systemd service packaging (DEB)
+if(NOT DEFINED VERSION)
+    if(DEFINED ENV{VERSION} AND NOT "$ENV{VERSION}" STREQUAL "")
+        set(VERSION "$ENV{VERSION}")
+    elseif(DEFINED ENV{OLLAMA_VERSION} AND NOT "$ENV{OLLAMA_VERSION}" STREQUAL "")
+        set(VERSION "$ENV{OLLAMA_VERSION}")
+    else()
+        set(VERSION "0.0.0")
+    endif()
+endif()
+
+set(OLLAMA_SERVICE_FILE ${CMAKE_BINARY_DIR}/ollama.service)
+file(WRITE ${OLLAMA_SERVICE_FILE}
+"[Unit]
+Description=Ollama Service
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ollama serve
+Restart=always
+RestartSec=3
+Environment=\"HOME=/root\"
+Environment=\"OLLAMA_HOST=0.0.0.0\"
+
+[Install]
+WantedBy=default.target
+")
+
+install(FILES ${OLLAMA_SERVICE_FILE}
+    DESTINATION lib/systemd/system
+    COMPONENT ollama-local)
+
+# CPack configuration
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CPACK_GENERATOR "DEB")
+endif()
+set(CPACK_PACKAGE_NAME "ollama")
+set(CPACK_PACKAGE_VERSION "${VERSION}")
+set(CPACK_PACKAGE_CONTACT "Ollama <ollama@ollama.com>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Get up and running with Llama, Mistral, Gemma, and other large language models")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Ollama")
+set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://ollama.com")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libgcc-s1, systemd")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "nvidia-cuda-toolkit | nvidia-driver")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-linux-${CMAKE_SYSTEM_PROCESSOR}")
+
+# Post-install script to enable and start service
+set(OLLAMA_POSTINST ${CMAKE_BINARY_DIR}/postinst)
+file(WRITE ${OLLAMA_POSTINST}
+"#!/bin/sh
+set -e
+systemctl daemon-reload
+systemctl enable ollama
+systemctl start ollama
+")
+file(CHMOD ${OLLAMA_POSTINST} PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${OLLAMA_POSTINST}")
+
+include(CPack)
