@@ -449,7 +449,78 @@ func TestExecuteWithSuffix(t *testing.T) {
 	}
 }
 
+func TestExecuteLegacyPreservesTemplateContext(t *testing.T) {
+	cases := []struct {
+		name     string
+		template string
+		expected string
+		complete string
+	}{
+		{
+			name:     "function",
+			template: `{{ json .Prompt }}|{{ .Response }}!`,
+			expected: `"hello"|hi!"goodbye"|`,
+			complete: `"again"|reply!`,
+		},
+		{
+			name:     "named template",
+			template: `{{ define "prefix" }}[{{ .Prompt }}]{{ end }}{{ template "prefix" . }}{{ .Response }}!`,
+			expected: `[hello]hi![goodbye]`,
+			complete: `[again]reply!`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl, err := Parse(tt.template)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := Values{Messages: []api.Message{
+				{Role: "user", Content: "hello"},
+				{Role: "assistant", Content: "hi"},
+				{Role: "user", Content: "goodbye"},
+			}}
+			for range 2 {
+				var b bytes.Buffer
+				if err := tmpl.Execute(&b, values); err != nil {
+					t.Fatal(err)
+				}
+				if diff := cmp.Diff(tt.expected, b.String()); diff != "" {
+					t.Fatalf("mismatch (-want +got):\n%s", diff)
+				}
+			}
+
+			// Rendering the last turn must leave the original root and its definitions intact.
+			var b bytes.Buffer
+			if err := tmpl.Template.Execute(&b, map[string]any{"Prompt": "again", "Response": "reply"}); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tt.complete, b.String()); diff != "" {
+				t.Errorf("original template mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestDateFunctions(t *testing.T) {
+	t.Run("currentDate legacy", func(t *testing.T) {
+		tmpl, err := Parse("{{ .Prompt }} Today is {{ currentDate }}")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		before := time.Now().Format("2006-01-02")
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Messages: []api.Message{{Role: "user", Content: "Hello"}}}); err != nil {
+			t.Fatal(err)
+		}
+		after := time.Now().Format("2006-01-02")
+		if b.String() != "Hello Today is "+before && b.String() != "Hello Today is "+after {
+			t.Errorf("got %q, want today's date (%s or %s)", b.String(), before, after)
+		}
+	})
+
 	t.Run("currentDate", func(t *testing.T) {
 		tmpl, err := Parse("{{- range .Messages }}{{ .Content }}{{ end }} Today is {{ currentDate }}")
 		if err != nil {
