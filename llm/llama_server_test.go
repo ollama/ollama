@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -4066,5 +4067,75 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 	if got := conversions.Load(); got != 1 {
 		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+}
+
+func TestMemoryParsingWriterSplitBufferSizeLine(t *testing.T) {
+	// A buffer-size log line may arrive across multiple Write calls.
+	line := "load_tensors: CUDA0 model buffer size = 800.00 MiB\n"
+	want := uint64(800 * 1024 * 1024)
+
+	// Test every possible split position to ensure incomplete lines are retained.
+	for split := 1; split < len(line); split++ {
+		t.Run(strconv.Itoa(split), func(t *testing.T) {
+			runner := &llamaServerRunner{
+				vramByDevice: make(map[string]uint64),
+			}
+			w := &memoryParsingWriter{
+				inner:  io.Discard,
+				runner: runner,
+			}
+
+			// Write the log line in two chunks, simulating split pipe reads.
+			if _, err := w.Write([]byte(line[:split])); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write([]byte(line[split:])); err != nil {
+				t.Fatal(err)
+			}
+
+			// Verify that the complete line was parsed correctly.
+			if runner.memGPU != want {
+				t.Errorf("memGPU = %d, want %d", runner.memGPU, want)
+			}
+			if runner.memTotal != want {
+				t.Errorf("memTotal = %d, want %d", runner.memTotal, want)
+			}
+		})
+	}
+}
+
+func TestMemoryParsingWriterSplitMultipleLines(t *testing.T) {
+	runner := &llamaServerRunner{
+		vramByDevice: make(map[string]uint64),
+	}
+	w := &memoryParsingWriter{
+		inner:  io.Discard,
+		runner: runner,
+	}
+
+	// Send two complete lines followed by part of a third line.
+	first := "load_tensors: CUDA0 model buffer size = 800.00 MiB\n"
+	second := "load_tensors: CUDA0 KV buffer size = 100.00 MiB\n"
+	third := "load_tensors: CUDA0 compute buffer size = 50.00 MiB\n"
+
+	if _, err := w.Write([]byte(first + second + third[:20])); err != nil {
+		t.Fatal(err)
+	}
+
+	// The two complete lines should already be accounted for.
+	want := uint64(900 * 1024 * 1024)
+	if runner.memGPU != want {
+		t.Errorf("memGPU = %d, want %d", runner.memGPU, want)
+	}
+
+	// Complete the third line.
+	if _, err := w.Write([]byte(third[20:])); err != nil {
+		t.Fatal(err)
+	}
+
+	want = uint64(950 * 1024 * 1024)
+	if runner.memGPU != want {
+		t.Errorf("memGPU = %d, want %d", runner.memGPU, want)
 	}
 }
