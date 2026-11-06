@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -582,5 +583,102 @@ func TestGetTensorQuantization_MixedPrecisionPromotion(t *testing.T) {
 					tt.tensor, tt.shape, tt.quantize, got, tt.want)
 			}
 		})
+	}
+}
+
+// mlx-lm writes per-module entries next to the default. Without a mode, a
+// config whose entries differ from the default records nothing, so the loader
+// infers each weight from its shapes.
+func TestQuantMetadataModuleEntries(t *testing.T) {
+	tests := []struct {
+		name          string
+		quantization  string
+		wantQuant     string
+		wantGroupSize string
+	}{
+		{"entry restating the default", `{"group_size": 32, "bits": 4, "model.layers.0.self_attn.v_proj": {"group_size": 32, "bits": 4, "mode": "affine"}}`, "int4", "32"},
+		{"modules without entries", `{"group_size": 32, "bits": 4, "lm_head": false, "model.embed_tokens": null, "model.layers.0.mlp.gate": {}, "model.layers.0.mlp.up_proj": true}`, "int4", "32"},
+		{"entry at another width", `{"group_size": 32, "bits": 4, "model.layers.0.self_attn.v_proj": {"group_size": 64, "bits": 8}}`, "", ""},
+		// MLX fills in an entry's omitted fields from the mode, not the config.
+		{"entry at MLX's group size", `{"group_size": 32, "bits": 4, "model.layers.0.mlp.gate": {"bits": 4}}`, "", ""},
+		{"entry at MLX's width", `{"group_size": 64, "bits": 8, "model.layers.0.mlp.gate": {"group_size": 64}}`, "", ""},
+		{"entry with null fields", `{"group_size": 64, "bits": 8, "model.layers.0.mlp.gate": {"bits": null}}`, "", ""},
+		{"entry in another mode", `{"group_size": 32, "bits": 4, "model.layers.0.mlp.gate": {"mode": "mxfp4"}}`, "", ""},
+		{"entry at an unsupported width", `{"group_size": 64, "bits": 4, "model.layers.0.mlp.down_proj": {"group_size": 64, "bits": 6}}`, "", ""},
+		{"unreadable entry", `{"group_size": 64, "bits": 4, "model.layers.0.mlp.down_proj": {"bits": "8"}}`, "", ""},
+		// Configs that state a mode still record the default, pending support
+		// for per-module entries.
+		{"mode stated", `{"group_size": 32, "bits": 4, "mode": "affine", "model.layers.0.self_attn.v_proj": {"group_size": 64, "bits": 8}}`, "int4", "32"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var q sourceQuantization
+			if err := json.Unmarshal([]byte(tt.quantization), &q); err != nil {
+				t.Fatal(err)
+			}
+			got := sourceModelConfig{Quantization: q}.QuantMetadata()
+			if got["quant_type"] != tt.wantQuant || got["group_size"] != tt.wantGroupSize {
+				t.Errorf("QuantMetadata() = %v, want quant_type=%q group_size=%q", got, tt.wantQuant, tt.wantGroupSize)
+			}
+		})
+	}
+}
+
+func TestSourceQuantizationModules(t *testing.T) {
+	var cfg sourceModelConfig
+	if err := json.Unmarshal([]byte(`{
+		"quantization": {
+			"group_size": 64, "bits": 4, "mode": "affine",
+			"model.layers.0.mlp.down_proj": {"group_size": 64, "bits": 8, "mode": "affine"},
+			"lm_head": {"bits": 8},
+			"model.layers.1.mlp.up_proj": {"bits": null},
+			"model.layers.2.mlp.up_proj": {"bits": "8"},
+			"model.layers.3.mlp.up_proj": {},
+			"model.embed_tokens": false,
+			"vision_tower": null
+		},
+		"compression_config": {
+			"quant_method": "compressed-tensors",
+			"config_groups": {"group_0": {"format": "float-quantized", "weights": {"num_bits": 8, "type": "float"}}},
+			"kv_cache_scheme": {"num_bits": 8, "type": "float"}
+		},
+		"text_config": {
+			"quantization": {"group_size": 32, "bits": 4, "model.layers.0.mlp.gate": {"group_size": 64, "bits": 8}}
+		}
+	}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	q := cfg.Quantization
+	if q.Bits != 4 || q.GroupSize != 64 || q.Mode != "affine" {
+		t.Errorf("defaults = %d bits, group size %d, mode %q; want 4, 64, affine", q.Bits, q.GroupSize, q.Mode)
+	}
+	// mlx.nn quantizes {"bits": null} at the mode's defaults, and {} not at all.
+	want := map[string]moduleQuantization{
+		"model.layers.0.mlp.down_proj": {Bits: 8, GroupSize: 64, Mode: "affine"},
+		"lm_head":                      {Bits: 8},
+		"model.layers.1.mlp.up_proj":   {},
+		"model.layers.2.mlp.up_proj":   {Unreadable: true},
+	}
+	if !maps.Equal(q.Modules, want) {
+		t.Errorf("modules = %v, want %v", q.Modules, want)
+	}
+
+	text := cfg.TextConfig.Quantization
+	if want := map[string]moduleQuantization{"model.layers.0.mlp.gate": {Bits: 8, GroupSize: 64}}; !maps.Equal(text.Modules, want) {
+		t.Errorf("text_config modules = %v, want %v", text.Modules, want)
+	}
+
+	// Its objects decode as entries, but they mean nothing outside an MLX
+	// config.
+	c := cfg.CompressionConfig
+	if got := slices.Sorted(maps.Keys(c.Modules)); !slices.Equal(got, []string{"config_groups", "kv_cache_scheme"}) {
+		t.Errorf("compression_config modules = %v, want config_groups and kv_cache_scheme", got)
+	}
+	if got := c.quantType(); got != "" {
+		t.Errorf("compression_config quantType() = %q, want none", got)
+	}
+	if len(c.ConfigGroups) != 1 {
+		t.Errorf("compression_config config_groups = %v, want group_0", c.ConfigGroups)
 	}
 }
