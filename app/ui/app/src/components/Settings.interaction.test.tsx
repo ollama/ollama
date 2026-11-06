@@ -216,7 +216,10 @@ describe("Settings reset interactions", () => {
       expect(settingsFieldset.props["aria-busy"]).toBe(true);
       expect(textContent(resetButton)).toContain("Resetting…");
       expect(renderer!.root.findAllByType(Badge)).toHaveLength(0);
-      expect(mocks.resetChatGPTModels).toHaveBeenCalledOnce();
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": "ChatGPT settings" }),
+      ).toHaveLength(0);
+      expect(mocks.resetChatGPTModels).not.toHaveBeenCalled();
 
       await act(async () => {
         pendingClaudeReset.resolve(true);
@@ -227,6 +230,7 @@ describe("Settings reset interactions", () => {
 
       expect(renderer!.root.findByType("fieldset").props.disabled).toBe(false);
       expect(renderer!.root.findAllByType(Badge)).toHaveLength(1);
+      expect(mocks.resetChatGPTModels).not.toHaveBeenCalled();
     } finally {
       await act(async () => {
         renderer?.unmount();
