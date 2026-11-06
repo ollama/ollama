@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/internal/toolargs"
 	"github.com/ollama/ollama/types/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -843,6 +844,98 @@ func TestToolCallFunctionArguments_OrderPreservation(t *testing.T) {
 		var args ToolCallFunctionArguments
 		assert.Equal(t, "{}", args.String())
 	})
+}
+
+func TestToolCallFunctionArguments_JSONSourceNumbersForRendering(t *testing.T) {
+	const input = `{"integer":1,"decimal":1.0,"exponent":1e0,"large":9007199254740993,"nested":{"count":2,"large":9007199254740993},"items":[1,1.0]}`
+	var args ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"integer", "decimal", "exponent"} {
+		value, ok := args.Get(name)
+		if !ok || value != float64(1) {
+			t.Errorf("Get(%q) = %v (%T), want float64(1)", name, value, value)
+		}
+	}
+	for name, value := range args.All() {
+		if name == "integer" || name == "decimal" || name == "exponent" {
+			if value != float64(1) {
+				t.Errorf("All() %q = %v (%T), want float64(1)", name, value, value)
+			}
+		}
+	}
+
+	values := make(map[string]any)
+	for name, value := range toolargs.RenderValues(&args) {
+		values[name] = value
+	}
+	for name, want := range map[string]json.Number{
+		"integer": "1", "decimal": "1.0", "exponent": "1e0", "large": "9007199254740993",
+	} {
+		if got := values[name]; got != want {
+			t.Errorf("render value %q = %v (%T), want %q", name, got, got, want)
+		}
+	}
+	nested := values["nested"].(map[string]any)
+	if got := nested["large"]; got != json.Number("9007199254740993") {
+		t.Errorf("nested large = %v (%T)", got, got)
+	}
+	items := values["items"].([]any)
+	if items[0] != json.Number("1") || items[1] != json.Number("1.0") {
+		t.Errorf("items = %#v, want distinct integer and decimal numbers", items)
+	}
+
+	mutable, _ := args.Get("nested")
+	mutable.(map[string]any)["count"] = float64(3)
+	for name, value := range toolargs.RenderValues(&args) {
+		if name == "nested" {
+			item := value.(map[string]any)
+			if item["count"] != json.Number("3") || item["large"] != json.Number("9007199254740993") {
+				t.Errorf("render values after nested mutation = %#v", item)
+			}
+		}
+	}
+
+	args.Set("decimal", 2)
+	if value, _ := args.Get("decimal"); value != 2 {
+		t.Errorf("Set(decimal) = %v, want int(2)", value)
+	}
+	for name, value := range toolargs.RenderValues(&args) {
+		if name == "decimal" && value != 2 {
+			t.Errorf("render value decimal = %v (%T), want int(2)", value, value)
+		}
+	}
+
+	programmatic := NewToolCallFunctionArguments()
+	programmatic.Set("decimal", float64(1))
+	if value, _ := programmatic.Get("decimal"); value != float64(1) {
+		t.Errorf("programmatic Get(decimal) = %v (%T), want float64(1)", value, value)
+	}
+	for _, value := range toolargs.RenderValues(&programmatic) {
+		if _, ok := value.(float64); !ok {
+			t.Errorf("programmatic render value = %v (%T), want float64", value, value)
+		}
+	}
+}
+
+func TestToolCallFunctionArguments_InvalidJSONClearsSource(t *testing.T) {
+	var args ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(`{"count":1.0}`), &args); err != nil {
+		t.Fatal(err)
+	}
+	if err := args.UnmarshalJSON([]byte(`{"count":`)); err == nil {
+		t.Fatal("malformed JSON unexpectedly accepted")
+	}
+	if err := json.Unmarshal([]byte(`{"count":2}`), &args); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range toolargs.RenderValues(&args) {
+		if value != json.Number("2") {
+			t.Errorf("render value after valid decode = %v (%T), want 2", value, value)
+		}
+	}
 }
 
 func TestToolPropertiesMap_OrderPreservation(t *testing.T) {

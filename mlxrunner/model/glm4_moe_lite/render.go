@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 )
 
 // Renderer renders messages for GLM4-MoE-Lite models.
@@ -113,7 +114,7 @@ func (r *Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *
 // renderToolArguments converts tool call arguments to GLM4 XML format.
 func renderToolArguments(args api.ToolCallFunctionArguments) string {
 	var sb strings.Builder
-	for key, value := range args.All() {
+	for key, value := range toolargs.RenderValues(&args) {
 		sb.WriteString("<arg_key>" + key + "</arg_key>")
 		var valueStr string
 		if str, ok := value.(string); ok {

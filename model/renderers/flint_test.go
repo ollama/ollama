@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/openai"
 )
 
 // Expected prompts were captured from the publisher's pinned chat template.
@@ -159,19 +160,34 @@ func TestFlintRendererFloatArgumentTypes(t *testing.T) {
 }
 
 func TestFlintRendererDecodedToolArguments(t *testing.T) {
-	var arguments api.ToolCallFunctionArguments
-	if err := json.Unmarshal([]byte(`{"integer":1,"one":1.0,"nested":{"value":1}}`), &arguments); err != nil {
+	const argumentJSON = `{"integer":1,"one":1.0,"large":9007199254740993,"nested":{"integer":1,"one":1.0},"items":[1,1.0]}`
+	var native api.Message
+	if err := json.Unmarshal([]byte(`{"role":"assistant","tool_calls":[{"function":{"name":"compute","arguments":`+argumentJSON+`}}]}`), &native); err != nil {
 		t.Fatal(err)
 	}
-	messages := []api.Message{{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "compute", Arguments: arguments}}}}}
-	got, err := (&FlintRenderer{}).Render(messages, nil, nil)
+	openaiCall := openai.ToolCall{}
+	openaiCall.Function.Name = "compute"
+	openaiCall.Function.Arguments = argumentJSON
+	openaiCalls, err := openai.FromCompletionToolCall([]openai.ToolCall{openaiCall})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The existing API decodes both 1 and 1.0 as float64, including nested
-	// arguments. The renderer can only format the typed values it receives.
-	const want = `<|assistant|><tool_call>compute<arg_key>integer</arg_key><arg_value>1.0</arg_value><arg_key>one</arg_key><arg_value>1.0</arg_value><arg_key>nested</arg_key><arg_value>{"value": 1.0}</arg_value></tool_call><|assistant|>`
-	if got != want {
-		t.Errorf("decoded tool arguments = %q, want %q", got, want)
+	const want = `<|assistant|><tool_call>compute<arg_key>integer</arg_key><arg_value>1</arg_value><arg_key>one</arg_key><arg_value>1.0</arg_value><arg_key>large</arg_key><arg_value>9007199254740993</arg_value><arg_key>nested</arg_key><arg_value>{"integer": 1, "one": 1.0}</arg_value><arg_key>items</arg_key><arg_value>[1, 1.0]</arg_value></tool_call><|assistant|>`
+	for _, tc := range []struct {
+		name    string
+		message api.Message
+	}{
+		{"native API", native},
+		{"OpenAI API", api.Message{Role: "assistant", ToolCalls: openaiCalls}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := (&FlintRenderer{}).Render([]api.Message{tc.message}, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Errorf("decoded tool arguments = %q, want %q", got, want)
+			}
+		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -321,7 +322,7 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 					}
 
 					sb.WriteString("<tool_call>\n<function=" + toolCall.Function.Name + ">\n")
-					for name, value := range toolCall.Function.Arguments.All() {
+					for name, value := range toolargs.RenderValues(&toolCall.Function.Arguments) {
 						sb.WriteString("<parameter=" + name + ">\n")
 						sb.WriteString(formatToolCallArgument(value))
 						sb.WriteString("\n</parameter>\n")

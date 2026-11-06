@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -234,7 +235,7 @@ func (r *Nemotron3NanoRenderer) formatToolCallContent(content string, truncate b
 func (r *Nemotron3NanoRenderer) writeToolCalls(sb *strings.Builder, toolCalls []api.ToolCall) {
 	for _, tc := range toolCalls {
 		sb.WriteString("<tool_call>\n<function=" + tc.Function.Name + ">\n")
-		for name, value := range tc.Function.Arguments.All() {
+		for name, value := range toolargs.RenderValues(&tc.Function.Arguments) {
 			sb.WriteString("<parameter=" + name + ">\n" + r.formatArgValue(value) + "\n</parameter>\n")
 		}
 		sb.WriteString("</function>\n</tool_call>\n")

@@ -3,7 +3,6 @@ package renderers
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -104,18 +103,12 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 					sb.WriteString(tc.Function.Name)
 					sb.WriteString("(")
 
-					// Get sorted keys for deterministic output
-					keys := make([]string, 0, tc.Function.Arguments.Len())
-					for k := range tc.Function.Arguments.All() {
-						keys = append(keys, k)
-					}
-					sort.Strings(keys)
-
-					for k, key := range keys {
-						if k > 0 {
+					first := true
+					for key, val := range sortedToolCallArgumentValues(tc.Function.Arguments) {
+						if !first {
 							sb.WriteString(", ")
 						}
-						val, _ := tc.Function.Arguments.Get(key)
+						first = false
 						value, err := json.Marshal(val)
 						if err != nil {
 							return "", err

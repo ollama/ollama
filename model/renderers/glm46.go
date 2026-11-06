@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 )
 
 type GLM46Renderer struct{}
@@ -70,7 +71,7 @@ func (r *GLM46Renderer) Render(messages []api.Message, tools []api.Tool, thinkVa
 			if len(message.ToolCalls) > 0 {
 				for _, toolCall := range message.ToolCalls {
 					sb.WriteString("\n<tool_call>" + toolCall.Function.Name + "\n")
-					for key, value := range toolCall.Function.Arguments.All() {
+					for key, value := range toolargs.RenderValues(&toolCall.Function.Arguments) {
 						sb.WriteString("<arg_key>" + key + "</arg_key>\n")
 
 						var valueStr string
