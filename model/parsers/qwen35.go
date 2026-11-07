@@ -219,6 +219,15 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				p.state = qwen35ParserStateCollectingContent
 			}
 			return events, true
+		} else if strings.Contains(acc, qwen35ToolCallOpenTag) {
+			// qwen3.5:9b model forgets sometimes to use </think> tag before the <tool_call> block starts
+			// this condition ends the Think block and continues with the <tool_call> when the tag
+			// is found. It must run before the partial tag check below, otherwise a trailing
+			// partial tag after a complete <tool_call> flushes the tool call out as thinking.
+			thinking, tooling := p.splitAtTag(qwen35ToolCallOpenTag, true)
+			p.buffer.Reset()
+			p.buffer.WriteString(thinking + qwen35ThinkingCloseTag + qwen35ToolCallOpenTag + tooling)
+			return events, true
 		} else if overlapLen := max(overlap(acc, qwen35ThinkingCloseTag), overlap(acc, qwen35ToolCallOpenTag)); overlapLen > 0 {
 			beforePartialTag := acc[:len(acc)-overlapLen]
 			trailingWsLen := trailingWhitespaceLen(beforePartialTag)
@@ -232,14 +241,6 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				events = append(events, qwen35EventThinkingContent{content: unambiguous})
 			}
 			return events, false
-		} else if strings.Contains(acc, qwen35ToolCallOpenTag) {
-			// qwen3.5:9b model forgets sometimes to use </think> tag before the <tool_call> block starts
-			// this condition ends the Think block and continues with the <tool_call> when the tag
-			// is found
-			thinking, tooling := p.splitAtTag(qwen35ToolCallOpenTag, true)
-			p.buffer.Reset()
-			p.buffer.WriteString(thinking + qwen35ThinkingCloseTag + qwen35ToolCallOpenTag + tooling)
-			return events, true
 		}
 
 		whitespaceLen := trailingWhitespaceLen(acc)
