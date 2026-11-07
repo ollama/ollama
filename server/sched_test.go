@@ -2302,3 +2302,32 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }
+
+func TestSelectLlamaServerPlacementPrefersRocketOverIntegratedVulkan(t *testing.T) {
+	systemInfo := ml.SystemInfo{
+		TotalMemory: 32 * format.GibiByte,
+		FreeMemory:  28 * format.GibiByte,
+	}
+	gpus := []ml.DeviceInfo{
+		{
+			DeviceID:    ml.DeviceID{ID: "0", Library: "Vulkan"},
+			Name:        "Vulkan0",
+			Description: "Mali-G610 (Panfrost)",
+			Integrated:  true,
+			TotalMemory: 32 * format.GibiByte,
+			FreeMemory:  28 * format.GibiByte,
+		},
+		{
+			DeviceID:    ml.DeviceID{ID: "0", Library: "Rocket"},
+			Name:        "ROCKET",
+			Description: "Rockchip RK3588 NPU (rknpu)",
+			Integrated:  true,
+			TotalMemory: 32 * format.GibiByte,
+			FreeMemory:  28*format.GibiByte - 4*format.MebiByte,
+		},
+	}
+
+	selected, _ := selectLlamaServerPlacement(systemInfo, gpus, 2*format.GibiByte, api.DefaultOptions())
+	require.Len(t, selected, 1)
+	require.Equal(t, "Rocket", selected[0].Library)
+}

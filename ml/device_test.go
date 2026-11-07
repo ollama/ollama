@@ -235,6 +235,11 @@ func TestFlashAttentionSupported(t *testing.T) {
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "Metal"}}},
 			want: true,
 		},
+		{
+			name: "rocket supported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "Rocket"}}},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -243,6 +248,18 @@ func TestFlashAttentionSupported(t *testing.T) {
 				t.Fatalf("FlashAttentionSupported = %t, want %t", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPreferredLibraryRocketOverVulkan(t *testing.T) {
+	rocket := DeviceInfo{DeviceID: DeviceID{Library: "Rocket", ID: "0"}}
+	vulkan := DeviceInfo{DeviceID: DeviceID{Library: "Vulkan", ID: "0"}}
+
+	if !rocket.PreferredLibrary(vulkan) {
+		t.Fatal("expected Rocket to be preferred over Vulkan")
+	}
+	if vulkan.PreferredLibrary(rocket) {
+		t.Fatal("did not expect Vulkan to be preferred over Rocket")
 	}
 }
 
