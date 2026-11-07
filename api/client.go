@@ -226,6 +226,12 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 
 		bts := scanner.Bytes()
 		if err := json.Unmarshal(bts, &errorResponse); err != nil {
+			if response.StatusCode == http.StatusUnauthorized {
+				return AuthorizationError{
+					StatusCode: response.StatusCode,
+					Status:     response.Status,
+				}
+			}
 			if response.StatusCode >= http.StatusBadRequest {
 				return StatusError{
 					StatusCode:   response.StatusCode,
@@ -260,7 +266,20 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	}
 
 	if err := scanner.Err(); err != nil {
+		if response.StatusCode == http.StatusUnauthorized {
+			return AuthorizationError{
+				StatusCode: response.StatusCode,
+				Status:     response.Status,
+			}
+		}
 		return err
+	}
+
+	if response.StatusCode == http.StatusUnauthorized {
+		return AuthorizationError{
+			StatusCode: response.StatusCode,
+			Status:     response.Status,
+		}
 	}
 
 	return nil
