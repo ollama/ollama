@@ -319,14 +319,22 @@ func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
 			hasThinkingSupport: true,
 		},
 		{
-			name: "split_tool_calls_begin_tag_conservative_parsing",
+			name: "split_tool_calls_begin_tag",
 			chunks: []string{
 				"Content before<｜tool▁calls▁beg",
 				"in｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test\n```json\n{}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
 			},
-			// Parser is conservative - treats incomplete tags as content
-			expectedContent:    "Content before<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test\n```json\n{}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
-			expectedToolCalls:  nil,
+			// A partial opening tag at a chunk boundary is held back and
+			// completed once the rest of the tag arrives.
+			expectedContent: "Content before",
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "test",
+						Arguments: api.NewToolCallFunctionArguments(),
+					},
+				},
+			},
 			hasThinkingSupport: false,
 		},
 		{
