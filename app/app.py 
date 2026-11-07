@@ -1,0 +1,29 @@
+NEUE NOTION SEITE ERSTELLEN → Copy diesen Block:
+
+/* DASHBOARD */
+# 🤖 Agency Optimizer V2.0 Hub
+**Kunden**: [Formula: COUNTA]
+**Revenue**: [Rollup]
+**MRR**: [€24.99 × Subs]
+
+/* AI ASSISTANT */
+[Notion AI Block → Paste Prompt]
+"Analysiere Query in 6 Kategorien: Status, Revenue, Tech, Wachstum, Marketing, Team/Ops..."
+
+/* DATABASE: Queries */
+Properties:
+- Query (Title)
+- Status, Revenue, Tech, Wachstum, Marketing, Team (Select)
+- Top3 (Multi-Select)
+- PIE (Formula)
+- User (Email)
+- Templates (Button)
+
+/* 6 TEMPLATE BUTTONS */
+Button 1: /Status Template (Duplicate Page)
+Button 2: /Revenue Template
+... (6 total)
+
+/* SHARE SETTINGS */
+Share → Publish → ?duplicate=true
+Link: https://yourpage.notion.site/Optimizer-Hub-[ID]?duplicate=true
