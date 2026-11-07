@@ -4,12 +4,18 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
 const (
 	part80  = "88888888888888888888888888888888888888888888888888888888888888888888888888888888"
 	part350 = "33333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333"
+)
+
+var (
+	part255 = strings.Repeat("2", 255)
+	part256 = strings.Repeat("2", 256)
 )
 
 func TestParseNameParts(t *testing.T) {
@@ -123,6 +129,26 @@ func TestParseNameParts(t *testing.T) {
 			},
 			wantFilepath: filepath.Join(part350, part80, part80, part80),
 		},
+		{
+			in: "hf.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF:Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-IQ3_M.gguf",
+			want: Name{
+				Host:      "hf.co",
+				Namespace: "DavidAU",
+				Model:     "Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF",
+				Tag:       "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-IQ3_M.gguf",
+			},
+			wantFilepath: filepath.Join("hf.co", "DavidAU", "Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF", "Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-IQ3_M.gguf"),
+		},
+		{
+			in: part350 + "/" + part255 + "/" + part255 + ":" + part255,
+			want: Name{
+				Host:      part350,
+				Namespace: part255,
+				Model:     part255,
+				Tag:       part255,
+			},
+			wantFilepath: filepath.Join(part350, part255, part255, part255),
+		},
 	}
 
 	for _, tt := range cases {
@@ -154,8 +180,14 @@ var testCases = map[string]bool{ // name -> valid
 	"model":                    false,
 
 	// long (but valid)
-	part80 + "/" + part80 + "/" + part80 + ":" + part80:  true,
-	part350 + "/" + part80 + "/" + part80 + ":" + part80: true,
+	part80 + "/" + part80 + "/" + part80 + ":" + part80:    true,
+	part350 + "/" + part80 + "/" + part80 + ":" + part80:   true,
+	part255 + "/" + part255 + "/" + part255 + ":" + part255: true,
+	part350 + "/" + part255 + "/" + part255 + ":" + part255: true,
+	"hf.co/DavidAU/Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF:Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-IQ3_M.gguf": true,
+	"host/" + part256 + "/model:tag":     false,
+	"host/namespace/" + part256 + ":tag": false,
+	"host/namespace/model:" + part256:     false,
 
 	"h/nn/mm:t": true, // bare minimum part sizes
 
@@ -239,6 +271,12 @@ func TestNameIsValidPart(t *testing.T) {
 		{kind: kindNamespace, s: "bb", want: true},
 		{kind: kindNamespace, s: "a.", want: false},
 		{kind: kindModel, s: "-h", want: false},
+		{kind: kindNamespace, s: part255, want: true},
+		{kind: kindNamespace, s: part256, want: false},
+		{kind: kindModel, s: part255, want: true},
+		{kind: kindModel, s: part256, want: false},
+		{kind: kindTag, s: part255, want: true},
+		{kind: kindTag, s: part256, want: false},
 		{kind: kindDigest, s: "sha256-1000000000000000000000000000000000000000000000000000000000000000", want: true},
 	}
 	for _, tt := range cases {
