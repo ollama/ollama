@@ -91,14 +91,16 @@ type BlockSelector interface {
 }
 
 var (
-	mu            sync.Mutex
-	registry      = make(map[string]func(root *Root) (Model, error))
-	draftRegistry = make(map[string]func(root *Root, target Model) (DraftModel, error))
+	mu             sync.Mutex
+	registry       = make(map[string]func(root *Root) (Model, error))
+	tokenizerSpecs = make(map[string]tokenizerSpec)
+	draftRegistry  = make(map[string]func(root *Root, target Model) (DraftModel, error))
 )
 
-// Register registers a model constructor by architecture name.
+// Register registers a model constructor by architecture name, with options
+// for a tokenizer outside the standard layout.
 // Called from init() in model packages. Panics on duplicate registration.
-func Register(arch string, fn func(root *Root) (Model, error)) {
+func Register(arch string, fn func(root *Root) (Model, error), opts ...TokenizerOption) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -106,6 +108,11 @@ func Register(arch string, fn func(root *Root) (Model, error)) {
 		panic(fmt.Sprintf("model architecture %q already registered", arch))
 	}
 	registry[arch] = fn
+	var spec tokenizerSpec
+	for _, opt := range opts {
+		opt(&spec)
+	}
+	tokenizerSpecs[arch] = spec
 }
 
 // RegisterDraft registers a draft model constructor by architecture name.
@@ -144,18 +151,10 @@ func New(root *Root) (Model, error) {
 		return nil, fmt.Errorf("failed to read config.json: %w", err)
 	}
 
-	var archConfig struct {
-		Architectures []string `json:"architectures"`
+	arch, err := architecture(configData)
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(configData, &archConfig); err != nil {
-		return nil, fmt.Errorf("failed to parse config.json: %w", err)
-	}
-
-	if len(archConfig.Architectures) == 0 {
-		return nil, fmt.Errorf("no architectures found in config.json")
-	}
-
-	arch := archConfig.Architectures[0]
 	slog.Info("Model architecture", "arch", arch)
 
 	mu.Lock()
@@ -167,6 +166,20 @@ func New(root *Root) (Model, error) {
 	}
 
 	return fn(root)
+}
+
+func architecture(configData []byte) (string, error) {
+	var archConfig struct {
+		Architectures []string `json:"architectures"`
+	}
+	if err := json.Unmarshal(configData, &archConfig); err != nil {
+		return "", fmt.Errorf("failed to parse config.json: %w", err)
+	}
+
+	if len(archConfig.Architectures) == 0 {
+		return "", fmt.Errorf("no architectures found in config.json")
+	}
+	return archConfig.Architectures[0], nil
 }
 
 // NewDraft constructs the draft model described by the manifest config, if any.

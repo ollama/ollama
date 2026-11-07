@@ -251,6 +251,8 @@
               "POST /api/generate",
               "POST /api/chat",
               "POST /api/embed",
+              "POST /api/tokenize",
+              "POST /api/detokenize",
               "POST /v1/systemone",
               "GET /api/tags",
               "GET /api/ps",

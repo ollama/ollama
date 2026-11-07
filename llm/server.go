@@ -55,6 +55,16 @@ func filteredEnvLogValue(key, value string) string {
 	return value
 }
 
+// Tokenizer converts between text and a model's token IDs. With addSpecial,
+// TokenizePrompt returns the tokens the model receives for content as a raw
+// prompt, including any special tokens the model adds. Invalid input, such as
+// a token ID outside the vocabulary, returns an [api.StatusError] with a 4xx
+// status.
+type Tokenizer interface {
+	TokenizePrompt(ctx context.Context, content string, addSpecial bool) ([]int, error)
+	Detokenize(ctx context.Context, tokens []int) (string, error)
+}
+
 type LlamaServer interface {
 	ModelPath() string
 	Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error)
@@ -65,6 +75,12 @@ type LlamaServer interface {
 	ApplyChatTemplate(ctx context.Context, req ChatRequest) (string, error)
 	Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
+	// TokenizeForCompletion counts the prompt the way the runner will see it,
+	// applying whatever prompt normalization the runner's own completion path
+	// applies. leadingBOS is the BOS string the renderer emitted, if any, so
+	// implementations that let the tokenizer add BOS can avoid double-counting
+	// it; implementations that tokenize the prompt verbatim ignore it.
+	TokenizeForCompletion(ctx context.Context, prompt, leadingBOS string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
 	MemorySize() (total, vram uint64)
