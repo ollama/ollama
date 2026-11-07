@@ -143,17 +143,25 @@ download_and_extract() {
         fi
 
         status "Downloading ${filename}.tar.zst"
+        # Download first without sudo so a slow download cannot let the sudo
+        # credential cache expire while no one is at the terminal.
         curl --fail --show-error --location --progress-bar \
-            "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
-            zstd -d | $SUDO tar -xf - -C "${dest_dir}"
+            -o "$TEMP_DIR/${filename}.tar.zst" \
+            "${url_base}/${filename}.tar.zst${VER_PARAM}"
+        [ -z "$SUDO" ] || $SUDO -v
+        zstd -d -c "$TEMP_DIR/${filename}.tar.zst" | $SUDO tar -xf - -C "${dest_dir}"
+        rm -f "$TEMP_DIR/${filename}.tar.zst"
         return 0
     fi
 
     # Fall back to .tgz for older versions
     status "Downloading ${filename}.tgz"
     curl --fail --show-error --location --progress-bar \
-        "${url_base}/${filename}.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "${dest_dir}"
+        -o "$TEMP_DIR/${filename}.tgz" \
+        "${url_base}/${filename}.tgz${VER_PARAM}"
+    [ -z "$SUDO" ] || $SUDO -v
+    $SUDO tar -xzf "$TEMP_DIR/${filename}.tgz" -C "${dest_dir}"
+    rm -f "$TEMP_DIR/${filename}.tgz"
 }
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
@@ -187,10 +195,12 @@ if [ -f /etc/nv_tegra_release ] ; then
 fi
 
 install_success() {
+    # Only report success when the script is exiting cleanly.
+    [ "${1:-0}" -eq 0 ] || return 0
     status 'The Ollama API is now available at 127.0.0.1:11434.'
     status 'Install complete. Run "ollama" from the command line.'
 }
-trap install_success EXIT
+trap 'install_success $?; cleanup' EXIT
 
 # Everything from this point onwards is optional.
 
