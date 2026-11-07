@@ -327,7 +327,7 @@ func TestRunMTPDecodeGrammar(t *testing.T) {
 		spec := r.spec.open(req, nil)
 		pinDraftLimit(spec, 4)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, g)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -368,7 +368,7 @@ func TestRunMTPDecodeGrammarRejectsInvalidDraft(t *testing.T) {
 		spec := r.spec.open(req, nil)
 		pinDraftLimit(spec, 2)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, g)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()

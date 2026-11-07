@@ -1637,11 +1637,13 @@ type llamaServerChatResponse struct {
 }
 
 type llamaServerTimings struct {
-	CacheN    *int    `json:"cache_n"`
-	PromptN   int     `json:"prompt_n"`
-	PromptMS  float64 `json:"prompt_ms"`
-	PredictN  int     `json:"predicted_n"`
-	PredictMS float64 `json:"predicted_ms"`
+	CacheN         *int    `json:"cache_n"`
+	PromptN        int     `json:"prompt_n"`
+	PromptMS       float64 `json:"prompt_ms"`
+	PredictN       int     `json:"predicted_n"`
+	PredictMS      float64 `json:"predicted_ms"`
+	DraftN         *int    `json:"draft_n"`
+	DraftNAccepted *int    `json:"draft_n_accepted"`
 }
 
 func (t llamaServerTimings) promptEvalCount() int {
@@ -1874,6 +1876,8 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 					PromptEvalDuration:    time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond)),
 					EvalCount:             lsResp.Timings.PredictN,
 					EvalDuration:          time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
+					DraftCount:            lsResp.Timings.DraftN,
+					DraftAcceptedCount:    lsResp.Timings.DraftNAccepted,
 				}
 				hasFinalResp = true
 			}
@@ -2177,6 +2181,8 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
 				resp.EvalCount = lsResp.Timings.PredictN
 				resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
+				resp.DraftCount = lsResp.Timings.DraftN
+				resp.DraftAcceptedCount = lsResp.Timings.DraftNAccepted
 				toolCalls, err := accumulatedToolCalls(toolCalls)
 				if err != nil {
 					return err

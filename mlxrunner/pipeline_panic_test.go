@@ -31,7 +31,7 @@ func TestDecodePreservesPanic(t *testing.T) {
 		var failure any
 		func() {
 			defer func() { failure = recover() }()
-			_ = (&Runner{}).decode(context.Background(), request, &cacheSession{inputs: []int32{1}}, d, 0)
+			_ = (&Runner{}).decode(context.Background(), request, &cacheSession{inputs: []int32{1}}, d, nil, 0)
 		}()
 		if failure != "decode failed" {
 			t.Fatalf("panic = %v, want original decode failure", failure)

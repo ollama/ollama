@@ -161,6 +161,9 @@ func (s *speculationSession) endRound(drafted, accepted, observed int) {
 	s.stats.maxDraft = max(s.stats.maxDraft, drafted)
 	s.stats.recordRound(drafted)
 	s.stats.iterations++
+	if drafted > 0 {
+		s.stats.draftSteps++
+	}
 	s.stats.drafted += drafted
 	s.stats.accepted += accepted
 	if s.enabled && !s.fixedDepth {

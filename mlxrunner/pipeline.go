@@ -147,7 +147,7 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position, media.rowLayout(), grammar)
 	}
 	defer skipCleanupOnPanic(d.close)
-	return r.decode(ctx, request, session, d, promptEval)
+	return r.decode(ctx, request, session, d, spec, promptEval)
 }
 
 // prefill evaluates the prompt in chunks, leaving one token for decode to
@@ -260,7 +260,7 @@ type decoder interface {
 // or the NumPredict budget. Every produced token is recorded so the caches
 // never rest ahead of session.outputs; tokens past the stop are recorded but
 // not streamed or counted.
-func (r *Runner) decode(ctx context.Context, request Request, session *cacheSession, d decoder, promptEval time.Duration) error {
+func (r *Runner) decode(ctx context.Context, request Request, session *cacheSession, d decoder, spec *speculationSession, promptEval time.Duration) error {
 	// A sampled-but-undelivered result is still a produced token; record it.
 	defer skipCleanupOnPanic(func() {
 		results, _, _ := d.drain()
@@ -358,6 +358,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 
 	final.EvalCount = generated
 	final.EvalDuration = time.Since(now)
+	spec.reportCounts(&final)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
