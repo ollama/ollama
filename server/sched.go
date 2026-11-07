@@ -959,7 +959,7 @@ func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (ava
 	var discreteGPUFree uint64
 	for _, gpu := range gpus {
 		gpuFree += gpu.FreeMemory
-		if gpu.Integrated {
+		if gpu.HostMemoryBounded() {
 			sharedGPUFree += gpu.FreeMemory
 		} else {
 			discreteGPUFree += gpu.FreeMemory
@@ -1146,11 +1146,7 @@ func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {
 }
 
 func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo) uint64 {
-	if gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
-		return systemInfo.FreeMemory
-	}
-
-	return gpu.FreeMemory
+	return gpu.AvailableMemory(systemInfo.FreeMemory)
 }
 
 func logSelectedGPUGroup(all, selected []ml.DeviceInfo) {

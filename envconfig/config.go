@@ -234,6 +234,8 @@ var (
 	EnableVulkan = BoolWithDefault("OLLAMA_VULKAN")
 	// EnableIntegratedGPU controls whether integrated GPUs may be selected.
 	EnableIntegratedGPU = BoolWithDefault("OLLAMA_IGPU_ENABLE")
+	// WSLSharedGPUMemory controls whether WSL2 integrated GPUs may use Windows shared GPU memory.
+	WSLSharedGPUMemory = BoolWithDefault("OLLAMA_WSL_SHARED_GPU_MEMORY")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
 	// CreateRemote forces model creation through the server API even when the server is local.
@@ -361,6 +363,10 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(true), "Enable Vulkan support"}
+	}
+
+	if runtime.GOOS == "linux" {
+		ret["OLLAMA_WSL_SHARED_GPU_MEMORY"] = EnvVar{"OLLAMA_WSL_SHARED_GPU_MEMORY", WSLSharedGPUMemory(true), "Let integrated GPUs under WSL2 use Windows shared GPU memory"}
 	}
 
 	return ret

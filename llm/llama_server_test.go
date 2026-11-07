@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -2486,6 +2487,211 @@ func TestMMProjFitTargetExtraEnvs(t *testing.T) {
 		got := launch.extraEnvsForStart()
 		if _, ok := got[llamaArgFitTargetEnv]; ok {
 			t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
+		}
+	})
+}
+
+func TestBackendFreeMarginFitTarget(t *testing.T) {
+	t.Setenv(llamaArgFitTargetEnv, "")
+	_ = os.Unsetenv(llamaArgFitTargetEnv)
+
+	// A 90 GiB budget with 60 GiB available; the backend reports 87 GiB.
+	gpu := ml.DeviceInfo{
+		DeviceID:          ml.DeviceID{ID: "0", Library: "CUDA"},
+		Name:              "CUDA0",
+		Integrated:        true,
+		TotalMemory:       90 << 30,
+		FreeMemory:        60 << 30,
+		BackendFreeMemory: 87 << 30,
+		MemoryBudget:      true,
+	}
+	marginMiB := uint64(27 << 10)
+
+	tests := []struct {
+		name       string
+		launch     llamaServerLaunchConfig
+		wantTarget string
+	}{
+		{
+			name:       "no limit leaves the default target",
+			launch:     llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 60 << 30}}},
+			wantTarget: "",
+		},
+		{
+			name:       "margin on top of the default target",
+			launch:     llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: []ml.DeviceInfo{gpu}},
+			wantTarget: fmt.Sprint(llamaServerDefaultFitTargetMiB + marginMiB),
+		},
+		{
+			name: "margin on top of the projector pad",
+			launch: llamaServerLaunchConfig{
+				opts:         api.DefaultOptions(),
+				gpus:         []ml.DeviceInfo{gpu},
+				projectors:   []string{"model.gguf"},
+				mmprojMemory: 933 * bytesPerMiB,
+				modelLayers:  81,
+			},
+			wantTarget: fmt.Sprint(933 + mmprojOffloadHeadroom/bytesPerMiB + marginMiB),
+		},
+		{
+			name: "margin on top of an existing launch target",
+			launch: llamaServerLaunchConfig{
+				opts:      api.DefaultOptions(),
+				gpus:      []ml.DeviceInfo{gpu},
+				extraEnvs: map[string]string{llamaArgFitTargetEnv: "2048"},
+			},
+			wantTarget: fmt.Sprint(2048 + marginMiB),
+		},
+		{
+			name: "list launch target is left untouched",
+			launch: llamaServerLaunchConfig{
+				opts:      api.DefaultOptions(),
+				gpus:      []ml.DeviceInfo{gpu},
+				extraEnvs: map[string]string{llamaArgFitTargetEnv: "2048/ 512"},
+			},
+			wantTarget: "2048/ 512",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.launch.extraEnvsForStart()[llamaArgFitTargetEnv]; got != tt.wantTarget {
+				t.Fatalf("fit target = %q, want %q", got, tt.wantTarget)
+			}
+		})
+	}
+
+	t.Run("margin on top of an inherited user target", func(t *testing.T) {
+		t.Setenv(llamaArgFitTargetEnv, "4096")
+		launch := llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: []ml.DeviceInfo{gpu}}
+		if got, want := launch.extraEnvsForStart()[llamaArgFitTargetEnv], fmt.Sprint(4096+marginMiB); got != want {
+			t.Fatalf("fit target = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("inherited list target is left untouched", func(t *testing.T) {
+		t.Setenv(llamaArgFitTargetEnv, "4096,512")
+		launch := llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: []ml.DeviceInfo{gpu}}
+		if got, ok := launch.extraEnvsForStart()[llamaArgFitTargetEnv]; ok {
+			t.Fatalf("fit target = %q, want the inherited value left alone", got)
+		}
+	})
+
+	t.Run("scalar target parses like stoull", func(t *testing.T) {
+		for target, want := range map[string]uint64{" 2048": 2048, "+2048": 2048, "2048MiB": 2048} {
+			if got, err := parseFitTarget(target); err != nil || got != want {
+				t.Errorf("parseFitTarget(%q) = %d, %v; want %d", target, got, err, want)
+			}
+		}
+		for _, target := range []string{"", "abc", "-5", "99999999999999999999"} {
+			if got, err := parseFitTarget(target); err == nil {
+				t.Errorf("parseFitTarget(%q) = %d, want an error", target, got)
+			}
+		}
+	})
+
+	// After discovery's first pass (87 GiB backend, 78 GiB available) an
+	// 18 GiB runner loaded. The next pass leaves 60 GiB available; whether the
+	// backend figure also dropped depends on the driver. Either way the next
+	// llama-server fits against the available figure less its default target.
+	t.Run("margin from the latest pass under either driver", func(t *testing.T) {
+		for _, tt := range []struct {
+			name    string
+			backend uint64
+		}{
+			{"driver counts other processes", 69 << 30},
+			{"driver does not count other processes", 87 << 30},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				next := gpu
+				next.BackendFreeMemory = tt.backend
+				launch := llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: []ml.DeviceInfo{next}}
+
+				// A free figure logged by a running llama-server does not
+				// change later targets.
+				runner := &llamaServerRunner{gpus: []ml.DeviceInfo{gpu}, systemFreeAtLoad: map[string]uint64{}}
+				w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+				if _, err := w.Write([]byte("llama_model_load_from_file_impl: using device CUDA0 (NVIDIA GPU) (000f:01:00.0) - 70656 MiB free\n")); err != nil {
+					t.Fatal(err)
+				}
+
+				target, err := strconv.ParseUint(launch.extraEnvsForStart()[llamaArgFitTargetEnv], 10, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, want := tt.backend-target*bytesPerMiB, next.FreeMemory-llamaServerDefaultFitTargetMiB*bytesPerMiB; got != want {
+					t.Fatalf("llama-server may use %d MiB, want %d MiB", got/bytesPerMiB, want/bytesPerMiB)
+				}
+			})
+		}
+	})
+
+	t.Run("NVML failure or a stale pass fits against host free memory", func(t *testing.T) {
+		unbudgeted := gpu
+		unbudgeted.MemoryBudget = false
+		unbudgeted.TotalMemory = 110 << 30
+		unbudgeted.FreeMemory = 87 << 30
+
+		launch := llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: []ml.DeviceInfo{unbudgeted}, systemFree: 20 << 30}
+		if got, want := launch.extraEnvsForStart()[llamaArgFitTargetEnv], fmt.Sprint(llamaServerDefaultFitTargetMiB+67<<10); got != want {
+			t.Fatalf("fit target = %q, want %q", got, want)
+		}
+
+		// A stale pass keeps the last budgeted total and the last bootstrap figure.
+		stale := unbudgeted
+		stale.TotalMemory = 90 << 30
+		stale.FreeMemory = 90 << 30
+		stale.BackendFreeMemory = 103 << 30
+		launch.gpus = []ml.DeviceInfo{stale}
+		if got, want := launch.extraEnvsForStart()[llamaArgFitTargetEnv], fmt.Sprint(llamaServerDefaultFitTargetMiB+83<<10); got != want {
+			t.Fatalf("stale pass fit target = %q, want %q", got, want)
+		}
+
+		// Native Linux integrated GPUs, where the backend already reports host
+		// memory, keep llama-server's default.
+		unbudgeted.BackendFreeMemory = 0
+		launch.gpus = []ml.DeviceInfo{unbudgeted}
+		if got := launch.extraEnvsForStart()[llamaArgFitTargetEnv]; got != "" {
+			t.Fatalf("fit target = %q, want none", got)
+		}
+	})
+
+	t.Run("no margin with two devices", func(t *testing.T) {
+		other := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, Integrated: true, TotalMemory: 24 << 30, FreeMemory: 20 << 30}
+		for _, gpus := range [][]ml.DeviceInfo{{gpu, other}, {other, gpu}} {
+			launch := llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: gpus}
+			if got := launch.extraEnvsForStart()[llamaArgFitTargetEnv]; got != "" {
+				t.Fatalf("fit target = %q, want none", got)
+			}
+		}
+	})
+
+	// llama-server drops integrated GPUs when a discrete GPU is present.
+	t.Run("no margin for an integrated GPU next to a discrete GPU", func(t *testing.T) {
+		discrete := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, TotalMemory: 24 << 30, FreeMemory: 20 << 30}
+		for _, gpus := range [][]ml.DeviceInfo{{gpu, discrete}, {discrete, gpu}} {
+			launch := llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: gpus}
+			if got := launch.extraEnvsForStart()[llamaArgFitTargetEnv]; got != "" {
+				t.Fatalf("fit target = %q, want none", got)
+			}
+		}
+	})
+
+	t.Run("margin rounds up to a whole MiB", func(t *testing.T) {
+		for _, tt := range []struct {
+			excess uint64
+			want   uint64
+		}{
+			{bytesPerMiB, 1},
+			{bytesPerMiB + 1, 2},
+			{1, 1},
+		} {
+			g := gpu
+			g.BackendFreeMemory = g.FreeMemory + tt.excess
+			launch := llamaServerLaunchConfig{opts: api.DefaultOptions(), gpus: []ml.DeviceInfo{g}}
+			if got := launch.backendFreeMarginMiB(); got != tt.want {
+				t.Fatalf("excess %d bytes: margin = %d, want %d", tt.excess, got, tt.want)
+			}
 		}
 	})
 }

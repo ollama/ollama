@@ -52,6 +52,14 @@ type DeviceInfo struct {
 	// FreeMemory is the amount of memory currently available on the device for loading models
 	FreeMemory uint64 `json:"free_memory,omitempty"`
 
+	// BackendFreeMemory, when set, is the backend's own free figure, which
+	// llama-server fits against; a launch keeps its excess over AvailableMemory free.
+	BackendFreeMemory uint64 `json:"-"`
+
+	// MemoryBudget marks an integrated GPU whose memory does not come out of the
+	// host free memory SystemInfo reports (a WSL2 guest's).
+	MemoryBudget bool `json:"-"`
+
 	// ComputeMajor is the major version of capabilities of the device
 	// if unsupported by the backend, -1 will be returned
 	ComputeMajor int
@@ -102,6 +110,21 @@ func (d DeviceInfo) Compute() string {
 
 func (d DeviceInfo) Driver() string {
 	return strconv.Itoa(d.DriverMajor) + "." + strconv.Itoa(d.DriverMinor)
+}
+
+// HostMemoryBounded reports whether host free memory also bounds the device:
+// true for integrated GPUs unless discovery set a MemoryBudget.
+func (d DeviceInfo) HostMemoryBounded() bool {
+	return d.Integrated && !d.MemoryBudget
+}
+
+// AvailableMemory is FreeMemory, capped at host free memory when
+// HostMemoryBounded.
+func (d DeviceInfo) AvailableMemory(systemFreeMemory uint64) uint64 {
+	if d.HostMemoryBounded() && systemFreeMemory > 0 && systemFreeMemory < d.FreeMemory {
+		return systemFreeMemory
+	}
+	return d.FreeMemory
 }
 
 // MinimumMemory reports the amount of memory that should be set aside
