@@ -91,18 +91,35 @@ func (r *FunctionGemmaRenderer) Render(messages []api.Message, tools []api.Tool,
 
 		case "tool":
 			toolName := ""
-			// Find the tool name from the previous assistant's tool call
+			// Find the tool name from the previous assistant's tool call.
+			//
+			// Prefer the explicit tool_call_id: the tool result messages that follow a
+			// multi-call assistant turn may arrive in any order (the OpenAI-compatible
+			// API does not require them to mirror the call order), and pairing them by
+			// position silently attributes each result to the wrong call. Only fall
+			// back to positional matching when the client sent no id, which is what
+			// /api/chat callers do. Matches how gemma4 resolves the same situation in
+			// toolResponseName.
 			for j := i - 1; j >= 0; j-- {
 				if loopMessages[j].Role == "assistant" && len(loopMessages[j].ToolCalls) > 0 {
-					// Count how many tool messages came before this one
-					toolIdx := 0
-					for k := j + 1; k < i; k++ {
-						if loopMessages[k].Role == "tool" {
-							toolIdx++
+					if message.ToolCallID != "" {
+						for _, tc := range loopMessages[j].ToolCalls {
+							if tc.ID == message.ToolCallID {
+								toolName = tc.Function.Name
+								break
+							}
 						}
-					}
-					if toolIdx < len(loopMessages[j].ToolCalls) {
-						toolName = loopMessages[j].ToolCalls[toolIdx].Function.Name
+					} else {
+						// Count how many tool messages came before this one
+						toolIdx := 0
+						for k := j + 1; k < i; k++ {
+							if loopMessages[k].Role == "tool" {
+								toolIdx++
+							}
+						}
+						if toolIdx < len(loopMessages[j].ToolCalls) {
+							toolName = loopMessages[j].ToolCalls[toolIdx].Function.Name
+						}
 					}
 					break
 				}
