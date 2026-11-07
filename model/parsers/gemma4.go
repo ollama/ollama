@@ -323,10 +323,13 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			p.buffer.WriteString(remaining)
 			p.state = Gemma4IgnoringPostToolCallNoise
 
-			if toolCall, err := parseGemma4ToolCall(toolCallContent, p.tools); err == nil {
+			if toolCall, err := parseGemma4ClosedToolCall(toolCallContent, p.tools); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
+				// Passed on as content rather than dropped: dropped, the response has neither a tool call
+				// nor content, and the client cannot tell the model its call was lost.
 				slog.Warn("gemma4 tool call parsing failed", "error", err, "content", toolCallContent)
+				events = append(events, gemma4EventContent{content: toolCallContent})
 			}
 			return events, true
 		}
@@ -340,6 +343,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
 				slog.Warn("gemma4 tool call flush on done failed", "error", err, "content", bufStr)
+				events = append(events, gemma4EventContent{content: bufStr})
 			}
 			return events, false
 		}
@@ -434,6 +438,159 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 	}, nil
 }
 
+// parseGemma4ClosedToolCall parses a tool call the model finished, its closing
+// tag seen. Where that fails, it tries once more with the lists and objects the
+// model left open closed. The model wrote all of the call, so closing them adds
+// no argument it did not write. A call flushed on done, with no closing tag, may
+// have been cut off and is not repaired this way.
+//
+// gemma4:e4b leaves a list of objects with long string values unclosed, as in
+// call:edit{edits:[{newText:<|"|>…<|"|>,oldText:<|"|>…<|"|>,path:<|"|>…<|"|>}
+// (ollama/ollama#19273), and once closed an object in a list with a brace too
+// many: set:[…,{path:<|"|>Level<|"|>,value:{…}}}]}.
+func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, error) {
+	toolCall, err := parseGemma4ToolCall(content, tools)
+	if err == nil {
+		return toolCall, nil
+	}
+
+	braceIdx := strings.Index(content, "{")
+	if !strings.HasPrefix(content, "call:") || braceIdx == -1 {
+		return toolCall, err
+	}
+
+	// The string delimiter is repaired first. The bracket repair skips strings,
+	// so one left unterminated would hide every bracket after it.
+	closed := content[:braceIdx] + repairGemma4UnclosedBrackets(repairGemma4MissingStringDelimiter(content[braceIdx:]))
+	if closed != content {
+		if repaired, repairErr := parseGemma4ToolCall(closed, tools); repairErr == nil {
+			return repaired, nil
+		}
+	}
+
+	// A value with a fence at one end and the delimiter at the other, its fence
+	// written as the delimiter: tried last, once every repair above has failed,
+	// so a call they read is read as before; the arguments are then read as any
+	// call's are, with the value repairs.
+	if mismatched := repairGemma4MismatchedFences(content[braceIdx:]); mismatched != content[braceIdx:] {
+		if repaired, repairErr := parseGemma4ToolCall(content[:braceIdx]+mismatched, tools); repairErr == nil {
+			return repaired, nil
+		}
+	}
+
+	return toolCall, err
+}
+
+// repairGemma4UnclosedBrackets closes the lists and objects left open in Gemma 4
+// arguments. A list still open where `}` closes the object around it, or where
+// `,` is followed by a key, gets its `]` there. A `}` there that the list's own
+// `]` follows closes nothing and is dropped. Whatever is still open at the
+// end is closed, innermost first. Strings are copied as they are.
+func repairGemma4UnclosedBrackets(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) + 4)
+	var open []byte
+	top := func() byte {
+		if len(open) == 0 {
+			return 0
+		}
+		return open[len(open)-1]
+	}
+
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				sb.WriteString(s[i:])
+				break
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+
+		if s[i] == '"' {
+			if end := gemma4JSONQuotedStringEnd(s, i); end != -1 {
+				sb.WriteString(s[i:end])
+				i = end
+				continue
+			}
+		}
+
+		switch s[i] {
+		case '{', '[':
+			open = append(open, s[i])
+		case '}':
+			if top() == '[' {
+				// With the list's own `]` next, this brace closes nothing: one too many.
+				if next := gemma4SkipSpace(s, i+1); next < len(s) && s[next] == ']' {
+					i++
+					continue
+				}
+				sb.WriteByte(']')
+				open = open[:len(open)-1]
+			}
+			if top() == '{' {
+				open = open[:len(open)-1]
+			}
+		case ']':
+			if top() == '[' {
+				open = open[:len(open)-1]
+			}
+		case ',':
+			if top() == '[' && gemma4KeyFollows(s, i+1) {
+				sb.WriteByte(']')
+				open = open[:len(open)-1]
+			}
+		}
+
+		sb.WriteByte(s[i])
+		i++
+	}
+
+	for j := len(open) - 1; j >= 0; j-- {
+		if open[j] == '{' {
+			sb.WriteByte('}')
+		} else {
+			sb.WriteByte(']')
+		}
+	}
+
+	return sb.String()
+}
+
+// gemma4KeyFollows reports whether an object's key, bare or JSON-quoted, and its
+// colon start at s[i], after any whitespace.
+func gemma4KeyFollows(s string, i int) bool {
+	return gemma4ValueAfterKey(s, i) != -1
+}
+
+// gemma4ValueAfterKey returns where the value starts after an object's key, bare
+// or JSON-quoted, and its colon at s[i], after any whitespace; -1 where no key
+// and colon are.
+func gemma4ValueAfterKey(s string, i int) int {
+	i = gemma4SkipSpace(s, i)
+	if i < len(s) && s[i] == '"' {
+		end := gemma4JSONQuotedStringEnd(s, i)
+		if end == -1 {
+			return -1
+		}
+		end = gemma4SkipSpace(s, end)
+		if end < len(s) && s[end] == ':' {
+			return gemma4SkipSpace(s, end+1)
+		}
+		return -1
+	}
+
+	keyEnd := gemma4BareKeyEnd(s, i)
+	if keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':' {
+		return gemma4SkipSpace(s, keyEnd+1)
+	}
+	return -1
+}
+
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
 func gemma4ArgsToJSON(s string) string {
 	var quotedStrings []string
@@ -517,8 +674,87 @@ func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.T
 			return args, nil
 		}
 	}
+	if args, ok := gemma4BarePhraseArgs(argsStr, gemma4ToolProperties(toolName, tools)); ok {
+		return args, nil
+	}
 
 	return api.ToolCallFunctionArguments{}, errors.New("repair failed to produce valid JSON arguments")
+}
+
+// gemma4BarePhraseArgs reads the arguments once more with each bare phrase the
+// model wrote for a value read as a string, as in
+// call:editRecord{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade}]}.
+// It is tried after every repair candidate fails, on top of their value repairs.
+// Words with spaces between them may be text meant to go on past a comma, as in
+// call:edit{set:[{path:<|"|>Note<|"|>,value:Hello there, how: are you}]}, which
+// reads with a key `how`. So they are read only for a known tool, and only where
+// each key read is one its schema names, wherever the schema names an object's
+// keys: the parameters, an object's properties, a list's items'.
+func gemma4BarePhraseArgs(argsStr string, props *api.ToolPropertiesMap) (api.ToolCallFunctionArguments, bool) {
+	if props == nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	values := repairGemma4HexNumberValues(repairGemma4EscapedQuoteValues(repairGemma4SingleQuotedValues(argsStr)))
+	phrases := repairGemma4BarePhraseValues(values)
+	if phrases == values {
+		return api.ToolCallFunctionArguments{}, false
+	}
+
+	var args api.ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(gemma4ArgsToJSON(phrases)), &args); err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	schema, err := json.Marshal(props)
+	if err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	var properties map[string]any
+	if err := json.Unmarshal(schema, &properties); err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	if !gemma4KeysInSchema(args.ToMap(), map[string]any{"properties": properties}) {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	return args, true
+}
+
+// gemma4KeysInSchema reports whether each key of value is one schema names,
+// wherever schema names an object's keys: an object's under its properties, a
+// list's items' under its items, one of its anyOf's.
+func gemma4KeysInSchema(value any, schema map[string]any) bool {
+	if anyOf, ok := schema["anyOf"].([]any); ok && len(anyOf) > 0 {
+		for _, alternative := range anyOf {
+			if alternative, ok := alternative.(map[string]any); ok && gemma4KeysInSchema(value, alternative) {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch value := value.(type) {
+	case map[string]any:
+		properties, ok := schema["properties"].(map[string]any)
+		if !ok || len(properties) == 0 {
+			return true
+		}
+		for key, field := range value {
+			property, ok := properties[key].(map[string]any)
+			if !ok || !gemma4KeysInSchema(field, property) {
+				return false
+			}
+		}
+	case []any:
+		items, ok := schema["items"].(map[string]any)
+		if !ok {
+			return true
+		}
+		for _, item := range value {
+			if !gemma4KeysInSchema(item, items) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func gemma4ToolProperties(toolName string, tools []api.Tool) *api.ToolPropertiesMap {
@@ -550,8 +786,54 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 	}
 
 	addCandidate(argsStr, false)
+	if closed := repairGemma4PlainQuoteStringClose(argsStr, gemma4ToolProperties(toolName, tools)); closed != argsStr {
+		addCandidate(closed, false)
+	}
 	if raw, ok := repairGemma4RawTerminalStringValue(argsStr, toolName, tools); ok {
 		addCandidate(raw, true)
+	}
+	// Tried last, so it reads only what every candidate above fails on. Single
+	// quotes are repaired first: a single-quoted value's text is no bare word.
+	quoted := repairGemma4SingleQuotedValues(argsStr)
+	if words := repairGemma4BareWordValues(quoted); words != quoted {
+		addCandidate(words, false)
+	}
+	// A value between escaped quotes keeps a bare word beside it from being read:
+	// its quote is read as a JSON-quoted string's.
+	if escaped := repairGemma4EscapedQuoteValues(quoted); escaped != quoted {
+		addCandidate(repairGemma4BareWordValues(escaped), false)
+	}
+	// JSON has no hex numbers: one written bare is read as its text.
+	if hex := repairGemma4HexNumberValues(quoted); hex != quoted {
+		addCandidate(repairGemma4BareWordValues(hex), false)
+	}
+	// JSON has no trailing comma. Tried after every candidate above, and on top of
+	// each, so a call one of them reads is read as before.
+	for _, candidate := range append([]string(nil), candidates...) {
+		if trimmed := repairGemma4TrailingCommas(candidate); trimmed != candidate {
+			addCandidate(trimmed, false)
+		}
+	}
+	// A token with a colon inside is no bare word, and the colon may be a key's:
+	// read as a string only after every candidate above, with the other value
+	// repairs beside it, and once more with its trailing commas dropped.
+	if tokens := repairGemma4ColonTokenValues(quoted); tokens != quoted {
+		candidate := repairGemma4BareWordValues(repairGemma4HexNumberValues(repairGemma4EscapedQuoteValues(tokens)))
+		addCandidate(candidate, false)
+		if trimmed := repairGemma4TrailingCommas(candidate); trimmed != candidate {
+			addCandidate(trimmed, false)
+		}
+	}
+	// A value fenced by two `---` lines holds text of its own, quotes and colons
+	// among it: read from the arguments as written, so no repair above changes
+	// its text, after every candidate above, with the other value repairs beside
+	// it, and once more with its trailing commas dropped.
+	if fenced := repairGemma4FencedValues(argsStr); fenced != argsStr {
+		candidate := repairGemma4BareWordValues(repairGemma4HexNumberValues(repairGemma4EscapedQuoteValues(repairGemma4SingleQuotedValues(fenced))))
+		addCandidate(candidate, false)
+		if trimmed := repairGemma4TrailingCommas(candidate); trimmed != candidate {
+			addCandidate(trimmed, false)
+		}
 	}
 
 	return candidates
@@ -575,6 +857,607 @@ func repairGemma4MissingStringDelimiter(s string) string {
 	sb.WriteString(s[:insertAt])
 	sb.WriteString(gemma4StringDelimiter)
 	sb.WriteString(s[insertAt:])
+	return sb.String()
+}
+
+// gemma4PlainQuoteBeforeKey matches the end of a Gemma string's text where the
+// model wrote a plain `"` for the closing delimiter, before the next argument:
+// the `"`, whitespace, an optional comma, then the argument's key and its colon.
+var gemma4PlainQuoteBeforeKey = regexp.MustCompile(`"\s*,?\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$`)
+
+// repairGemma4PlainQuoteStringClose closes a Gemma string the model ended with a
+// plain `"` instead of its delimiter, the comma before the next argument left
+// out with it, as in
+// call:write{content:<|"|>…\n"\npath:<|"|>…<|"|>}.
+// Only an odd count of delimiters is repaired, and only where a string's text
+// ends in that `"` and the key of one of the tool's parameters, so that the
+// delimiter after it opens that parameter's value: the delimiter and a comma are
+// written for the `"`. With no tool to name the parameters, nothing is repaired.
+func repairGemma4PlainQuoteStringClose(s string, props *api.ToolPropertiesMap) string {
+	if props == nil || strings.Count(s, gemma4StringDelimiter)%2 == 0 {
+		return s
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(s) + len(gemma4StringDelimiter) + 1)
+	rest := s
+	for {
+		open := strings.Index(rest, gemma4StringDelimiter)
+		if open == -1 {
+			break
+		}
+		sb.WriteString(rest[:open+len(gemma4StringDelimiter)])
+		rest = rest[open+len(gemma4StringDelimiter):]
+
+		end := strings.Index(rest, gemma4StringDelimiter)
+		if end == -1 {
+			break
+		}
+		if m := gemma4PlainQuoteBeforeKey.FindStringSubmatchIndex(rest[:end]); m != nil {
+			if _, ok := props.Get(rest[m[2]:m[3]]); ok {
+				sb.WriteString(rest[:m[0]])
+				sb.WriteString(gemma4StringDelimiter)
+				sb.WriteString(",")
+				sb.WriteString(rest[m[2]:end])
+				// The delimiter at end opens the key's value.
+				rest = rest[end:]
+				continue
+			}
+		}
+		sb.WriteString(rest[:end+len(gemma4StringDelimiter)])
+		rest = rest[end+len(gemma4StringDelimiter):]
+	}
+	sb.WriteString(rest)
+	return sb.String()
+}
+
+// repairGemma4BareWordValues reads a bare word the model wrote for a value as a
+// string, as in
+// call:edit{set:[{path:<|"|>Mode<|"|>,value:Fast}]}.
+// Only an even count of delimiters is repaired, and only a word that is all of a
+// value, after an object's key and its colon or as a list's item: it starts with
+// a letter or `_`, goes on with letters, digits, `_` and `.`, and a `,`, `}` or
+// `]` follows it after any whitespace. The delimiters are written around it.
+// true, false and null are JSON already; written in other cases, or as none, they
+// may mean a literal too, and are left as they are, as are numbers. Strings are
+// copied as they are. Where the strings or brackets are unclear, nothing is
+// repaired.
+func repairGemma4BareWordValues(s string) string {
+	return repairGemma4Values(s, func(s string, i int) (string, int, bool) {
+		end, ok := gemma4BareWordValueEnd(s, i)
+		if !ok {
+			return "", 0, false
+		}
+		return s[i:end], end, true
+	})
+}
+
+// repairGemma4EscapedQuoteValues reads a value the model wrote between escaped
+// quotes, as it would inside a JSON string, as a string, as in
+// call:edit{set:[{path:<|"|>Level<|"|>,value:\"5\"}]}.
+// Only an even count of delimiters is repaired, and only a value that is all of
+// the text between the two `\"`, after an object's key and its colon or as a
+// list's item: its text holds no `"` and no `\` but in `\\`, which is read as the
+// one `\` it escapes, and a `,`, `}` or `]` follows the closing `\"` after any
+// whitespace. A text of lines written so keeps its line ends as `\n`:
+// value:\"- Data:\\n    Level: 1\"}. The delimiters are written for the two
+// `\"`. Strings are copied as they are. Where the strings or brackets are
+// unclear, nothing is repaired.
+func repairGemma4EscapedQuoteValues(s string) string {
+	return repairGemma4Values(s, gemma4EscapedQuoteValue)
+}
+
+// gemma4EscapedQuoteValue returns the text and the end of a value written
+// between escaped quotes at s[i], as repairGemma4EscapedQuoteValues reads one.
+func gemma4EscapedQuoteValue(s string, i int) (string, int, bool) {
+	const quote = `\"`
+	if !strings.HasPrefix(s[i:], quote) {
+		return "", 0, false
+	}
+	var text strings.Builder
+	for j := i + len(quote); j < len(s); j++ {
+		switch {
+		case strings.HasPrefix(s[j:], `\\`):
+			text.WriteByte('\\')
+			j++
+		case strings.HasPrefix(s[j:], quote):
+			end := j + len(quote)
+			next := gemma4SkipSpace(s, end)
+			if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+				return "", 0, false
+			}
+			return text.String(), end, true
+		case s[j] == '\\' || s[j] == '"':
+			return "", 0, false
+		default:
+			text.WriteByte(s[j])
+		}
+	}
+	return "", 0, false
+}
+
+// repairGemma4HexNumberValues reads a hex number the model wrote bare for a value
+// as a string, its text kept as written, as in
+// call:edit{set:[{path:<|"|>Unused<|"|>,value:0x000100}]}.
+// Only an even count of delimiters is repaired, and only a number that is all of
+// a value, after an object's key and its colon or as a list's item: `0x` or `0X`
+// and one or more hex digits, and a `,`, `}` or `]` follows it after any
+// whitespace. The delimiters are written around it. Strings are copied as they
+// are. Where the strings or brackets are unclear, nothing is repaired.
+func repairGemma4HexNumberValues(s string) string {
+	return repairGemma4Values(s, gemma4HexNumberValue)
+}
+
+// gemma4HexNumberValue returns the text and the end of a hex number written bare
+// at s[i], as repairGemma4HexNumberValues reads one.
+func gemma4HexNumberValue(s string, i int) (string, int, bool) {
+	if i+2 >= len(s) || s[i] != '0' || (s[i+1] != 'x' && s[i+1] != 'X') {
+		return "", 0, false
+	}
+	end := i + 2
+	for end < len(s) && strings.IndexByte("0123456789abcdefABCDEF", s[end]) != -1 {
+		end++
+	}
+	if end == i+2 {
+		return "", 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return "", 0, false
+	}
+	return s[i:end], end, true
+}
+
+// repairGemma4ColonTokenValues reads a token with a colon inside that the model
+// wrote bare for a value as a string, its text kept as written, as in
+// call:editRecord{set:[{path:<|"|>Entries<|"|>,value:[{Data:{Reference:037C18:Skyrim.esm,Count:1}}]}]}.
+// Only an even count of delimiters is repaired, and only a token that is all of a
+// value, after an object's key and its colon or as a list's item: letters, digits,
+// `_` and `.`, from a digit, with a `:` between two of them once or more and a
+// letter among them, and a `,`, `}` or `]` follows it after any whitespace. From a
+// digit, its text before a colon is no bare key: b in {a:b:c} may be one. The
+// delimiters are written around it. Strings are copied as they are. Where the
+// strings or brackets are unclear, nothing is repaired.
+func repairGemma4ColonTokenValues(s string) string {
+	return repairGemma4Values(s, gemma4ColonTokenValue)
+}
+
+// gemma4ColonTokenValue returns the text and the end of a token with a colon
+// inside written bare at s[i], as repairGemma4ColonTokenValues reads one.
+func gemma4ColonTokenValue(s string, i int) (string, int, bool) {
+	if i >= len(s) || s[i] < '0' || s[i] > '9' {
+		return "", 0, false
+	}
+	end, colons, letters := i, 0, false
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if r == ':' {
+			if end == i || s[end-1] == ':' || s[end-1] == '.' {
+				return "", 0, false
+			}
+			colons++
+		} else if r == '_' || unicode.IsLetter(r) {
+			letters = true
+		} else if !unicode.IsDigit(r) && !(r == '.' && end > i && s[end-1] != ':') {
+			break
+		}
+		end += size
+	}
+	if colons == 0 || !letters || s[end-1] == ':' {
+		return "", 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return "", 0, false
+	}
+	return s[i:end], end, true
+}
+
+// gemma4Fence is the line a value is fenced by where the model wrote a YAML
+// document's start and end for a string's delimiters.
+const gemma4Fence = "---"
+
+// repairGemma4FencedValues reads a value the model wrote between two `---`
+// lines for its delimiters as a string, the text between the two lines, as in
+// call:write{content:---\nEditorID: Name\n---\n,path:<|"|>Name.yaml<|"|>}.
+// Only an even count of delimiters is repaired, and only a value that is all of
+// the lines between the two fences, after an object's key and its colon: the
+// opening `---` and any spaces or tabs end their line, the closing `---` starts
+// one, a `}`, or a `,` and an object's key and its colon, follows it after any
+// whitespace, and the text holds no delimiter. The
+// delimiters are written for the two fences and the line ends beside them.
+// Strings are copied as they are. Where the strings or brackets are unclear,
+// nothing is repaired.
+func repairGemma4FencedValues(s string) string {
+	return repairGemma4Values(s, gemma4FencedValue)
+}
+
+// gemma4FencedValue returns the text and the end of a value fenced by `---`
+// lines at s[i], as repairGemma4FencedValues reads one.
+func gemma4FencedValue(s string, i int) (string, int, bool) {
+	if !strings.HasPrefix(s[i:], gemma4Fence) {
+		return "", 0, false
+	}
+	start := i + len(gemma4Fence)
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	switch {
+	case strings.HasPrefix(s[start:], "\r\n"):
+		start += 2
+	case strings.HasPrefix(s[start:], "\n"):
+		start++
+	default:
+		return "", 0, false
+	}
+
+	for line := start; line < len(s); {
+		if strings.HasPrefix(s[line:], gemma4Fence) {
+			end := line + len(gemma4Fence)
+			next := gemma4SkipSpace(s, end)
+			if next < len(s) && (s[next] == '}' || s[next] == ',' && gemma4KeyFollows(s, next+1)) {
+				text := strings.TrimSuffix(strings.TrimSuffix(s[start:line], "\n"), "\r")
+				if strings.Contains(text, gemma4StringDelimiter) {
+					return "", 0, false
+				}
+				return text, end, true
+			}
+		}
+		newline := strings.IndexByte(s[line:], '\n')
+		if newline == -1 {
+			break
+		}
+		line += newline + 1
+	}
+	return "", 0, false
+}
+
+// gemma4MismatchedFences are what a model wrote at one end of a value's text
+// where the string delimiter goes, the other end having the delimiter: a YAML
+// document's `---`, and a code block's ``` fence.
+var gemma4MismatchedFences = []string{gemma4Fence, "```"}
+
+// repairGemma4MismatchedFences writes the string delimiter for a fence the model
+// wrote at one end of a value whose other end has the delimiter, as in
+// call:write{content:---EditorID: Name\n...<|"|>,path:<|"|>Name.yaml<|"|>} and
+// call:write{content:<|"|>EditorID: Name\n...\n```,path:<|"|>Name.yaml<|"|>}.
+// Only an odd count of delimiters is repaired, and only a value after an
+// object's key and its colon, whose end a `}`, or a `,` and an object's key and
+// its colon, follows after any whitespace: a value opened by a fence runs to
+// the first delimiter, a fence's line end and a ``` fence's language left out
+// of its text; a value opened by the delimiter runs to the last fence before
+// the next delimiter, the line end before that fence left out. One value is
+// repaired, the first one found: the count is even after it. Where no value is
+// so, nothing is repaired.
+func repairGemma4MismatchedFences(s string) string {
+	if strings.Count(s, gemma4StringDelimiter)%2 == 0 {
+		return s
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' && s[i] != ',' {
+			continue
+		}
+		v := gemma4ValueAfterKey(s, i+1)
+		if v == -1 {
+			continue
+		}
+		if repaired, ok := gemma4FenceOpenedValue(s, v); ok {
+			return repaired
+		}
+		if repaired, ok := gemma4FenceClosedValue(s, v); ok {
+			return repaired
+		}
+	}
+	return s
+}
+
+// gemma4ValueEnds reports whether a `}`, or a `,` and an object's key and its
+// colon, follows s[i] after any whitespace: where a value of an object ends.
+func gemma4ValueEnds(s string, i int) bool {
+	next := gemma4SkipSpace(s, i)
+	return next < len(s) && (s[next] == '}' || s[next] == ',' && gemma4KeyFollows(s, next+1))
+}
+
+// gemma4FenceOpenedValue writes the delimiter for the fence a value at s[v]
+// opens with, where the first delimiter after it closes the value.
+func gemma4FenceOpenedValue(s string, v int) (string, bool) {
+	for _, fence := range gemma4MismatchedFences {
+		if !strings.HasPrefix(s[v:], fence) {
+			continue
+		}
+		start := v + len(fence)
+		if fence == "```" {
+			for start < len(s) && (s[start] >= 'a' && s[start] <= 'z' || s[start] >= 'A' && s[start] <= 'Z') {
+				start++
+			}
+		}
+		for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+			start++
+		}
+		if strings.HasPrefix(s[start:], "\r\n") {
+			start += 2
+		} else if strings.HasPrefix(s[start:], "\n") {
+			start++
+		}
+		end := strings.Index(s[start:], gemma4StringDelimiter)
+		if end == -1 {
+			return "", false
+		}
+		end += start
+		if !gemma4ValueEnds(s, end+len(gemma4StringDelimiter)) {
+			return "", false
+		}
+		return s[:v] + gemma4StringDelimiter + s[start:], true
+	}
+	return "", false
+}
+
+// gemma4FenceClosedValue writes the delimiter for the fence a value opened by
+// the delimiter at s[v] closes with: the last fence before the next delimiter
+// whose end the value's end follows.
+func gemma4FenceClosedValue(s string, v int) (string, bool) {
+	if !strings.HasPrefix(s[v:], gemma4StringDelimiter) {
+		return "", false
+	}
+	start := v + len(gemma4StringDelimiter)
+	limit := len(s)
+	if next := strings.Index(s[start:], gemma4StringDelimiter); next != -1 {
+		limit = start + next
+	}
+	best, bestFence := -1, ""
+	for _, fence := range gemma4MismatchedFences {
+		for k := limit; k > start; {
+			at := strings.LastIndex(s[start:k], fence)
+			if at == -1 {
+				break
+			}
+			at += start
+			if gemma4ValueEnds(s, at+len(fence)) {
+				if at > best {
+					best, bestFence = at, fence
+				}
+				break
+			}
+			k = at
+		}
+	}
+	if best == -1 {
+		return "", false
+	}
+	text := s[start:best]
+	if strings.HasSuffix(text, "\n") {
+		text = strings.TrimSuffix(strings.TrimSuffix(text, "\n"), "\r")
+	}
+	return s[:start] + text + gemma4StringDelimiter + s[best+len(bestFence):], true
+}
+
+// repairGemma4Values writes the delimiters around each value that value reads
+// at a value's start, after an object's key and its colon or as a list's item:
+// value returns the value's text and where the value ends. Only an even count of
+// delimiters is repaired; strings are copied as they are, and where the strings
+// or brackets are unclear, nothing is repaired.
+func repairGemma4Values(s string, value func(s string, i int) (string, int, bool)) string {
+	if strings.Count(s, gemma4StringDelimiter)%2 != 0 {
+		return s
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(s) + 4*len(gemma4StringDelimiter))
+	var open []byte
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				return s
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+
+		if s[i] == '"' {
+			// A JSON-quoted string closed by the quote of a delimiter leaves unclear
+			// which text is a string.
+			end := gemma4JSONQuotedStringEnd(s, i)
+			if end == -1 || strings.Contains(s[i:min(end+2, len(s))], gemma4StringDelimiter) {
+				return s
+			}
+			sb.WriteString(s[i:end])
+			i = end
+			continue
+		}
+
+		c := s[i]
+		sb.WriteByte(c)
+		i++
+
+		valueStart := -1
+		switch c {
+		case '{':
+			open = append(open, c)
+			valueStart = gemma4ValueAfterKey(s, i)
+		case '[':
+			open = append(open, c)
+			valueStart = gemma4SkipSpace(s, i)
+		case ',':
+			if len(open) > 0 && open[len(open)-1] == '{' {
+				valueStart = gemma4ValueAfterKey(s, i)
+			} else if len(open) > 0 {
+				valueStart = gemma4SkipSpace(s, i)
+			}
+		case '}', ']':
+			opener := byte('{')
+			if c == ']' {
+				opener = '['
+			}
+			if len(open) == 0 || open[len(open)-1] != opener {
+				return s
+			}
+			open = open[:len(open)-1]
+		}
+		if valueStart == -1 {
+			continue
+		}
+
+		if text, end, ok := value(s, valueStart); ok {
+			sb.WriteString(s[i:valueStart])
+			sb.WriteString(gemma4StringDelimiter)
+			sb.WriteString(text)
+			sb.WriteString(gemma4StringDelimiter)
+			i = end
+		}
+	}
+
+	return sb.String()
+}
+
+// gemma4BareWordValueEnd returns the end of a bare word that is all of a value
+// at s[i], as repairGemma4BareWordValues reads one.
+func gemma4BareWordValueEnd(s string, i int) (int, bool) {
+	end := i
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if !(r == '_' || unicode.IsLetter(r) || (end > i && (r == '.' || unicode.IsDigit(r)))) {
+			break
+		}
+		end += size
+	}
+	if end == i {
+		return 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return 0, false
+	}
+
+	for _, literal := range []string{"true", "false", "null", "none"} {
+		if strings.EqualFold(s[i:end], literal) {
+			return 0, false
+		}
+	}
+	return end, true
+}
+
+// repairGemma4BarePhraseValues reads bare words the model wrote for a value, with
+// spaces between them, as a string, as in
+// call:editRecord{set:[{path:<|"|>Name.Value<|"|>,value:Flame Blade}]}.
+// It reads what repairGemma4BareWordValues reads, and words after the first with
+// spaces or tabs between them, each of letters, digits, `_` and `.`, from a letter,
+// a digit or `_`, all of the value: a `,`, `}` or `]` follows the last after any
+// whitespace. A literal is left as it is only as a word alone. The delimiters are
+// written around the words and the spaces between them. Only an even count of
+// delimiters is repaired; strings are copied as they are, and where the strings or
+// brackets are unclear, nothing is repaired.
+func repairGemma4BarePhraseValues(s string) string {
+	return repairGemma4Values(s, func(s string, i int) (string, int, bool) {
+		end, ok := gemma4BarePhraseValueEnd(s, i)
+		if !ok {
+			return "", 0, false
+		}
+		return s[i:end], end, true
+	})
+}
+
+// gemma4BarePhraseValueEnd returns the end of bare words that are all of a value
+// at s[i], as repairGemma4BarePhraseValues reads them.
+func gemma4BarePhraseValueEnd(s string, i int) (int, bool) {
+	if end, ok := gemma4BareWordValueEnd(s, i); ok {
+		return end, true
+	}
+
+	end := gemma4WordEnd(s, i, false)
+	if end == i {
+		return 0, false
+	}
+	words := 1
+	for {
+		gap := end
+		for gap < len(s) && (s[gap] == ' ' || s[gap] == '\t') {
+			gap++
+		}
+		next := gemma4WordEnd(s, gap, true)
+		if gap == end || next == gap {
+			break
+		}
+		end = next
+		words++
+	}
+	if words == 1 {
+		return 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return 0, false
+	}
+	return end, true
+}
+
+// gemma4WordEnd returns the end of a word at s[i]: letters, digits, `_` and `.`,
+// from a letter or `_`, or from a digit too where digitFirst is set.
+func gemma4WordEnd(s string, i int, digitFirst bool) int {
+	end := i
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if !(r == '_' || unicode.IsLetter(r) || (end > i && r == '.') || ((end > i || digitFirst) && unicode.IsDigit(r))) {
+			break
+		}
+		end += size
+	}
+	return end
+}
+
+// repairGemma4TrailingCommas drops each comma that a `}` or `]` follows after any
+// whitespace, as in call:editRecord{…,remove:[<|"|>Unit<|"|>],set:[],}: JSON has
+// no trailing comma, and such a comma separates nothing. Only an even count of
+// delimiters is repaired; strings are copied as they are, and where the strings
+// are unclear, nothing is repaired.
+func repairGemma4TrailingCommas(s string) string {
+	if strings.Count(s, gemma4StringDelimiter)%2 != 0 {
+		return s
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				return s
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+
+		if s[i] == '"' {
+			end := gemma4JSONQuotedStringEnd(s, i)
+			if end == -1 {
+				return s
+			}
+			sb.WriteString(s[i:end])
+			i = end
+			continue
+		}
+
+		if s[i] == ',' {
+			if next := gemma4SkipSpace(s, i+1); next < len(s) && (s[next] == '}' || s[next] == ']') {
+				i++
+				continue
+			}
+		}
+
+		sb.WriteByte(s[i])
+		i++
+	}
+
 	return sb.String()
 }
 
