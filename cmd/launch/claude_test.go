@@ -376,7 +376,7 @@ func TestClaudeEnvVars(t *testing.T) {
 	}
 }
 
-func TestClaudeRunDisablesClaudeAiConnectors(t *testing.T) {
+func TestClaudeRunRoutesThroughOllama(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell fake binary")
 	}
@@ -387,6 +387,17 @@ func TestClaudeRunDisablesClaudeAiConnectors(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:12345")
 			t.Setenv("ANTHROPIC_API_KEY", "test-api-key")
 			t.Setenv("ANTHROPIC_AUTH_TOKEN", "test-auth-token")
+			t.Setenv("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "0")
+			providerKeys := []string{
+				"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+				"CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", "CLAUDE_CODE_USE_MANTLE",
+				"CLAUDE_CODE_USE_GATEWAY",
+			}
+			for _, key := range providerKeys {
+				t.Setenv(key, "1")
+			}
+			t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "high")
+			t.Setenv("MAX_THINKING_TOKENS", "4096")
 
 			dir := t.TempDir()
 			output := filepath.Join(dir, "env-and-args")
@@ -394,6 +405,7 @@ func TestClaudeRunDisablesClaudeAiConnectors(t *testing.T) {
 			t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
 			script := `#!/bin/sh
 printf '%s\n' "$ENABLE_CLAUDEAI_MCP_SERVERS" "$ANTHROPIC_BASE_URL" "${ANTHROPIC_API_KEY-unset}" "$ANTHROPIC_AUTH_TOKEN" "$@" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+printf '%s\n' "$CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" "$CLAUDE_CODE_USE_BEDROCK" "$CLAUDE_CODE_USE_VERTEX" "$CLAUDE_CODE_USE_FOUNDRY" "$CLAUDE_CODE_USE_ANTHROPIC_AWS" "$CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD" "$CLAUDE_CODE_USE_MANTLE" "$CLAUDE_CODE_USE_GATEWAY" "$CLAUDE_CODE_EFFORT_LEVEL" "$MAX_THINKING_TOKENS" >> "$CLAUDE_LAUNCH_TEST_OUTPUT"
 `
 			if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
 				t.Fatal(err)
@@ -407,12 +419,23 @@ printf '%s\n' "$ENABLE_CLAUDEAI_MCP_SERVERS" "$ANTHROPIC_BASE_URL" "${ANTHROPIC_
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := strings.Join([]string{"false", "http://127.0.0.1:12345", "", "ollama", "--model", model, "--mcp-config", mcpConfig, ""}, "\n")
+			want := strings.Join([]string{
+				"false", "http://127.0.0.1:12345", "", "ollama", "--model", model, "--mcp-config", mcpConfig,
+				"1", "", "", "", "", "", "", "", "high", "4096", "",
+			}, "\n")
 			if string(got) != want {
 				t.Fatalf("child environment and arguments = %q, want %q", got, want)
 			}
 			if got := os.Getenv("ENABLE_CLAUDEAI_MCP_SERVERS"); got != "true" {
 				t.Fatalf("parent ENABLE_CLAUDEAI_MCP_SERVERS = %q, want true", got)
+			}
+			for _, key := range providerKeys {
+				if got := os.Getenv(key); got != "1" {
+					t.Errorf("parent %s = %q, want 1", key, got)
+				}
+			}
+			if got := os.Getenv("ANTHROPIC_API_KEY"); got != "test-api-key" {
+				t.Errorf("parent ANTHROPIC_API_KEY = %q, want test-api-key", got)
 			}
 		})
 	}
