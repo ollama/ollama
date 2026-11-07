@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -235,6 +236,9 @@ type ToolCallFunction struct {
 }
 
 // ToolCallFunctionArguments holds tool call arguments in insertion order.
+// JSON numbers are decoded as json.Number, including in nested objects and arrays,
+// to preserve precision. Use json.Number.Int64 or Float64 for explicit conversion.
+// Values supplied through Set retain their caller-provided types.
 type ToolCallFunctionArguments struct {
 	om *orderedmap.Map[string, any]
 }
@@ -296,8 +300,24 @@ func (t *ToolCallFunctionArguments) String() string {
 }
 
 func (t *ToolCallFunctionArguments) UnmarshalJSON(data []byte) error {
-	t.om = orderedmap.New[string, any]()
-	return json.Unmarshal(data, t.om)
+	// Retain raw values until decoding with UseNumber: the ordered map's default
+	// any decoder converts numbers to float64 before we can preserve them.
+	raw := orderedmap.New[string, json.RawMessage]()
+	if err := json.Unmarshal(data, raw); err != nil {
+		return err
+	}
+	values := orderedmap.New[string, any]()
+	for key, data := range raw.All() {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		values.Set(key, value)
+	}
+	t.om = values
+	return nil
 }
 
 func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
