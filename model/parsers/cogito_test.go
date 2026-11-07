@@ -7,6 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 func TestCogitoParser(t *testing.T) {
@@ -66,8 +67,8 @@ func TestCogitoParser(t *testing.T) {
 			input: `I need to check the weather.</think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
 ` + "```json\n" + `{"location":"Paris"}
 ` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
-			expectedContent:  "I need to check the weather.</think>",
-			expectedThinking: "", // No thinking when tools are present (Cogito-specific behavior)
+			expectedContent:  "",
+			expectedThinking: "I need to check the weather.",
 			expectedToolCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -561,6 +562,73 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 
 			if diff := cmp.Diff(tt.expected, result, argsComparer); diff != "" {
 				t.Errorf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestCogitoToolChoiceThinking(t *testing.T) {
+	// With tools in the request and thinking on, both sides have to agree on
+	// whether the response starts with a reasoning trace. The renderer opens
+	// with <think>\n, so the parser has to be expecting </think> too.
+	tools := []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name: "get_weather",
+			Parameters: api.ToolFunctionParameters{
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"location": {Type: api.PropertyType{"string"}},
+				}),
+			},
+		},
+	}}
+	think := &api.ThinkValue{Value: true}
+	lastMessage := &api.Message{Role: "user", Content: "weather?"}
+
+	prompt, err := renderers.RenderWithRenderer("cogito", []api.Message{*lastMessage}, tools, think)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(prompt, "<think>\n") {
+		t.Fatalf("expected the prompt to open a thinking block, got %q", prompt[len(prompt)-40:])
+	}
+
+	tests := []struct {
+		name             string
+		input            string
+		expectedContent  string
+		expectedThinking string
+	}{
+		{
+			name:             "thinking then content",
+			input:            "I need to check the weather.</think>It is sunny.",
+			expectedContent:  "It is sunny.",
+			expectedThinking: "I need to check the weather.",
+		},
+		{
+			name: "thinking then tool call",
+			input: `I need to check the weather.</think><｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
+` + "```json\n" + `{"location":"Paris"}
+` + "```" + `<｜tool▁call▁end｜><｜tool▁calls▁end｜>`,
+			expectedContent:  "",
+			expectedThinking: "I need to check the weather.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &CogitoParser{}
+			parser.Init(tools, lastMessage, think)
+
+			content, thinking, _, err := parser.Add(tt.input, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if content != tt.expectedContent {
+				t.Errorf("content: want %q, got %q", tt.expectedContent, content)
+			}
+			if thinking != tt.expectedThinking {
+				t.Errorf("thinking: want %q, got %q", tt.expectedThinking, thinking)
 			}
 		})
 	}

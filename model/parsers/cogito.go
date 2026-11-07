@@ -73,8 +73,6 @@ func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Too
 
 	// Check both model capability AND request preference
 	thinkingEnabled := thinkValue != nil && thinkValue.Bool()
-	// thinkingEnabled should be set to false for tools
-
 	if !thinkingEnabled {
 		p.state = CogitoCollectingContent
 		return
@@ -85,17 +83,12 @@ func (p *CogitoParser) setInitialState(lastMessage *api.Message, tools []api.Too
 		return
 	}
 
-	// Note: for cogito, if there are tools, then we don't want to be thinking
-	if len(tools) > 0 {
-		p.state = CogitoCollectingContent
-		return
-	}
-
 	p.state = CogitoCollectingThinking
 }
 
 func (p *CogitoParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.callIndex = 0
+	p.state = CogitoCollectingContent
 	p.setInitialState(lastMessage, tools, thinkValue)
 	return tools
 }
