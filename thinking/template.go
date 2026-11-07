@@ -14,6 +14,10 @@ func TemplateSupportsThinking(chatTemplate string) bool {
 	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
 		return true
 	}
+	// harmony templates (gpt-oss and derivatives such as LLM-jp-4) render reasoning in the analysis channel
+	if strings.Contains(chatTemplate, "<|channel|>analysis<|message|>") {
+		return true
+	}
 
 	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
 		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
