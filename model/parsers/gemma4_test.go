@@ -1501,3 +1501,77 @@ func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
 		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestGemma4ParserDropsUnmatchedThinkingCloseTag(t *testing.T) {
+	// A thinking close tag can reach the content state with no open tag before
+	// it: the model emits one spuriously, or it closes a block the rendered
+	// prompt primed. <channel|> is a PreservedTokens control token, so it is
+	// never assistant text -- it must not be shown to the user.
+	t.Run("whole", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+
+		content, thinking, calls, err := p.Add("I have analyzed the syntax error.\n\n<channel|>", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(content, gemma4ThinkingCloseTag) {
+			t.Errorf("content leaked the close tag: %q", content)
+		}
+		if content != "I have analyzed the syntax error." {
+			t.Errorf("content = %q, want the visible text with the tag removed", content)
+		}
+		if thinking != "" {
+			t.Errorf("thinking = %q, want empty", thinking)
+		}
+		if len(calls) != 0 {
+			t.Errorf("calls = %v, want none", calls)
+		}
+	})
+
+	// The tokenizer can split the tag across streamed chunks. The content state
+	// has to hold back a partial close tag the same way it holds back a partial
+	// open tag, or the halves are emitted before they can be matched.
+	t.Run("split across chunks", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+
+		var got strings.Builder
+		for _, chunk := range []string{"done.", "<chan", "nel", "|>"} {
+			content, _, _, err := p.Add(chunk, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got.WriteString(content)
+		}
+		content, _, _, err := p.Add("", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got.WriteString(content)
+
+		if strings.Contains(got.String(), gemma4ThinkingCloseTag) {
+			t.Errorf("content leaked the close tag: %q", got.String())
+		}
+		if got.String() != "done." {
+			t.Errorf("content = %q, want %q", got.String(), "done.")
+		}
+	})
+
+	// A properly opened block must still be collected as thinking.
+	t.Run("matched block still parses", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+
+		content, thinking, _, err := p.Add("<|channel>thought\nweighing it\n<channel|>the answer", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "weighing it" {
+			t.Errorf("thinking = %q, want %q", thinking, "weighing it")
+		}
+		if content != "the answer" {
+			t.Errorf("content = %q, want %q", content, "the answer")
+		}
+	})
+}
