@@ -64,6 +64,9 @@ func (m *Model) Thinking() *model.Thinking {
 	if m == nil || m.Config.RemoteHost != "" {
 		return nil
 	}
+	if m.Config.CapabilitiesExplicit && !slices.Contains(m.Capabilities(), model.CapabilityThinking) {
+		return &model.Thinking{Values: []any{false}, Default: false}
+	}
 	if shouldUseHarmony(m) {
 		return renderers.ThinkingForRenderer("harmony")
 	}

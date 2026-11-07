@@ -167,11 +167,13 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-// publicCapabilities limits decision models to decision and the vision and
-// audio they declare or ship a projector for, not media inherited from a base
-// model. Serving still uses Capabilities.
+// publicCapabilities hides inferred capabilities for legacy decision models.
+// Explicit declarations are shared by discovery and serving.
 func (m *Model) publicCapabilities() []model.Capability {
 	capabilities := m.Capabilities()
+	if m.Config.CapabilitiesExplicit {
+		return capabilities
+	}
 	if slices.Contains(capabilities, model.CapabilityDecision) {
 		public := []model.Capability{model.CapabilityDecision}
 		if slices.Contains(m.Config.Capabilities, "vision") || len(m.ProjectorPaths) > 0 {
@@ -190,6 +192,9 @@ func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model
 	var modelArch string
 
 	capabilities = m.configCapabilities(capabilities)
+	if m.Config.CapabilitiesExplicit {
+		return m.filterUnsupportedCapabilities(capabilities, m.metadata.String("general.architecture"))
+	}
 	capabilities, modelArch = m.ggufCapabilities(capabilities, source)
 	capabilities = m.projectorCapabilities(capabilities)
 	capabilities = m.templateCapabilities(capabilities, source)
@@ -509,7 +514,7 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 }
 
 func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
-	if m.metadata.String("decision.type") != "" {
+	if !m.Config.CapabilitiesExplicit && m.metadata.String("decision.type") != "" {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
 				c == model.CapabilityTools || c == model.CapabilityThinking
@@ -697,10 +702,15 @@ func (m *Model) String() string {
 			Args: m.Config.Parser,
 		})
 	}
-	for _, capability := range m.Config.Capabilities {
+	capabilities := m.configCapabilities(nil)
+	if len(capabilities) > 0 && !m.Config.CapabilitiesExplicit {
+		// Recreating this Modelfile makes its declarations authoritative.
+		capabilities = m.publicCapabilities()
+	}
+	for _, capability := range capabilities {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "capability",
-			Args: capability,
+			Args: string(capability),
 		})
 	}
 
