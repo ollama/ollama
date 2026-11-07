@@ -176,6 +176,11 @@ func (m *Metadata) HeadCountMax() uint64 {
 	return maximum
 }
 
+func (m *Metadata) HeadCountMin() uint64 {
+	minimum, _ := m.uintRange("attention.head_count", 1)
+	return minimum
+}
+
 func (m *Metadata) HeadCountKVMin() uint64 {
 	minimum, _ := m.uintRange("attention.head_count_kv", 1)
 	return minimum
