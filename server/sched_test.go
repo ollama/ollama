@@ -2107,8 +2107,13 @@ func TestSchedRuntimeOOMExpiresLoadedRunners(t *testing.T) {
 
 	s.expireRunnersForRuntimeOOM(currentModel, errors.New("cudaMalloc failed: out of memory"))
 
-	require.Equal(t, time.Duration(0), current.sessionDuration)
-	require.Equal(t, time.Duration(0), other.sessionDuration)
+	// The keep-alive each runner was loaded with is left alone; the eviction
+	// itself is recorded as runner state so a request that lands before the
+	// unload cannot revive the runner.
+	require.Equal(t, time.Hour, current.sessionDuration)
+	require.Equal(t, time.Hour, other.sessionDuration)
+	require.Equal(t, runnerStateEvictRequested, current.state)
+	require.Equal(t, runnerStateEvictRequested, other.state)
 	require.Len(t, s.expiredCh, 2)
 }
 
@@ -2301,4 +2306,162 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
+}
+
+// runnerSnapshotLocked-free view of the fields the eviction state machine owns.
+func evictionStateOf(r *runnerRef) (uint, runnerState, time.Duration) {
+	r.refMu.Lock()
+	defer r.refMu.Unlock()
+	return r.refCount, r.state, r.sessionDuration
+}
+
+func newEvictionTestScheduler(t *testing.T, ctx context.Context) (*Scheduler, *reqBundle, *reqBundle) {
+	t.Helper()
+
+	resident := newScenarioRequest(t, ctx, "resident", 1*format.GigaByte, &api.Duration{Duration: time.Hour},
+		map[ml.DeviceID]uint64{{Library: "Metal"}: 1 * format.GigaByte})
+	queued := newScenarioRequest(t, ctx, "queued", 1*format.GigaByte, &api.Duration{Duration: time.Hour},
+		map[ml.DeviceID]uint64{{Library: "Metal"}: 1 * format.GigaByte})
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+	s.newServerFn = func(_ ml.SystemInfo, _ []ml.DeviceInfo, model string, _ *gguf.Model, _ []string, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		switch model {
+		case resident.req.model.ModelPath:
+			resident.srv.modelPath = model
+			return resident.srv, nil
+		case queued.req.model.ModelPath:
+			queued.srv.modelPath = model
+			return queued.srv, nil
+		default:
+			return nil, errors.New("unexpected model path " + model)
+		}
+	}
+	s.Run(ctx)
+	return s, resident, queued
+}
+
+// TestSchedKeepAliveDoesNotCancelEviction is the regression test for the
+// lost-eviction stall: with a single model slot, a request for a non-resident
+// model claims the resident runner and waits for it to go idle. A request for
+// the resident model that arrives during that wait and carries a keep_alive
+// used to overwrite the runner's session duration, so when the runner finally
+// went idle it armed a keep-alive timer instead of unloading -- stalling the
+// queued request for the whole keep_alive.
+func TestSchedKeepAliveDoesNotCancelEviction(t *testing.T) {
+	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "1")
+	ctx, done := context.WithTimeout(t.Context(), 5*time.Second)
+	defer done()
+
+	s, resident, queued := newEvictionTestScheduler(t, ctx)
+
+	// the resident model is loaded with a long generation in flight
+	residentCh, residentErrCh := s.getRunner(resident.ctx, resident.req.model, resident.req.opts, resident.req.sessionDuration, false, false, nil)
+	var residentRunner *runnerRef
+	select {
+	case residentRunner = <-residentCh:
+	case err := <-residentErrCh:
+		t.Fatalf("loading resident model: %v", err)
+	case <-ctx.Done():
+		t.Fatal("timeout loading resident model")
+	}
+	require.Equal(t, uint(1), mustRefCount(residentRunner))
+
+	// a request for a different model needs the only slot, so the scheduler
+	// claims the resident runner and waits for it to go idle
+	s.pendingReqCh <- queued.req
+	require.Eventually(t, func() bool {
+		_, state, _ := evictionStateOf(residentRunner)
+		return state == runnerStateEvictRequested
+	}, 2*time.Second, 5*time.Millisecond, "scheduler never claimed the resident runner for eviction")
+
+	// a request for the resident model arrives while the eviction is pending and
+	// asks for its own keep_alive. It must be served, and must not buy the
+	// runner a reprieve.
+	pingCtx, cancelPing := context.WithCancel(ctx)
+	defer cancelPing()
+	pingCh, pingErrCh := s.getRunner(pingCtx, resident.req.model, api.DefaultOptions(), &api.Duration{Duration: time.Minute}, false, false, nil)
+	select {
+	case got := <-pingCh:
+		require.Same(t, residentRunner, got)
+	case err := <-pingErrCh:
+		t.Fatalf("resident model request while eviction pending: %v", err)
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for resident model request")
+	}
+	_, state, duration := evictionStateOf(residentRunner)
+	require.Equal(t, runnerStateEvictRequested, state, "keep_alive must not clear a pending eviction")
+	require.Equal(t, time.Hour, duration, "keep_alive must not overwrite the evicted runner's session duration")
+
+	// /api/ps has to be able to tell the resident model is on its way out
+	models := s.loadedModels()
+	require.Len(t, models, 1)
+	require.True(t, models[0].evicting, "loadedModels must report the pending eviction")
+
+	// drain both resident requests; the runner must unload immediately and the
+	// queued model must load, not in one minute
+	resident.ctxDone()
+	cancelPing()
+	select {
+	case got := <-queued.req.successCh:
+		require.Equal(t, queued.srv, got.llama)
+	case err := <-queued.req.errCh:
+		t.Fatalf("loading queued model: %v", err)
+	case <-ctx.Done():
+		t.Fatal("queued request stalled: keep_alive cancelled the pending eviction")
+	}
+
+	s.loadedMu.Lock()
+	_, stillLoaded := s.loaded[residentRunner.modelKey]
+	s.loadedMu.Unlock()
+	require.False(t, stillLoaded, "evicted runner is still registered as loaded")
+}
+
+// TestSchedEvictionCancelledWhenWaiterLeaves covers the inverse: once nobody is
+// waiting for the slot, the claim is dropped and the runner keeps its normal
+// keep_alive instead of being unloaded the moment it goes idle.
+func TestSchedEvictionCancelledWhenWaiterLeaves(t *testing.T) {
+	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "1")
+	ctx, done := context.WithTimeout(t.Context(), 5*time.Second)
+	defer done()
+
+	s, resident, queued := newEvictionTestScheduler(t, ctx)
+
+	residentCh, residentErrCh := s.getRunner(resident.ctx, resident.req.model, resident.req.opts, resident.req.sessionDuration, false, false, nil)
+	var residentRunner *runnerRef
+	select {
+	case residentRunner = <-residentCh:
+	case err := <-residentErrCh:
+		t.Fatalf("loading resident model: %v", err)
+	case <-ctx.Done():
+		t.Fatal("timeout loading resident model")
+	}
+
+	s.pendingReqCh <- queued.req
+	require.Eventually(t, func() bool {
+		_, state, _ := evictionStateOf(residentRunner)
+		return state == runnerStateEvictRequested
+	}, 2*time.Second, 5*time.Millisecond, "scheduler never claimed the resident runner for eviction")
+
+	// the queued request gives up while the resident generation is still in
+	// flight, so the claim is released rather than committed
+	queued.ctxDone()
+	require.Eventually(t, func() bool {
+		_, state, _ := evictionStateOf(residentRunner)
+		return state == runnerStateLoaded
+	}, 2*time.Second, 5*time.Millisecond, "eviction claim was not released when the waiter left")
+
+	resident.ctxDone()
+
+	s.loadedMu.Lock()
+	_, stillLoaded := s.loaded[residentRunner.modelKey]
+	s.loadedMu.Unlock()
+	require.True(t, stillLoaded, "resident runner should stay loaded with its hour-long keep_alive")
+}
+
+func mustRefCount(r *runnerRef) uint {
+	count, _, _ := evictionStateOf(r)
+	return count
 }
