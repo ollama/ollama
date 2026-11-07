@@ -3090,3 +3090,64 @@ func containsString(values []string, target string) bool {
 	}
 	return false
 }
+
+func TestAnthropicMessagesMiddleware_DeferredToolLoad(t *testing.T) {
+	body := `{
+		"model": "test-model",
+		"max_tokens": 1024,
+		"tools": [
+			{"name": "Bash", "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}}},
+			{"name": "Monitor", "description": "Watch a process", "input_schema": {"type": "object", "properties": {"timeout_ms": {"type": "number"}}}, "defer_loading": true},
+			{"name": "ToolSearch", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
+			{"name": "DeferredToolPlaceholder", "description": "never call this tool", "input_schema": {"type": "object", "properties": {}}, "defer_loading": true}
+		],
+		"messages": [
+			{"role": "user", "content": "watch the build"},
+			{"role": "assistant", "content": [{"type": "tool_use", "id": "call_1", "name": "ToolSearch", "input": {"query": "select:Monitor"}}]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "tool_use_id": "call_1", "content": [{"type": "tool_reference", "tool_name": "Monitor"}]},
+				{"type": "text", "text": "Tool loaded."}
+			]}
+		]
+	}`
+
+	var captured *api.ChatRequest
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware(), captureAnthropicRequest(&captured))
+	router.Handle(http.MethodPost, "/v1/messages", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("unexpected status %d: %s", resp.Code, resp.Body.String())
+	}
+	if captured == nil {
+		t.Fatal("request was not captured")
+	}
+
+	var names []string
+	for _, tool := range captured.Tools {
+		names = append(names, tool.Function.Name)
+	}
+	if diff := cmp.Diff([]string{"Bash", "Monitor", "ToolSearch"}, names); diff != "" {
+		t.Errorf("declared tools mismatch (-want +got):\n%s", diff)
+	}
+
+	want := `[{"type":"function","name":"Monitor","description":"Watch a process","parameters":{"type":"object","properties":{"timeout_ms":{"type":"number"}}}}]`
+	var found bool
+	for _, m := range captured.Messages {
+		if m.Role == "tool" && m.ToolCallID == "call_1" {
+			found = true
+			if m.Content != want {
+				t.Errorf("tool result content mismatch\nwant %s\ngot  %s", want, m.Content)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no ToolSearch result in %+v", captured.Messages)
+	}
+}

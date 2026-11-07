@@ -293,7 +293,7 @@ See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [di
   - [x] Image `content` (base64)
   - [x] Array of content blocks
   - [x] `tool_use` blocks
-  - [x] `tool_result` blocks
+  - [x] `tool_result` blocks (including `tool_reference` blocks from client-side tool search)
   - [x] `thinking` blocks
 - [x] `system` (string or array)
 - [x] `stream`
@@ -302,6 +302,7 @@ See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [di
 - [x] `top_k`
 - [x] `stop_sequences`
 - [x] `tools`
+  - [x] `defer_loading` (a deferred tool is offered to the model only after a `tool_reference` loads it)
 - [x] `thinking`
 - [x] `output_config`
   - [x] `effort` (model-defined names)
