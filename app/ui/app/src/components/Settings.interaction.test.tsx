@@ -11,9 +11,11 @@ const mocks = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   updateCloudSetting: vi.fn(),
   setShowAppsInMenu: vi.fn(),
+  setMenuBarIconVisible: vi.fn(),
   refetchUser: vi.fn(),
   disconnectUser: vi.fn(),
   isWindows: false,
+  isDarwin: false,
   queryClient: {
     cancelQueries: vi.fn().mockResolvedValue(undefined),
     getQueryData: vi.fn(),
@@ -73,6 +75,7 @@ vi.mock("@/hooks/useCloudStatus", () => ({
 
 vi.mock("@/lib/platform", () => ({
   isWindowsPlatform: () => mocks.isWindows,
+  isDarwinPlatform: () => mocks.isDarwin,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -163,6 +166,7 @@ describe("Settings reset interactions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isWindows = false;
+    mocks.isDarwin = false;
     mocks.settings = new SettingsType({ ContextLength: 65_536 });
     mocks.updateSettings.mockResolvedValue({ settings: mocks.settings });
     mocks.updateCloudSetting.mockResolvedValue({
@@ -170,6 +174,7 @@ describe("Settings reset interactions", () => {
       source: "none",
     });
     mocks.setShowAppsInMenu.mockResolvedValue(undefined);
+    mocks.setMenuBarIconVisible.mockResolvedValue(undefined);
     mocks.resetChatGPTModels.mockResolvedValue(true);
     mocks.disconnectUser.mockResolvedValue(undefined);
 
@@ -180,6 +185,7 @@ describe("Settings reset interactions", () => {
       clearTimeout: globalThis.clearTimeout.bind(globalThis),
       getShowAppsInMenu: vi.fn().mockResolvedValue(true),
       setShowAppsInMenu: mocks.setShowAppsInMenu,
+      setMenuBarIconVisible: mocks.setMenuBarIconVisible,
       open: vi.fn(),
       confirm: vi.fn(() => true),
       location: { reload: vi.fn() },
@@ -265,6 +271,42 @@ describe("Settings reset interactions", () => {
 
       expect(mocks.resetClaudeMappings).not.toHaveBeenCalled();
       expect(mocks.resetChatGPTModels).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("applies the saved menu bar visibility immediately on macOS", async () => {
+    mocks.isDarwin = true;
+    mocks.settings = new SettingsType({
+      ContextLength: 65_536,
+      ShowMenuBarIcon: true,
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+
+      const switchControl = renderer!.root.findByProps({
+        "aria-label": "Show menu bar icon",
+      });
+      await act(async () => {
+        switchControl.props.onChange(false);
+        await vi.waitFor(() =>
+          expect(mocks.setMenuBarIconVisible).toHaveBeenCalledWith(false),
+        );
+      });
+
+      expect(mocks.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ ShowMenuBarIcon: false }),
+      );
     } finally {
       await act(async () => {
         renderer?.unmount();

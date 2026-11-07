@@ -98,6 +98,29 @@ func TestSchemaMigrations(t *testing.T) {
 	})
 }
 
+func TestMigrateV19ToV20DefaultsMenuBarIconEnabled(t *testing.T) {
+	db, err := newDatabase(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.conn.Exec(`ALTER TABLE settings DROP COLUMN show_menu_bar_icon; UPDATE settings SET schema_version = 19`); err != nil {
+		t.Fatalf("prepare v19 database: %v", err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migrate v19 database: %v", err)
+	}
+
+	var visible bool
+	if err := db.conn.QueryRow(`SELECT show_menu_bar_icon FROM settings`).Scan(&visible); err != nil {
+		t.Fatal(err)
+	}
+	if !visible {
+		t.Fatal("expected existing installation to keep the menu bar icon enabled")
+	}
+}
+
 func TestMigrationV13ToV14ContextLength(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
