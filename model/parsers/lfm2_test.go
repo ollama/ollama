@@ -1,12 +1,145 @@
 package parsers
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestLFM2Parser_ToolCallChunkBoundaries(t *testing.T) {
+	const toolCall = `<|tool_call_start|>[get_weather(location="Paris")]<|tool_call_end|>`
+	call := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name:      "get_weather",
+			Arguments: testArgs(map[string]any{"location": "Paris"}),
+		},
+	}
+	secondCall := call
+	secondCall.Function.Index = 1
+
+	type result struct {
+		Content  string
+		Thinking string
+		Calls    []api.ToolCall
+	}
+	tests := []struct {
+		name  string
+		input string
+		want  result
+	}{
+		{name: "tool_only", input: toolCall, want: result{Calls: []api.ToolCall{call}}},
+		{name: "content_before_tool", input: "Checking Paris." + toolCall, want: result{Content: "Checking Paris.", Calls: []api.ToolCall{call}}},
+		{name: "unicode_before_tool", input: "Vérifions 🌍." + toolCall, want: result{Content: "Vérifions 🌍.", Calls: []api.ToolCall{call}}},
+		{name: "consecutive_tools", input: toolCall + toolCall, want: result{Calls: []api.ToolCall{call, secondCall}}},
+		{name: "content_between_tools", input: toolCall + "Checking again." + toolCall, want: result{Content: "Checking again.", Calls: []api.ToolCall{call, secondCall}}},
+		{name: "content_after_tool", input: toolCall + "Done.", want: result{Content: "Done.", Calls: []api.ToolCall{call}}},
+		{name: "ordinary_text", input: "Use <html> or compare 1 < 2.\n", want: result{Content: "Use <html> or compare 1 < 2.\n"}},
+		{name: "nonmatching_tag", input: "Example: <|tool_call_started|>", want: result{Content: "Example: <|tool_call_started|>"}},
+		{name: "truncated_tag", input: "Example: <|tool_call_sta", want: result{Content: "Example: <|tool_call_sta"}},
+	}
+	for _, mode := range []struct {
+		name            string
+		thinkingEnabled bool
+		thinkingBlock   bool
+	}{
+		{name: "thinking_disabled"},
+		{name: "direct_answer", thinkingEnabled: true},
+		{name: "thinking_block", thinkingEnabled: true, thinkingBlock: true},
+	} {
+		for _, tt := range tests {
+			t.Run(mode.name+"/"+tt.name, func(t *testing.T) {
+				input, want := tt.input, tt.want
+				if mode.thinkingBlock {
+					input = "<think>Check the weather.</think>" + input
+					want.Thinking = "Check the weather."
+				}
+				parse := func(chunks []string, finalEmptyChunk bool) result {
+					t.Helper()
+					p := &LFM2Parser{hasThinkingSupport: true}
+					p.Init([]api.Tool{{Type: "function", Function: api.ToolFunction{Name: "get_weather"}}}, nil, &api.ThinkValue{Value: mode.thinkingEnabled})
+					if finalEmptyChunk {
+						chunks = append(chunks, "")
+					}
+					var got result
+					for i, chunk := range chunks {
+						content, thought, calls, err := p.Add(chunk, i == len(chunks)-1)
+						if err != nil {
+							t.Fatalf("Add() error = %v", err)
+						}
+						got.Content += content
+						got.Thinking += thought
+						got.Calls = append(got.Calls, calls...)
+					}
+					return got
+				}
+				for _, finalEmptyChunk := range []bool{false, true} {
+					t.Run(fmt.Sprintf("empty_final_chunk_%t", finalEmptyChunk), func(t *testing.T) {
+						whole := parse([]string{input}, finalEmptyChunk)
+						if diff := cmp.Diff(want, whole, argsComparer); diff != "" {
+							t.Fatalf("whole response mismatch (-want +got):\n%s", diff)
+						}
+						for i := range input {
+							if i == 0 {
+								continue
+							}
+							t.Run(fmt.Sprintf("split_%d", i), func(t *testing.T) {
+								got := parse([]string{input[:i], input[i:]}, finalEmptyChunk)
+								if diff := cmp.Diff(whole, got, argsComparer); diff != "" {
+									t.Errorf("chunked response mismatch (-want +got):\n%s", diff)
+								}
+							})
+						}
+						t.Run("one_rune_per_chunk", func(t *testing.T) {
+							got := parse(strings.Split(input, ""), finalEmptyChunk)
+							if diff := cmp.Diff(whole, got, argsComparer); diff != "" {
+								t.Errorf("chunked response mismatch (-want +got):\n%s", diff)
+							}
+						})
+					})
+				}
+			})
+		}
+	}
+}
+
+func TestLFM2Parser_PartialToolCallStart(t *testing.T) {
+	for _, thinking := range []bool{false, true} {
+		for i := 1; i < len(lfm2ToolCallStartTag); i++ {
+			t.Run(fmt.Sprintf("thinking_%t/prefix_%d", thinking, i), func(t *testing.T) {
+				completion := lfm2ToolCallStartTag[i:] + `[get_weather()]` + lfm2ToolCallEndTag
+				for _, suffix := range []string{"", "x", completion} {
+					p := &LFM2Parser{hasThinkingSupport: thinking}
+					p.Init(nil, nil, &api.ThinkValue{Value: thinking})
+					prefix := lfm2ToolCallStartTag[:i]
+					content, thought, calls, err := p.Add("Example: \n\t"+prefix, false)
+					if err != nil || thought != "" || len(calls) != 0 || content != "Example:" {
+						t.Fatalf("partial tag: got (%q, %q, %v, %v)", content, thought, calls, err)
+					}
+					// A final chunk flushes a truncated opener. A mismatch releases it
+					// immediately, without waiting for the end of the response.
+					content, thought, calls, err = p.Add(suffix, suffix == "")
+					if suffix == completion {
+						if err != nil || thought != "" || content != "" {
+							t.Fatalf("completed tag: got (%q, %q, %v, %v)", content, thought, calls, err)
+						}
+						wantCalls := []api.ToolCall{{Function: api.ToolCallFunction{Name: "get_weather", Arguments: api.NewToolCallFunctionArguments()}}}
+						if diff := cmp.Diff(wantCalls, calls, argsComparer); diff != "" {
+							t.Fatalf("completed tag calls mismatch (-want +got):\n%s", diff)
+						}
+						continue
+					}
+					if want := " \n\t" + prefix + suffix; err != nil || thought != "" || len(calls) != 0 || content != want {
+						t.Fatalf("released prefix: want %q, got (%q, %q, %v, %v)", want, content, thought, calls, err)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestLFM2Parser(t *testing.T) {
 	tests := []struct {
