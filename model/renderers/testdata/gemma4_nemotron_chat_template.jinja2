@@ -375,7 +375,6 @@
             {%- if not (role == 'model' and message.get('tool_calls')) -%}
                 {{- captured_content -}}
             {%- endif -%}
-            {%- set has_content = captured_content | trim | length > 0 -%}
 
         {#- Forward-scan: find next non-tool message role for continuation detection -#}
         {%- set next_nt = namespace(role=None, found=false) -%}
@@ -397,7 +396,7 @@
         {%- if ns.prev_message_type == 'tool_call' and not ns_tr_out.flag -%}
             {{- '<|tool_response>' -}}
         {%- elif continues_into_next -%}
-        {%- elif not (ns_tr_out.flag and not has_content and not next_nt.found) -%}
+        {%- elif not (ns_tr_out.flag and not next_nt.found) -%}
             {{- '<turn|>\n' -}}
         {%- endif -%}
 
