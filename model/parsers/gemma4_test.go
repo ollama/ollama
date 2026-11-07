@@ -1519,9 +1519,102 @@ func TestGemma4ParserDropsUnmatchedThinkingCloseTag(t *testing.T) {
 		}
 	})
 
-// Note: split-across-chunks not tested here because the overlap logic handles partial
-	// tag prefixes by holding back just those characters (e.g., keeping "<" after emitting "done."),
-	// which works correctly for stream continuation but differs from the expected "whole" test form.
+	t.Run("before_tool_call", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, nil)
+
+		input := `Done.<channel|><|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|>`
+		content, thinking, calls, err := p.Add(input, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if diff := cmp.Diff("Done.", content); diff != "" {
+			t.Errorf("content mismatch (-want +got):\n%s", diff)
+		}
+		if thinking != "" {
+			t.Errorf("unexpected thinking: %q", thinking)
+		}
+		want := []api.ToolCall{
+			{
+				Function: api.ToolCallFunction{
+					Name:      "get_weather",
+					Arguments: testArgs(map[string]any{"location": "Paris"}),
+				},
+			},
+		}
+		if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+			t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("before_thinking_open", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, &api.ThinkValue{Value: true})
+
+		input := "Done.<channel|><|channel>thought\nLet me think about this...<channel|>The answer is 42."
+		content, thinking, calls, err := p.Add(input, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if diff := cmp.Diff("Done.The answer is 42.", content); diff != "" {
+			t.Errorf("content mismatch (-want +got):\n%s", diff)
+		}
+		if diff := cmp.Diff("Let me think about this...", thinking); diff != "" {
+			t.Errorf("thinking mismatch (-want +got):\n%s", diff)
+		}
+		if len(calls) != 0 {
+			t.Errorf("unexpected tool calls: %v", calls)
+		}
+	})
+
+	t.Run("repeated_before_tool_call", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, nil)
+
+		input := `Done.<channel|><channel|><|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|>`
+		content, _, calls, err := p.Add(input, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if diff := cmp.Diff("Done.", content); diff != "" {
+			t.Errorf("content mismatch (-want +got):\n%s", diff)
+		}
+		if len(calls) != 1 {
+			t.Fatalf("expected 1 tool call, got %d: %v", len(calls), calls)
+		}
+	})
+
+	t.Run("streamed_before_tool_call", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, nil)
+
+		chunks := []string{
+			"Done.<chan",
+			"nel|><|tool_call>call:get_",
+			`weather{location:<|"|>Paris<|"|>}<tool_call|>`,
+		}
+
+		var content strings.Builder
+		var calls []api.ToolCall
+		for i, chunk := range chunks {
+			c, _, tc, err := p.Add(chunk, i == len(chunks)-1)
+			if err != nil {
+				t.Fatalf("unexpected error on chunk %d: %v", i, err)
+			}
+			content.WriteString(c)
+			calls = append(calls, tc...)
+		}
+
+		if diff := cmp.Diff("Done.", content.String()); diff != "" {
+			t.Errorf("content mismatch (-want +got):\n%s", diff)
+		}
+		if len(calls) != 1 || calls[0].Function.Name != "get_weather" {
+			t.Errorf("expected one get_weather call, got %v", calls)
+		}
+	})
 
 	t.Run("proper_block_still_works", func(t *testing.T) {
 		p := &Gemma4Parser{hasThinkingSupport: true}
@@ -1529,7 +1622,6 @@ func TestGemma4ParserDropsUnmatchedThinkingCloseTag(t *testing.T) {
 
 		input := "<|channel>thought\nLet me think about this...<channel|>The answer is 42."
 		content, thinking, calls, err := p.Add(input, true)
-
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

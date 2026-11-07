@@ -185,9 +185,14 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 	switch p.state {
 	case Gemma4CollectingContent:
+		// A <channel|> reached in this state is always unmatched: a real thinking
+		// block would have switched us to Gemma4CollectingThinking. So it is
+		// dropped from the content ahead of whichever tag dispatches first, not
+		// only when it is the sole tag in the buffer (issue #18288).
+
 		// Check for thinking open tag
 		if idx := strings.Index(bufStr, gemma4ThinkingOpenTag); idx != -1 {
-			contentBefore := bufStr[:idx]
+			contentBefore := strings.ReplaceAll(bufStr[:idx], gemma4ThinkingCloseTag, "")
 			remaining := bufStr[idx+len(gemma4ThinkingOpenTag):]
 
 			p.buffer.Reset()
@@ -203,7 +208,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 		// Check for tool call open tag
 		if idx := strings.Index(bufStr, gemma4ToolCallOpenTag); idx != -1 {
-			contentBefore := bufStr[:idx]
+			contentBefore := strings.ReplaceAll(bufStr[:idx], gemma4ThinkingCloseTag, "")
 			remaining := bufStr[idx+len(gemma4ToolCallOpenTag):]
 
 			p.buffer.Reset()
