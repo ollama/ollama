@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,6 +54,11 @@ func codexAppRestoreFixtureFiles(t *testing.T, configPath string) map[string]str
 		if err != nil || entry.IsDir() {
 			return err
 		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			files[strings.TrimPrefix(path, home)] = "symlink:" + target
+			return err
+		}
 		data, err := os.ReadFile(path)
 		files[strings.TrimPrefix(path, home)] = string(data)
 		return err
@@ -74,9 +80,9 @@ func TestLaunchCmdChatGPTRestoreConfirmsBeforeChanges(t *testing.T) {
 				func() error { t.Error("quit before consent"); return nil },
 				func() error { t.Error("open after declining restore"); return nil },
 			)
-			codexAppCanOpenID = func() bool { return true }
+			codexAppCanOpenID = func(context.Context) bool { return true }
 			oldProfileRunning, oldStopProfile := codexAppProfileIsRunning, codexAppStopProfile
-			codexAppProfileIsRunning = func() bool { return mode == "legacy decline" }
+			codexAppProfileIsRunning = func(context.Context) (bool, error) { return mode == "legacy decline", nil }
 			codexAppStopProfile = func(context.Context) error { t.Error("legacy quit before consent"); return nil }
 			t.Cleanup(func() {
 				codexAppProfileIsRunning, codexAppStopProfile = oldProfileRunning, oldStopProfile
@@ -163,7 +169,7 @@ func TestCodexAppCLIRestorePreservesSettingsAndHistory(t *testing.T) {
 				},
 				reopen,
 			)
-			codexAppCanOpenID = func() bool { return true }
+			codexAppCanOpenID = func(context.Context) bool { return true }
 			oldSleep := codexAppSleep
 			codexAppSleep = func(time.Duration) {
 				if !quitRequested {
@@ -178,7 +184,7 @@ func TestCodexAppCLIRestorePreservesSettingsAndHistory(t *testing.T) {
 			t.Cleanup(func() { codexAppSleep = oldSleep })
 			if mode == "windows running" {
 				withCodexAppPlatform(t, "windows")
-				codexAppStartID = func() string { return "fixture.ChatGPT!App" }
+				codexAppStartID = func(context.Context) string { return "fixture.ChatGPT!App" }
 				codexAppOpenStart = func(id string) error {
 					if id != "fixture.ChatGPT!App" {
 						t.Fatalf("restart app ID = %q", id)
@@ -275,7 +281,7 @@ func TestCodexAppCLIRestoreInterruptedQuitPreservesFiles(t *testing.T) {
 				},
 				func() error { t.Error("reopened after interrupted quit"); return nil },
 			)
-			codexAppExitTimeout = 0
+			codexAppExitTimeout = 20 * time.Millisecond
 			if mode == "quit failure" {
 				codexAppExitTimeout = time.Second
 			}
@@ -293,7 +299,7 @@ func TestCodexAppCLIRestoreInterruptedQuitPreservesFiles(t *testing.T) {
 			err := app.Restore()
 			if mode == "quit failure" && !errors.Is(err, quitErr) ||
 				mode == "ctrl-c" && !errors.Is(err, ErrCancelled) ||
-				mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "did not quit")) {
+				mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT")) {
 				t.Fatalf("restore error = %v for %s", err, mode)
 			}
 			if !spinnerStopped {
@@ -335,7 +341,7 @@ func TestCodexAppCLIRestoreBoundsQuitRequest(t *testing.T) {
 			start := time.Now()
 			err := app.Restore()
 			if mode == "cancel" && !errors.Is(err, ErrCancelled) ||
-				mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "did not quit")) {
+				mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT")) {
 				t.Fatalf("restore error = %v for %s", err, mode)
 			}
 			if elapsed := time.Since(start); elapsed >= 750*time.Millisecond {
@@ -357,7 +363,8 @@ func TestCodexAppCLIRestoreLegacyQuit(t *testing.T) {
 			defer restoreConfirm()
 			marker := filepath.Join(t.TempDir(), "quit-request")
 			t.Setenv("OLLAMA_TEST_LEGACY_QUIT_MARKER", marker)
-			script := "printf '%s' \"$2\" > \"$OLLAMA_TEST_LEGACY_QUIT_MARKER\"\n"
+			script := "printf '%s' \"$2\" > \"$OLLAMA_TEST_LEGACY_QUIT_MARKER.tmp\"\n" +
+				"/bin/mv \"$OLLAMA_TEST_LEGACY_QUIT_MARKER.tmp\" \"$OLLAMA_TEST_LEGACY_QUIT_MARKER\"\n"
 			if mode != "exit" {
 				script += "exec /bin/sleep 1\n"
 			}
@@ -376,7 +383,7 @@ func TestCodexAppCLIRestoreLegacyQuit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			codexAppProcessCommand = func(pid int) (string, error) {
+			codexAppProcessCommand = func(_ context.Context, pid int) (string, error) {
 				if pid != process.Pid {
 					t.Fatalf("unexpected process lookup %d", pid)
 				}
@@ -434,7 +441,7 @@ func TestCodexAppCLIRestoreLegacyQuit(t *testing.T) {
 				return
 			}
 			if mode == "cancel" && !errors.Is(err, ErrCancelled) ||
-				mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "did not quit")) {
+				mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT")) {
 				t.Fatalf("legacy quit error = %v for %s", err, mode)
 			}
 			if openCalls != 0 {
@@ -457,16 +464,39 @@ func TestCodexAppProfileChangeFinishesAfterCommit(t *testing.T) {
 		func() error { calls = append(calls, "open"); return nil },
 	)
 	cancel := make(chan struct{})
-	err := codexAppApplyProfileChange(func() error {
+	ctx, stop := codexAppExitContext(time.Second, cancel)
+	defer stop()
+	err := codexAppApplyProfileChange(ctx, func() error {
 		calls = append(calls, "commit")
 		close(cancel)
 		return nil
-	}, false, true, cancel, time.Second)
+	}, false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(calls, []string{"quit", "commit", "open"}) {
 		t.Fatalf("calls = %v, want quit, commit, open", calls)
+	}
+}
+
+func TestCodexAppCLIRestoreObservesCancelBeforeMutation(t *testing.T) {
+	oldProcs := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(oldProcs) })
+	app, configPath, _ := codexAppCLIRestoreFixture(t)
+	before := codexAppRestoreFixtureFiles(t, configPath)
+	cancel := make(chan struct{})
+	running := true
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error { running = false; close(cancel); return nil },
+		func() error { t.Error("reopened after pre-mutation cancellation"); return nil },
+	)
+	err := app.restore(true, cancel, time.Second)
+	if !errors.Is(err, ErrCancelled) {
+		t.Errorf("restore error = %v, want cancellation", err)
+	}
+	if diff := cmp.Diff(before, codexAppRestoreFixtureFiles(t, configPath)); diff != "" {
+		t.Fatalf("changed files after cancellation (-before +after):\n%s", diff)
 	}
 }
 
@@ -484,7 +514,7 @@ func TestCodexAppCLIRestoreFailureReopensRunningClient(t *testing.T) {
 			running := mode == "regular"
 			legacyRunning := strings.HasPrefix(mode, "legacy")
 			oldRunning, oldStop := codexAppProfileIsRunning, codexAppStopProfile
-			codexAppProfileIsRunning = func() bool { return legacyRunning }
+			codexAppProfileIsRunning = func(context.Context) (bool, error) { return legacyRunning, nil }
 			codexAppStopProfile = func(context.Context) error { legacyRunning = false; return nil }
 			t.Cleanup(func() { codexAppProfileIsRunning, codexAppStopProfile = oldRunning, oldStop })
 			openCalls := 0
@@ -516,6 +546,327 @@ func TestCodexAppCLIRestoreFailureReopensRunningClient(t *testing.T) {
 			}
 			if diff := cmp.Diff(before, codexAppRestoreFixtureFiles(t, configPath)); diff != "" {
 				t.Fatalf("failed restore changed files (-before +after):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestCodexAppLateLegacyStartRequiresConsent(t *testing.T) {
+	for _, mode := range []string{"restore", "desktop update", "approved restore"} {
+		t.Run(mode, func(t *testing.T) {
+			app, configPath, _ := codexAppCLIRestoreFixture(t)
+			before := codexAppRestoreFixtureFiles(t, configPath)
+			withCodexAppRouterHealth(t, func() error { return nil })
+			openCalls := 0
+			withCodexAppProcessHooks(t, func() bool { return false },
+				func() error { t.Error("regular app was closed"); return nil },
+				func() error { openCalls++; return nil })
+			oldRunning, oldStop := codexAppProfileIsRunning, codexAppStopProfile
+			checks, stops := 0, 0
+			codexAppProfileIsRunning = func(context.Context) (bool, error) { checks++; return checks > 1 && stops == 0, nil }
+			codexAppStopProfile = func(context.Context) error { stops++; return nil }
+			t.Cleanup(func() { codexAppProfileIsRunning, codexAppStopProfile = oldRunning, oldStop })
+			var err error
+			if mode == "desktop update" {
+				err = app.UpdateOllamaModelsFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false)
+			} else {
+				err = app.RestoreFromDesktop(mode == "approved restore")
+			}
+			if mode == "approved restore" {
+				if err != nil || stops != 1 || openCalls != 1 {
+					t.Fatalf("approved restore: error %v, stops %d, opens %d", err, stops, openCalls)
+				}
+				return
+			}
+			if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) || stops != 0 || openCalls != 0 {
+				t.Fatalf("late start bypassed consent: error %v, stops %d, opens %d", err, stops, openCalls)
+			}
+			if diff := cmp.Diff(before, codexAppRestoreFixtureFiles(t, configPath)); diff != "" {
+				t.Fatalf("changed files before consent (-before +after):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestCodexAppExitWaitBoundsProcessProbes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process fixtures require a POSIX shell")
+	}
+	for _, probe := range []string{"pgrep", "ps", "powershell", "legacy ps"} {
+		for _, mode := range []string{"timeout", "cancel"} {
+			t.Run(probe+"/"+mode, func(t *testing.T) {
+				_, configPath, _ := codexAppCLIRestoreFixture(t)
+				withCodexAppProcessHooks(t, func() bool { return true },
+					func() error { return nil }, func() error { t.Error("unexpected open"); return nil })
+				codexAppIsRunning = defaultCodexAppIsRunning
+				blocked := filepath.Join(t.TempDir(), "blocked-probe")
+				t.Setenv("OLLAMA_TEST_BLOCKED_PROBE", blocked)
+				slowProbe := ": > \"$OLLAMA_TEST_BLOCKED_PROBE\"\nexec /bin/sleep 2\n"
+				commands := map[string]string{"pgrep": "exit 1\n", "ps": "exit 0\n", "osascript": "exit 0\n"}
+				switch probe {
+				case "pgrep", "ps":
+					commands[probe] = slowProbe
+				case "powershell":
+					withCodexAppPlatform(t, "windows")
+					commands["powershell.exe"] = slowProbe
+				case "legacy ps":
+					marker := filepath.Join(t.TempDir(), "first-probe")
+					t.Setenv("OLLAMA_TEST_PROBE_MARKER", marker)
+					commands["ps"] = "if [ -e \"$OLLAMA_TEST_PROBE_MARKER\" ]; then\n" + slowProbe + "fi\n" +
+						": > \"$OLLAMA_TEST_PROBE_MARKER\"\nprintf '%s' \"$OLLAMA_TEST_PROCESS_COMMAND\"\n"
+					// Only an owned fixture PID is ever eligible for a quit request.
+					process, err := os.StartProcess("/bin/sleep", []string{"sleep", "5"}, &os.ProcAttr{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = process.Kill(); _, _ = process.Wait() })
+					oldExecutable, oldCommand := codexAppProfileExecutable, codexAppProcessCommand
+					codexAppProfileExecutable = func() (string, error) { return "/fixture/ChatGPT", nil }
+					codexAppProcessCommand = defaultCodexAppProcessCommand
+					t.Cleanup(func() { codexAppProfileExecutable, codexAppProcessCommand = oldExecutable, oldCommand })
+					userData, err := codexAppOllamaProfileUserDataDir()
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Setenv("OLLAMA_TEST_PROCESS_COMMAND", "/fixture/ChatGPT --user-data-dir="+userData)
+					if err := writeCodexAppOllamaProfilePID(process.Pid); err != nil {
+						t.Fatal(err)
+					}
+				}
+				stubCodexAppProcessCommands(t, commands)
+				before := codexAppRestoreFixtureFiles(t, configPath)
+				cancel := make(chan struct{})
+				timeout := time.Second
+				if mode == "cancel" {
+					timeout = -1
+					cancelled := make(chan struct{})
+					go func() {
+						defer close(cancelled)
+						deadline := time.Now().Add(5 * time.Second)
+						for time.Now().Before(deadline) {
+							if _, err := os.Stat(blocked); err == nil {
+								break
+							}
+							time.Sleep(time.Millisecond)
+						}
+						close(cancel)
+					}()
+					t.Cleanup(func() { <-cancelled })
+				}
+				start := time.Now()
+				var err error
+				if probe == "legacy ps" {
+					ctx, stop := codexAppExitContext(timeout, cancel)
+					defer stop()
+					err = defaultCodexAppStopOllamaProfile(ctx)
+					if err != nil {
+						if contextErr := codexAppExitContextError(ctx); contextErr != nil {
+							err = contextErr
+						}
+					}
+				} else {
+					ctx, stop := codexAppExitContext(timeout, cancel)
+					defer stop()
+					err = codexAppStopForRestart(ctx)
+				}
+				if mode == "cancel" && !errors.Is(err, ErrCancelled) ||
+					mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT")) {
+					t.Errorf("probe ignored %s: %v", mode, err)
+				}
+				if elapsed := time.Since(start); elapsed >= 1750*time.Millisecond {
+					t.Errorf("probe ignored %s for %v", mode, elapsed)
+				}
+				if diff := cmp.Diff(before, codexAppRestoreFixtureFiles(t, configPath)); diff != "" {
+					t.Fatalf("interrupted probe changed files (-before +after):\n%s", diff)
+				}
+			})
+		}
+	}
+}
+
+func TestCodexAppRestoreProbePhasesRespectExitContext(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process fixtures require a POSIX shell")
+	}
+	for _, phase := range []string{"initial regular", "apply regular", "after legacy", "initial legacy", "legacy singleton", "windows start target", "windows path target"} {
+		for _, mode := range []string{"timeout", "cancel"} {
+			t.Run(phase+"/"+mode, func(t *testing.T) {
+				app, configPath, _ := codexAppCLIRestoreFixture(t)
+				withCodexAppProcessHooks(t, func() bool { return true },
+					func() error { t.Error("quit after an interrupted status check"); return nil },
+					func() error { t.Error("open after an interrupted status check"); return nil })
+				checks := 0
+				codexAppIsRunning = func(ctx context.Context) bool {
+					checks++
+					if strings.HasPrefix(phase, "windows") {
+						return true
+					}
+					if phase == "initial legacy" || phase == "legacy singleton" ||
+						checks == 1 && phase != "initial regular" {
+						return false
+					}
+					return defaultCodexAppIsRunning(ctx)
+				}
+				oldRunning, oldStop := codexAppProfileIsRunning, codexAppStopProfile
+				legacyStopped := false
+				codexAppProfileIsRunning = func(context.Context) (bool, error) { return phase == "after legacy" && !legacyStopped, nil }
+				codexAppStopProfile = func(context.Context) error { legacyStopped = true; return nil }
+				t.Cleanup(func() { codexAppProfileIsRunning, codexAppStopProfile = oldRunning, oldStop })
+				blocked := filepath.Join(t.TempDir(), "blocked-probe")
+				t.Setenv("OLLAMA_TEST_BLOCKED_PROBE", blocked)
+				slowOnce := "if [ -e \"$OLLAMA_TEST_BLOCKED_PROBE\" ]; then exit 1; fi\n" +
+					": > \"$OLLAMA_TEST_BLOCKED_PROBE\"\nexec /bin/sleep 2\n"
+				commands := map[string]string{"pgrep": slowOnce, "ps": "exit 0\n", "powershell.exe": slowOnce}
+				if strings.HasPrefix(phase, "windows") {
+					withCodexAppPlatform(t, "windows")
+					codexAppStartID = func(context.Context) string { return "" }
+					codexAppRunPath = func(context.Context) string { return "" }
+					if phase == "windows start target" {
+						codexAppStartID = defaultCodexAppStartAppID
+					} else {
+						codexAppRunPath = defaultCodexAppRunningAppPath
+					}
+				}
+				if phase == "initial legacy" || phase == "legacy singleton" {
+					process, err := os.StartProcess("/bin/sleep", []string{"sleep", "5"}, &os.ProcAttr{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = process.Kill(); _, _ = process.Wait() })
+					oldExecutable, oldCommand := codexAppProfileExecutable, codexAppProcessCommand
+					codexAppProfileExecutable = func() (string, error) { return "/fixture/ChatGPT", nil }
+					codexAppProcessCommand = defaultCodexAppProcessCommand
+					codexAppProfileIsRunning = defaultCodexAppOllamaProfileIsRunning
+					t.Cleanup(func() { codexAppProfileExecutable, codexAppProcessCommand = oldExecutable, oldCommand })
+					commands["ps"] = slowOnce
+					if phase == "initial legacy" {
+						if err := writeCodexAppOllamaProfilePID(process.Pid); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						userData, err := codexAppOllamaProfileUserDataDir()
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := os.MkdirAll(userData, 0o700); err != nil {
+							t.Fatal(err)
+						}
+						for _, name := range []string{codexAppSingletonLockName, codexAppSingletonSocketName, codexAppSingletonCookieName} {
+							if err := os.Symlink("fixture-"+strconv.Itoa(process.Pid), filepath.Join(userData, name)); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+				}
+				stubCodexAppProcessCommands(t, commands)
+				before := codexAppRestoreFixtureFiles(t, configPath)
+				cancel := make(chan struct{})
+				timeout := time.Second
+				if mode == "cancel" {
+					timeout = -1
+					cancelled := make(chan struct{})
+					go func() {
+						defer close(cancelled)
+						deadline := time.Now().Add(5 * time.Second)
+						for time.Now().Before(deadline) {
+							if _, err := os.Stat(blocked); err == nil {
+								break
+							}
+							time.Sleep(time.Millisecond)
+						}
+						close(cancel)
+					}()
+					t.Cleanup(func() { <-cancelled })
+				}
+				start := time.Now()
+				err := app.restore(true, cancel, timeout)
+				if mode == "cancel" && !errors.Is(err, ErrCancelled) ||
+					mode == "timeout" && (err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT")) {
+					t.Errorf("%s ignored %s: %v", phase, mode, err)
+				}
+				if elapsed := time.Since(start); elapsed >= 1750*time.Millisecond {
+					t.Errorf("%s ignored %s for %v", phase, mode, elapsed)
+				}
+				if diff := cmp.Diff(before, codexAppRestoreFixtureFiles(t, configPath)); diff != "" {
+					t.Fatalf("interrupted restore changed files (-before +after):\n%s", diff)
+				}
+			})
+		}
+	}
+}
+
+func TestCodexAppDeclinedRestorePreservesLegacyMetadata(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("owned process fixture requires a POSIX executable")
+	}
+	for _, mode := range []string{"missing PID", "malformed PID", "probe error", "legacy-only probe error"} {
+		t.Run(mode, func(t *testing.T) {
+			app, configPath, _ := codexAppCLIRestoreFixture(t)
+			withInteractiveSession(t, true)
+			restorePolicy := withLaunchConfirmPolicy(launchConfirmPolicy{})
+			defer restorePolicy()
+			withCodexAppProcessHooks(t, func() bool { return mode != "legacy-only probe error" },
+				func() error { t.Error("quit before consent"); return nil },
+				func() error { t.Error("open after declining"); return nil })
+			process, err := os.StartProcess("/bin/sleep", []string{"sleep", "5"}, &os.ProcAttr{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = process.Kill(); _, _ = process.Wait() })
+			userData, err := codexAppOllamaProfileUserDataDir()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(userData, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{codexAppSingletonLockName, codexAppSingletonSocketName, codexAppSingletonCookieName} {
+				if err := os.Symlink("fixture-"+strconv.Itoa(process.Pid), filepath.Join(userData, name)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode != "missing PID" {
+				if err := writeCodexAppOllamaProfilePID(process.Pid); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "malformed PID" {
+				path, err := codexAppOllamaProfilePIDPath()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("not a process ID\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			probeErr := errors.New("fixture identity lookup failed")
+			oldRunning, oldExecutable, oldCommand := codexAppProfileIsRunning, codexAppProfileExecutable, codexAppProcessCommand
+			codexAppProfileIsRunning = defaultCodexAppOllamaProfileIsRunning
+			codexAppProfileExecutable = func() (string, error) { return "/fixture/ChatGPT", nil }
+			codexAppProcessCommand = func(context.Context, int) (string, error) {
+				if strings.Contains(mode, "probe error") {
+					return "", probeErr
+				}
+				return "/fixture/ChatGPT --user-data-dir=" + userData, nil
+			}
+			t.Cleanup(func() {
+				codexAppProfileIsRunning, codexAppProfileExecutable, codexAppProcessCommand = oldRunning, oldExecutable, oldCommand
+			})
+			oldConfirm := DefaultConfirmPrompt
+			prompts := 0
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { prompts++; return false, nil }
+			t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+			before := codexAppRestoreFixtureFiles(t, configPath)
+			err = app.Restore()
+			if mode == "legacy-only probe error" {
+				if !errors.Is(err, probeErr) || prompts != 0 {
+					t.Errorf("lost identity error: %v, prompts %d", err, prompts)
+				}
+			} else if !errors.Is(err, ErrCancelled) || prompts != 1 {
+				t.Errorf("declined restore: error %v, prompts %d", err, prompts)
+			}
+			if diff := cmp.Diff(before, codexAppRestoreFixtureFiles(t, configPath)); diff != "" {
+				t.Fatalf("preflight changed legacy metadata (-before +after):\n%s", diff)
 			}
 		})
 	}

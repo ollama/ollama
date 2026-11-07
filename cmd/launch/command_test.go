@@ -2,6 +2,7 @@ package launch
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -364,7 +365,7 @@ func TestLaunchCmdChatGPT(t *testing.T) {
 				func() error { quitCalls++; return nil },
 				func() error { openCalls++; return nil },
 			)
-			codexAppCanOpenID = func() bool { return true }
+			codexAppCanOpenID = func(context.Context) bool { return true }
 
 			client, err := api.ClientFromEnvironment()
 			if err != nil {

@@ -705,7 +705,7 @@ func (c *CodexApp) RestorePending() bool {
 
 // Running reports whether the user's regular ChatGPT app is open.
 func (c *CodexApp) Running() bool {
-	return codexAppIsRunning()
+	return codexAppIsRunning(context.Background())
 }
 
 // UseOllamaFromDesktop adds Ollama models to the regular ChatGPT profile.
@@ -724,25 +724,39 @@ func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []Launch
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
-	if !codexAppInstalled() {
+	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
+	defer stop()
+	installed := codexAppInstalledContext(ctx)
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
+	}
+	if !installed {
 		return fmt.Errorf("ChatGPT is not installed")
 	}
 	if err := codexAppRouterHealth(); err != nil {
 		return err
 	}
 	// Check before cleanup so cancellation is a no-op; check again when applying the profile.
-	if (codexAppIsRunning() || codexAppProfileIsRunning()) && !restartConfirmed {
-		return ErrCodexAppRestartConfirmationRequired
-	}
-	if err := stopLegacyCodexAppOllamaProfile(nil, codexAppExitTimeout); err != nil {
+	legacyRunning, legacyErr := codexAppProfileIsRunning(ctx)
+	running := codexAppIsRunning(ctx) || legacyRunning
+	if err := codexAppExitContextError(ctx); err != nil {
 		return err
 	}
-	return codexAppApplyProfileChange(func() error {
+	if running && !restartConfirmed {
+		return ErrCodexAppRestartConfirmationRequired
+	}
+	if err := codexAppStatusError(ctx, legacyErr); err != nil {
+		return err
+	}
+	if _, err := stopLegacyCodexAppOllamaProfile(ctx, restartConfirmed); err != nil {
+		return err
+	}
+	return codexAppApplyProfileChange(ctx, func() error {
 		if err := resetCodexAppRegularProfileRequestCount(); err != nil {
 			return err
 		}
 		return c.ConfigureWithModels(primary, models)
-	}, openWhenStopped, restartConfirmed, nil, codexAppExitTimeout)
+	}, openWhenStopped, restartConfirmed)
 }
 
 func defaultCodexAppRouterHealth() error {
@@ -789,27 +803,40 @@ func (c *CodexApp) restore(restartConfirmed bool, cancel <-chan struct{}, exitTi
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
-	select {
-	case <-cancel:
-		return ErrCancelled
-	default:
-	}
-	legacyRunning := codexAppGOOS == "darwin" && codexAppProfileIsRunning()
-	if (codexAppIsRunning() || legacyRunning) && !restartConfirmed {
-		return ErrCodexAppRestartConfirmationRequired
-	}
-	if err := stopLegacyCodexAppOllamaProfile(cancel, exitTimeout); err != nil {
+	ctx, stop := codexAppExitContext(exitTimeout, cancel)
+	defer stop()
+	if err := codexAppExitContextError(ctx); err != nil {
 		return err
 	}
-	if legacyRunning && !codexAppIsRunning() {
-		select {
-		case <-cancel:
-			return ErrCancelled
-		default:
-		}
-		return codexAppChangeAndReopen(restoreCodexAppProfile, func() error { return codexAppOpenApp(nil) })
+	legacyRunning := false
+	var legacyErr error
+	if codexAppGOOS == "darwin" {
+		legacyRunning, legacyErr = codexAppProfileIsRunning(ctx)
 	}
-	return codexAppApplyProfileChange(restoreCodexAppProfile, false, restartConfirmed, cancel, exitTimeout)
+	running := codexAppIsRunning(ctx) || legacyRunning
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
+	}
+	if running && !restartConfirmed {
+		return ErrCodexAppRestartConfirmationRequired
+	}
+	if err := codexAppStatusError(ctx, legacyErr); err != nil {
+		return err
+	}
+	legacyStopped, err := stopLegacyCodexAppOllamaProfile(ctx, restartConfirmed)
+	if err != nil {
+		return err
+	}
+	if legacyStopped {
+		running := codexAppIsRunning(ctx)
+		if err := codexAppExitContextError(ctx); err != nil {
+			return err
+		}
+		if !running {
+			return codexAppChangeAndReopen(restoreCodexAppProfile, func() error { return codexAppOpenApp(nil) })
+		}
+	}
+	return codexAppApplyProfileChange(ctx, restoreCodexAppProfile, false, restartConfirmed)
 }
 
 // RestartFromDesktop repairs and restarts the saved profile without requiring live inventory.
@@ -817,36 +844,51 @@ func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
-	if !codexAppInstalled() {
+	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
+	defer stop()
+	installed := codexAppInstalledContext(ctx)
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
+	}
+	if !installed {
 		return errors.New("ChatGPT is not installed")
 	}
 	if !c.OllamaConfigured() {
 		return errors.New("ChatGPT is not configured to use Ollama")
 	}
-	return codexAppApplyProfileChange(repairCodexAppCatalogAuthVisibility, true, restartConfirmed, nil, codexAppExitTimeout)
+	return codexAppApplyProfileChange(ctx, repairCodexAppCatalogAuthVisibility, true, restartConfirmed)
 }
 
 func (c *CodexApp) OllamaRequestCount() uint64 {
 	return codexAppRegularProfileRequestCount()
 }
 
-func stopLegacyCodexAppOllamaProfile(cancel <-chan struct{}, exitTimeout time.Duration) error {
-	if codexAppGOOS != "darwin" || !codexAppProfileIsRunning() {
-		return nil
+func stopLegacyCodexAppOllamaProfile(ctx context.Context, restartConfirmed bool) (bool, error) {
+	if codexAppGOOS != "darwin" {
+		return false, nil
 	}
-	ctx, stop := codexAppExitContext(exitTimeout, cancel)
-	defer stop()
+	running, probeErr := codexAppProfileIsRunning(ctx)
+	if err := codexAppStatusError(ctx, probeErr); err != nil {
+		return false, err
+	}
+	if !running {
+		return false, nil
+	}
+	// The legacy instance may have started after the caller checked for consent.
+	if !restartConfirmed {
+		return false, ErrCodexAppRestartConfirmationRequired
+	}
 	if err := codexAppStopProfile(ctx); err != nil {
 		if contextErr := codexAppExitContextError(ctx); contextErr != nil {
-			return contextErr
+			return false, contextErr
 		}
-		return fmt.Errorf("close the previous ChatGPT · Ollama profile: %w", err)
+		return false, fmt.Errorf("close the previous ChatGPT · Ollama profile: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func (c *CodexApp) Restore() error {
-	err := c.RestoreFromDesktop(false)
+	err := c.restore(false, nil, codexAppCLIExitTimeout())
 	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
 		return err
 	}
@@ -957,14 +999,18 @@ func codexAppSupported() error {
 }
 
 func codexAppInstalled() bool {
+	return codexAppInstalledContext(context.Background())
+}
+
+func codexAppInstalledContext(ctx context.Context) bool {
 	if codexAppAppPath() != "" {
 		return true
 	}
 	switch codexAppGOOS {
 	case "darwin":
-		return codexAppCanOpenID()
+		return codexAppCanOpenID(ctx)
 	case "windows":
-		return codexAppIsRunning() || codexAppStartID() != ""
+		return codexAppIsRunning(ctx) || codexAppStartID(ctx) != ""
 	default:
 		return false
 	}
@@ -1619,7 +1665,7 @@ func copyCodexAppScratchFile(source, destination string) error {
 func defaultCodexAppCodexExecutable() (string, error) {
 	appPath := codexAppAppPath()
 	if appPath == "" && codexAppGOOS == "windows" {
-		appPath = codexAppRunPath()
+		appPath = codexAppRunPath(context.Background())
 	}
 	var candidates []string
 	if appPath != "" {
@@ -1800,16 +1846,16 @@ func codexAppLocalAppData() (string, error) {
 }
 
 func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
-	if !codexAppIsRunning() {
-		return codexAppOpenApp(launchArgs)
+	probeCtx, stopProbe := codexAppExitContext(codexAppCLIExitTimeout(), nil)
+	defer stopProbe()
+	running := codexAppIsRunning(probeCtx)
+	probeErr := codexAppExitContextError(probeCtx)
+	stopProbe()
+	if probeErr != nil {
+		return probeErr
 	}
-	restartAppID := ""
-	restartAppPath := ""
-	if len(launchArgs) == 0 && codexAppGOOS == "windows" {
-		restartAppID = codexAppStartID()
-		if restartAppID == "" {
-			restartAppPath = codexAppRunPath()
-		}
+	if !running {
+		return codexAppOpenApp(launchArgs)
 	}
 
 	restart, err := ConfirmPrompt(prompt)
@@ -1821,35 +1867,33 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 		return nil
 	}
 
-	// A single spinner and cancellation channel span the entire restart flow
-	// (quit, wait, reopen) so that one Ctrl+C aborts the whole sequence rather
-	// than just the currently-active wait. The bubbletea
-	// spinner closes Cancelled() from its raw-mode Ctrl+C handler; the ANSI
-	// fallback relies on SIGINT terminating the process directly.
 	sp := StartSpinner(codexAppRestartMessage)
 	defer sp.Stop()
-	cancelled := sp.Cancelled()
-	if err := codexAppStopForRestart(cancelled, codexAppCLIExitTimeout()); err != nil {
+	ctx, stop := codexAppExitContext(codexAppCLIExitTimeout(), sp.Cancelled())
+	defer stop()
+	restartAppID, restartAppPath := "", ""
+	if len(launchArgs) == 0 {
+		restartAppID, restartAppPath = codexAppRestartTarget(ctx)
+	}
+	if err := codexAppStopForRestart(ctx); err != nil {
 		return err
 	}
-	select {
-	case <-cancelled:
-		return ErrCancelled
-	default:
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
 	}
-	if sp != nil {
-		sp.Stop()
-	}
+	sp.Stop()
 	return codexAppOpenAfterRestart(restartAppID, restartAppPath, launchArgs)
 }
 
-func codexAppApplyProfileChange(change func() error, openWhenStopped, restartConfirmed bool, cancel <-chan struct{}, exitTimeout time.Duration) error {
-	select {
-	case <-cancel:
-		return ErrCancelled
-	default:
+func codexAppApplyProfileChange(ctx context.Context, change func() error, openWhenStopped, restartConfirmed bool) error {
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
 	}
-	if !codexAppIsRunning() {
+	running := codexAppIsRunning(ctx)
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
+	}
+	if !running {
 		if err := change(); err != nil {
 			return err
 		}
@@ -1862,14 +1906,12 @@ func codexAppApplyProfileChange(change func() error, openWhenStopped, restartCon
 		return ErrCodexAppRestartConfirmationRequired
 	}
 
-	restartAppID, restartAppPath := codexAppRestartTarget()
-	if err := codexAppStopForRestart(cancel, exitTimeout); err != nil {
+	restartAppID, restartAppPath := codexAppRestartTarget(ctx)
+	if err := codexAppStopForRestart(ctx); err != nil {
 		return err
 	}
-	select {
-	case <-cancel:
-		return ErrCancelled
-	default:
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
 	}
 	return codexAppChangeAndReopen(change, func() error {
 		return codexAppOpenAfterRestart(restartAppID, restartAppPath, nil)
@@ -1888,26 +1930,29 @@ func codexAppChangeAndReopen(change, reopen func() error) error {
 	return reopen()
 }
 
-func codexAppRestartTarget() (appID, appPath string) {
+func codexAppRestartTarget(ctx context.Context) (appID, appPath string) {
 	if codexAppGOOS != "windows" {
 		return "", ""
 	}
-	if appID = codexAppStartID(); appID == "" {
-		appPath = codexAppRunPath()
+	if appID = codexAppStartID(ctx); appID == "" {
+		appPath = codexAppRunPath(ctx)
 	}
 	return appID, appPath
 }
 
-func codexAppStopForRestart(cancel <-chan struct{}, exitTimeout time.Duration) error {
-	ctx, stop := codexAppExitContext(exitTimeout, cancel)
-	defer stop()
+func codexAppStopForRestart(ctx context.Context) error {
+	if err := codexAppExitContextError(ctx); err != nil {
+		return err
+	}
 	if err := codexAppQuitApp(ctx); err != nil {
 		if contextErr := codexAppExitContextError(ctx); contextErr != nil {
 			return contextErr
 		}
 		return fmt.Errorf("quit ChatGPT: %w", err)
 	}
-	return waitForCodexAppCondition(ctx, func() bool { return !codexAppIsRunning() })
+	return waitForCodexAppCondition(ctx, func() (bool, error) {
+		return !codexAppIsRunning(ctx), nil
+	})
 }
 
 // One context covers both the quit request and waiting for the app to exit.
@@ -1920,6 +1965,7 @@ func codexAppExitContext(timeout time.Duration, cancelled <-chan struct{}) (cont
 		ctx, stop = context.WithTimeout(context.Background(), timeout)
 	}
 	if cancelled != nil {
+		ctx = codexAppInterruptContext{Context: ctx, interrupted: cancelled, stop: stop}
 		select {
 		case <-cancelled:
 			stop()
@@ -1936,15 +1982,42 @@ func codexAppExitContext(timeout time.Duration, cancelled <-chan struct{}) (cont
 	return ctx, stop
 }
 
+type codexAppInterruptContext struct {
+	context.Context
+	interrupted <-chan struct{}
+	stop        context.CancelFunc
+}
+
+func (c codexAppInterruptContext) Err() error {
+	// Observe Ctrl+C before starting a profile change even if the cancellation
+	// bridge goroutine has not run yet. Blocking subprocesses use Done as usual.
+	select {
+	case <-c.interrupted:
+		c.stop()
+	default:
+	}
+	return c.Context.Err()
+}
+
 func codexAppExitContextError(ctx context.Context) error {
 	switch ctx.Err() {
 	case context.Canceled:
 		return ErrCancelled
 	case context.DeadlineExceeded:
-		return errors.New("ChatGPT did not quit. Confirm its quit prompt or quit it manually, then try again")
+		return errors.New("Timed out waiting for ChatGPT. Close it, then try again.")
 	default:
 		return nil
 	}
+}
+
+func codexAppStatusError(ctx context.Context, err error) error {
+	if contextErr := codexAppExitContextError(ctx); contextErr != nil {
+		return contextErr
+	}
+	if err != nil {
+		return fmt.Errorf("Could not check ChatGPT status; try again: %w", err)
+	}
+	return nil
 }
 
 // Interactive CLI users may need time to confirm ChatGPT's own quit prompt.
@@ -1971,12 +2044,17 @@ func codexAppOpenAfterRestart(appID, appPath string, launchArgs []string) error 
 const codexAppRestartMessage = "Waiting for ChatGPT to quit. Confirm its prompt; Ctrl+C cancels."
 
 // Wait until graceful exit, cancellation or the quit deadline. Never force quit.
-func waitForCodexAppCondition(ctx context.Context, done func() bool) error {
+func waitForCodexAppCondition(ctx context.Context, done func() (bool, error)) error {
 	for {
+		// An expired process query must not be mistaken for a confirmed exit.
 		if err := codexAppExitContextError(ctx); err != nil {
 			return err
 		}
-		if done() {
+		finished, probeErr := done()
+		if err := codexAppStatusError(ctx, probeErr); err != nil {
+			return err
+		}
+		if finished {
 			return nil
 		}
 		codexAppSleep(200 * time.Millisecond)
@@ -2003,33 +2081,6 @@ func defaultCodexAppOllamaProfileExecutable() (string, error) {
 	return executable, nil
 }
 
-func prepareCodexAppOllamaProfileUserData(userDataDir string) (bool, error) {
-	if err := os.MkdirAll(userDataDir, 0o700); err != nil {
-		return false, err
-	}
-	if adoptCodexAppOllamaProfileSingleton(userDataDir) {
-		return true, nil
-	}
-	for _, name := range []string{
-		codexAppSingletonLockName,
-		codexAppSingletonSocketName,
-		codexAppSingletonCookieName,
-	} {
-		if err := os.Remove(filepath.Join(userDataDir, name)); err != nil && !os.IsNotExist(err) {
-			return false, fmt.Errorf("clear stale ChatGPT · Ollama %s: %w", name, err)
-		}
-	}
-	return false, nil
-}
-
-func adoptCodexAppOllamaProfileSingleton(userDataDir string) bool {
-	pid, ok := codexAppOllamaProfileSingletonPID(userDataDir)
-	if !ok || !codexAppOllamaProfileProcessMatches(pid) {
-		return false
-	}
-	return writeCodexAppOllamaProfilePID(pid) == nil
-}
-
 func codexAppOllamaProfileSingletonPID(userDataDir string) (int, bool) {
 	target, err := os.Readlink(filepath.Join(userDataDir, codexAppSingletonLockName))
 	if err != nil {
@@ -2047,27 +2098,42 @@ func codexAppOllamaProfileSingletonPID(userDataDir string) (int, bool) {
 	return pid, true
 }
 
-// Detect isolated legacy processes for cleanup; this integration uses one profile.
-func defaultCodexAppOllamaProfileIsRunning() bool {
-	pid, ok := codexAppOllamaProfilePID()
-	if !ok {
-		return reconcileCodexAppOllamaProfileSingleton()
-	}
-	running, matches := codexAppOllamaProfileProcessIdentity(pid)
-	if !running || !matches {
-		_ = removeCodexAppOllamaProfilePID()
-		return reconcileCodexAppOllamaProfileSingleton()
-	}
-	return true
+// Legacy preflight only reads identity metadata; it must not repair or delete it.
+func defaultCodexAppOllamaProfileIsRunning(ctx context.Context) (bool, error) {
+	_, matches, err := codexAppOllamaProfileProcess(ctx)
+	return matches, err
 }
 
-func reconcileCodexAppOllamaProfileSingleton() bool {
+func codexAppOllamaProfileProcess(ctx context.Context) (int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	var candidates []int
+	if pid, ok := codexAppOllamaProfilePID(); ok {
+		candidates = append(candidates, pid)
+	}
 	userDataDir, err := codexAppOllamaProfileUserDataDir()
 	if err != nil {
-		return false
+		return 0, false, err
 	}
-	running, err := prepareCodexAppOllamaProfileUserData(userDataDir)
-	return err == nil && running
+	if pid, ok := codexAppOllamaProfileSingletonPID(userDataDir); ok &&
+		(len(candidates) == 0 || candidates[0] != pid) {
+		candidates = append(candidates, pid)
+	}
+	unverified := 0
+	for _, pid := range candidates {
+		running, matches, err := codexAppOllamaProfileProcessIdentity(ctx, pid)
+		if err != nil {
+			return 0, false, err
+		}
+		if matches {
+			return pid, true, nil
+		}
+		if running {
+			unverified = pid
+		}
+	}
+	return unverified, false, nil
 }
 
 func writeCodexAppOllamaProfilePID(pid int) error {
@@ -2095,40 +2161,38 @@ func codexAppOllamaProfilePID() (int, bool) {
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil || pid <= 1 || pid == os.Getpid() {
-		_ = os.Remove(pidPath)
 		return 0, false
 	}
 	return pid, true
 }
 
-func codexAppOllamaProfileProcessMatches(pid int) bool {
-	_, matches := codexAppOllamaProfileProcessIdentity(pid)
-	return matches
-}
-
-func codexAppOllamaProfileProcessIdentity(pid int) (bool, bool) {
+func codexAppOllamaProfileProcessIdentity(ctx context.Context, pid int) (bool, bool, error) {
 	if pid <= 1 || pid == os.Getpid() {
-		return false, false
+		return false, false, nil
 	}
 	executable, err := codexAppProfileExecutable()
 	if err != nil {
-		return false, false
+		return false, false, err
 	}
 	userDataDir, err := codexAppOllamaProfileUserDataDir()
 	if err != nil {
-		return false, false
+		return false, false, err
 	}
-	command, err := codexAppProcessCommand(pid)
+	command, err := codexAppProcessCommand(ctx, pid)
 	if err != nil {
-		return false, false
+		var exitErr *exec.ExitError
+		if errors.Is(err, os.ErrNotExist) || errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && ctx.Err() == nil {
+			return false, false, nil
+		}
+		return false, false, err
 	}
 	command = strings.TrimSpace(command)
 	return true, strings.HasPrefix(command, executable+" ") &&
-		strings.Contains(command, "--user-data-dir="+userDataDir)
+		strings.Contains(command, "--user-data-dir="+userDataDir), nil
 }
 
-func defaultCodexAppProcessCommand(pid int) (string, error) {
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+func defaultCodexAppProcessCommand(ctx context.Context, pid int) (string, error) {
+	out, err := exec.CommandContext(ctx, "ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
 	return string(out), err
 }
 
@@ -2144,12 +2208,17 @@ func removeCodexAppOllamaProfilePID() error {
 }
 
 func defaultCodexAppStopOllamaProfile(ctx context.Context) error {
-	pid, ok := codexAppOllamaProfilePID()
-	if !ok {
-		return removeCodexAppOllamaProfilePID()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	running, matches := codexAppOllamaProfileProcessIdentity(pid)
-	if !running {
+	pid, matches, err := codexAppOllamaProfileProcess(ctx)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if pid == 0 {
 		return removeCodexAppOllamaProfilePID()
 	}
 	if !matches {
@@ -2165,7 +2234,10 @@ end if`, pid)
 	if err := exec.CommandContext(ctx, "osascript", "-e", script).Run(); err != nil {
 		return fmt.Errorf("request ChatGPT · Ollama quit: %w", err)
 	}
-	if err := waitForCodexAppCondition(ctx, func() bool { return !codexAppOllamaProfileProcessMatches(pid) }); err != nil {
+	if err := waitForCodexAppCondition(ctx, func() (bool, error) {
+		_, matches, err := codexAppOllamaProfileProcessIdentity(ctx, pid)
+		return !matches, err
+	}); err != nil {
 		return err
 	}
 	return removeCodexAppOllamaProfilePID()
@@ -2185,10 +2257,10 @@ func defaultCodexAppOpenApp(args []string) error {
 		if path := codexAppAppPath(); path != "" {
 			return codexAppOpenPath(path)
 		}
-		if path := codexAppRunPath(); path != "" {
+		if path := codexAppRunPath(context.Background()); path != "" {
 			return codexAppOpenPath(path)
 		}
-		if appID := codexAppStartID(); appID != "" {
+		if appID := codexAppStartID(context.Background()); appID != "" {
 			return codexAppOpenStart(appID)
 		}
 		return fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download, then re-run 'ollama launch chatgpt'")
@@ -2250,26 +2322,26 @@ func defaultCodexAppQuitApp(ctx context.Context) error {
 	return scriptErr
 }
 
-func defaultCodexAppIsRunning() bool {
+func defaultCodexAppIsRunning(ctx context.Context) bool {
 	switch codexAppGOOS {
 	case "windows":
-		return len(codexAppMatchingProcessIDs()) > 0
+		return len(codexAppMatchingProcessIDs(ctx)) > 0
 	case "darwin":
-		if err := exec.Command("pgrep", "-a", "-x", "ChatGPT|Codex").Run(); err == nil {
+		if err := exec.CommandContext(ctx, "pgrep", "-a", "-x", "ChatGPT|Codex").Run(); err == nil {
 			return true
 		}
-		return len(codexAppMatchingProcessIDs()) > 0
+		return len(codexAppMatchingProcessIDs(ctx)) > 0
 	default:
 		return false
 	}
 }
 
-func codexAppMatchingProcessIDs() []int {
+func codexAppMatchingProcessIDs(ctx context.Context) []int {
 	if codexAppGOOS == "windows" {
-		return codexAppWindowsMatchingProcessIDs()
+		return codexAppWindowsMatchingProcessIDs(ctx)
 	}
 
-	out, err := exec.Command("ps", "-axo", "pid=,command=").Output()
+	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,command=").Output()
 	if err != nil {
 		return nil
 	}
@@ -2295,9 +2367,9 @@ func codexAppMatchingProcessIDs() []int {
 	return pids
 }
 
-func codexAppWindowsMatchingProcessIDs() []int {
+func codexAppWindowsMatchingProcessIDs(ctx context.Context) []int {
 	script := fmt.Sprintf(`$current = %d; Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'codex.exe' OR Name = 'ChatGPT.exe' OR Name = 'chatgpt.exe'" | Where-Object { $_.ProcessId -ne $current -and ((($_.Name -ieq 'Codex.exe' -or $_.Name -ieq 'ChatGPT.exe') -and (($null -eq $_.CommandLine) -or ($_.CommandLine -notlike '* --type=*'))) -or ((($_.Name -ieq 'codex.exe') -or ($_.Name -ieq 'chatgpt.exe')) -and ($_.CommandLine -like '*app-server*'))) } | Select-Object -ExpandProperty ProcessId`, os.Getpid())
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return nil
 	}
@@ -2312,36 +2384,36 @@ func codexAppWindowsMatchingProcessIDs() []int {
 	return pids
 }
 
-func defaultCodexAppRunningAppPath() string {
+func defaultCodexAppRunningAppPath(ctx context.Context) string {
 	if codexAppGOOS != "windows" {
 		return ""
 	}
 	script := `(Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
 }
 
-func defaultCodexAppStartAppID() string {
+func defaultCodexAppStartAppID(ctx context.Context) string {
 	if codexAppGOOS != "windows" {
 		return ""
 	}
 	script := `(Get-StartApps | Where-Object { $_.Name -eq 'ChatGPT' -or $_.Name -like 'ChatGPT*' -or $_.Name -eq 'Codex' -or $_.Name -like 'Codex*' } | Select-Object -First 1 -ExpandProperty AppID)`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
 }
 
-func defaultCodexAppCanOpenBundleID() bool {
+func defaultCodexAppCanOpenBundleID(ctx context.Context) bool {
 	if codexAppGOOS != "darwin" {
 		return false
 	}
 	query := fmt.Sprintf("kMDItemCFBundleIdentifier == %q", codexAppBundleID)
-	out, err := exec.Command("mdfind", query).Output()
+	out, err := exec.CommandContext(ctx, "mdfind", query).Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
