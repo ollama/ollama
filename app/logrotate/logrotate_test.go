@@ -68,3 +68,43 @@ func TestRotate(t *testing.T) {
 		}
 	}
 }
+
+func TestRotateFilename(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		filename string
+		rotated  string
+	}{
+		{"extensionless", "server", "server-1"},
+		{"extensionless in dotted directory", "server", "server-1"},
+		{"multiple extensions", "server.debug.log", "server.debug-1.log"},
+		{"unicode basename", "günlük.log", "günlük-1.log"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.name == "extensionless in dotted directory" {
+				dir = filepath.Join(dir, "logs.d")
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			filename := filepath.Join(dir, tt.filename)
+			if err := os.WriteFile(filename, []byte("first"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			Rotate(filename)
+
+			data, err := os.ReadFile(filepath.Join(dir, tt.rotated))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != "first" {
+				t.Fatalf("rotated content = %q, want first", data)
+			}
+			if _, err := os.Stat(filename); !os.IsNotExist(err) {
+				t.Fatalf("original file still exists or cannot be inspected: %v", err)
+			}
+		})
+	}
+}
