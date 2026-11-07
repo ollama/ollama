@@ -654,6 +654,20 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 						maxAvailable += vram
 					}
 					if minTotal > maxAvailable {
+						// FreeMemory can be stale when the GPU discovery refresh
+						// timed out ("unable to refresh free memory, using old
+						// values"), e.g. after other runners were evicted. In that
+					// case the check below re-reads live per-device free memory;
+						// only refuse when the fresh reading also confirms no fit.
+						if !s.liveVRAMConfirmsNoFit(req.ctx, loadGpus, minTotal) {
+							slog.Warn("pinned num_gpu pre-flight failed but live VRAM reading is inconclusive, proceeding with load",
+								"model", req.model.ModelPath,
+								"num_gpu", launchOpts.NumGPU,
+								"needs", format.HumanBytes2(minTotal),
+								"stale_available", format.HumanBytes2(maxAvailable))
+							s.loadedMu.Unlock()
+							return false
+						}
 						s.loadedMu.Unlock()
 						s.activeLoading.Close()
 						s.activeLoading = nil
@@ -861,6 +875,78 @@ iGPUScan:
 	}()
 
 	return false
+}
+
+// liveVRAMConfirmsNoFit re-reads live free memory for the given devices after
+// the scheduler's FreeMemory snapshot indicated a pinned num_gpu cannot fit.
+//
+// The snapshot can be stale: the discovery refresh may have timed out
+// ("unable to refresh free memory, using old values") after other runners
+// were evicted, leaving FreeMemory at the pre-eviction value. In that case
+// the pre-flight must not fail the request, because the actual load (and
+// llama-server's --fit) will see the real VRAM. This helper returns true only
+// when a fresh live reading also confirms there is no fit, so fail-fast
+// remains authoritative for genuine OOMs while tolerating stale snapshots.
+//
+// Callers must hold s.loadedMu.
+func (s *Scheduler) liveVRAMConfirmsNoFit(ctx context.Context, loadGpus []ml.DeviceInfo, minTotal uint64) bool {
+	runnersSnapshot := make([]ml.FilteredRunnerDiscovery, 0, len(s.loaded))
+	for _, r := range s.loaded {
+		if r != nil && r.llama != nil {
+			runnersSnapshot = append(runnersSnapshot, r)
+		}
+	}
+
+	queried := false
+	maxAvailable := uint64(0)
+	// First try the existing runners (fast, no process spawn)
+	for _, runner := range runnersSnapshot {
+		infos := runner.GetDeviceInfos(ctx)
+		for _, info := range infos {
+			for _, g := range loadGpus {
+				if info.DeviceID == g.DeviceID {
+					maxAvailable += info.FreeMemory
+					queried = true
+					break
+				}
+			}
+		}
+	}
+	// Fall back to a full discovery refresh (may spawn a bootstrap probe)
+	if !queried {
+		if gpus := s.getGpuFn(ctx, runnersSnapshot); len(gpus) > 0 {
+			queried = true
+			for _, g := range gpus {
+				for _, lg := range loadGpus {
+					if g.DeviceID == lg.DeviceID {
+						maxAvailable += g.FreeMemory
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Add resident runner VRAM: it can be evicted before this load
+	for _, r := range s.loaded {
+		if r == nil || r.llama == nil {
+			continue
+		}
+		_, vram := r.llama.MemorySize()
+		maxAvailable += vram
+	}
+
+	if !queried {
+		// Couldn't get any live reading; don't trust the stale snapshot
+		slog.Warn("live VRAM confirmation unavailable, deferring to actual load", "model", loadGpus)
+		return false
+	}
+
+	slog.Info("live VRAM confirmation for pinned num_gpu",
+		"min_total", format.HumanBytes2(minTotal),
+		"live_available", format.HumanBytes2(maxAvailable),
+		"fits", maxAvailable >= minTotal)
+	return maxAvailable < minTotal
 }
 
 func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *gguf.Model, numParallel int, completion bool, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, launchOpts api.Options) (oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch int, ok bool) {
