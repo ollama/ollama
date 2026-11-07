@@ -302,6 +302,24 @@ func TestMainGPUFormatParams(t *testing.T) {
 	assert.Equal(t, int64(0), resp["main_gpu"])
 }
 
+func TestFormatParamsMissingValues(t *testing.T) {
+	for _, name := range []string{"temperature", "num_ctx", "use_mmap", "main_gpu"} {
+		t.Run(name, func(t *testing.T) {
+			var err error
+			require.NotPanics(t, func() {
+				_, err = FormatParams(map[string][]string{name: {}})
+			})
+			require.EqualError(t, err, "missing value for parameter \""+name+"\"")
+		})
+	}
+
+	t.Run("empty stop list", func(t *testing.T) {
+		params, err := FormatParams(map[string][]string{"stop": {}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{}, params["stop"])
+	})
+}
+
 func TestMessage_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		input    string
