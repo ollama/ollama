@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,24 +33,25 @@ var (
 )
 
 type Config struct {
-	ModelType             string   `json:"model_type"`
-	VocabSize             int32    `json:"vocab_size"`
-	HiddenSize            int32    `json:"hidden_size"`
-	IntermediateSize      int32    `json:"intermediate_size"`
-	NumHiddenLayers       int32    `json:"num_hidden_layers"`
-	HybridOverridePattern string   `json:"hybrid_override_pattern"`
-	LayersBlockType       []string `json:"layers_block_type"`
-	NumAttentionHeads     int32    `json:"num_attention_heads"`
-	NumKeyValueHeads      int32    `json:"num_key_value_heads"`
-	HeadDim               int32    `json:"head_dim"`
-	LayerNormEpsilon      float32  `json:"layer_norm_epsilon"`
-	RMSNormEps            float32  `json:"rms_norm_eps"`
-	TieWordEmbeddings     bool     `json:"tie_word_embeddings"`
-	MaxPositionEmbeddings int32    `json:"max_position_embeddings"`
-	AttentionBias         bool     `json:"attention_bias"`
-	MLPBias               bool     `json:"mlp_bias"`
-	UseBias               bool     `json:"use_bias"`
-	NumNextNPredictLayers int32    `json:"num_nextn_predict_layers"`
+	ModelType             string        `json:"model_type"`
+	VocabSize             int32         `json:"vocab_size"`
+	HiddenSize            int32         `json:"hidden_size"`
+	IntermediateSize      int32         `json:"intermediate_size"`
+	NumHiddenLayers       int32         `json:"num_hidden_layers"`
+	HybridOverridePattern string        `json:"hybrid_override_pattern"`
+	LayersBlockType       []string      `json:"layers_block_type"`
+	BlockConfigs          []blockConfig `json:"block_configs"`
+	NumAttentionHeads     int32         `json:"num_attention_heads"`
+	NumKeyValueHeads      int32         `json:"num_key_value_heads"`
+	HeadDim               int32         `json:"head_dim"`
+	LayerNormEpsilon      float32       `json:"layer_norm_epsilon"`
+	RMSNormEps            float32       `json:"rms_norm_eps"`
+	TieWordEmbeddings     bool          `json:"tie_word_embeddings"`
+	MaxPositionEmbeddings int32         `json:"max_position_embeddings"`
+	AttentionBias         bool          `json:"attention_bias"`
+	MLPBias               bool          `json:"mlp_bias"`
+	UseBias               bool          `json:"use_bias"`
+	NumNextNPredictLayers int32         `json:"num_nextn_predict_layers"`
 
 	ConvKernel     int32 `json:"conv_kernel"`
 	SSMStateSize   int32 `json:"ssm_state_size"`
@@ -58,9 +60,10 @@ type Config struct {
 	NGroups        int32 `json:"n_groups"`
 	MambaChunkSize int32 `json:"chunk_size"`
 
-	// Round scan output before gating and normalized activations before scaling.
-	// The first cast intentionally discards precision before resuming in FP32.
-	MambaRoundIntermediates bool `json:"-"`
+	// Scan rounding happens before FP32 gating; norm rounding precedes scaling.
+	MambaRoundScan bool `json:"-"`
+	MambaRoundNorm bool `json:"-"`
+	NormInFP32     bool `json:"-"`
 
 	NRoutedExperts                  int32   `json:"n_routed_experts"`
 	NSharedExperts                  int32   `json:"n_shared_experts"`
@@ -80,6 +83,31 @@ type Config struct {
 
 	LayerTypes []byte  `json:"-"`
 	AttnScale  float32 `json:"-"`
+}
+
+type blockConfig struct {
+	BlockType           string `json:"block_type"`
+	NRoutedExperts      *int32 `json:"n_routed_experts"`
+	NumExpertsPerTok    *int32 `json:"num_experts_per_tok"`
+	MoEIntermediateSize *int32 `json:"moe_intermediate_size"`
+}
+
+func (c *Config) layerConfig(index int) *Config {
+	if len(c.BlockConfigs) == 0 {
+		return c
+	}
+	cfg := *c
+	block := c.BlockConfigs[index]
+	if block.NRoutedExperts != nil {
+		cfg.NRoutedExperts = *block.NRoutedExperts
+	}
+	if block.NumExpertsPerTok != nil {
+		cfg.NumExpertsPerTok = *block.NumExpertsPerTok
+	}
+	if block.MoEIntermediateSize != nil {
+		cfg.MoEIntermediateSize = *block.MoEIntermediateSize
+	}
+	return &cfg
 }
 
 type Model struct {
@@ -102,7 +130,8 @@ type Model struct {
 	tok *tokenizer.Tokenizer
 	*Config
 
-	weightPrefix string
+	weightPrefix    string
+	auxHiddenLayers []int
 }
 
 type MTPHead struct {
@@ -114,7 +143,8 @@ type MTPHead struct {
 }
 
 type Layer struct {
-	Norm *nn.RMSNorm
+	config *Config
+	Norm   *nn.RMSNorm
 
 	Type      byte
 	Mamba     *Mamba2
@@ -206,12 +236,24 @@ func parseConfig(data []byte) (Config, error) {
 	if env.LLMConfig != nil {
 		cfg = *env.LLMConfig
 	}
+	cfg.NormInFP32 = cfg.ModelType == "nemotron_h_puzzle"
 	for _, architecture := range env.Architectures {
 		if architecture == "NemotronH_Omni_Reasoning_V3" {
-			cfg.MambaRoundIntermediates = true
+			cfg.MambaRoundScan = true
+			cfg.MambaRoundNorm = !cfg.NormInFP32
 		}
 	}
-	if cfg.HybridOverridePattern == "" && len(cfg.LayersBlockType) > 0 {
+	if len(cfg.BlockConfigs) > 0 {
+		blockTypes := make([]string, len(cfg.BlockConfigs))
+		for i, block := range cfg.BlockConfigs {
+			blockTypes[i] = block.BlockType
+		}
+		if len(cfg.LayersBlockType) > 0 && !slices.Equal(cfg.LayersBlockType, blockTypes) {
+			return Config{}, fmt.Errorf("block_configs types do not match layers_block_type")
+		}
+		cfg.LayersBlockType = blockTypes
+	}
+	if len(cfg.LayersBlockType) > 0 && (cfg.HybridOverridePattern == "" || len(cfg.BlockConfigs) > 0) {
 		pattern := make([]byte, len(cfg.LayersBlockType))
 		for i, layerType := range cfg.LayersBlockType {
 			// linear_attention and full_attention are legacy aliases retained
@@ -228,6 +270,9 @@ func parseConfig(data []byte) (Config, error) {
 			default:
 				return Config{}, fmt.Errorf("unsupported layers_block_type %q at layer %d", layerType, i)
 			}
+		}
+		if cfg.HybridOverridePattern != "" && cfg.HybridOverridePattern != string(pattern) {
+			return Config{}, fmt.Errorf("block_configs types do not match hybrid_override_pattern")
 		}
 		cfg.HybridOverridePattern = string(pattern)
 		if cfg.NumHiddenLayers == 0 {
@@ -312,6 +357,22 @@ func parseConfig(data []byte) (Config, error) {
 		case 'M', '*', 'A', 'E', '-':
 		default:
 			return Config{}, fmt.Errorf("unsupported layer type %q at layer %d", t, i)
+		}
+	}
+
+	for i, block := range cfg.BlockConfigs {
+		if cfg.LayerTypes[i] != 'E' {
+			if block.NRoutedExperts != nil || block.NumExpertsPerTok != nil || block.MoEIntermediateSize != nil {
+				return Config{}, fmt.Errorf("layer %d: expert configuration requires a moe block", i)
+			}
+			continue
+		}
+		layer := cfg.layerConfig(i)
+		if layer.NRoutedExperts <= 0 || layer.NumExpertsPerTok <= 0 || layer.NumExpertsPerTok > layer.NRoutedExperts || layer.MoEIntermediateSize <= 0 {
+			return Config{}, fmt.Errorf("layer %d: invalid moe configuration: experts %d, top-k %d, intermediate size %d", i, layer.NRoutedExperts, layer.NumExpertsPerTok, layer.MoEIntermediateSize)
+		}
+		if layer.NRoutedExperts%cfg.ExpertGroupCount != 0 {
+			return Config{}, fmt.Errorf("layer %d: n_routed_experts %d must be divisible by n_group %d", i, layer.NRoutedExperts, cfg.ExpertGroupCount)
 		}
 	}
 
@@ -438,7 +499,7 @@ func stackAndClone(parts []*mlx.Array) *mlx.Array {
 func supportsGatherQMM(mode string, bits int) bool {
 	switch mode {
 	case "affine":
-		return bits == 4 || bits == 8
+		return bits == 3 || bits == 4 || bits == 8
 	case "mxfp8":
 		return bits == 8
 	case "nvfp4", "mxfp4":
@@ -963,7 +1024,7 @@ func mtpLayerPrefixes(tensors map[string]*mlx.Array, mtpPrefix string) ([]string
 }
 
 func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *Config, layerPrefix string, typ byte, useQuantizedExperts bool) (*Layer, error) {
-	layer := &Layer{Type: typ}
+	layer := &Layer{Type: typ, config: cfg}
 
 	norm := loadRMSNorm(tensors, layerPrefix+".norm.weight", cfg.LayerNormEpsilon)
 	if norm == nil {
@@ -1226,7 +1287,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", backbonePrefix, i)
-		layer, err := loadLayer(linears, tensors, cfg, layerPrefix, cfg.LayerTypes[i], useQuantizedExperts)
+		layer, err := loadLayer(linears, tensors, cfg.layerConfig(int(i)), layerPrefix, cfg.LayerTypes[i], useQuantizedExperts)
 		if err != nil {
 			return fmt.Errorf("layer %d: %w", i, err)
 		}
@@ -1305,7 +1366,7 @@ var mambaGate = mlx.Compile2("NemotronMambaGate", func(y, gate *mlx.Array) *mlx.
 }, mlx.Shapeless())
 
 var mambaRoundedGate = mlx.Compile2("NemotronMambaRoundedGate", func(y, gate *mlx.Array) *mlx.Array {
-	// Super rounds the scan to the projection dtype before gating in FP32.
+	// The scan accumulator has more precision than the gate input expects.
 	y = y.AsType(gate.DType()).AsType(mlx.DTypeFloat32)
 	return mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
 }, mlx.Shapeless())
@@ -1323,14 +1384,14 @@ func gatedGroupRMSNorm(y, gate, weight *mlx.Array, cfg *Config, dtype mlx.DType)
 	B, L := int32(dims[0]), int32(dims[1])
 	groupSize := inner / cfg.NGroups
 
-	if cfg.MambaRoundIntermediates {
+	if cfg.MambaRoundScan {
 		y = mambaRoundedGate(y, gate)
 	} else {
 		y = mambaGate(y, gate)
 	}
 	y = mlx.RMSNormFn(mlx.Reshape(y, B, L, cfg.NGroups, groupSize), nil, cfg.LayerNormEpsilon)
 	scaleType := y.DType()
-	if cfg.MambaRoundIntermediates {
+	if cfg.MambaRoundNorm {
 		scaleType = dtype
 	}
 	y = mambaNormScale(y, mlx.Reshape(weight.AsType(scaleType), 1, 1, cfg.NGroups, groupSize))
@@ -1584,9 +1645,17 @@ func (m *SparseMoE) route(x *mlx.Array, cfg *Config, B, L int32) (*mlx.Array, *m
 	return inds, scores
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (c *Config) normalize(norm *nn.RMSNorm, x *mlx.Array) *mlx.Array {
+	if c.NormInFP32 {
+		return mlx.RMSNormFn(x.AsType(mlx.DTypeFloat32), norm.Weight.AsType(mlx.DTypeFloat32), c.LayerNormEpsilon).AsType(x.DType())
+	}
+	return norm.Forward(x, c.LayerNormEpsilon)
+}
+
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32) *mlx.Array {
+	cfg := l.config
 	residual := x
-	h := l.Norm.Forward(x, cfg.LayerNormEpsilon)
+	h := cfg.normalize(l.Norm, x)
 	switch l.Type {
 	case 'M':
 		h = l.Mamba.Forward(h, b, c, B, L, cfg)
@@ -1613,15 +1682,34 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	if len(b.Media) > 0 {
 		h = m.scatterMedia(h, b, 0)
 	}
+	var features []*mlx.Array
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, b, c, B, L, m.Config)
+		h = layer.Forward(h, b, c, B, L)
+		if slices.Contains(m.auxHiddenLayers, i) {
+			features = append(features, h)
+		}
 	}
-	h = m.Norm.Forward(h, m.LayerNormEpsilon)
+	h = m.Config.normalize(m.Norm, h)
+	if features != nil {
+		return h, mlx.Concatenate(features, -1)
+	}
 	return h, h
+}
+
+func (m *Model) SetAuxHiddenLayers(layers []int) {
+	m.auxHiddenLayers = layers
+}
+
+func (m *Model) TokenEmbeddings(ids *mlx.Array) *mlx.Array {
+	return m.EmbedTokens.Forward(ids)
+}
+
+func (m *Model) RawLogits(hidden *mlx.Array) *mlx.Array {
+	return m.LMHead.Forward(hidden)
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -1673,8 +1761,8 @@ func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden
 		// column 0 holds the prompt token one past its offset.
 		raw = (*Model)(m).scatterMedia(raw, b, 1)
 	}
-	emb := m.MTP.Enorm.Forward(raw, m.LayerNormEpsilon)
-	h := m.MTP.Hnorm.Forward(b.Hidden, m.LayerNormEpsilon)
+	emb := m.Config.normalize(m.MTP.Enorm, raw)
+	h := m.Config.normalize(m.MTP.Hnorm, b.Hidden)
 	fused := m.MTP.FC.Forward(emb.Concatenate(-1, h))
 
 	cacheIndex := 0
@@ -1684,9 +1772,9 @@ func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden
 			c = draftCaches[cacheIndex]
 			cacheIndex++
 		}
-		fused = layer.Forward(fused, b, c, B, L, m.Config)
+		fused = layer.Forward(fused, b, c, B, L)
 	}
-	hidden = m.MTP.Norm.Forward(fused, m.LayerNormEpsilon)
+	hidden = m.Config.normalize(m.MTP.Norm, fused)
 	return hidden, hidden
 }
 

@@ -220,6 +220,14 @@ func TestDFlashProposeBounds(t *testing.T) {
 		if got, want := draft.calls[0].block, []int32{1, 6, 6, 6}; !slices.Equal(got, want) {
 			t.Fatalf("block = %v, want %v (anchor plus blockSize-1 masks)", got, want)
 		}
+		cand = session.propose(current, 1)
+		mlx.Eval(cand.tokens)
+		if got := cand.tokens.Ints(); !slices.Equal(got, []int32{2}) {
+			t.Fatalf("limited draft tokens = %v, want [2]", got)
+		}
+		if got := draft.calls[len(draft.calls)-1].block; !slices.Equal(got, []int32{1, 6}) {
+			t.Fatalf("limited block = %v, want [1 6]", got)
+		}
 	})
 }
 
@@ -352,6 +360,56 @@ func TestDecodeBlockDraft(t *testing.T) {
 	})
 }
 
+// LiLiCorr consumes the full block and the context returned by Forward.
+type correlatedBlockDraft struct {
+	*fakeBlockDraft
+	rows        int
+	contextRows int
+}
+
+func (d *correlatedBlockDraft) SelectBlock(hidden, logits, context *mlx.Array) (tokens, ids, probs *mlx.Array) {
+	d.rows = hidden.Dim(1)
+	if context != nil {
+		d.contextRows = context.Dim(1)
+	}
+	tokens = logits.Argmax(-1, false).AsType(mlx.DTypeInt32)
+	ids = tokens.ExpandDims(-1)
+	probs = mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, ids.Dims()...), 1)
+	return tokens, ids, probs
+}
+
+func TestCorrelatedDraftKeepsFullBlock(t *testing.T) {
+	for _, budget := range []int{1, 3} {
+		mlxtest.RunSubtest(t, fmt.Sprintf("budget %d", budget), func(t *mlxtest.T) {
+			r, draft, session, _ := newBlockTestSession(t, map[int32]int32{1: 2, 2: 3, 3: 4}, 4)
+			defer session.close()
+			selector := &correlatedBlockDraft{fakeBlockDraft: draft}
+			r.spec.draft = selector
+			session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
+			candidates := session.propose(mlx.FromValues([]int32{1}, 1), budget)
+			mlx.Eval(candidates.Arrays()...)
+			if selector.rows != 3 || len(draft.calls) != 1 || len(draft.calls[0].block) != 4 {
+				t.Fatalf("selected %d rows from calls %+v, want the full four-token block", selector.rows, draft.calls)
+			}
+			if selector.contextRows != 4 {
+				t.Fatal("selector did not receive Forward's context")
+			}
+			want := []int32{2, 3, 4}[:budget]
+			if got := candidates.tokens.Ints(); !slices.Equal(got, want) {
+				t.Fatalf("tokens = %v, want %v", got, want)
+			}
+			if got := candidates.dist.IDs.Ints(); !slices.Equal(got, want) || candidates.dist.Probs.Dim(0) != budget {
+				t.Fatalf("proposal support = %v, want %v with %d probability rows", got, want, budget)
+			}
+			for _, q := range candidates.dist.Probs.Floats() {
+				if q != 1 {
+					t.Fatalf("proposal probability = %g, want point mass", q)
+				}
+			}
+		})
+	}
+}
+
 // This test model's learned score favors token 0 rather than the unary winner.
 // The real sampler callback must supply both the choice and its probability.
 type selectedBlockDraft struct{ *fakeBlockDraft }
@@ -423,11 +481,14 @@ func TestSelectorDraftKeepsFixedDepth(t *testing.T) {
 		session.close()
 		req := Request{Tokens: []int32{1, 2, 3}}
 
-		plain := r.spec.open(req, nil)
-		if plain.fixedDepth || plain.limit != r.spec.depth.scheduled {
-			t.Fatalf("block draft: fixedDepth %v limit %d, want the controller's %d", plain.fixedDepth, plain.limit, r.spec.depth.scheduled)
+		for _, candidate := range []model.DraftModel{draft, &correlatedBlockDraft{fakeBlockDraft: draft}} {
+			r.spec.draft = candidate
+			plain := r.spec.open(req, nil)
+			if plain.fixedDepth || plain.limit != r.spec.depth.scheduled {
+				t.Fatalf("%T: fixedDepth %v limit %d, want the controller's %d", candidate, plain.fixedDepth, plain.limit, r.spec.depth.scheduled)
+			}
+			plain.close()
 		}
-		plain.close()
 
 		r.spec.draft = &selectedBlockDraft{draft}
 		s := r.spec.open(req, nil)

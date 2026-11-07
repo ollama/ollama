@@ -147,6 +147,12 @@ func (d *dflashDraftSession) flush() {
 	})
 }
 
+// A correlated draft scores the full trained block before choosing a prefix.
+// It reports its actual proposal probabilities for rejection sampling.
+type blockSelector interface {
+	SelectBlock(hidden, logits, context *mlx.Array) (tokens, ids, probs *mlx.Array)
+}
+
 // propose drafts a block after the not-yet-validated current token, one
 // forward filling every mask position.
 func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandidates {
@@ -159,12 +165,14 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 	}
 	d.commitBlock()
 
-	// Draft only the requested rows, not the full trained block: exact for
-	// causal layers, while a bidirectional draft's proposal distribution
-	// changes; verification uses the actual proposal probabilities.
+	proposalLength := n
+	selector, correlated := spec.draft.(blockSelector)
+	if correlated {
+		proposalLength = blockSize - 1
+	}
 	var candidates *draftCandidates
 	mlx.ScopedArrays(func() []*mlx.Array {
-		masks := make([]int32, n)
+		masks := make([]int32, proposalLength)
 		for i := range masks {
 			masks[i] = d.drafter.maskToken
 		}
@@ -176,13 +184,27 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 		scheduleSpeculation(spec.draftKV, d.ctxOffset, 1)
 		d.blockOutstanding = true
 
-		hidden, _ := spec.draft.Forward(&batch.Batch{
+		hidden, context := spec.draft.Forward(&batch.Batch{
 			InputIDs:     block,
 			SeqOffsets:   []int32{int32(offset)},
-			SeqQueryLens: []int32{int32(n + 1)},
+			SeqQueryLens: []int32{int32(proposalLength + 1)},
 			Hidden:       features,
 			Layout:       d.layout,
 		}, spec.targets, spec.draftKV)
+
+		if correlated {
+			hidden = hidden.Slice(mlx.Slice(), mlx.Slice(1, proposalLength+1), mlx.Slice())
+			tokens, ids, probs := selector.SelectBlock(hidden, spec.draft.Unembed(hidden), context)
+			candidates = &draftCandidates{
+				tokens: tokens.Slice(mlx.Slice(), mlx.Slice(0, n)),
+				dist: sample.Distribution{
+					IDs:   ids.Squeeze(0).Slice(mlx.Slice(0, n), mlx.Slice()),
+					Probs: probs.Squeeze(0).Slice(mlx.Slice(0, n), mlx.Slice()),
+				},
+			}
+			return candidates.Arrays()
+		}
+
 		candidates = d.selectBlock(hidden, current, n)
 		return candidates.Arrays()
 	})
