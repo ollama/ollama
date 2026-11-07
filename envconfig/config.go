@@ -258,6 +258,51 @@ var (
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
 
+// ParseByteSize parses a human-readable byte count into an int64.
+// Suffixes b/k/m/g (case-insensitive) mean bytes, kibibytes (×1024),
+// mebibytes (×1024²), gibibytes (×1024³). No suffix means bytes.
+// Returns an error on invalid input.
+func ParseByteSize(s string) (int64, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return 0, fmt.Errorf("empty string")
+	}
+	var mult int64 = 1
+	switch {
+	case strings.HasSuffix(s, "g"):
+		mult = 1024 * 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "m"):
+		mult = 1024 * 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "k"):
+		mult = 1024
+		s = s[:len(s)-1]
+	case strings.HasSuffix(s, "b"):
+		s = s[:len(s)-1]
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid byte size %q: %w", s, err)
+	}
+	return n * mult, nil
+}
+
+func ByteSize(key string, defaultValue uint) func() uint {
+	return func() uint {
+		s := Var(key)
+		if strings.TrimSpace(s) == "" {
+			return defaultValue
+		}
+		n, err := ParseByteSize(s)
+		if err != nil {
+			slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+			return defaultValue
+		}
+		return uint(n)
+	}
+}
+
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
 		if s := Var(key); s != "" {
@@ -285,6 +330,24 @@ var (
 	// no effect on GGUF transfers, which use the legacy upload/download
 	// paths.
 	MaxTransferStreams = Uint("OLLAMA_MAX_TRANSFER_STREAMS", 4)
+	// MaxPullStreams caps how many blob parts a pull transfers at once. It is
+	// the sibling of MaxTransferStreams above and applies to both pull paths:
+	// the legacy GGUF path in server/download.go and, via BodyConcurrency, the
+	// tensor-layer path in transfer.Download. On narrow connections each stream
+	// gets a proportionally smaller share of bandwidth and may time out before
+	// finishing; reducing this keeps each stream fast enough to complete.
+	// Overridden per request by the --limit-streams flag. Default: 16.
+	MaxPullStreams = Uint("OLLAMA_MAX_PULL_STREAMS", 16)
+	// MaxPullRetries sets how many times a failed part is retried before the
+	// whole pull is aborted. Default: 6.
+	MaxPullRetries = Uint("OLLAMA_MAX_PULL_RETRIES", 6)
+	// MaxPullRate caps the total pull bandwidth at this many bytes per second,
+	// shared by all streams — not per stream, which would multiply it by
+	// OLLAMA_MAX_PULL_STREAMS. Accepts a plain number or a binary suffix: b, k,
+	// m, g (e.g. "500k" = 512000 B/s, which the progress bar then prints as
+	// "512 KB/s" because it divides by 1000). Overridden per request by the
+	// --limit-rate flag. 0 means no limit. Default: 0.
+	MaxPullRate = ByteSize("OLLAMA_MAX_PULL_RATE", 0)
 )
 
 func Uint64(key string, defaultValue uint64) func() uint64 {
@@ -326,6 +389,9 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS":    {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
+		"OLLAMA_MAX_PULL_RATE":        {"OLLAMA_MAX_PULL_RATE", MaxPullRate(), "Total pull bandwidth in bytes/s, binary suffixes b/k/m/g (default 0, no limit)"},
+		"OLLAMA_MAX_PULL_RETRIES":     {"OLLAMA_MAX_PULL_RETRIES", MaxPullRetries(), "Retries for a failed pull part before the pull is aborted (default 6)"},
+		"OLLAMA_MAX_PULL_STREAMS":     {"OLLAMA_MAX_PULL_STREAMS", MaxPullStreams(), "Maximum parallel streams per model pull (default 16)"},
 		"OLLAMA_MAX_TRANSFER_STREAMS": {"OLLAMA_MAX_TRANSFER_STREAMS", MaxTransferStreams(), "Maximum parallel transfer streams for safetensors model pulls/pushes (default 4)"},
 		"OLLAMA_MAX_QUEUE":            {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
 		"OLLAMA_MODELS":               {"OLLAMA_MODELS", Models(), "The path to the models directory"},
