@@ -1,6 +1,7 @@
 package compatmigrate
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -126,6 +127,14 @@ func glmOCRModelKV(src *SourceModel) outKV {
 	}
 	if src.GGUF.KeyValue("tokenizer.ggml.pre").Valid() {
 		modelKV["tokenizer.ggml.pre"] = "chatglm-bpe"
+	}
+	// Mirrors the EOT fix in handle_glmocr: GLM-OCR ends its turn with
+	// <|user|>, which llama.cpp only treats as end of generation when it is
+	// published as the EOT token.
+	if _, ok := modelKV["tokenizer.ggml.eot_token_id"]; !ok {
+		if id := slices.Index(src.GGUF.KeyValue("tokenizer.ggml.tokens").Strings(), "<|user|>"); id >= 0 {
+			modelKV["tokenizer.ggml.eot_token_id"] = uint32(id)
+		}
 	}
 	if _, ok := modelKV["glm4.rope.dimension_count"]; !ok {
 		if keyLength := src.GGUF.KeyValue("attention.key_length"); keyLength.Valid() {
