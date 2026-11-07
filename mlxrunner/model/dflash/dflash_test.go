@@ -2,9 +2,11 @@ package dflash
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +47,50 @@ func TestDraftConfigBoundsAndCausality(t *testing.T) {
 			// Only DFlash2 reads the top-level is_causal; the shared parse must not apply it.
 			if tt.valid && (got.Causal != nil || got.isCausal == nil || *got.isCausal != tt.value.(bool)) {
 				t.Fatalf("causal=%v is_causal=%v, want only is_causal %v", got.Causal, got.isCausal, tt.value)
+			}
+		})
+	}
+}
+
+// Keep the policy in JSON so these tests exercise parsing and loader wiring.
+func draftRotaryTestConfig(noRoPEField string) []byte {
+	return []byte(fmt.Sprintf(`{
+		"hidden_size": 2, "num_hidden_layers": 2,
+		"num_attention_heads": 1, "num_key_value_heads": 1, "head_dim": 2,
+		"rms_norm_eps": 0.000001, "rope_theta": 10000,
+		"layer_types": ["sliding_attention", "full_attention"], "sliding_window": 64,
+		"dflash_config": {"block_size": 4, "mask_token_id": 0, "target_layer_ids": [0], "causal": false}
+		%s
+	}`, noRoPEField))
+}
+
+func TestDraftConfigNoRoPELayers(t *testing.T) {
+	for _, tt := range []struct {
+		name, field string
+		valid       bool
+	}{
+		{"omitted", "", true},
+		{"empty", `,"no_rope_layers":[]`, true},
+		{"first", `,"no_rope_layers":[0]`, true},
+		{"last", `,"no_rope_layers":[1]`, true},
+		{"unordered", `,"no_rope_layers":[1,0]`, true},
+		{"negative", `,"no_rope_layers":[-1]`, false},
+		{"past_last", `,"no_rope_layers":[2]`, false},
+		{"invalid_after_valid", `,"no_rope_layers":[0,2]`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseConfig(draftRotaryTestConfig(tt.field))
+			if tt.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("parseConfig accepted invalid %s", tt.field)
+			}
+			if !strings.Contains(err.Error(), "no_rope_layers") {
+				t.Fatalf("error %q does not identify no_rope_layers", err)
 			}
 		})
 	}
