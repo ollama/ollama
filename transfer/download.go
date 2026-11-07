@@ -26,6 +26,18 @@ var (
 	errSlow    = errors.New("download too slow")
 )
 
+// destError is a local failure creating or writing the blob destination.
+// It is not a transient network failure, so the download is not retried.
+type destError struct{ err error }
+
+func (e *destError) Error() string { return e.err.Error() }
+func (e *destError) Unwrap() error { return e.err }
+
+func isDestWriteError(err error) bool {
+	var de *destError
+	return errors.As(err, &de)
+}
+
 type downloader struct {
 	client       *http.Client
 	baseURL      string
@@ -206,6 +218,10 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 		switch {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return err
+		case isDestWriteError(err):
+			// Creating the destination or writing the blob will not succeed on
+			// retry, and a later network error would hide the local failure.
+			return err
 		case errors.Is(err, errStalled):
 			if stallRetries++; stallRetries >= maxTransientRetries {
 				attempt++
@@ -296,7 +312,9 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 func (d *downloader) save(ctx context.Context, cancel context.CancelCauseFunc, blob Blob, r io.Reader, existingSize int64) (int64, error) {
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
-	os.MkdirAll(filepath.Dir(dest), 0o755)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return 0, &destError{err: err}
+	}
 
 	h := sha256.New()
 
@@ -325,7 +343,7 @@ func (d *downloader) save(ctx context.Context, cancel context.CancelCauseFunc, b
 	if existingSize == 0 {
 		f, err = os.Create(tmp)
 		if err != nil {
-			return 0, err
+			return 0, &destError{err: err}
 		}
 		setSparse(f)
 	}
@@ -336,7 +354,10 @@ func (d *downloader) save(ctx context.Context, cancel context.CancelCauseFunc, b
 		// Don't remove .tmp here — download() handles cleanup based on blob size
 		return existingSize + n, err
 	}
-	f.Close()
+	// The final flush can be where a full disk reports the error.
+	if err := f.Close(); err != nil {
+		return existingSize + n, &destError{err: err}
+	}
 
 	if got := fmt.Sprintf("sha256:%x", h.Sum(nil)); got != blob.Digest {
 		os.Remove(tmp)
@@ -399,10 +420,21 @@ func (d *downloader) copy(ctx context.Context, cancel context.CancelCauseFunc, d
 		nr, err := src.Read(buf)
 		if nr > 0 {
 			lastRead.Store(time.Now().UnixNano())
-			dst.Write(buf[:nr])
-			h.Write(buf[:nr])
-			d.progress.add(int64(nr))
-			n.Add(int64(nr))
+			// A full disk fails here. Dropping the error reports the blob as
+			// downloaded and only surfaces "no space left" later, while writing
+			// the manifest, after the payload has already been read.
+			nw, werr := dst.Write(buf[:nr])
+			if nw > 0 {
+				h.Write(buf[:nw])
+				d.progress.add(int64(nw))
+				n.Add(int64(nw))
+			}
+			if werr != nil {
+				return n.Load(), &destError{err: werr}
+			}
+			if nw < nr {
+				return n.Load(), &destError{err: io.ErrShortWrite}
+			}
 		}
 		if err == io.EOF {
 			return n.Load(), nil
