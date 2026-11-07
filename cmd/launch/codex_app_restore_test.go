@@ -561,6 +561,7 @@ func TestCodexAppLateLegacyStartRequiresConsent(t *testing.T) {
 			withCodexAppProcessHooks(t, func() bool { return false },
 				func() error { t.Error("regular app was closed"); return nil },
 				func() error { openCalls++; return nil })
+			codexAppCanOpenID = func(context.Context) bool { return true }
 			oldRunning, oldStop := codexAppProfileIsRunning, codexAppStopProfile
 			checks, stops := 0, 0
 			codexAppProfileIsRunning = func(context.Context) (bool, error) { checks++; return checks > 1 && stops == 0, nil }

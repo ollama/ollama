@@ -1983,6 +1983,7 @@ func codexAppExitContext(timeout time.Duration, cancelled <-chan struct{}) (cont
 }
 
 type codexAppInterruptContext struct {
+	//nolint:containedctx // This context adapter adds synchronous spinner cancellation.
 	context.Context
 	interrupted <-chan struct{}
 	stop        context.CancelFunc
