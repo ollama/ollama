@@ -627,9 +627,9 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 		callIndex   int
 		resultIndex int
 		group       compactionToolGroup
+		summary     bool
 	}
 	byCallID := make(map[string]*pendingGroup)
-	ignoredCallIDs := make(map[string]struct{})
 	forced := make(map[string]struct{})
 	var ordered []*pendingGroup
 
@@ -640,14 +640,11 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 			if call.ID == "" {
 				return nil, nil, fmt.Errorf("%s: function call is missing call_id", item.Ref)
 			}
-			if call.Function.Name == compactionSummaryToolName && strings.HasPrefix(call.ID, "call_ollama_compaction_") {
-				ignoredCallIDs[call.ID] = struct{}{}
-				continue
-			}
 			if _, exists := byCallID[call.ID]; exists {
 				return nil, nil, fmt.Errorf("%s: duplicate function call_id %q", item.Ref, call.ID)
 			}
 			group := &pendingGroup{callIndex: i, resultIndex: -1, group: compactionToolGroup{CallRef: item.Ref}}
+			group.summary = call.Function.Name == compactionSummaryToolName && strings.HasPrefix(call.ID, "call_ollama_compaction_")
 			byCallID[call.ID] = group
 			ordered = append(ordered, group)
 		case "function_call_output":
@@ -656,9 +653,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 				// Standalone outputs can carry the task instructions. Retain them
 				// without inventing a call or relying on the summary to repeat them.
 				forced[item.Ref] = struct{}{}
-				continue
-			}
-			if _, ignored := ignoredCallIDs[callID]; ignored {
 				continue
 			}
 			group := byCallID[callID]
@@ -676,6 +670,12 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 	groups := make([]compactionToolGroup, 0, len(ordered))
 	for _, candidate := range ordered {
 		groups = append(groups, candidate.group)
+		// A completed prior summary is replaceable by the new summary. It
+		// still needs normal pair validation and selection closure, but must
+		// not be forced into every subsequent payload as active tool work.
+		if candidate.summary && candidate.resultIndex >= 0 {
+			continue
+		}
 		active := candidate.resultIndex < 0
 		if !active {
 			active = true
@@ -761,6 +761,19 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 			peers[group.ResultRef] = group.CallRef
 		}
 	}
+	// Keep prior summaries available to the summarizer during overflow
+	// trimming. Their membership in groups now also enforces pair closure.
+	for _, item := range p.items {
+		if item.Type == "function_call" {
+			call := item.Message.ToolCalls[0]
+			if call.Function.Name == compactionSummaryToolName && strings.HasPrefix(call.ID, "call_ollama_compaction_") {
+				protected[item.Ref] = true
+				if peer := peers[item.Ref]; peer != "" {
+					protected[peer] = true
+				}
+			}
+		}
+	}
 
 	removed := make(map[string]bool)
 	var removedBytes int
@@ -773,7 +786,6 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 		}
 		peer := peers[item.Ref]
 		if item.Type == "function_call" || item.Type == "function_call_output" {
-			// Prior summary pairs are intentionally absent from p.groups.
 			if peer == "" || protected[peer] {
 				continue
 			}
