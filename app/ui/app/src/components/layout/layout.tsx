@@ -5,6 +5,17 @@ import { useState } from "react";
 
 let sessionSidebarOpen = false;
 
+const DEFAULT_SIDEBAR_WIDTH = 192;
+const MIN_SIDEBAR_WIDTH = 160;
+const MAX_SIDEBAR_WIDTH = 480;
+const SIDEBAR_KEYBOARD_STEP = 16;
+
+let sessionSidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+
+function clampSidebarWidth(width: number) {
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width));
+}
+
 export function SidebarLayout({
   sidebar,
   title,
@@ -14,6 +25,8 @@ export function SidebarLayout({
   title?: string;
 }>) {
   const [sidebarOpen, setSidebarOpen] = useState(sessionSidebarOpen);
+  const [sidebarWidth, setSidebarWidth] = useState(sessionSidebarWidth);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const isWindows = isWindowsPlatform();
 
   const toggleSidebar = () => {
@@ -21,10 +34,69 @@ export function SidebarLayout({
     setSidebarOpen(sessionSidebarOpen);
   };
 
+  const updateSidebarWidth = (width: number) => {
+    sessionSidebarWidth = clampSidebarWidth(width);
+    setSidebarWidth(sessionSidebarWidth);
+  };
+
+  const handleResizePointerDown = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setIsResizingSidebar(true);
+  };
+
+  const handleResizePointerMove = (
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (!isResizingSidebar) return;
+    updateSidebarWidth(event.clientX);
+  };
+
+  const stopResizingSidebar = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setIsResizingSidebar(false);
+  };
+
+  const handleResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    let nextWidth: number | undefined;
+    switch (event.key) {
+      case "ArrowLeft":
+        nextWidth = sidebarWidth - SIDEBAR_KEYBOARD_STEP;
+        break;
+      case "ArrowRight":
+        nextWidth = sidebarWidth + SIDEBAR_KEYBOARD_STEP;
+        break;
+      case "Home":
+        nextWidth = MIN_SIDEBAR_WIDTH;
+        break;
+      case "End":
+        nextWidth = MAX_SIDEBAR_WIDTH;
+        break;
+    }
+    if (nextWidth === undefined) return;
+    event.preventDefault();
+    updateSidebarWidth(nextWidth);
+  };
+
+  const sidebarControlsLeft = isWindows
+    ? 8
+    : sidebarOpen
+      ? sidebarWidth - 52
+      : 80;
+
   return (
-    <div className="flex h-screen w-full overflow-hidden dark:bg-neutral-900">
+    <div
+      className={`flex h-screen w-full overflow-hidden dark:bg-neutral-900 ${isResizingSidebar ? "cursor-col-resize select-none" : ""}`}
+    >
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${sidebarOpen ? (isWindows ? "left-2" : "left-[140px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center text-neutral-500 dark:text-neutral-400 ${isResizingSidebar ? "" : "transition-[left] duration-375"}`}
+        style={{ left: sidebarControlsLeft }}
       >
         <button
           onClick={toggleSidebar}
@@ -58,11 +130,12 @@ export function SidebarLayout({
         )}
       </div>
       <div
-        className={`flex max-h-screen flex-col transition-[width] duration-300 ${
+        className={`relative flex max-h-screen flex-none flex-col ${isResizingSidebar ? "" : "transition-[width] duration-300"} ${
           sidebarOpen
-            ? "w-48 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950/40"
+            ? "border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950/40"
             : "w-0"
         }`}
+        style={sidebarOpen ? { width: sidebarWidth } : undefined}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
@@ -70,6 +143,25 @@ export function SidebarLayout({
           className="flex-none h-13 w-full"
         ></div>
         {sidebarOpen && sidebar}
+        {sidebarOpen && (
+          <div
+            role="separator"
+            aria-label="Resize sidebar"
+            aria-orientation="vertical"
+            aria-valuemin={MIN_SIDEBAR_WIDTH}
+            aria-valuemax={MAX_SIDEBAR_WIDTH}
+            aria-valuenow={sidebarWidth}
+            aria-valuetext={`${sidebarWidth} pixels`}
+            tabIndex={0}
+            className="absolute inset-y-0 right-0 z-30 w-2 translate-x-full cursor-col-resize touch-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400"
+            onPointerDown={handleResizePointerDown}
+            onPointerMove={handleResizePointerMove}
+            onPointerUp={stopResizingSidebar}
+            onPointerCancel={stopResizingSidebar}
+            onLostPointerCapture={() => setIsResizingSidebar(false)}
+            onKeyDown={handleResizeKeyDown}
+          />
+        )}
       </div>
       <main className="flex min-w-0 flex-1 flex-col transition-all duration-300">
         <div
