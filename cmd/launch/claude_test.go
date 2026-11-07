@@ -391,6 +391,7 @@ func TestClaudeRunRoutesThroughOllama(t *testing.T) {
 			providerKeys := []string{
 				"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
 				"CLAUDE_CODE_USE_ANTHROPIC_AWS", "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", "CLAUDE_CODE_USE_MANTLE",
+				"CLAUDE_CODE_USE_GATEWAY",
 			}
 			for _, key := range providerKeys {
 				t.Setenv(key, "1")
@@ -404,7 +405,7 @@ func TestClaudeRunRoutesThroughOllama(t *testing.T) {
 			t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
 			script := `#!/bin/sh
 printf '%s\n' "$ENABLE_CLAUDEAI_MCP_SERVERS" "$ANTHROPIC_BASE_URL" "${ANTHROPIC_API_KEY-unset}" "$ANTHROPIC_AUTH_TOKEN" "$@" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
-printf '%s\n' "$CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" "$CLAUDE_CODE_USE_BEDROCK" "$CLAUDE_CODE_USE_VERTEX" "$CLAUDE_CODE_USE_FOUNDRY" "$CLAUDE_CODE_USE_ANTHROPIC_AWS" "$CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD" "$CLAUDE_CODE_USE_MANTLE" "$CLAUDE_CODE_EFFORT_LEVEL" "$MAX_THINKING_TOKENS" >> "$CLAUDE_LAUNCH_TEST_OUTPUT"
+printf '%s\n' "$CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" "$CLAUDE_CODE_USE_BEDROCK" "$CLAUDE_CODE_USE_VERTEX" "$CLAUDE_CODE_USE_FOUNDRY" "$CLAUDE_CODE_USE_ANTHROPIC_AWS" "$CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD" "$CLAUDE_CODE_USE_MANTLE" "$CLAUDE_CODE_USE_GATEWAY" "$CLAUDE_CODE_EFFORT_LEVEL" "$MAX_THINKING_TOKENS" >> "$CLAUDE_LAUNCH_TEST_OUTPUT"
 `
 			if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
 				t.Fatal(err)
@@ -418,8 +419,10 @@ printf '%s\n' "$CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST" "$CLAUDE_CODE_USE_BEDROCK"
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := strings.Join([]string{"false", "http://127.0.0.1:12345", "", "ollama", "--model", model, "--mcp-config", mcpConfig,
-				"1", "", "", "", "", "", "", "high", "4096", ""}, "\n")
+			want := strings.Join([]string{
+				"false", "http://127.0.0.1:12345", "", "ollama", "--model", model, "--mcp-config", mcpConfig,
+				"1", "", "", "", "", "", "", "", "high", "4096", "",
+			}, "\n")
 			if string(got) != want {
 				t.Fatalf("child environment and arguments = %q, want %q", got, want)
 			}
