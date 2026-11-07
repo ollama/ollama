@@ -455,6 +455,19 @@ if(WIN32 AND TARGET dl)
         COMPONENT MLX)
 endif()
 
+if(WIN32)
+    # Install compiler runtime DLLs (libc++, libunwind) for Clang/MinGW toolchains if present
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        get_filename_component(_comp_dir ${CMAKE_CXX_COMPILER} DIRECTORY)
+        file(GLOB _runtime_dlls "${_comp_dir}/libc++*.dll" "${_comp_dir}/libunwind*.dll")
+        if(_runtime_dlls)
+            install(FILES ${_runtime_dlls}
+                DESTINATION ${OLLAMA_INSTALL_DIR}
+                COMPONENT MLX)
+        endif()
+    endif()
+endif()
+
 if(CUDAToolkit_FOUND)
     set(MLX_SHARED_CUDA_LIBS)
     set(MLX_PRIVATE_CUDA_LIBS)

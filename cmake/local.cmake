@@ -8,7 +8,7 @@ include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
     "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
-set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
+set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cpu;cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
     "Build-time staging prefix for nested Ollama native payloads")
@@ -866,7 +866,12 @@ endif()
 
 set(_mlx_targets)
 foreach(_backend IN LISTS OLLAMA_MLX_BACKENDS)
-    if(_backend STREQUAL "cuda_v13")
+    if(_backend STREQUAL "cpu")
+        ollama_add_mlx_build(cpu
+            PRESET mlx_cpu
+            RUNNER_DIR mlx)
+        list(APPEND _mlx_targets ollama-mlx-cpu)
+    elseif(_backend STREQUAL "cuda_v13")
         ollama_mlx_cuda_preset(_mlx_cuda_preset)
         set(_mlx_cuda_args)
         ollama_append_cache_arg_if_set(_mlx_cuda_args CMAKE_CUDA_ARCHITECTURES)

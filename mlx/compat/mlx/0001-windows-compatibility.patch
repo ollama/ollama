@@ -1,0 +1,108 @@
+diff --git a/mlx/backend/cpu/compiled_preamble.h b/mlx/backend/cpu/compiled_preamble.h
+index 02e3db8e7..58db3099a 100644
+--- a/mlx/backend/cpu/compiled_preamble.h
++++ b/mlx/backend/cpu/compiled_preamble.h
+@@ -1,6 +1,7 @@
+ // Copyright © 2023-24 Apple Inc.
+ 
+ #pragma once
++#define _USE_MATH_DEFINES
+ 
+ // clang-format off
+ #include "mlx/types/half_types.h"
+diff --git a/mlx/backend/cpu/jit_compiler.cpp b/mlx/backend/cpu/jit_compiler.cpp
+index 530637e55..8543a7138 100644
+--- a/mlx/backend/cpu/jit_compiler.cpp
++++ b/mlx/backend/cpu/jit_compiler.cpp
+@@ -271,7 +271,7 @@ std::string JitCompiler::build_command(
+   }
+ #endif
+   return fmt::format(
+-      "g++ -std=c++17 -O3 -Wall -fPIC -shared {} \"{}\" -o \"{}\" 2>&1",
++      "c++ -std=c++20 -D_USE_MATH_DEFINES -w -shared {} \"{}\" -o \"{}\" 2>&1",
+       extra_flags,
+       (dir / source_file_name).string(),
+       (dir / shared_lib_name).string());
+diff --git a/mlx/backend/cpu/make_compiled_preamble.ps1 b/mlx/backend/cpu/make_compiled_preamble.ps1
+index e9fa7afba..b09b90bce 100644
+--- a/mlx/backend/cpu/make_compiled_preamble.ps1
++++ b/mlx/backend/cpu/make_compiled_preamble.ps1
+@@ -23,7 +23,8 @@ if ($IS_MSVC_LIKE) {
+   [void]$CL_ARGS.Add('/std:c++17')
+   [void]$CL_ARGS.Add('/EP')
+ } else {
+-  [void]$CL_ARGS.Add('-std=c++17')
++  [void]$CL_ARGS.Add('-std=c++20')
++  [void]$CL_ARGS.Add('-D_USE_MATH_DEFINES')
+   [void]$CL_ARGS.Add('-E')
+   [void]$CL_ARGS.Add('-P')
+ }
+diff --git a/mlx/backend/no_gpu/allocator.cpp b/mlx/backend/no_gpu/allocator.cpp
+index a800e381a..d6a1b7131 100644
+--- a/mlx/backend/no_gpu/allocator.cpp
++++ b/mlx/backend/no_gpu/allocator.cpp
+@@ -12,6 +12,16 @@
+ #include "mlx/backend/no_gpu/apple_memory.h"
+ #elif defined(__linux__)
+ #include "mlx/backend/no_gpu/linux_memory.h"
++#elif defined(_WIN32)
++#include <windows.h>
++size_t get_memory_size() {
++  MEMORYSTATUSEX status;
++  status.dwLength = sizeof(status);
++  if (GlobalMemoryStatusEx(&status)) {
++    return (size_t)status.ullTotalPhys;
++  }
++  return 0;
++}
+ #else
+ size_t get_memory_size() {
+   return 0;
+diff --git a/mlx/dtype.cpp b/mlx/dtype.cpp
+index 380a9362a..e8d412552 100644
+--- a/mlx/dtype.cpp
++++ b/mlx/dtype.cpp
+@@ -92,21 +92,6 @@ Dtype::Kind kindof(const Dtype& t) {
+   return type_kinds[static_cast<int>(t.val())];
+ }
+ 
+-template class MLX_API TypeToDtype<bool>;
+-template class MLX_API TypeToDtype<uint8_t>;
+-template class MLX_API TypeToDtype<uint16_t>;
+-template class MLX_API TypeToDtype<uint32_t>;
+-template class MLX_API TypeToDtype<uint64_t>;
+-template class MLX_API TypeToDtype<int8_t>;
+-template class MLX_API TypeToDtype<int16_t>;
+-template class MLX_API TypeToDtype<int32_t>;
+-template class MLX_API TypeToDtype<int64_t>;
+-template class MLX_API TypeToDtype<float16_t>;
+-template class MLX_API TypeToDtype<float>;
+-template class MLX_API TypeToDtype<double>;
+-template class MLX_API TypeToDtype<bfloat16_t>;
+-template class MLX_API TypeToDtype<complex64_t>;
+-
+ template <>
+ TypeToDtype<bool>::operator Dtype() {
+   return bool_;
+@@ -177,6 +162,21 @@ TypeToDtype<complex64_t>::operator Dtype() {
+   return complex64;
+ }
+ 
++template class MLX_API TypeToDtype<bool>;
++template class MLX_API TypeToDtype<uint8_t>;
++template class MLX_API TypeToDtype<uint16_t>;
++template class MLX_API TypeToDtype<uint32_t>;
++template class MLX_API TypeToDtype<uint64_t>;
++template class MLX_API TypeToDtype<int8_t>;
++template class MLX_API TypeToDtype<int16_t>;
++template class MLX_API TypeToDtype<int32_t>;
++template class MLX_API TypeToDtype<int64_t>;
++template class MLX_API TypeToDtype<float16_t>;
++template class MLX_API TypeToDtype<float>;
++template class MLX_API TypeToDtype<double>;
++template class MLX_API TypeToDtype<bfloat16_t>;
++template class MLX_API TypeToDtype<complex64_t>;
++
+ bool issubdtype(const Dtype& a, const Dtype& b) {
+   return a == b;
+ }
