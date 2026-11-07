@@ -115,6 +115,10 @@ if [ "$(id -u)" -ne 0 ]; then
     fi
 
     SUDO="sudo"
+    $SUDO -v || error "Failed to authenticate"
+    # Keep sudo credentials fresh
+    PARENT_PID=$$
+    ( while kill -0 $PARENT_PID 2>/dev/null; do $SUDO -n true 2>/dev/null || true; sleep 60; done ) &
 fi
 
 NEEDS=$(require curl awk grep sed tee xargs)
