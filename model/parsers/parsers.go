@@ -53,6 +53,8 @@ func ParserForName(name string) Parser {
 	var p Parser
 
 	switch name {
+	case "ripple":
+		p = &RippleParser{}
 	case "qwen3":
 		p = &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
 	case "qwen3-thinking":
