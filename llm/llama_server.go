@@ -2849,10 +2849,12 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 }
 
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
+// Uses model file size, less the input tensors llama-server keeps on the CPU,
+// as a proxy for weights plus a rough KV cache estimate.
 // This is intentionally conservative — it overestimates to avoid VRAM contention.
 func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 	weights := modelFileSize(modelPath, f)
+	weights -= min(weights, cpuInputTensorSize(f))
 
 	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
 	layers := f.KV().BlockCount()
@@ -2867,6 +2869,19 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
 
 	return weights + kvCache
+}
+
+// cpuInputTensorSize returns the size of the input-layer tensors that
+// llama-server always keeps on the CPU, however many layers are offloaded.
+// token_embd only counts when the model has its own output tensor; tied models
+// also load it onto the GPU as the output layer.
+func cpuInputTensorSize(f *gguf.Model) uint64 {
+	tensors := f.Tensors()
+	size := tensors.Size("per_layer_token_embd.")
+	if len(tensors.Items("output.")) > 0 {
+		size += tensors.Size("token_embd.")
+	}
+	return size
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output
