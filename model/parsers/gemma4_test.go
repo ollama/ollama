@@ -1616,6 +1616,32 @@ func TestGemma4ParserDropsUnmatchedThinkingCloseTag(t *testing.T) {
 		}
 	})
 
+	t.Run("after_tool_call", func(t *testing.T) {
+		p := &Gemma4Parser{hasThinkingSupport: true}
+		p.Init(nil, nil, nil)
+
+		input := `Foo.<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><channel|>Bar.`
+		content, _, calls, err := p.Add(input, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if diff := cmp.Diff("Foo.Bar.", content); diff != "" {
+			t.Errorf("content mismatch (-want +got):\n%s", diff)
+		}
+		want := []api.ToolCall{
+			{
+				Function: api.ToolCallFunction{
+					Name:      "get_weather",
+					Arguments: testArgs(map[string]any{"location": "Paris"}),
+				},
+			},
+		}
+		if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+			t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+		}
+	})
+
 	t.Run("proper_block_still_works", func(t *testing.T) {
 		p := &Gemma4Parser{hasThinkingSupport: true}
 		p.Init(nil, nil, &api.ThinkValue{Value: true})
