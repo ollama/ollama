@@ -173,6 +173,7 @@ func TestBenchmarkModel_MultipleModelsPartialFailure(t *testing.T) {
 		t.Fatalf("second model was not measured after first failed: %s", output)
 	}
 }
+
 // TestBenchmarkOpenAI_IncompleteEpochs checks that both fully failed and
 // partially completed OpenAI-compatible runs return a failure while retaining
 // metrics produced by successful epochs.

@@ -43,6 +43,10 @@ go run ./cmd/bench -model gemma3 -epochs 3
 benchstat -col /name gemma.bench
 ```
 
+Incomplete runs (including `-openai`) retain successful results but exit non-zero
+when any timed epoch fails. Use `set -o pipefail` when piping through `tee` in
+shell scripts so the benchmark exit status is preserved.
+
 ### With Image Prompt
 
 ```
