@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -170,5 +171,54 @@ func TestBenchmarkModel_MultipleModelsPartialFailure(t *testing.T) {
 	})
 	if !strings.Contains(output, "BenchmarkModel/name=good-model/step=total") {
 		t.Fatalf("second model was not measured after first failed: %s", output)
+	}
+}
+// TestBenchmarkOpenAI_IncompleteEpochs checks that both fully failed and
+// partially completed OpenAI-compatible runs return a failure while retaining
+// metrics produced by successful epochs.
+func TestBenchmarkOpenAI_IncompleteEpochs(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		successful int32
+	}{
+		{name: "all failed", successful: 0},
+		{name: "partially completed", successful: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/chat/completions" {
+					http.NotFound(w, r)
+					return
+				}
+				if calls.Add(1) > tc.successful {
+					http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n"))
+				_, _ = w.Write([]byte("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5}}\n\n"))
+				_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			}))
+			defer server.Close()
+
+			opts := createTestFlagOptions()
+			epochs, maxTokens := 2, 0
+			opts.epochs, opts.maxTokens = &epochs, &maxTokens
+			openaiURL := server.URL + "/v1"
+			opts.openaiURL = &openaiURL
+			var out bytes.Buffer
+			err := benchmarkOpenAI(opts, []string{"test-model"}, &out)
+			want := fmt.Sprintf("incomplete benchmark: test-model: %d/2 epochs completed", tc.successful)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("benchmarkOpenAI() error = %v, want %q", err, want)
+			}
+			if calls.Load() != 2 {
+				t.Fatalf("requests = %d, want 2", calls.Load())
+			}
+			if got := strings.Count(out.String(), "step=total"); got != int(tc.successful) {
+				t.Errorf("completed epoch results = %d, want %d; output: %s", got, tc.successful, out.String())
+			}
+		})
 	}
 }

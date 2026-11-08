@@ -1085,6 +1085,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 	keepAliveForever := float64(-1)
 	keepAliveUnload := float64(0)
 
+	var incomplete []string
 	for _, model := range models {
 		// Size the generated prompt against this server, over the same API the
 		// timed requests use, so no Ollama endpoint is required.
@@ -1121,6 +1122,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 		}
 
 		hasTimings := false
+		completedEpochs := 0
 		shortCount := 0
 		for epoch := range *fOpt.epochs {
 			var oaiMetrics *openaiMetrics
@@ -1217,6 +1219,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 			)
 
 			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
+			completedEpochs++
 
 			if *fOpt.debug && *fOpt.promptTokens > 0 {
 				fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual prompt_tokens: %d)\n",
@@ -1232,8 +1235,14 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 			fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' had short responses (<%d tokens). Generation metrics may be unreliable.\n",
 				shortCount, *fOpt.epochs, model, *fOpt.maxTokens)
 		}
+		if completedEpochs != *fOpt.epochs {
+			incomplete = append(incomplete, fmt.Sprintf("%s: %d/%d epochs completed", model, completedEpochs, *fOpt.epochs))
+		}
 	}
 
+	if len(incomplete) > 0 {
+		return fmt.Errorf("incomplete benchmark: %s", strings.Join(incomplete, "; "))
+	}
 	return nil
 }
 
