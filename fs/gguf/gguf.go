@@ -144,8 +144,8 @@ func (f *File) readTensor() (TensorInfo, error) {
 	if err != nil {
 		return TensorInfo{}, err
 	}
-	if dims > MaxTensorDims {
-		return TensorInfo{}, fmt.Errorf("%w tensor dimensions %d exceeds maximum %d", ErrUnsupported, dims, MaxTensorDims)
+	if dims == 0 || dims > MaxTensorDims {
+		return TensorInfo{}, fmt.Errorf("%w tensor dimensions %d must be between 1 and %d", ErrUnsupported, dims, MaxTensorDims)
 	}
 
 	shape := make([]uint64, dims)
