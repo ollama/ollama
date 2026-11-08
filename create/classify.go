@@ -12,7 +12,7 @@ type SourceKind int
 
 const (
 	SourceFloat        SourceKind = iota // bf16/fp16/fp32 — quantizable on request
-	SourceBlockFP8                       // HF block-FP8 — auto-converted to mxfp8
+	SourceFP8                            // FP8 weights with float scales — auto-converted to mxfp8
 	SourcePrequantized                   // already quantized — copied through
 )
 
@@ -20,8 +20,8 @@ func (k SourceKind) String() string {
 	switch k {
 	case SourceFloat:
 		return "float"
-	case SourceBlockFP8:
-		return "block-fp8"
+	case SourceFP8:
+		return "fp8"
 	case SourcePrequantized:
 		return "prequantized"
 	default:
@@ -47,10 +47,14 @@ func Classify(inv Inventory, requested string) (Classification, error) {
 	}
 
 	if name, ok := firstUnsupportedFP8(inv); ok {
-		return Classification{}, fmt.Errorf("unsupported fp8 source: tensor %s is F8_E5M2; only F8_E4M3 block-FP8 sources are supported", name)
+		return Classification{}, fmt.Errorf("unsupported fp8 source: tensor %s is F8_E5M2; only F8_E4M3 sources are supported", name)
 	}
 
-	switch detectKind(inv) {
+	kind, err := detectKind(inv)
+	if err != nil {
+		return Classification{}, err
+	}
+	switch kind {
 	case SourceFloat:
 		return Classification{Kind: SourceFloat, Quantize: requested}, nil
 
@@ -63,18 +67,11 @@ func Classify(inv Inventory, requested string) (Classification, error) {
 			Quantize: detectPrequantizedQuantization(inv),
 		}, nil
 
-	case SourceBlockFP8:
-		rows, cols, ok := inv.Config.HFFP8WeightBlockSize()
-		if !ok {
-			return Classification{}, fmt.Errorf("fp8 source model is missing weight_block_size metadata")
-		}
-		if rows != 128 || cols != 128 {
-			return Classification{}, fmt.Errorf("unsupported fp8 source block size %dx%d (only 128x128 is supported)", rows, cols)
-		}
+	case SourceFP8:
 		if requested != "" {
-			return Classification{}, fmt.Errorf("cannot quantize an fp8 source model (requested %q): fp8 sources are converted to mxfp8 automatically; only bf16/fp16/fp32 sources can be quantized", requested)
+			return Classification{}, fmt.Errorf("cannot quantize an fp8 source model (requested %q): fp8 weights are stored with their published values; only bf16/fp16/fp32 sources can be quantized", requested)
 		}
-		return Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, nil
+		return Classification{Kind: SourceFP8, Quantize: fp8DecodeTarget}, nil
 	}
 
 	return Classification{}, fmt.Errorf("could not classify source model in %s", inv.Dir)
@@ -115,40 +112,39 @@ func normalizeRequested(requested string) (string, error) {
 	return c, nil
 }
 
-// detectKind sorts a source into Float, BlockFP8, or Prequantized using only
-// the inventory's tensor names, dtypes, and config. Prequantized is detected
-// from the tensors themselves, so a model whose quantization config sidecar is
-// missing (e.g. a ModelOpt checkpoint without hf_quant_config.json) is still
-// recognized as already-quantized and not mistaken for a float model.
-func detectKind(inv Inventory) SourceKind {
-	var hasMLXScales, hasPacked, hasPrequantScale, hasFP8Weight bool
-	for name, t := range inv.Tensors {
-		switch {
-		case strings.HasSuffix(name, ".scales"):
-			hasMLXScales = true
-		case strings.HasSuffix(name, ".weight_packed"):
-			hasPacked = true
-		case strings.HasSuffix(name, ".weight_scale"):
-			// ModelOpt NVFP4 uses a packed weight with an FP8 scale; its
-			// MXFP8 uses an FP8 weight with a U8 scale. HF block-FP8 also
-			// has a scale companion but is decoded through a separate path.
-			if bt, ok := inv.Tensors[strings.TrimSuffix(name, "_scale")]; ok &&
-				(isPackedDtype(bt.Dtype) || isE4M3Dtype(bt.Dtype) && strings.EqualFold(t.Dtype, "U8")) {
-				hasPrequantScale = true
-			}
+// detectKind recognizes each weight's encoding and sorts the source by the
+// most specific one present: Prequantized if any weight is already quantized
+// in a form the runtime executes, else FP8 if any weight is FP8 with a float
+// scale, else Float. A source can mix encodings (ModelOpt mixed precision
+// ships NVFP4 experts beside FP8 projections and BF16 attention); the planner
+// handles each weight by its own encoding. An FP8 weight with no usable scale
+// is an error: it cannot be decoded and the runtime has no FP8 type.
+func detectKind(inv Inventory) (SourceKind, error) {
+	var prequant, fp8 bool
+	for _, name := range sortedTensorNames(inv) {
+		if _, _, ok := matchPrequant(name, inv); ok {
+			prequant = true
+			continue
 		}
-		if strings.HasSuffix(name, ".weight") && isE4M3Dtype(t.Dtype) {
-			hasFP8Weight = true
+		_, ok, err := matchFP8(name, inv)
+		if err != nil {
+			return SourceFloat, err
+		}
+		if ok {
+			fp8 = true
+			continue
+		}
+		if t := inv.Tensors[name]; strings.HasSuffix(name, ".weight") && isE4M3Dtype(t.Dtype) {
+			return SourceFloat, fmt.Errorf("fp8 weight %s has no float scale companion (%s_scale or %s_scale_inv)", name, name, name)
 		}
 	}
-
 	switch {
-	case hasMLXScales || hasPacked || hasPrequantScale:
-		return SourcePrequantized
-	case hasFP8Weight:
-		return SourceBlockFP8
+	case prequant:
+		return SourcePrequantized, nil
+	case fp8:
+		return SourceFP8, nil
 	default:
-		return SourceFloat
+		return SourceFloat, nil
 	}
 }
 
@@ -162,15 +158,6 @@ func firstUnsupportedFP8(inv Inventory) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func isPackedDtype(dtype string) bool {
-	switch strings.ToUpper(dtype) {
-	case "U8", "U32": // current .weight_scale producers ship U8; U32 covers a future word-packed source
-		return true
-	default:
-		return false
-	}
 }
 
 func isE4M3Dtype(dtype string) bool {

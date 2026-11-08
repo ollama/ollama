@@ -640,18 +640,18 @@ func TestSwitchMLPFusedGateUpGlobalScaleMatchesSeparate(t *testing.T) {
 		shared := model.PrepareGatherQMMGlobalScale(mlx.FromValues([]float32{0.5, 2}, 2), 2)
 		differing := model.PrepareGatherQMMGlobalScale(mlx.FromValues([]float32{2, 0.5}, 2), 2)
 
-		gateW := &stackedExpertWeights{
-			Weight: gateQ, Scales: gateScales, GlobalScales: shared,
+		gateW := &model.ExpertBank{
+			Weight: gateQ, Scales: gateScales, GlobalScale: shared,
 			Bits: 4, GroupSize: 16, Mode: "nvfp4",
 		}
-		upW := &stackedExpertWeights{
-			Weight: upQ, Scales: upScales, GlobalScales: shared,
+		upW := &model.ExpertBank{
+			Weight: upQ, Scales: upScales, GlobalScale: shared,
 			Bits: 4, GroupSize: 16, Mode: "nvfp4",
 		}
 		if !canFuseQuantizedGateUp(gateW, upW) {
 			t.Fatal("gate and up sharing a global scale did not fuse")
 		}
-		upW.GlobalScales = differing
+		upW.GlobalScale = differing
 		if canFuseQuantizedGateUp(gateW, upW) {
 			t.Fatal("gate and up with differing global scales fused")
 		}
@@ -684,7 +684,7 @@ func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
 		qweight, scales, qbiases := mlx.Quantize(weight, 32, 8, "mxfp8")
 		mlx.Eval(qweight, scales)
 
-		got := denseExpertWeightForGatherMM(&stackedExpertWeights{
+		got := denseExpertWeightForGatherMM(&model.ExpertBank{
 			Weight:    qweight,
 			Scales:    scales,
 			Biases:    qbiases,
@@ -702,26 +702,6 @@ func TestDenseExpertWeightForGatherMMDequantizesQuantizedWeight(t *testing.T) {
 		}
 		if got.DType() == mlx.DTypeUint32 {
 			t.Fatal("dense expert fallback kept packed U32 weight")
-		}
-	})
-}
-
-func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		tensors := map[string]*mlx.Array{
-			"proj.weight.global_scale":       mlx.FromValues([]float32{0.25}, 1),
-			"proj.weight.input_global_scale": mlx.FromValues([]float32{8}, 1),
-		}
-
-		got, _ := combinedTensorGlobalScale(tensors, "proj.weight")
-		if got == nil {
-			t.Fatal("combinedTensorGlobalScale returned nil")
-		}
-		mlx.Eval(got)
-		// The reader converts to MLX's representation on the way out.
-		vals := got.Floats()
-		if want := float32(0.25 * mlx.Nvfp4MaxProduct); len(vals) != 1 || vals[0] != want {
-			t.Fatalf("combinedTensorGlobalScale = %v, want [%v]", vals, want)
 		}
 	})
 }

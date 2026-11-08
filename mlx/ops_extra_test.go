@@ -89,6 +89,52 @@ func TestMulGatherQMMGlobalScale(t *testing.T) {
 	})
 }
 
+// TestGatherQMMMXFP8GlobalScale checks a scale MLX's gather kernel does not
+// take: an mxfp8 bank with one scale per expert. The reference gathers the
+// dequantized, scaled weights.
+func TestGatherQMMMXFP8GlobalScale(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		const experts, rows, cols, group = 2, 4, 64, 32
+		// E4M3 codes of 1, 2, 0.5, -1, 1.5, packed four to a word.
+		codes := []uint32{0x38, 0x40, 0x30, 0xb8, 0x3c}
+		packed := make([]uint32, experts*rows*cols/4)
+		for i := range packed {
+			for j := range 4 {
+				packed[i] |= codes[(i*4+j)%len(codes)] << (8 * j)
+			}
+		}
+		blockScales := make([]uint8, experts*rows*(cols/group))
+		for i := range blockScales {
+			blockScales[i] = uint8(126 + i%3)
+		}
+		weights := FromValues(packed, experts, rows, cols/4)
+		scales := FromValues(blockScales, experts, rows, cols/group)
+
+		xValues := make([]float32, cols)
+		for i := range xValues {
+			xValues[i] = float32(i%7-3) / 8
+		}
+		x := FromValues(xValues, 1, cols).AsType(DTypeBFloat16)
+		indices := FromValues([]int32{1, 0}, 1, experts)
+
+		scale := FromValues(mlxForm([]float32{0.5, 3}), experts)
+		got := GatherQMM(x, weights, scales, nil, nil, indices, true, group, 8, "mxfp8", scale, false).AsType(DTypeFloat32)
+		dense := Dequantize(weights, scales, nil, group, 8, "mxfp8", scale).AsType(DTypeFloat32)
+		want := GatherMM(x.AsType(DTypeFloat32), Transpose(dense, 0, 2, 1), nil, indices, false)
+		Eval(got, want)
+		gotValues, wantValues := got.Floats(), want.Floats()
+		if len(gotValues) != len(wantValues) {
+			t.Fatalf("result length = %d, want %d", len(gotValues), len(wantValues))
+		}
+		for i := range gotValues {
+			delta := math.Abs(float64(gotValues[i] - wantValues[i]))
+			if tolerance := 0.02 * math.Max(math.Abs(float64(wantValues[i])), 1); !(delta <= tolerance) {
+				t.Fatalf("result[%d] = %v, want %v", i, gotValues[i], wantValues[i])
+			}
+		}
+	})
+}
+
 // The quantized payload is built directly, the way an nvfp4 checkpoint ships
 // it: packed fp4 codes, e4m3 group-scale bytes, and a separate global scale.
 // Only the dequantize consumer path runs, so expectations are exact.

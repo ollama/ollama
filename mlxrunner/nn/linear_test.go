@@ -102,6 +102,37 @@ func TestQuantizedLinearGlobalScaleMatchesDequantized(t *testing.T) {
 	})
 }
 
+// An FP8 checkpoint stored exactly is an mxfp8 projection with a per-tensor
+// global scale; the dequantized weights are the reference.
+func TestQuantizedLinearMXFP8GlobalScale(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const rows, cols, group = 8, 64, 32
+		weightValues := make([]float32, rows*cols)
+		for i := range weightValues {
+			weightValues[i] = float32((i%23)-11) * 0.25
+		}
+		packed, scales, _ := mlx.Quantize(mlx.FromValues(weightValues, rows, cols).AsType(mlx.DTypeBFloat16), group, 8, "mxfp8")
+		globalScale := mlx.FromValues([]float32{1.375 * mlx.Nvfp4MaxProduct}, 1)
+		linear := &QuantizedLinear{Weight: packed, Scales: scales, GlobalScale: globalScale, GroupSize: group, Bits: 8, Mode: "mxfp8"}
+
+		xValues := make([]float32, 2*cols)
+		for i := range xValues {
+			xValues[i] = float32(i%7-3) / 8
+		}
+		x := mlx.FromValues(xValues, 2, cols).AsType(mlx.DTypeBFloat16)
+		got := linear.Forward(x).AsType(mlx.DTypeFloat32)
+		dense := mlx.Dequantize(packed, scales, nil, group, 8, "mxfp8", globalScale).AsType(mlx.DTypeFloat32)
+		want := mlx.Matmul(x.AsType(mlx.DTypeFloat32), mlx.Transpose(dense, 1, 0))
+		mlx.Eval(got, want)
+		gotValues, wantValues := got.Floats(), want.Floats()
+		for i := range gotValues {
+			if !approxEqual(gotValues[i], wantValues[i], 0.02*float32(math.Max(math.Abs(float64(wantValues[i])), 1))) {
+				t.Fatalf("output[%d] = %v, want %v", i, gotValues[i], wantValues[i])
+			}
+		}
+	})
+}
+
 func TestSwiGLU(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
