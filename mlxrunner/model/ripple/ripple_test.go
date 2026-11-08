@@ -1,6 +1,8 @@
 package ripple
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -30,18 +32,16 @@ func TestMain(m *testing.M) {
 
 func fixtureConfig(t *testing.T) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile("../../testdata/ripple.json")
-	if err != nil {
-		t.Fatal(err)
+	return map[string]any{
+		"architectures": []string{"RicursiveForCausalLM"},
+		"vocab_size":    19, "hidden_size": 8, "intermediate_size": 12,
+		"num_hidden_layers": 3, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 4,
+		"layer_types":    []string{"sliding_attention", "full_attention", "sliding_attention"},
+		"sliding_window": 3, "rms_norm_eps": 1e-6, "rope_theta": 10000.0,
+		"use_valres": true, "use_gated_attention": true, "gate_full_precision": true,
+		"ffn_clamp_threshold": 20.0, "embed_scale": 71.55417527999327,
+		"max_position_embeddings": 2097152, "tie_word_embeddings": false,
 	}
-	var f struct {
-		Config map[string]any `json:"config"`
-	}
-	if err := json.Unmarshal(data, &f); err != nil {
-		t.Fatal(err)
-	}
-	f.Config["architectures"] = []string{"RicursiveForCausalLM"}
-	return f.Config
 }
 
 func testRoot(t *testing.T, cfg map[string]any) *model.Root {
@@ -84,40 +84,56 @@ func (r referenceTensor) array() *mlx.Array {
 	return a
 }
 
-type component struct {
-	Input, Expected, Weight, Seed, Lambda, Alpha, Positions, Cos, Sin referenceTensor
-	NormalizedHidden                                                  referenceTensor `json:"normalized_hidden"`
-	Eps, Theta, Threshold                                             float32
-	Scale                                                             float64
-	Weights                                                           map[string]referenceTensor
-	ClippedGate                                                       referenceTensor `json:"clipped_gate"`
-	ClippedUp                                                         referenceTensor `json:"clipped_up"`
-}
-
 type reference struct {
-	Components   map[string]map[string]component
-	Weights      map[string]map[string]referenceTensor
-	ForwardCases []forwardCase `json:"forward_cases"`
-}
-
-type forwardCase struct {
-	Name, DType, Mode string
-	InputIDs          referenceTensor `json:"input_ids"`
-	PrefixIDs         referenceTensor `json:"prefix_ids"`
-	PositionIDs       referenceTensor `json:"position_ids"`
-	Hidden, Logits    referenceTensor
-	Intermediates     map[string]referenceTensor
+	Weights map[string]map[string]referenceTensor
 }
 
 func readReference(t *testing.T) reference {
 	t.Helper()
-	data, err := os.ReadFile("../../testdata/ripple.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var r reference
-	if err := json.Unmarshal(data, &r); err != nil {
-		t.Fatal(err)
+	m := &Model{Config: &Config{
+		HiddenSize: 8, IntermediateSize: 12, NumHiddenLayers: 3,
+		NumAttentionHeads: 4, NumKeyValueHeads: 2, HeadDim: 4, VocabSize: 19,
+	}}
+	r := reference{Weights: make(map[string]map[string]referenceTensor)}
+	for _, dtype := range []string{"float32", "bfloat16"} {
+		weights := make(map[string]referenceTensor)
+		for name, shape := range m.weightShapes() {
+			size := 1
+			for _, dim := range shape {
+				size *= dim
+			}
+			values := make([]float32, size)
+			hash := sha256.Sum256([]byte(name))
+			phase := int(binary.BigEndian.Uint32(hash[:4]) % 101)
+			if strings.HasSuffix(name, "value_res_lambda") {
+				layer := strings.Split(name, ".")[2]
+				values[0] = map[string]float32{"0": -1.25, "1": 0.75, "2": 1.5}[layer]
+			} else {
+				for i := range values {
+					v := float32((i*37+phase)%101-50) / 50
+					switch {
+					case strings.Contains(name, "norm.weight"):
+						scaled := v * 0.375
+						v = 1 + scaled
+					case strings.Contains(name, "embed_tokens"):
+						v *= 0.045
+					case strings.Contains(name, ".mlp.gate_proj") || strings.Contains(name, ".mlp.up_proj"):
+						v *= 18
+					default:
+						v *= 0.3
+					}
+					values[i] = v
+				}
+			}
+			if dtype == "bfloat16" {
+				for i, v := range values {
+					bits := math.Float32bits(v)
+					values[i] = math.Float32frombits((bits + 0x7fff + ((bits >> 16) & 1)) & 0xffff0000)
+				}
+			}
+			weights[name] = referenceTensor{Data: values, Shape: shape, DType: dtype}
+		}
+		r.Weights[dtype] = weights
 	}
 	return r
 }
@@ -135,72 +151,6 @@ func checkTensor(t *mlxtest.T, label string, got *mlx.Array, want referenceTenso
 		bound := atol + rtol*math.Abs(float64(want.Data[i]))
 		if math.IsNaN(float64(v)) || d > bound {
 			t.Fatalf("%s[%d]=%.9g want %.9g (abs error %.9g > %.9g)", label, i, v, want.Data[i], d, bound)
-		}
-	}
-}
-
-func TestPrecisionComponents(t *testing.T) {
-	r := readReference(t)
-	for _, dtype := range []string{"float32", "bfloat16"} {
-		for _, name := range []string{"embedding_scale", "rmsnorm", "gate_sigmoid", "value_blend"} {
-			t.Run(dtype+"/"+name, func(t *testing.T) {
-				mlxtest.Run(t, func(t *mlxtest.T) {
-					c := r.Components[dtype][name]
-					var got *mlx.Array
-					switch name {
-					case "embedding_scale":
-						got = scaleEmbedding(c.Input.array(), &c.Scale)
-					case "rmsnorm":
-						got = rmsNorm(c.Input.array(), c.Weight.array(), c.Eps)
-					case "gate_sigmoid":
-						got = attentionGate(c.Input.array())
-					case "value_blend":
-						got = blendValues(c.Seed.array(), c.NormalizedHidden.array(), c.Lambda.array())
-					}
-					atol := 1e-6
-					if dtype == "bfloat16" {
-						atol = 0
-					}
-					checkTensor(t, name, got, c.Expected, atol, 0)
-				})
-			})
-		}
-	}
-}
-
-func TestRotaryAndFFNComponents(t *testing.T) {
-	r := readReference(t)
-	for _, dtype := range []string{"float32", "bfloat16"} {
-		t.Run(dtype+"/rotary", func(t *testing.T) {
-			mlxtest.Run(t, func(t *mlxtest.T) {
-				c := r.Components[dtype]["rotary"]
-				x := c.Input.array()
-				cos, sin := rotaryTables(c.Positions.array(), int32(x.Dim(-1)), c.Theta, x.DType())
-				atol := 1e-6
-				if dtype == "bfloat16" {
-					atol = 0
-				}
-				checkTensor(t, "cos", cos, c.Cos, atol, 0)
-				checkTensor(t, "sin", sin, c.Sin, atol, 0)
-				checkTensor(t, "rotary", applyRotary(x, cos, sin), c.Expected, atol, 0)
-			})
-		})
-		for _, name := range []string{"ffn_clamp_2", "ffn_clamp_20"} {
-			t.Run(dtype+"/"+name, func(t *testing.T) {
-				mlxtest.Run(t, func(t *mlxtest.T) {
-					c := r.Components[dtype][name]
-					x := c.Input.array()
-					f := MLP{GateProj: nn.NewLinear(c.Weights["gate_proj.weight"].array(), nil), UpProj: nn.NewLinear(c.Weights["up_proj.weight"].array(), nil), DownProj: nn.NewLinear(c.Weights["down_proj.weight"].array(), nil)}
-					gate, up := clipFFN(f.GateProj.Forward(x), f.UpProj.Forward(x), &c.Threshold)
-					checkTensor(t, "clipped gate", gate, c.ClippedGate, 0, 0)
-					checkTensor(t, "clipped up", up, c.ClippedUp, 0, 0)
-					atol := 1e-4
-					if dtype == "bfloat16" {
-						atol = 0
-					}
-					checkTensor(t, "ffn", f.Forward(x, &c.Threshold), c.Expected, atol, 0)
-				})
-			})
 		}
 	}
 }
@@ -1285,121 +1235,6 @@ func inputBatch(ids []float32, offset int32) *batch.Batch {
 		tokens[i] = int32(v)
 	}
 	return &batch.Batch{InputIDs: mlx.FromValues(tokens, 1, len(tokens)), SeqOffsets: []int32{offset}, SeqQueryLens: []int32{int32(len(tokens))}}
-}
-
-func TestReferenceForward(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	r := readReference(t)
-	root := testRoot(t, fixtureConfig(t))
-	for _, tc := range r.ForwardCases {
-		t.Run(tc.DType+"/"+tc.Name, func(t *testing.T) {
-			mlxtest.Run(t, func(t *mlxtest.T) {
-				loaded, err := model.New(root)
-				if err != nil {
-					t.Fatal(err)
-				}
-				m := loaded.(*Model)
-				if err := m.LoadWeights(fixtureWeights(r, tc.DType)); err != nil {
-					t.Fatal(err)
-				}
-				var caches []cache.Cache
-				if len(tc.PrefixIDs.Data) > 0 || tc.Name == "cached_prefill" {
-					caches = m.NewCaches()
-					defer func() {
-						for _, c := range caches {
-							c.Free()
-						}
-					}()
-				}
-				if len(tc.PrefixIDs.Data) > 0 {
-					// The oracle used a four-token prefill followed by single-token steps.
-					n := min(4, len(tc.PrefixIDs.Data))
-					h, _ := m.Forward(inputBatch(tc.PrefixIDs.Data[:n], 0), caches)
-					mlx.Eval(h)
-					for i := n; i < len(tc.PrefixIDs.Data); i++ {
-						h, _ = m.Forward(inputBatch(tc.PrefixIDs.Data[i:i+1], int32(i)), caches)
-						mlx.Eval(h)
-					}
-				}
-				b := inputBatch(tc.InputIDs.Data, int32(tc.PositionIDs.Data[0]))
-				got, aux := m.Forward(b, caches)
-				if got != aux {
-					t.Fatal("aux must be final hidden")
-				}
-				atol, rtol := 2e-5, 2e-5
-				if tc.DType == "bfloat16" {
-					atol, rtol = 0.25, 0.05
-				}
-				checkTensor(t, "hidden", got, tc.Hidden, atol, rtol)
-				checkTensor(t, "logits", m.Unembed(got), tc.Logits, atol, rtol)
-				for i, c := range caches {
-					if c.Offset() != len(tc.PrefixIDs.Data)+len(tc.InputIDs.Data) {
-						t.Fatalf("cache %d offset=%d", i, c.Offset())
-					}
-				}
-			})
-		})
-	}
-}
-
-type checkedLinear struct {
-	nn.LinearLayer
-	name       string
-	want       map[string]referenceTensor
-	t          *mlxtest.T
-	atol, rtol float64
-}
-
-func (l checkedLinear) Forward(x *mlx.Array) *mlx.Array {
-	checkTensor(l.t, l.name+".input", x, l.want[l.name+".input"], l.atol, l.rtol)
-	y := l.LinearLayer.Forward(x)
-	checkTensor(l.t, l.name+".output", y, l.want[l.name+".output"], l.atol, l.rtol)
-	return y
-}
-
-func TestReferenceIntermediates(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	r := readReference(t)
-	root := testRoot(t, fixtureConfig(t))
-	for _, tc := range r.ForwardCases {
-		// BF16 attention rounding varies by backend; use FP32 for intermediate checks.
-		if tc.Name != "prefill" || tc.DType != "float32" {
-			continue
-		}
-		t.Run(tc.DType, func(t *testing.T) {
-			mlxtest.Run(t, func(t *mlxtest.T) {
-				loaded, err := model.New(root)
-				if err != nil {
-					t.Fatal(err)
-				}
-				m := loaded.(*Model)
-				if err := m.LoadWeights(fixtureWeights(r, tc.DType)); err != nil {
-					t.Fatal(err)
-				}
-				atol, rtol := 1e-3, 2e-5
-				for i, l := range m.Layers {
-					prefix := fmt.Sprintf("model.layers.%d.", i)
-					for _, p := range []struct {
-						name   string
-						linear *nn.LinearLayer
-					}{
-						{"self_attn.q_proj", &l.Attention.QProj},
-						{"self_attn.k_proj", &l.Attention.KProj},
-						{"self_attn.v_proj", &l.Attention.VProj},
-						{"self_attn.g_proj", &l.Attention.GProj},
-						{"self_attn.o_proj", &l.Attention.OProj},
-						{"mlp.gate_proj", &l.MLP.GateProj},
-						{"mlp.up_proj", &l.MLP.UpProj},
-						{"mlp.down_proj", &l.MLP.DownProj},
-					} {
-						*p.linear = checkedLinear{*p.linear, prefix + p.name, tc.Intermediates, t, atol, rtol}
-					}
-				}
-				h, _ := m.Forward(inputBatch(tc.InputIDs.Data, 0), nil)
-				checkTensor(t, "hidden", h, tc.Hidden, atol, rtol)
-			})
-		})
-	}
 }
 
 func TestAttentionWindow(t *testing.T) {

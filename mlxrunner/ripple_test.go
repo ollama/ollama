@@ -3,6 +3,8 @@ package mlxrunner
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,34 +29,85 @@ import (
 	modeltypes "github.com/ollama/ollama/types/model"
 )
 
-// Only the small fixture's input weights are reused, not its numerical oracles.
+type rippleRunnerTensor struct {
+	data  []float32
+	shape []int
+}
+
+func rippleRunnerFixture() (map[string]any, map[string]rippleRunnerTensor) {
+	cfg := map[string]any{
+		"architectures": []string{"RicursiveForCausalLM"},
+		"vocab_size":    19, "hidden_size": 8, "intermediate_size": 12,
+		"num_hidden_layers": 3, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 4,
+		"layer_types":    []string{"sliding_attention", "full_attention", "sliding_attention"},
+		"sliding_window": 3, "rms_norm_eps": 1e-6, "rope_theta": 10000.0,
+		"use_valres": true, "use_gated_attention": true, "gate_full_precision": true,
+		"ffn_clamp_threshold": 20.0, "embed_scale": 71.55417527999327,
+		"max_position_embeddings": 64, "tie_word_embeddings": false,
+	}
+	shapes := map[string][]int{
+		"model.embed_tokens.weight": {19, 8}, "lm_head.weight": {19, 8}, "model.norm.weight": {8},
+	}
+	for i := range 3 {
+		prefix := fmt.Sprintf("model.layers.%d.", i)
+		for name, shape := range map[string][]int{
+			"input_layernorm.weight": {8}, "post_attention_layernorm.weight": {8},
+			"pre_feedforward_layernorm.weight": {8}, "post_feedforward_layernorm.weight": {8},
+			"self_attn.q_proj.weight": {16, 8}, "self_attn.k_proj.weight": {8, 8},
+			"self_attn.v_proj.weight": {8, 8}, "self_attn.o_proj.weight": {8, 16},
+			"self_attn.g_proj.weight": {16, 8}, "self_attn.q_norm.weight": {4},
+			"self_attn.k_norm.weight": {4}, "self_attn.value_res_lambda": {1},
+			"mlp.gate_proj.weight": {12, 8}, "mlp.up_proj.weight": {12, 8}, "mlp.down_proj.weight": {8, 12},
+		} {
+			shapes[prefix+name] = shape
+		}
+	}
+	weights := make(map[string]rippleRunnerTensor)
+	for name, shape := range shapes {
+		size := 1
+		for _, dim := range shape {
+			size *= dim
+		}
+		values := make([]float32, size)
+		hash := sha256.Sum256([]byte(name))
+		phase := int(binary.BigEndian.Uint32(hash[:4]) % 101)
+		if strings.HasSuffix(name, "value_res_lambda") {
+			layer := strings.Split(name, ".")[2]
+			values[0] = map[string]float32{"0": -1.25, "1": 0.75, "2": 1.5}[layer]
+		} else {
+			for i := range values {
+				v := float32((i*37+phase)%101-50) / 50
+				switch {
+				case strings.Contains(name, "norm.weight"):
+					scaled := v * 0.375
+					v = 1 + scaled
+				case strings.Contains(name, "embed_tokens"):
+					v *= 0.045
+				case strings.Contains(name, ".mlp.gate_proj") || strings.Contains(name, ".mlp.up_proj"):
+					v *= 18
+				default:
+					v *= 0.3
+				}
+				values[i] = v
+			}
+		}
+		weights[name] = rippleRunnerTensor{data: values, shape: shape}
+	}
+	return cfg, weights
+}
+
 func writeRippleRunnerModel(t *testing.T) string {
 	t.Helper()
 	mlxtest.SkipIfUnavailable(t)
 	dir := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", dir)
-	data, err := os.ReadFile("testdata/ripple.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Config  map[string]any `json:"config"`
-		Weights map[string]map[string]struct {
-			Data  []float32 `json:"data"`
-			Shape []int     `json:"shape"`
-		} `json:"weights"`
-	}
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	fixture.Config["architectures"] = []string{"RicursiveForCausalLM"}
-	fixture.Config["max_position_embeddings"] = 64
-	config, err := json.Marshal(fixture.Config)
+	fixtureConfig, fixtureWeights := rippleRunnerFixture()
+	config, err := json.Marshal(fixtureConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	vocab := make(map[string]int)
-	for i := range int(fixture.Config["vocab_size"].(float64)) {
+	for i := range fixtureConfig["vocab_size"].(int) {
 		vocab[string(rune('a'+i))] = i
 	}
 	tokenizer, err := json.Marshal(map[string]any{
@@ -67,8 +120,8 @@ func writeRippleRunnerModel(t *testing.T) string {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		mlx.Scoped(func() {
 			weights := make(map[string]*mlx.Array)
-			for name, tensor := range fixture.Weights["float32"] {
-				weights[name] = mlx.FromValues(tensor.Data, tensor.Shape...)
+			for name, tensor := range fixtureWeights {
+				weights[name] = mlx.FromValues(tensor.data, tensor.shape...)
 			}
 			path := filepath.Join(dir, "model.safetensors")
 			if err := mlx.SaveSafetensors(path, weights); err != nil {

@@ -117,6 +117,24 @@ func TestRippleRendererInvalidInput(t *testing.T) {
 	}
 }
 
+func TestRippleRendererToolResultContinuation(t *testing.T) {
+	messages := []api.Message{
+		{Role: "user", Content: "Run the program and report what it prints."},
+		{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "execute_bash", Arguments: args(`{"command":"go run ./cmd/demo"}`)}}}},
+		{Role: "tool", Content: `{"exit_code":0,"stdout":"fmt.Println(\"done\")","stderr":""}`},
+		{Role: "assistant", Thinking: "The command succeeded; I can report its output.", Content: "The program prints `done`."},
+	}
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{Name: "execute_bash"}}}
+	want := "<|im_start|>system\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"execute_bash\", \"parameters\": {\"type\": \"\", \"properties\": null}}}\n</tools>\n\nFor each function call, return exactly one valid JSON object with function name and arguments inside XML tool-call tags. The arguments field must be a JSON object, not a string, and strings must use valid JSON escaping:\n<tool_call>\n{\"name\": \"execute_bash\", \"arguments\": {\"command\": \"pwd\"}}\n</tool_call><|im_end|>\n<|im_start|>user\nRun the program and report what it prints.<|im_end|>\n<|im_start|>assistant\n<tool_call>\n{\"name\": \"execute_bash\", \"arguments\": {\"command\": \"go run ./cmd/demo\"}}\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\n{\"exit_code\":0,\"stdout\":\"fmt.Println(\\\"done\\\")\",\"stderr\":\"\"}\n</tool_response><|im_end|>\n<|im_start|>assistant\n<think>\nThe command succeeded; I can report its output.\n</think>\nThe program prints `done`.<|im_end|>\n<|im_start|>assistant\n"
+	got, err := (&RippleRenderer{}).Render(messages, tools, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("render mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestRippleRendererJinjaParity(t *testing.T) {
 	if os.Getenv("VERIFY_JINJA2") == "" {
 		t.Skip("set VERIFY_JINJA2=1 and JINJA_PYTHON for publisher template parity")
@@ -144,6 +162,16 @@ func TestRippleRendererJinjaParity(t *testing.T) {
 		{name: "tools JSON numbers escaping and order", messages: []api.Message{{Role: "assistant", Thinking: "Reason", Content: " \n ", ToolCalls: []api.ToolCall{call}}, {Role: "tool", Content: " result \n"}, {Role: "tool", Content: "other"}}, tools: []api.Tool{tool}},
 		{name: "tools reasoning only", messages: []api.Message{{Role: "assistant", Thinking: "Reason", ToolCalls: []api.ToolCall{call}}}},
 		{name: "group boundary ignores unknown role", messages: []api.Message{{Role: "tool", Content: "one"}, {Role: "ignored"}, {Role: "tool", Content: "two"}}},
+		{
+			name:  "tool result followed by assistant decision",
+			tools: []api.Tool{{Type: "function", Function: api.ToolFunction{Name: "execute_bash"}}},
+			messages: []api.Message{
+				{Role: "user", Content: "Run the program and report what it prints."},
+				{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "execute_bash", Arguments: args(`{"command":"go run ./cmd/demo"}`)}}}},
+				{Role: "tool", Content: `{"exit_code":0,"stdout":"fmt.Println(\"done\")","stderr":""}`},
+				{Role: "assistant", Thinking: "The command succeeded; I can report its output.", Content: "The program prints `done`."},
+			},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := RenderWithRenderer("ripple", tt.messages, tt.tools, tt.think)
