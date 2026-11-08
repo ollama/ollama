@@ -123,12 +123,12 @@ func (f *File) alignment() (int64, error) {
 		return 32, nil
 	}
 	if n, ok := value.UintOK(); ok {
-		if n == 0 || n > maxInt64() {
+		if n == 0 || n > maxInt64() || n&(n-1) != 0 {
 			return 0, fmt.Errorf("%w alignment %d", ErrUnsupported, n)
 		}
 		return int64(n), nil
 	}
-	if n, ok := value.IntOK(); ok && n > 0 {
+	if n, ok := value.IntOK(); ok && n > 0 && n&(n-1) == 0 {
 		return n, nil
 	}
 	return 0, fmt.Errorf("%w alignment %v", ErrUnsupported, value.Any())
