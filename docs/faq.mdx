@@ -329,7 +329,7 @@ If there is insufficient available memory to load a new model request while one 
 
 Parallel request processing for a given model results in increasing the context size by the number of parallel requests. For example, a 2K context with 4 parallel requests will result in an 8K context and additional memory allocation.
 
-The following server settings may be used to adjust how Ollama handles concurrent requests on most platforms:
+The following server settings may be used to adjust how Ollama handles concurrent requests:
 
 - `OLLAMA_MAX_LOADED_MODELS` - The maximum number of models that can be loaded concurrently provided they fit in available memory. The default is 3 \* the number of GPUs or 3 for CPU inference.
 - `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time, default 1.  Required RAM will scale by `OLLAMA_NUM_PARALLEL` * `OLLAMA_CONTEXT_LENGTH`.
