@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -515,16 +516,37 @@ func TestWriteWithBackup_FileUnreadableButDirWritable(t *testing.T) {
 	}
 }
 
-// TestWriteWithBackup_RapidSuccessiveWrites verifies backup works with multiple writes
-// within the same second (timestamp collision scenario).
+// TestWriteWithBackup_RapidSuccessiveWrites verifies that rapid writes create distinct backups,
+// preserve the exact original content, do not overwrite intermediate versions, contain the
+// latest target content, and correctly retain only the newest configured number of backups.
 func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "rapid.json")
 
 	// Create initial file
-	os.WriteFile(path, []byte(`{"v": 0}`), 0o644)
+	if err := os.WriteFile(path, []byte(`{"v": 0}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	// Rapid successive writes
+	readBackups := func() []string {
+		entries, err := os.ReadDir(BackupDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var contents []string
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "rapid.json.") {
+				data, err := os.ReadFile(filepath.Join(BackupDir(), e.Name()))
+				if err != nil {
+					t.Fatalf("could not read backup %s: %v", e.Name(), err)
+				}
+				contents = append(contents, string(data))
+			}
+		}
+		return contents
+	}
+
+	// 1. Perform 3 immediate successive writes
 	for i := 1; i <= 3; i++ {
 		data := []byte(fmt.Sprintf(`{"v": %d}`, i))
 		if err := WriteWithBackup(path, data); err != nil {
@@ -532,22 +554,75 @@ func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 		}
 	}
 
-	// Verify final content
-	content, _ := os.ReadFile(path)
+	// Verify target contains latest content
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(content) != `{"v": 3}` {
 		t.Errorf("expected final content {\"v\": 3}, got %s", string(content))
 	}
 
-	// Verify at least one backup exists
-	entries, _ := os.ReadDir(BackupDir())
-	var backupCount int
-	for _, e := range entries {
-		if len(e.Name()) > len("rapid.json.") && e.Name()[:len("rapid.json.")] == "rapid.json." {
-			backupCount++
+	// Verify distinct backups exist and no overwrite occurred
+	backups := readBackups()
+	if len(backups) != 3 {
+		t.Fatalf("expected 3 backups, got %d: %v", len(backups), backups)
+	}
+
+	backupMap := make(map[string]bool)
+	for _, b := range backups {
+		backupMap[b] = true
+	}
+
+	// Original content remains in a backup
+	if !backupMap[`{"v": 0}`] {
+		t.Errorf("original content {\"v\": 0} not found in backups: %v", backups)
+	}
+
+	// Intermediate versions do not overwrite earlier backups
+	if !backupMap[`{"v": 1}`] || !backupMap[`{"v": 2}`] {
+		t.Errorf("intermediate versions missing from backups: %v", backups)
+	}
+
+	// 2. Perform additional immediate writes to exceed maxBackupsPerFile (total 7 writes: v0 -> v1..v7)
+	for i := 4; i <= 7; i++ {
+		data := []byte(fmt.Sprintf(`{"v": %d}`, i))
+		if err := WriteWithBackup(path, data); err != nil {
+			t.Fatalf("write %d failed: %v", i, err)
 		}
 	}
-	if backupCount == 0 {
-		t.Error("expected at least one backup file from rapid writes")
+
+	// Verify final target contains latest content
+	content, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != `{"v": 7}` {
+		t.Errorf("expected final content {\"v\": 7}, got %s", string(content))
+	}
+
+	// Retention still keeps only the newest configured number of backups
+	backups = readBackups()
+	if len(backups) != maxBackupsPerFile {
+		t.Fatalf("expected %d backups after retention pruning, got %d: %v", maxBackupsPerFile, len(backups), backups)
+	}
+
+	retainedMap := make(map[string]bool)
+	for _, b := range backups {
+		retainedMap[b] = true
+	}
+
+	// Newest 5 versions before writes 3, 4, 5, 6, 7 should be {"v": 2}, {"v": 3}, {"v": 4}, {"v": 5}, {"v": 6}
+	for i := 2; i <= 6; i++ {
+		expected := fmt.Sprintf(`{"v": %d}`, i)
+		if !retainedMap[expected] {
+			t.Errorf("expected newest version %s in retained backups: %v", expected, backups)
+		}
+	}
+
+	// Older versions {"v": 0} and {"v": 1} should have been pruned
+	if retainedMap[`{"v": 0}`] || retainedMap[`{"v": 1}`] {
+		t.Errorf("older versions should have been pruned: %v", backups)
 	}
 }
 

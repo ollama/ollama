@@ -43,6 +43,27 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
+func copyBackupFile(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	return f.Close()
+}
+
 // BackupDir returns the shared backup root used before overwriting files.
 func BackupDir() string {
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
@@ -62,12 +83,20 @@ func writeBackupCopy(srcPath string, integration string) (string, error) {
 		return "", err
 	}
 
-	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, time.Now().Unix()))
-	if err := copyFile(srcPath, backupPath); err != nil {
+	ts := time.Now().UnixNano()
+	for {
+		backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, ts))
+		err := copyBackupFile(srcPath, backupPath)
+		if err == nil {
+			pruneOldBackups(dir, name, maxBackupsPerFile)
+			return backupPath, nil
+		}
+		if os.IsExist(err) {
+			ts++
+			continue
+		}
 		return "", err
 	}
-	pruneOldBackups(dir, name, maxBackupsPerFile)
-	return backupPath, nil
 }
 
 // WriteWithBackup writes data to path via temp file + rename, backing up any
