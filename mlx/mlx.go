@@ -96,13 +96,14 @@ func mlxCheck[T comparable](v T) T {
 // Deferred frees go through these helpers: defer evaluates a call's
 // arguments immediately, so defer mlxCheck(C.mlx_..._free(v)) would
 // free v on the spot and defer only the check.
-func freeArray(a C.mlx_array)              { mlxCheck(C.mlx_array_free(a)) }
-func freeString(s C.mlx_string)            { mlxCheck(C.mlx_string_free(s)) }
-func freeVectorArray(v C.mlx_vector_array) { mlxCheck(C.mlx_vector_array_free(v)) }
-func freeClosure(c C.mlx_closure)          { mlxCheck(C.mlx_closure_free(c)) }
-func freeStream(s C.mlx_stream)            { mlxCheck(C.mlx_stream_free(s)) }
-func freeDevice(d C.mlx_device)            { mlxCheck(C.mlx_device_free(d)) }
-func freeDeviceInfo(i C.mlx_device_info)   { mlxCheck(C.mlx_device_info_free(i)) }
+func freeArray(a C.mlx_array)                { mlxCheck(C.mlx_array_free(a)) }
+func freeString(s C.mlx_string)              { mlxCheck(C.mlx_string_free(s)) }
+func freeVectorArray(v C.mlx_vector_array)   { mlxCheck(C.mlx_vector_array_free(v)) }
+func freeVectorString(v C.mlx_vector_string) { mlxCheck(C.mlx_vector_string_free(v)) }
+func freeClosure(c C.mlx_closure)            { mlxCheck(C.mlx_closure_free(c)) }
+func freeStream(s C.mlx_stream)              { mlxCheck(C.mlx_stream_free(s)) }
+func freeDevice(d C.mlx_device)              { mlxCheck(C.mlx_device_free(d)) }
+func freeDeviceInfo(i C.mlx_device_info)     { mlxCheck(C.mlx_device_info_free(i)) }
 
 func freeArrayMap(m C.mlx_map_string_to_array) {
 	mlxCheck(C.mlx_map_string_to_array_free(m))

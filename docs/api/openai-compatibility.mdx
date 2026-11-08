@@ -340,6 +340,45 @@ Generates audio with [speech models](/capabilities/speech). The response streams
 - The default `response_format` is `wav`, not `mp3`.
 - Unsupported values return a `400` error instead of being ignored.
 
+### `/v1/audio/transcriptions`
+
+Transcribes speech with models that accept audio input.
+
+#### Supported request fields
+
+- [x] `file` (WAV at up to 384 kHz; up to 512 MB and 2 hours)
+- [x] `model`
+- [x] `language` (ISO 639-1 code such as `fr`, or an English language name; omit it to let the model detect the language)
+- [x] `prompt` (used by models without speech-specific instructions)
+- [x] `response_format`
+  - [x] `json` (default)
+  - [x] `text`
+  - [x] `verbose_json` (one segment per transcribed piece of audio; `language` is the output language for translations; for transcriptions it is set only when given in the request)
+  - [ ] `srt`, `vtt`
+- [x] `temperature` (default `0`)
+- [x] `stream` (server-sent `transcript.text.delta` and `transcript.text.done` events)
+- [ ] `timestamp_granularities`
+
+#### Notes
+
+- Audio longer than the model takes at once (30 seconds for current models) is split at pauses and transcribed piece by piece. Streaming sends each piece as it finishes.
+- Each model gets the transcription instructions its publisher documents.
+
+### `/v1/audio/translations`
+
+> Note: Added in Ollama v0.40.12
+
+Translates speech into text in another language.
+
+#### Supported request fields
+
+- [x] `file`
+- [x] `model`
+- [x] `to_language` (Ollama extension; ISO 639-1 code of the output language, default `en`)
+- [x] `language` (Ollama extension; the spoken language, if known)
+- [x] `prompt` (used by models without speech-specific instructions)
+- [x] `response_format`, `temperature` and `stream`, as for transcriptions
+
 ### Responses API
 
 `POST /v1/responses`

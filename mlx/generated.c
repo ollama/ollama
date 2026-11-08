@@ -248,6 +248,7 @@ int (*mlx_detail_compile_erase_)(const mlx_compile_cache cache, uintptr_t fun_id
 int (*mlx_disable_compile_)(void) = NULL;
 int (*mlx_enable_compile_)(void) = NULL;
 int (*mlx_set_compile_mode_)(mlx_compile_mode mode) = NULL;
+int (*mlx_cuda_get_arch_list_)(mlx_vector_string* res) = NULL;
 int (*mlx_cuda_is_available_)(bool* res) = NULL;
 mlx_device (*mlx_device_new_)(void) = NULL;
 mlx_device (*mlx_device_new_type_)(mlx_device_type type, int index) = NULL;
@@ -2714,6 +2715,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_disable_compile);
     CHECK_LOAD(handle, mlx_enable_compile);
     CHECK_LOAD(handle, mlx_set_compile_mode);
+    CHECK_LOAD(handle, mlx_cuda_get_arch_list);
     CHECK_LOAD(handle, mlx_cuda_is_available);
     CHECK_LOAD(handle, mlx_device_new);
     CHECK_LOAD(handle, mlx_device_new_type);

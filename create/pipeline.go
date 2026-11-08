@@ -48,6 +48,10 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 			return err
 		}
 	}
+	inv, err = prepareLFM3SpeechInventory(inv)
+	if err != nil {
+		return err
+	}
 	if opts.Renderer == "clef" {
 		inv, err = prepareClefInventory(inv)
 		if err != nil {
@@ -103,6 +107,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 		if err != nil {
 			return err
 		}
+	}
+	if class.Kind == SourceFloat && class.Quantize == "" && modelConfig.FileType == "" {
+		modelConfig.FileType = sourceFloatFileType(inv)
 	}
 	policy, err := newTensorImportTransform(inv)
 	if err != nil {

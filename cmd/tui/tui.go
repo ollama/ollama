@@ -42,7 +42,14 @@ type menuItem struct {
 	title       string
 	description string
 	integration string
+	isRunModel  bool
 	isOthers    bool
+}
+
+var runModelMenuItem = menuItem{
+	title:       "Chat with a model",
+	description: "Start an interactive chat with a model",
+	isRunModel:  true,
 }
 
 var othersMenuItem = menuItem{
@@ -52,11 +59,11 @@ var othersMenuItem = menuItem{
 }
 
 // launcherMenuIntegrations defines the default priority before the additional
-// integrations in registry order. Installed apps are promoted above missing
-// apps, with only the first five shown before More.
+// integrations in registry order. Chat with a model comes first, then installed
+// apps are promoted above missing apps, with only the first four shown before More.
 var launcherMenuIntegrations = []string{"claude", "opencode", "hermes", "openclaw"}
 
-const launcherMenuLimit = 5
+const launcherMenuLimit = 4
 
 type model struct {
 	state      *launch.LauncherState
@@ -96,10 +103,10 @@ func shouldExpandOthers(state *launch.LauncherState) bool {
 
 func buildMenuItems(state *launch.LauncherState, showOthers bool) []menuItem {
 	items := orderedIntegrationItems(state)
-	if showOthers || len(items) <= launcherMenuLimit {
-		return items
+	if !showOthers && len(items) > launcherMenuLimit {
+		items = append(items[:launcherMenuLimit], othersMenuItem)
 	}
-	return append(items[:launcherMenuLimit], othersMenuItem)
+	return append([]menuItem{runModelMenuItem}, items...)
 }
 
 func integrationMenuItem(state launch.LauncherIntegrationState) menuItem {
@@ -181,7 +188,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
-			if m.showOthers && m.cursor < launcherMenuLimit {
+			if m.showOthers && m.cursor <= launcherMenuLimit {
 				m.showOthers = false
 				m.items = buildMenuItems(m.state, false)
 				m.cursor = min(m.cursor, len(m.items)-1)
@@ -199,9 +206,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "enter", " ":
-			if len(m.items) == 0 {
-				return m, nil
-			}
 			if m.selectableItem(m.items[m.cursor]) {
 				m.selected = true
 				m.action = actionForMenuItem(m.items[m.cursor], false)
@@ -211,9 +215,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "right", "l":
-			if len(m.items) == 0 {
-				return m, nil
-			}
 			item := m.items[m.cursor]
 			if m.changeableItem(item) {
 				m.selected = true
@@ -229,6 +230,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) selectableItem(item menuItem) bool {
+	if item.isRunModel {
+		return true
+	}
 	if item.integration == "" || m.state == nil {
 		return false
 	}
@@ -237,6 +241,9 @@ func (m model) selectableItem(item menuItem) bool {
 }
 
 func (m model) changeableItem(item menuItem) bool {
+	if item.isRunModel {
+		return true
+	}
 	if item.integration == "" || m.state == nil {
 		return false
 	}
@@ -253,9 +260,6 @@ func (m model) View() string {
 
 	for i, item := range m.items {
 		s += m.renderMenuItem(i, item)
-	}
-	if len(m.items) == 0 {
-		s += "No apps available.\n"
 	}
 
 	s += "\n" + selectorHelpStyle.Render("↑/↓ navigate • enter launch • → configure • esc quit")
@@ -277,7 +281,14 @@ func (m model) renderMenuItem(index int, item menuItem) string {
 		cursor = "▸ "
 	}
 
-	if item.isOthers {
+	if item.isRunModel {
+		if m.cursor == index {
+			style = menuSelectedItemStyle
+			if m.state.RunModel != "" {
+				modelSuffix = " " + modelStyle.Render("("+m.state.RunModel+")")
+			}
+		}
+	} else if item.isOthers {
 		// More immediately expands when reached, so it always uses the default style.
 	} else {
 		integrationState := m.state.Integrations[item.integration]
@@ -354,6 +365,8 @@ func (a TUIAction) IntegrationLaunchRequest() launch.IntegrationLaunchRequest {
 
 func actionForMenuItem(item menuItem, forceConfigure bool) TUIAction {
 	switch {
+	case item.isRunModel:
+		return TUIAction{Kind: TUIActionRunModel, ForceConfigure: forceConfigure}
 	case item.integration != "":
 		return TUIAction{Kind: TUIActionLaunchIntegration, Integration: item.integration, ForceConfigure: forceConfigure}
 	default:

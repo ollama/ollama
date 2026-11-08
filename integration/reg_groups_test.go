@@ -41,6 +41,7 @@ func TestAPI(t *testing.T) {
 		"chat-logprobs",
 		"system-one",
 		"system-one-vision",
+		"system-one-audio",
 	)
 }
 

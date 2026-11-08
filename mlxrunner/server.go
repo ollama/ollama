@@ -42,6 +42,11 @@ func Execute(args []string) error {
 		}
 
 		if mlx.GPUIsAvailable() {
+			if mlx.CUDAIsAvailable() {
+				if err := mlx.CheckCUDADeviceSupport(); err != nil {
+					return fmt.Errorf("MLX CUDA initialization failed: %w", err)
+				}
+			}
 			mlx.SetDefaultDeviceGPU()
 			slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "gpu")
 		} else {

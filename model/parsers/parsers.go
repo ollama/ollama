@@ -53,6 +53,8 @@ func ParserForName(name string) Parser {
 	var p Parser
 
 	switch name {
+	case "ripple":
+		p = &RippleParser{}
 	case "qwen3":
 		p = &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
 	case "qwen3-thinking":
@@ -99,6 +101,12 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: false}
 	case "lfm2-thinking":
 		return &LFM2Parser{hasThinkingSupport: true}
+	case "lfm3":
+		return &LFM3Parser{}
+	case "lfm3-omni":
+		return &Qwen3CoderParser{}
+	case "lfm3-audio":
+		return &LFM3AudioParser{}
 	case "laguna":
 		return &LagunaParser{}
 	case "poolside-v1":

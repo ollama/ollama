@@ -32,6 +32,7 @@ func TestIsCompactionContextLimit(t *testing.T) {
 	}{
 		{"reported cloud error", 400, `{"error":{"message":"The prompt is too long: 1068408, model maximum context length: 1048576 (ref: 00000000-0000-4000-8000-000000000001)","code":null}}`, true},
 		{"without reference", 400, `{"error":{"message":"The prompt is too long: 100, model maximum context length: 90"}}`, true},
+		{"local runner error", 400, `{"error":{"message":"request (887 tokens) exceeds the available context size (300 tokens), try increasing it","code":null}}`, true},
 		{"structured code", 400, `{"error":{"message":"input too large","code":"context_length_exceeded"}}`, true},
 		{"structured 413", 413, `{"error":{"code":"context_length_exceeded"}}`, true},
 		{"wrong status", 500, `{"error":{"code":"context_length_exceeded"}}`, false},
@@ -39,6 +40,7 @@ func TestIsCompactionContextLimit(t *testing.T) {
 		{"other 413", 413, `{"error":{"message":"request body too large"}}`, false},
 		{"other invalid request", 400, `{"error":{"message":"invalid tool schema","code":"invalid_request_error"}}`, false},
 		{"untrusted embedded phrase", 400, `{"error":{"message":"Invalid input contains: The prompt is too long: 100, model maximum context length: 90"}}`, false},
+		{"untrusted local phrase", 400, `{"error":{"message":"Invalid input contains: request (887 tokens) exceeds the available context size (300 tokens), try increasing it"}}`, false},
 		{"missing counts", 400, `{"error":{"message":"The prompt is too long: unknown, model maximum context length: unknown"}}`, false},
 		{"invalid JSON", 400, `upstream failed`, false},
 	} {
@@ -757,11 +759,15 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 	}{
 		{
 			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantMessages: []api.Message{{Role: "user"}},
+			wantMessages: []api.Message{{Role: "user", Content: "\n\n[This image is unavailable. Attach the image again, or continue without the image.]\n\n"}},
+			wantPrompt:   []string{"[This image is unavailable. Attach the image again, or continue without the image.]"},
+			wantOmitted:  []string{"file-fixture"},
 		},
 		{
 			name: "file ID beside text", item: `{"role":"user","content":[{"type":"input_text","text":"Read this image"},{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantMessages: []api.Message{{Role: "user", Content: "Read this image"}},
+			wantMessages: []api.Message{{Role: "user", Content: "Read this image\n\n[This image is unavailable. Attach the image again, or continue without the image.]\n\n"}},
+			wantPrompt:   []string{"Read this image", "[This image is unavailable. Attach the image again, or continue without the image.]"},
+			wantOmitted:  []string{"file-fixture"},
 		},
 		{
 			name: "file reference", item: `{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`,
@@ -833,7 +839,7 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 		},
 		{
 			name: "agent image", item: `{"type":"agent_message","content":[{"type":"input_image","image_url":"data:image/png;base64,Zml4dHVyZQ=="}]}`,
-			wantMessages: []api.Message{{Role: "user"}},
+			wantMessages: []api.Message{{Role: "user", Images: []api.ImageData{[]byte("fixture")}}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

@@ -28,6 +28,7 @@ extern "C" {
  */
 /**@{*/
 
+int mlx_cuda_get_arch_list(mlx_vector_string* res);
 int mlx_cuda_is_available(bool* res);
 
 /**@}*/

@@ -1,6 +1,7 @@
 package mlx
 
 import (
+	"debug/elf"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,44 @@ func dependencyDir(mlxDir string) (string, bool) {
 	return depDir, true
 }
 
+// sharedDependencies lists, dependencies first, the libraries in depDir that
+// lib needs, directly or through the libraries beside it.
+func sharedDependencies(lib, depDir string) []string {
+	mlxDir := filepath.Dir(lib)
+	var order []string
+	seen := map[string]bool{}
+	var visit func(path string)
+	visit = func(path string) {
+		for _, name := range neededLibraries(path) {
+			// A soname has no directory part; anything else is not ours to load.
+			if seen[name] || strings.ContainsRune(name, '/') {
+				continue
+			}
+			seen[name] = true
+			if local := filepath.Join(mlxDir, name); fileExists(local) {
+				visit(local)
+			} else if dep := filepath.Join(depDir, name); fileExists(dep) {
+				visit(dep)
+				order = append(order, dep)
+			}
+		}
+	}
+	visit(lib)
+	return order
+}
+
+// neededLibraries returns an ELF file's DT_NEEDED sonames, or nil if path is
+// not an ELF file.
+func neededLibraries(path string) []string {
+	f, err := elf.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	libs, _ := f.ImportedLibraries()
+	return libs
+}
+
 func cudaToolkitDirForLibrary(libraryPath string) (string, bool) {
 	return cudaToolkitDirForMLXDir(filepath.Dir(libraryPath))
 }
@@ -78,4 +117,9 @@ func cudaToolkitDirForMLXDir(mlxDir string) (string, bool) {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
