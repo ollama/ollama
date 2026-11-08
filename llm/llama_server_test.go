@@ -3200,6 +3200,43 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantTotal: 200 + 200 + 600 + 60,
 		},
 		{
+			// llama.cpp b12111 with a quantized cache: each KV cache is
+			// followed by its rotation buffer, so the two KV lines of an
+			// iSWA model are no longer adjacent.
+			name: "rotation lines between iswa caches",
+			lines: []string{
+				"load_tensors:  MTL0_Mapped model buffer size =   290.80 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =  1102.52 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size = 10880.00 MiB\n",
+				"init_rotation:       MTL0 rotation buffer size =     0.63 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =  1275.00 MiB\n",
+				"init_rotation:       MTL0 rotation buffer size =     3.13 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =  3575.00 MiB\n",
+			},
+			wantGPU:   290.80 + 1102.52 + 10880 + 0.63 + 1275 + 3.13 + 3575,
+			wantTotal: 290.80 + 1102.52 + 10880 + 0.63 + 1275 + 3.13 + 3575,
+		},
+		{
+			name: "fit probe with rotation lines is replaced by final load",
+			lines: []string{
+				"load_tensors:  MTL0_Mapped model buffer size =   100.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =   500.00 MiB\n",
+				"init_rotation:       MTL0 rotation buffer size =     1.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =    50.00 MiB\n",
+				"init_rotation:       MTL0 rotation buffer size =     1.00 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =    40.00 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   200.00 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   200.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =   600.00 MiB\n",
+				"init_rotation:       MTL0 rotation buffer size =     2.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =    60.00 MiB\n",
+				"init_rotation:       MTL0 rotation buffer size =     2.00 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =    45.00 MiB\n",
+			},
+			wantGPU:   200 + 200 + 600 + 2 + 60 + 2 + 45,
+			wantTotal: 200 + 200 + 600 + 2 + 60 + 2 + 45,
+		},
+		{
 			name: "rc21 fit probe accounting",
 			lines: []string{
 				"load_tensors:          CPU model buffer size =     0.00 MiB\n",
