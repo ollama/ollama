@@ -2848,23 +2848,86 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
+func kvCacheElementBytes(cacheType string) float64 {
+	switch strings.ToLower(cacheType) {
+	case "f32":
+		return 4.0
+	case "q8_0":
+		return 34.0 / 32.0 // 1.0625
+	case "q4_0":
+		return 18.0 / 32.0 // 0.5625
+	case "q5_0":
+		return 22.0 / 32.0 // 0.6875
+	case "q5_1":
+		return 24.0 / 32.0 // 0.75
+	case "f16", "":
+		return 2.0
+	default:
+		return 2.0
+	}
+}
+
+func kvCacheLayers(kv *gguf.Metadata) uint64 {
+	totalBlocks := kv.BlockCount()
+	if totalBlocks == 0 {
+		return 0
+	}
+
+	// If explicit recurrent layers are specified, count only the attention (non-recurrent) layers.
+	if recurrent := kv.KeyValue("attention.recurrent_layers").Bools(); len(recurrent) > 0 {
+		var attentionLayers uint64
+		for _, isRecurrent := range recurrent {
+			if !isRecurrent {
+				attentionLayers++
+			}
+		}
+		if attentionLayers > 0 {
+			return attentionLayers
+		}
+	}
+
+	// If full attention interval is specified (e.g., only 1 in N layers has full attention).
+	interval := kv.Uint("full_attention_interval")
+	if interval == 0 {
+		interval = kv.Uint("attention.full_attention_interval")
+	}
+	if interval > 1 {
+		layers := totalBlocks / interval
+		if layers == 0 {
+			return 1
+		}
+		return layers
+	}
+
+	return totalBlocks
+}
+
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
+// Uses model file size as a proxy for weights plus KV cache estimated from architecture
+// metadata and configured KV cache quantization type.
 func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 	weights := modelFileSize(modelPath, f)
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
+	kv := f.KV()
+	if kv == nil {
+		return weights
+	}
+
+	keyLen := kv.Uint("attention.key_length")
+	valLen := kv.Uint("attention.value_length", keyLen)
+	if keyLen == 0 && kv.HeadCountMax() > 0 {
+		keyLen = kv.EmbeddingLength() / kv.HeadCountMax()
+		valLen = keyLen
+	}
+
+	kvHeads := kv.HeadCountKVMin()
 	if kvHeads == 0 {
 		kvHeads = 1
 	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+
+	layers := kvCacheLayers(kv)
+	elements := (keyLen + valLen) * kvHeads * layers * uint64(numCtx)
+	kvCache := uint64(float64(elements) * kvCacheElementBytes(envconfig.KvCacheType()))
 
 	return weights + kvCache
 }

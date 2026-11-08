@@ -4068,3 +4068,125 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 		t.Errorf("json format converted a schema, %d conversions", got)
 	}
 }
+
+func TestPredictServerVRAM(t *testing.T) {
+	t.Run("standard llama architecture default f16", func(t *testing.T) {
+		path, f := writeTestGGUF(t, gguftest.KV{
+			"general.architecture":          "llama",
+			"llama.block_count":             uint64(32),
+			"llama.embedding_length":        uint64(4096),
+			"llama.attention.head_count":    uint64(32),
+			"llama.attention.head_count_kv": uint64(8),
+		}, nil)
+
+		// weights = file size (empty gguf headers)
+		weights := modelFileSize(path, f)
+
+		// HeadDim = 4096 / 32 = 128
+		// Elements = (128 + 128) * 8 * 32 * 2048 = 134,217,728
+		// f16 (2 bytes per element): 134,217,728 * 2 = 268,435,456 bytes
+		wantCache := uint64(268435456)
+		got := PredictServerVRAM(path, f, 2048)
+		if got != weights+wantCache {
+			t.Fatalf("got %d, want %d (weights=%d cache=%d)", got, weights+wantCache, weights, wantCache)
+		}
+	})
+
+	t.Run("quantized kv cache q8_0", func(t *testing.T) {
+		t.Setenv("OLLAMA_KV_CACHE_TYPE", "q8_0")
+
+		path, f := writeTestGGUF(t, gguftest.KV{
+			"general.architecture":          "llama",
+			"llama.block_count":             uint64(32),
+			"llama.embedding_length":        uint64(4096),
+			"llama.attention.head_count":    uint64(32),
+			"llama.attention.head_count_kv": uint64(8),
+		}, nil)
+
+		weights := modelFileSize(path, f)
+
+		// Elements = (128 + 128) * 8 * 32 * 2048 = 134,217,728
+		// q8_0 (34/32 bytes per element): 134,217,728 * 1.0625 = 142,606,336 bytes
+		wantCache := uint64(142606336)
+		got := PredictServerVRAM(path, f, 2048)
+		if got != weights+wantCache {
+			t.Fatalf("got %d, want %d", got, weights+wantCache)
+		}
+	})
+
+	t.Run("explicit key and value lengths", func(t *testing.T) {
+		path, f := writeTestGGUF(t, gguftest.KV{
+			"general.architecture":           "custom",
+			"custom.block_count":             uint64(16),
+			"custom.attention.head_count_kv": uint64(4),
+			"custom.attention.key_length":    uint64(128),
+			"custom.attention.value_length":  uint64(128),
+		}, nil)
+
+		weights := modelFileSize(path, f)
+
+		// Elements = (128 + 128) * 4 * 16 * 1024 = 16,777,216
+		// f16 (2 bytes): 33,554,432 bytes
+		wantCache := uint64(33554432)
+		got := PredictServerVRAM(path, f, 1024)
+		if got != weights+wantCache {
+			t.Fatalf("got %d, want %d", got, weights+wantCache)
+		}
+	})
+
+	t.Run("hybrid architecture with recurrent layers", func(t *testing.T) {
+		t.Setenv("OLLAMA_KV_CACHE_TYPE", "q8_0")
+
+		// 32 total layers, 8 full-attention layers and 24 recurrent layers
+		recurrent := make([]bool, 32)
+		for i := 0; i < 32; i++ {
+			if i%4 != 0 {
+				recurrent[i] = true // recurrent
+			}
+		}
+
+		path, f := writeTestGGUF(t, gguftest.KV{
+			"general.architecture":              "hybrid",
+			"hybrid.block_count":                uint64(32),
+			"hybrid.attention.head_count_kv":    uint64(4),
+			"hybrid.attention.key_length":       uint64(256),
+			"hybrid.attention.value_length":     uint64(256),
+			"hybrid.attention.recurrent_layers": recurrent,
+		}, nil)
+
+		weights := modelFileSize(path, f)
+
+		// 8 attention layers out of 32
+		// Elements = (256 + 256) * 4 * 8 * 131072 = 2,147,483,648
+		// q8_0 (34/32 bytes): 2,147,483,648 * 1.0625 = 2,281,701,376 bytes (2176 MiB)
+		wantCache := uint64(2281701376)
+		got := PredictServerVRAM(path, f, 131072)
+		if got != weights+wantCache {
+			t.Fatalf("got %d, want %d", got, weights+wantCache)
+		}
+	})
+
+	t.Run("hybrid architecture with full attention interval", func(t *testing.T) {
+		t.Setenv("OLLAMA_KV_CACHE_TYPE", "q8_0")
+
+		path, f := writeTestGGUF(t, gguftest.KV{
+			"general.architecture":           "hybrid",
+			"hybrid.block_count":             uint64(64),
+			"hybrid.full_attention_interval": uint64(4),
+			"hybrid.attention.head_count_kv": uint64(4),
+			"hybrid.attention.key_length":    uint64(256),
+			"hybrid.attention.value_length":  uint64(256),
+		}, nil)
+
+		weights := modelFileSize(path, f)
+
+		// 64 / 4 = 16 attention layers
+		// Elements = (256 + 256) * 4 * 16 * 262144 = 8,589,934,592
+		// q8_0 (34/32 bytes): 8,589,934,592 * 1.0625 = 9,126,805,504 bytes (8704 MiB)
+		wantCache := uint64(9126805504)
+		got := PredictServerVRAM(path, f, 262144)
+		if got != weights+wantCache {
+			t.Fatalf("got %d, want %d", got, weights+wantCache)
+		}
+	})
+}
