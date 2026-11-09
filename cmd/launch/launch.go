@@ -1519,7 +1519,7 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 			resolved[i].Thinking = thinking.Clone()
 		}
 	}
-	if integration != "codex" && integration != "opencode" && integration != chatGPTIntegrationName && integration != codexAppIntegrationName {
+	if !slices.Contains([]string{"codex", "opencode", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
 		return resolved
 	}
 	showCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

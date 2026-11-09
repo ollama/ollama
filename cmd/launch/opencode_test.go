@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1515,5 +1516,107 @@ func TestOpenCodeEdit_FalseOnlyThinking(t *testing.T) {
 	}
 	if selected := state.Variant["ollama/qwen3-coder"]; selected != "" {
 		t.Errorf("non-thinking model selected variant %q", selected)
+	}
+}
+
+func TestOpenCodeConfigForVersion(t *testing.T) {
+	models := []LaunchModel{
+		{Name: "glm", ContextLength: 1024, MaxOutputTokens: 256, Thinking: &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "max"}},
+		{Name: "gemma", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}},
+		{Name: "nemotron", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: true}},
+		{Name: "coder", Thinking: &api.ModelRecommendationThinking{Values: []any{false}, Default: false}},
+		{Name: "collision", Capabilities: []model.Capability{model.CapabilityVision}, Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "thinking"}, Default: true}},
+	}
+	content, err := buildInlineConfig(models[0], models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"", "v1.18.35", "v1.19.2", "v1.19.3-beta.1", "v1.19.3", "v2.2.6"} {
+		t.Run(version, func(t *testing.T) {
+			got, err := openCodeConfigForVersion(content, version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if version != "v1.19.3" && version != "v2.2.6" {
+				if got != content {
+					t.Fatal("legacy client configuration changed")
+				}
+				return
+			}
+			var config map[string]any
+			if err := json.Unmarshal([]byte(got), &config); err != nil {
+				t.Fatal(err)
+			}
+			providerKey, optionsKey := "provider", "options"
+			if version == "v2.2.6" {
+				providerKey, optionsKey = "providers", "settings"
+				if _, exists := config["provider"]; exists {
+					t.Fatal("v2 config still contains a legacy provider")
+				}
+			}
+			provider := config[providerKey].(map[string]any)["ollama"].(map[string]any)
+			if provider[optionsKey].(map[string]any)["baseURL"] == nil {
+				t.Fatal("provider connection settings lost")
+			}
+			entries := provider["models"].(map[string]any)
+			limits := entries["glm"].(map[string]any)["limit"].(map[string]any)
+			if limits["context"] != float64(1024) || limits["output"] != float64(256) {
+				t.Fatalf("model limits changed: %v", limits)
+			}
+			if version == "v2.2.6" {
+				input := entries["collision"].(map[string]any)["capabilities"].(map[string]any)["input"].([]any)
+				if !slices.Equal(input, []any{"text", "image"}) {
+					t.Fatalf("vision capability changed: %v", input)
+				}
+			}
+			for name, want := range map[string][]string{
+				"glm": {"high", "low", "max"}, "gemma": {"none", "thinking"},
+				"nemotron": {"medium", "none", "thinking"}, "coder": {}, "collision": {"none", "thinking", "thinking-2"},
+			} {
+				entry := entries[name].(map[string]any)
+				variants := map[string]map[string]any{}
+				var efforts []any
+				if version == "v2.2.6" {
+					for _, raw := range entry["variants"].([]any) {
+						variant := raw.(map[string]any)
+						variants[variant["id"].(string)] = variant["settings"].(map[string]any)
+					}
+					reasoning := entry["capabilities"].(map[string]any)["reasoning"].(map[string]any)
+					if reasoning["supported"] != (name != "coder") {
+						t.Fatalf("%s thinking support = %v", name, reasoning)
+					}
+					efforts, _ = reasoning["effort"].([]any)
+				} else {
+					if raw, ok := entry["variants"].(map[string]any); ok {
+						for label, variant := range raw {
+							variants[label] = variant.(map[string]any)
+						}
+					}
+					if options := entry["reasoning_options"].([]any); len(options) > 0 {
+						efforts = options[0].(map[string]any)["values"].([]any)
+					}
+				}
+				labels := make([]string, 0, len(variants))
+				for label, variant := range variants {
+					labels = append(labels, label)
+					if variant["disabled"] != nil {
+						t.Fatalf("%s still has a disabled variant: %v", name, variant)
+					}
+				}
+				slices.Sort(labels)
+				if !slices.Equal(labels, want) {
+					t.Fatalf("%s variants = %v, want %v", name, labels, want)
+				}
+				if name == "gemma" && (variants["thinking"]["reasoningEffort"] != "high" || slices.Contains(efforts, any("high"))) {
+					t.Fatalf("boolean-on alias changed or became an extra high control: %v, %v", variants, efforts)
+				}
+				if name == "nemotron" && variants["thinking"]["reasoningEffort"] != "" {
+					t.Fatalf("boolean-on default changed: %v", variants)
+				}
+				if name == "glm" && (len(efforts) != 3 || entry[optionsKey].(map[string]any)["reasoningEffort"] != "max") {
+					t.Fatalf("named efforts or default changed: %v", entry)
+				}
+			}
+		})
 	}
 }
