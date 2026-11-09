@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/mattn/go-runewidth"
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
@@ -3327,6 +3328,52 @@ func TestFormerAgentEntryPointsAreRejected(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "unknown") {
 				t.Fatalf("former agent entry point %q returned %v, want unknown command or flag", args, err)
+			}
+		})
+	}
+}
+
+// A glyph can be several runes and displayResponse prints them one at a time.
+// The columns it counts for a line have to match the columns the line
+// occupies, or the line wraps before it is full.
+func TestDisplayResponseStateAdvance(t *testing.T) {
+	family := "\U0001F468\u200d\U0001F469\u200d\U0001F467\u200d\U0001F466"
+	for _, text := range []string{
+		"hello",
+		"私は日本語",
+		"é",
+		family,
+		"\U0001F3F3\ufe0f\u200d\U0001F308",
+		"\U0001F44D\U0001F3FD",
+		"\U0001F1EF\U0001F1F5",
+		"Here is a family " + family + " and a flag \U0001F1EF\U0001F1F5 done",
+	} {
+		t.Run(text, func(t *testing.T) {
+			want := runewidth.StringWidth(text)
+
+			var state displayResponseState
+			got := 0
+			for _, ch := range text {
+				got += state.advance(ch)
+			}
+			if got != want {
+				t.Errorf("counted %d columns for %q, which occupies %d", got, text, want)
+			}
+
+			// The stream arrives in pieces and a glyph can be split across two
+			// of them, so the count must not depend on where the split falls.
+			runes := []rune(text)
+			for _, size := range []int{1, 2, 3, 5} {
+				var state displayResponseState
+				got := 0
+				for i := 0; i < len(runes); i += size {
+					for _, ch := range runes[i:min(i+size, len(runes))] {
+						got += state.advance(ch)
+					}
+				}
+				if got != want {
+					t.Errorf("in chunks of %d runes counted %d columns, want %d", size, got, want)
+				}
 			}
 		})
 	}
