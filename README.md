@@ -304,6 +304,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [wowTerminal](https://github.com/cuter74-dev/wowTerminal) - AI terminal with SSH/SFTP that reads your screen and works with local models
 
 ### Productivity & Apps
 
