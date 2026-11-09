@@ -184,6 +184,8 @@ Restart Ollama after changing configuration. Once disabled, Ollama's logs will s
 
 Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable.
 
+On macOS and Windows, the app's **Expose Ollama to the network** setting takes precedence over `OLLAMA_HOST`: while it is on, the app starts the server on `0.0.0.0` whatever address `OLLAMA_HOST` names, keeping only its port. To bind a specific address, such as `127.0.0.1` only, turn the setting off and set `OLLAMA_HOST`.
+
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## How can I use Ollama with a proxy server?
