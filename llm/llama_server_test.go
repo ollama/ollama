@@ -4113,6 +4113,7 @@ func TestPredictKVCache(t *testing.T) {
 		numCtx      int
 		numParallel int
 		numBatch    int
+		mtpDraft    bool
 		cacheType   string
 		want        uint64
 	}{
@@ -4213,7 +4214,7 @@ func TestPredictKVCache(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			kv := loadTestGGUF(t, tc.kv).KV()
-			got := predictKVCache(kv, tc.numCtx, tc.numParallel, tc.numBatch, tc.cacheType)
+			got := predictKVCache(kv, tc.numCtx, tc.numParallel, tc.numBatch, tc.mtpDraft, tc.cacheType)
 			if got != tc.want {
 				t.Errorf("predictKVCache() = %d, want %d", got, tc.want)
 			}
@@ -4253,7 +4254,7 @@ func TestPredictKVCacheGemma4(t *testing.T) {
 	}).KV()
 
 	const measured = (10880 + 1275) << 20
-	got := predictKVCache(kv, 262144, 1, 0, "q8_0")
+	got := predictKVCache(kv, 262144, 1, 0, false, "q8_0")
 	if got < measured {
 		t.Errorf("predicted %d MiB, below the %d MiB llama-server allocated", got>>20, measured>>20)
 	}
@@ -4262,8 +4263,203 @@ func TestPredictKVCacheGemma4(t *testing.T) {
 	}
 
 	const measuredWideBatch = (10880 + 3825) << 20
-	got = predictKVCache(kv, 262144, 1, 8192, "q8_0")
+	got = predictKVCache(kv, 262144, 1, 8192, false, "q8_0")
 	if got != measuredWideBatch {
 		t.Errorf("with num_batch 8192 predicted %d MiB, want %d MiB", got>>20, measuredWideBatch>>20)
+	}
+}
+
+// TestPredictKVCacheLayers covers the layers llama.cpp gives no KV cache of
+// their own. Every fixture layer has 2 KV heads of 16 keys and 16 values, so
+// at 100 cells and f16 a layer with a cache holds 12800 bytes.
+func TestPredictKVCacheLayers(t *testing.T) {
+	const perLayer = (2*16 + 2*16) * 100 * 2
+
+	model := func(arch string, layers uint32, extra gguftest.KV) gguftest.KV {
+		kv := gguftest.KV{
+			"general.architecture":            arch,
+			arch + ".block_count":             layers,
+			arch + ".embedding_length":        uint32(64),
+			arch + ".attention.head_count":    uint32(4),
+			arch + ".attention.head_count_kv": uint32(2),
+		}
+		for k, v := range extra {
+			kv[arch+"."+k] = v
+		}
+		return kv
+	}
+
+	cases := []struct {
+		name     string
+		kv       gguftest.KV
+		mtpDraft bool
+		want     uint64
+	}{
+		{
+			name: "qwen35 recurrent_layers array",
+			kv: model("qwen35", 8, gguftest.KV{
+				"attention.recurrent_layers": []bool{true, true, true, false, true, true, true, false},
+			}),
+			want: 2 * perLayer,
+		},
+		{
+			name: "qwen35 full_attention_interval without the array",
+			kv:   model("qwen35", 8, gguftest.KV{"full_attention_interval": uint32(2)}),
+			want: 4 * perLayer,
+		},
+		{
+			name: "qwen35 defaults to an interval of 4",
+			kv:   model("qwen35", 8, nil),
+			want: 2 * perLayer,
+		},
+		{
+			name: "qwen35moe and qwen3next follow the same rule",
+			kv:   model("qwen35moe", 8, nil),
+			want: 2 * perLayer,
+		},
+		{
+			name: "qwen35 mtp layer has no cache without drafting",
+			kv:   model("qwen35", 9, gguftest.KV{"nextn_predict_layers": uint32(1)}),
+			want: 2 * perLayer,
+		},
+		{
+			name:     "qwen35 mtp layer has a cache when drafting",
+			kv:       model("qwen35", 9, gguftest.KV{"nextn_predict_layers": uint32(1)}),
+			mtpDraft: true,
+			want:     3 * perLayer,
+		},
+		{
+			name: "dense model mtp layer has no cache without drafting",
+			kv:   model("llama", 5, gguftest.KV{"nextn_predict_layers": uint32(1)}),
+			want: 4 * perLayer,
+		},
+		{
+			name:     "dense model mtp layer has a cache when drafting",
+			kv:       model("llama", 5, gguftest.KV{"nextn_predict_layers": uint32(1)}),
+			mtpDraft: true,
+			want:     5 * perLayer,
+		},
+		{
+			name: "graniteswitch router layer keeps its cache",
+			kv:   model("graniteswitch", 5, gguftest.KV{"nextn_predict_layers": uint32(1)}),
+			want: 5 * perLayer,
+		},
+		{
+			name: "full_attention_interval is ignored on other architectures",
+			kv:   model("llama", 8, gguftest.KV{"full_attention_interval": uint32(4)}),
+			want: 8 * perLayer,
+		},
+		{
+			name: "gemma4 shared layers have no cache",
+			kv:   model("gemma4", 6, gguftest.KV{"attention.shared_kv_layers": uint32(2)}),
+			want: 4 * perLayer,
+		},
+		{
+			name: "gemma4 without shared layers is unchanged",
+			kv:   model("gemma4", 6, gguftest.KV{"attention.shared_kv_layers": uint32(0)}),
+			want: 6 * perLayer,
+		},
+		{
+			name: "gemma3n shares from layer 20",
+			kv:   model("gemma3n", 30, nil),
+			want: 20 * perLayer,
+		},
+		{
+			name: "shared_kv_layers is ignored on other architectures",
+			kv:   model("llama", 6, gguftest.KV{"attention.shared_kv_layers": uint32(2)}),
+			want: 6 * perLayer,
+		},
+		{
+			name: "deepseek2 mla stores keys only",
+			kv: model("deepseek2", 2, gguftest.KV{
+				"attention.key_length_mla":   uint32(8),
+				"attention.value_length_mla": uint32(8),
+			}),
+			want: 2 * (2 * 16) * 100 * 2,
+		},
+		{
+			name: "mla keys keep V on architectures with an indexer cache",
+			kv: model("deepseek32", 2, gguftest.KV{
+				"attention.key_length_mla":   uint32(8),
+				"attention.value_length_mla": uint32(8),
+			}),
+			want: 2 * perLayer,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := loadTestGGUF(t, tc.kv).KV()
+			got := predictKVCache(kv, 100, 1, 0, tc.mtpDraft, "f16")
+			if got != tc.want {
+				t.Errorf("predictKVCache() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPredictKVCacheQwen35 checks the estimate against what llama-server
+// allocated for qwen3.5:0.8b at 32768 context with a q8_0 cache:
+// "llama_kv_cache: size = 204.00 MiB (32768 cells, 6 layers)". The model has
+// 24 layers, of which every fourth is not recurrent.
+func TestPredictKVCacheQwen35(t *testing.T) {
+	recurrent := make([]bool, 24)
+	for il := range 24 {
+		recurrent[il] = il%4 != 3
+	}
+
+	kv := loadTestGGUF(t, gguftest.KV{
+		"general.architecture":              "qwen35",
+		"qwen35.block_count":                uint32(24),
+		"qwen35.embedding_length":           uint32(1024),
+		"qwen35.attention.head_count":       uint32(8),
+		"qwen35.attention.head_count_kv":    uint32(2),
+		"qwen35.attention.key_length":       uint32(256),
+		"qwen35.attention.value_length":     uint32(256),
+		"qwen35.attention.recurrent_layers": recurrent,
+		"qwen35.full_attention_interval":    uint32(4),
+	}).KV()
+
+	const measured = 204 << 20
+	if got := predictKVCache(kv, 32768, 1, 0, false, "q8_0"); got != measured {
+		t.Errorf("predicted %d bytes, llama-server allocated %d", got, measured)
+	}
+}
+
+// TestPredictKVCacheGemma4Shared checks the estimate against what
+// llama-server allocated for gemma4:e2b at 32768 context with a q8_0 cache
+// and -ub 1024. The model has 35 layers and shared_kv_layers = 20, so only
+// the first 15 have a cache: 102.00 MiB for 3 full layers and 9.56 MiB for
+// 12 sliding layers (1536 cells). The estimate sizes the window for -ub
+// 2048, so it may run a little over; it may not fall below.
+func TestPredictKVCacheGemma4Shared(t *testing.T) {
+	pattern := make([]bool, 35)
+	for il := range 35 {
+		pattern[il] = il%5 != 4
+	}
+
+	kv := loadTestGGUF(t, gguftest.KV{
+		"general.architecture":                    "gemma4",
+		"gemma4.block_count":                      uint32(35),
+		"gemma4.embedding_length":                 uint32(1536),
+		"gemma4.attention.head_count":             uint32(8),
+		"gemma4.attention.head_count_kv":          uint32(1),
+		"gemma4.attention.key_length":             uint32(512),
+		"gemma4.attention.value_length":           uint32(512),
+		"gemma4.attention.key_length_swa":         uint32(256),
+		"gemma4.attention.value_length_swa":       uint32(256),
+		"gemma4.attention.sliding_window":         uint32(512),
+		"gemma4.attention.sliding_window_pattern": pattern,
+		"gemma4.attention.shared_kv_layers":       uint32(20),
+	}).KV()
+
+	// 102.00 MiB + 9.56 MiB, in bytes.
+	const measured = 106954752 + 10027008
+	got := predictKVCache(kv, 32768, 1, 1024, true, "q8_0")
+	if got < measured {
+		t.Errorf("predicted %d bytes, below the %d llama-server allocated", got, measured)
+	}
+	if got > measured*11/10 {
+		t.Errorf("predicted %d bytes, more than 10%% above the %d llama-server allocated", got, measured)
 	}
 }

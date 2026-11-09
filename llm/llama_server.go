@@ -2857,22 +2857,25 @@ const llamaServerMaxUbatch = 2048
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
 // Weights use the model file size, which also covers a projector stored in the
 // same file. The KV cache follows llama.cpp's per-layer allocation. The compute
-// graph is not counted; the scheduler's headroom absorbs it. numBatch is the
-// request's num_batch; the automatic batch, chosen later, never exceeds
-// llamaServerMaxUbatch.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel, numBatch int) uint64 {
+// graph and the recurrent state of hybrid models are not counted; the
+// scheduler's headroom absorbs them. opts is the request's options: an
+// explicit num_batch widens a sliding window (the automatic batch, chosen
+// later, never exceeds llamaServerMaxUbatch), and draft_num_predict turns on
+// the MTP draft context, which holds the cache of a model's MTP layers.
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel int, opts api.Options) uint64 {
 	weights := modelFileSize(modelPath, f)
-	kvCache := predictKVCache(f.KV(), numCtx, numParallel, numBatch, envconfig.KvCacheType())
+	kvCache := predictKVCache(f.KV(), numCtx, numParallel, opts.NumBatch, opts.DraftNumPredict > 0, envconfig.KvCacheType())
 
 	return weights + kvCache
 }
 
 // predictKVCache mirrors llama.cpp's KV cache allocation. Each layer stores
 // key_length and value_length values per KV head for every cell. Layers with
-// no KV heads (recurrent layers in hybrid models) store nothing, layers marked
-// in sliding_window_pattern store only the window, and non-causal models
-// (embedding encoders) keep no cache at all.
-func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, cacheType string) uint64 {
+// no KV heads (recurrent layers in hybrid models) store nothing, as do the
+// layers kvCacheLayers rules out. Layers marked in sliding_window_pattern
+// store only the window, and non-causal models (embedding encoders) keep no
+// cache at all.
+func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, mtpDraft bool, cacheType string) uint64 {
 	if !kv.Bool("attention.causal", true) {
 		return 0
 	}
@@ -2883,6 +2886,8 @@ func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, cacheT
 		return 0
 	}
 	headCountKV := layerValues(kv, "attention.head_count_kv", layers, headCount)
+	ownCache := kvCacheLayers(kv, layers, mtpDraft)
+	keysOnly := kvCacheKeysOnly(kv)
 
 	headK := kv.Uint("attention.key_length", kv.EmbeddingLength()/headCount[0])
 	headV := kv.Uint("attention.value_length", kv.EmbeddingLength()/headCount[0])
@@ -2910,6 +2915,9 @@ func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, cacheT
 		if swa != nil && swa[il] {
 			k, v = headKSWA, headVSWA
 		}
+		if keysOnly {
+			v = 0
+		}
 		widthK[il] = headCountKV[il] * k
 		widthV[il] = headCountKV[il] * v
 		widestV = max(widestV, widthV[il])
@@ -2917,13 +2925,14 @@ func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, cacheT
 
 	// A quantized V cache requires flash attention, which stores V as is.
 	// Without flash attention llama.cpp transposes V and pads every layer to
-	// the widest one, so unquantized caches are sized that way.
+	// the widest one, counting layers with no cache of their own, so
+	// unquantized caches are sized that way.
 	bytesPer32 := kvCacheBytesPer32(cacheType)
 	quantized := bytesPer32 < kvCacheBytesPer32("f16")
 
 	var values uint64
 	for il := range layers {
-		if widthK[il] == 0 {
+		if widthK[il] == 0 || !ownCache[il] {
 			continue
 		}
 
@@ -2941,6 +2950,69 @@ func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, cacheT
 	}
 
 	return values * bytesPer32 / 32
+}
+
+// kvCacheLayers reports which layers get a KV cache of their own in the main
+// context. Beyond layers with no KV heads, llama.cpp gives none to:
+//
+//   - MTP layers, the last nextn_predict_layers blocks. Their cache lives in
+//     the MTP draft context, which exists only when drafting is on. A
+//     graniteswitch model reuses the key for a router layer the trunk
+//     attends, so it keeps its cache.
+//   - recurrent layers of qwen3next, qwen35 and qwen35moe, which are marked
+//     by attention.recurrent_layers, or else are every layer but each
+//     full_attention_interval-th (4 when the key is missing).
+//   - the gemma layers that read an earlier layer's cache: the last
+//     attention.shared_kv_layers of gemma4, and layer 20 onward of gemma3n.
+//
+// These rules are per architecture in llama.cpp, so only the architectures
+// checked there are listed. Any other is sized as if every layer had a
+// cache, which can only overestimate.
+func kvCacheLayers(kv *gguf.Metadata, layers int, mtpDraft bool) []bool {
+	own := slices.Repeat([]bool{true}, layers)
+	arch := kv.Architecture()
+
+	trunk := layers
+	if nextn := int(kv.Uint("nextn_predict_layers")); nextn > 0 && nextn < layers && arch != "graniteswitch" {
+		trunk = layers - nextn
+		for il := trunk; il < layers; il++ {
+			own[il] = mtpDraft
+		}
+	}
+
+	shared := trunk
+	switch arch {
+	case "qwen3next", "qwen35", "qwen35moe":
+		recurrent := kv.KeyValue("attention.recurrent_layers").Bools()
+		interval := int(kv.Uint("full_attention_interval", 4))
+		for il := range trunk {
+			if len(recurrent) == layers {
+				own[il] = !recurrent[il]
+			} else if interval > 0 {
+				own[il] = (il+1)%interval == 0
+			}
+		}
+	case "gemma4":
+		if n := int(kv.Uint("attention.shared_kv_layers")); n > 0 && n < layers {
+			shared = layers - n
+		}
+	case "gemma3n":
+		shared = min(20, layers)
+	}
+	for il := shared; il < trunk; il++ {
+		own[il] = false
+	}
+
+	return own
+}
+
+// kvCacheKeysOnly reports a multi-head latent attention cache, which stores K
+// and no V. Other architectures with the MLA keys also allocate an indexer
+// cache that is not estimated here, so they keep the V term as cover.
+func kvCacheKeysOnly(kv *gguf.Metadata) bool {
+	return kv.Architecture() == "deepseek2" &&
+		kv.Uint("attention.key_length_mla") > 0 &&
+		kv.Uint("attention.value_length_mla") > 0
 }
 
 // layerValues returns one value per layer for key. GGUF stores these either as
