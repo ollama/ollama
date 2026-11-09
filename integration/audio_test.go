@@ -11,11 +11,13 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/mlxrunner/model/audio"
 )
 
 // decodeTestAudio returns the test audio clip ("Why is the sky blue?", 16kHz mono WAV).
@@ -124,57 +126,132 @@ func testAudioResponseForModel(t *testing.T, ctx context.Context, client *api.Cl
 	}, initialTimeout, streamTimeout)
 }
 
-// runOpenAIAudioTranscription tests the /v1/audio/transcriptions endpoint.
+// runOpenAIAudioTranscription tests the /v1/audio/transcriptions and
+// /v1/audio/translations endpoints.
 func runOpenAIAudioTranscription(t *testing.T, models []string) {
 	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer cancel()
 			client, endpoint, cleanup := InitServerConnection(ctx, t)
 			defer cleanup()
 
 			setupAudioModel(ctx, t, client, model)
-			audioBytes := decodeTestAudio(t)
+			clip := decodeTestAudio(t)
 
-			// Build multipart form request.
-			var body bytes.Buffer
-			writer := multipart.NewWriter(&body)
-			writer.WriteField("model", model)
-			part, err := writer.CreateFormFile("file", "prompt.wav")
-			if err != nil {
-				t.Fatal(err)
-			}
-			part.Write(audioBytes)
-			writer.Close()
+			t.Run("transcription", func(t *testing.T) {
+				text := postAudioText(ctx, t, endpoint, "transcriptions", map[string]string{"model": model}, clip)
+				// The clip is a question; transcribing must not answer it.
+				requireWords(t, text, "sky", "blue")
+				if strings.Contains(text, "scatter") {
+					t.Errorf("transcription answered the question: %q", text)
+				}
+			})
 
-			url := fmt.Sprintf("http://%s/v1/audio/transcriptions", endpoint)
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			req.Header.Set("Content-Type", writer.FormDataContentType())
+			t.Run("long audio", func(t *testing.T) {
+				// Four questions 25 s apart run longer than any model's 30 s
+				// clip limit, so the server splits them at the pauses; every
+				// piece must come back and every question be transcribed once.
+				samples, rate, err := audio.Decode(clip)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var long []float32
+				for i := range 4 {
+					if i > 0 {
+						long = append(long, make([]float32, 25*rate)...)
+					}
+					long = append(long, samples...)
+				}
+				result := postAudio(ctx, t, endpoint, "transcriptions",
+					map[string]string{"model": model, "language": "en", "response_format": "verbose_json"}, audio.EncodeWAV(long, rate))
+				if len(result.Segments) < 2 {
+					t.Fatalf("got %d segments, want the audio split: %+v", len(result.Segments), result.Segments)
+				}
+				sky := regexp.MustCompile(`\bsky\b`)
+				questions := 0
+				for i, seg := range result.Segments {
+					n := len(sky.FindAllString(strings.ToLower(seg.Text), -1))
+					if n == 0 {
+						t.Errorf("segment %d (%.1f-%.1f s) = %q, want a question", i, seg.Start, seg.End, seg.Text)
+					}
+					questions += n
+				}
+				if questions != 4 {
+					t.Errorf("transcribed %d questions, want 4: %+v", questions, result.Segments)
+				}
+			})
 
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Fatalf("request failed: %v", err)
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				respBody, _ := io.ReadAll(resp.Body)
-				t.Fatalf("expected 200, got %d: %s", resp.StatusCode, string(respBody))
-			}
-
-			respBody, err := io.ReadAll(resp.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			text := strings.ToLower(string(respBody))
-			if !strings.Contains(text, "sky") && !strings.Contains(text, "blue") {
-				t.Errorf("transcription response missing expected words, got: %s", string(respBody))
-			}
+			t.Run("translation", func(t *testing.T) {
+				text := postAudioText(ctx, t, endpoint, "translations",
+					map[string]string{"model": model, "language": "en", "to_language": "es"}, clip)
+				requireWords(t, text, "cielo", "azul")
+			})
 		})
+	}
+}
+
+// postAudioText posts clip to an OpenAI audio endpoint and returns the
+// lowercased text of the response.
+func postAudioText(ctx context.Context, t *testing.T, endpoint, path string, fields map[string]string, clip []byte) string {
+	t.Helper()
+	return strings.ToLower(postAudio(ctx, t, endpoint, path, fields, clip).Text)
+}
+
+type audioTextResult struct {
+	Text     string `json:"text"`
+	Segments []struct {
+		Start float64 `json:"start"`
+		End   float64 `json:"end"`
+		Text  string  `json:"text"`
+	} `json:"segments"`
+}
+
+// postAudio posts clip to an OpenAI audio endpoint and decodes the response.
+func postAudio(ctx context.Context, t *testing.T, endpoint, path string, fields map[string]string, clip []byte) audioTextResult {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for k, v := range fields {
+		writer.WriteField(k, v)
+	}
+	part, err := writer.CreateFormFile("file", "prompt.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write(clip)
+	writer.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://%s/v1/audio/%s", endpoint, path), &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, respBody)
+	}
+	var result audioTextResult
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		t.Fatalf("decode %s: %v", respBody, err)
+	}
+	return result
+}
+
+func requireWords(t *testing.T, text string, words ...string) {
+	t.Helper()
+	for _, w := range words {
+		if !strings.Contains(text, w) {
+			t.Errorf("missing %q in %q", w, text)
+		}
 	}
 }
 

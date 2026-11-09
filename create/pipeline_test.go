@@ -59,8 +59,8 @@ func TestCreatePipeline(t *testing.T) {
 	if gotModelConfig.Requires != "0.20.0" {
 		t.Errorf("requires = %q, want 0.20.0", gotModelConfig.Requires)
 	}
-	if gotModelConfig.FileType != "" {
-		t.Errorf("file type = %q, want empty for non-Kev source", gotModelConfig.FileType)
+	if gotModelConfig.FileType != "BF16" {
+		t.Errorf("file type = %q, want BF16 from the stored weights", gotModelConfig.FileType)
 	}
 	if gotClass.Kind != SourceFloat || gotClass.Quantize != "" {
 		t.Errorf("classification = {%s %q}, want {float %q}", gotClass.Kind, gotClass.Quantize, "")

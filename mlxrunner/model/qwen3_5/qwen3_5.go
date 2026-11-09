@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/mlx"
@@ -32,11 +33,8 @@ var (
 
 // RopeParameters carries optional rope metadata embedded under rope_parameters.
 type RopeParameters struct {
-	Type                string  `json:"type"`
-	RopeType            string  `json:"rope_type"`
-	RopeTheta           float32 `json:"rope_theta"`
-	PartialRotaryFactor float32 `json:"partial_rotary_factor"`
-	MropeSection        []int32 `json:"mrope_section"`
+	nn.RopeParameters
+	MropeSection []int32 `json:"mrope_section"`
 }
 
 // Config holds Qwen 3.5 text config (top-level or nested text_config).
@@ -74,7 +72,7 @@ type Config struct {
 
 	RopeTheta           float32         `json:"rope_theta"`
 	PartialRotaryFactor float32         `json:"partial_rotary_factor"`
-	RopeScaling         map[string]any  `json:"rope_scaling"`
+	RopeScaling         *RopeParameters `json:"rope_scaling"`
 	RopeParameters      *RopeParameters `json:"rope_parameters"`
 
 	MropeSection []int32 `json:"-"`
@@ -88,8 +86,11 @@ type Config struct {
 	NoncausalFullAttention bool                              `json:"-"`
 
 	// Computed fields.
-	Scale   float32 `json:"-"`
-	RopeDim int32   `json:"-"`
+	Scale        float32    `json:"-"`
+	RopeDim      int32      `json:"-"`
+	RopeFreqs    *mlx.Array `json:"-"`
+	RopeInvFreqs []float32  `json:"-"`
+	RopeScale    *float32   `json:"-"`
 }
 
 // Model is the Qwen 3.5 model.
@@ -99,7 +100,8 @@ type Model struct {
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
 
-	MTP *MTPHead
+	MTP             *MTPHead
+	auxHiddenLayers []int
 
 	// Vision components; nil for text-only checkpoints.
 	Vision      *VisionConfig
@@ -275,12 +277,16 @@ func parseConfig(configData []byte) (Config, error) {
 		return Config{}, fmt.Errorf("linear_num_value_heads (%d) must be divisible by linear_num_key_heads (%d)", cfg.LinearNumValueHeads, cfg.LinearNumKeyHeads)
 	}
 
-	if cfg.RopeParameters != nil {
-		if cfg.RopeParameters.RopeTheta > 0 {
-			cfg.RopeTheta = cfg.RopeParameters.RopeTheta
+	rope := cfg.RopeParameters
+	if rope == nil {
+		rope = cfg.RopeScaling
+	}
+	if rope != nil {
+		if rope.RopeTheta > 0 {
+			cfg.RopeTheta = rope.RopeTheta
 		}
-		if cfg.RopeParameters.PartialRotaryFactor > 0 {
-			cfg.PartialRotaryFactor = cfg.RopeParameters.PartialRotaryFactor
+		if rope.PartialRotaryFactor > 0 {
+			cfg.PartialRotaryFactor = rope.PartialRotaryFactor
 		}
 	}
 	if cfg.RopeTheta == 0 {
@@ -301,8 +307,25 @@ func parseConfig(configData []byte) (Config, error) {
 	}
 	cfg.RopeDim = ropeDim
 	cfg.MropeSection = []int32{11, 11, 10}
-	if cfg.RopeParameters != nil && len(cfg.RopeParameters.MropeSection) == 3 {
-		cfg.MropeSection = cfg.RopeParameters.MropeSection
+	if rope != nil && len(rope.MropeSection) == 3 {
+		cfg.MropeSection = rope.MropeSection
+	}
+	if rope != nil && rope.TypeName() == "yarn" {
+		params := rope.RopeParameters
+		if params.OriginalMaxPositionEmbeddings <= 0 {
+			params.OriginalMaxPositionEmbeddings = cfg.MaxPositionEmbeddings
+		}
+		var scale float32
+		cfg.RopeFreqs, scale = nn.BuildYarnRopeFreqs(int(cfg.RopeDim), cfg.RopeTheta, &params)
+		cfg.RopeScale = &scale
+		cfg.MaxPositionEmbeddings = max(cfg.MaxPositionEmbeddings, int32(float64(params.Factor)*float64(params.OriginalMaxPositionEmbeddings)))
+		if cfg.RopeFreqs != nil {
+			freqs := cfg.RopeFreqs.Floats()
+			cfg.RopeInvFreqs = make([]float32, len(freqs))
+			for i, freq := range freqs {
+				cfg.RopeInvFreqs[i] = 1 / freq
+			}
+		}
 	}
 
 	if cfg.FullAttentionInterval <= 0 {
@@ -1139,8 +1162,12 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 		q = applyMRoPE(q, mropeCos, mropeSin, cfg.RopeDim)
 		k = applyMRoPE(k, mropeCos, mropeSin, cfg.RopeDim)
 	} else {
-		q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
-		k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+		q = mlx.RoPEWithFreqs(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+		k = mlx.RoPEWithFreqs(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+		if cfg.RopeScale != nil {
+			q = nn.ScaleRotaryPart(q, int(cfg.RopeDim), *cfg.RopeScale)
+			k = nn.ScaleRotaryPart(k, int(cfg.RopeDim), *cfg.RopeScale)
+		}
 	}
 
 	var kv nn.SDPAOption
@@ -1336,14 +1363,21 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 		mropeCos, mropeSin = mropeCosSin(m.Config, mp, L)
 	}
 
+	var features []*mlx.Array
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config, mropeCos, mropeSin)
+		if slices.Contains(m.auxHiddenLayers, i) {
+			features = append(features, h)
+		}
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
+	if len(features) > 0 {
+		return out, mlx.Concatenate(features, -1)
+	}
 	return out, out
 }
 
@@ -1429,3 +1463,14 @@ func (m *Model) NewCaches() []cache.Cache {
 	}
 	return caches
 }
+
+// SetAuxHiddenLayers taps the listed layers' outputs, which Forward then
+// returns concatenated as the draft-conditioning features.
+func (m *Model) SetAuxHiddenLayers(layers []int) { m.auxHiddenLayers = append([]int(nil), layers...) }
+
+// TokenEmbeddings is the raw lookup, for a draft that embeds with the
+// target's table.
+func (m *Model) TokenEmbeddings(ids *mlx.Array) *mlx.Array { return m.EmbedTokens.Forward(ids) }
+
+// RawLogits is the head projection without any output decoration.
+func (m *Model) RawLogits(hidden *mlx.Array) *mlx.Array { return m.LMHead.Forward(hidden) }

@@ -214,7 +214,7 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		opts.NumCtx = 4
 	}
 
-	if m.CheckCapabilities(model.CapabilityVision) == nil {
+	if m.CheckCapabilities(model.CapabilityVision) == nil || len(m.ProjectorPaths) > 0 {
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
@@ -543,13 +543,6 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	// Embedding models should always be loaded with parallel=1
 	if !completion {
 		numParallel = 1
-	}
-
-	// Some architectures are not safe with num_parallel > 1.
-	// ref: https://github.com/ollama/ollama/issues/4165
-	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe", "qwen3next", "lfm2", "lfm2moe", "nemotron_h", "nemotron_h_moe", "nemotron_h_omni"}, req.model.Config.ModelFamily) && numParallel != 1 {
-		numParallel = 1
-		slog.Warn("model architecture does not currently support parallel requests", "architecture", req.model.Config.ModelFamily)
 	}
 
 	sessionDuration := envconfig.KeepAlive()

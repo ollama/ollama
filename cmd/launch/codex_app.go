@@ -680,6 +680,30 @@ func (c *CodexApp) OllamaConfigured() bool {
 	return c.CurrentModel() != ""
 }
 
+// RestorePending recognizes saved restore state and abandoned Ollama catalogs,
+// including legacy connections that do not have a restore record.
+func (c *CodexApp) RestorePending() bool {
+	if _, err := os.Lstat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
+		return true
+	}
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return false
+	}
+	if data, err := os.ReadFile(configPath); err == nil && codexAppRootReferencesCatalog(string(data)) {
+		return false
+	}
+	for _, path := range []string{
+		codexAppModelCatalogPathForConfig(configPath),
+		codexAppRoutingCatalogPathForConfig(configPath),
+	} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			return true
+		}
+	}
+	return false
+}
+
 // Running reports whether the user's regular ChatGPT app is open.
 func (c *CodexApp) Running() bool {
 	return codexAppIsRunning()
@@ -818,16 +842,21 @@ func restoreCodexAppProfile() error {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if err := removeCodexAppManagedAuth(configPath); err != nil {
-				return codexAppRestoreFailure(configPath, err)
+			if _, err := os.Lstat(codexAppRestoreStatePath()); os.IsNotExist(err) {
+				if err := writeCodexAppRestoreState(codexAppRestoreState{}); err != nil {
+					return codexAppRestoreFailure(configPath, err)
+				}
 			}
-			if err := removeCodexAppRestoreState(); err != nil {
+			if err := removeCodexAppManagedAuth(configPath); err != nil {
 				return codexAppRestoreFailure(configPath, err)
 			}
 			if err := removeCodexAppProfileConfig(); err != nil {
 				return codexAppRestoreFailure(configPath, err)
 			}
 			if err := codexAppRemoveOwnedCatalog(); err != nil {
+				return codexAppRestoreFailure(configPath, err)
+			}
+			if err := removeCodexAppRestoreState(); err != nil {
 				return codexAppRestoreFailure(configPath, err)
 			}
 			return nil
@@ -854,16 +883,23 @@ func restoreCodexAppProfile() error {
 	if err := codexValidateConfigText(text); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
+	// Keep a durable retry record before changing settings, including legacy
+	// connections whose catalogs and original restore record are already gone.
+	if os.IsNotExist(stateErr) {
+		if err := writeCodexAppRestoreState(codexAppRestoreStateFromText(text)); err != nil {
+			return codexAppRestoreFailure(configPath, err)
+		}
+	}
 	if err := fileutil.WriteWithBackup(configPath, []byte(text), codexAppIntegrationName); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
 	if err := removeCodexAppProfileConfig(); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
-	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
+	if err := removeCodexAppManagedAuth(configPath); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
-	if err := removeCodexAppManagedAuth(configPath); err != nil {
+	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
 	if err := removeCodexAppRestoreState(); err != nil {

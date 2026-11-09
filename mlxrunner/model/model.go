@@ -31,6 +31,13 @@ type Model interface {
 	MaxContextLength() int
 }
 
+// SkippedTensorsModel identifies checkpoint tensors to exclude from MLX loading.
+// Names use the original safetensors namespace, including any quantization
+// companions. The model is responsible for accessing any required skipped tensors.
+type SkippedTensorsModel interface {
+	SkippedTensorNames() []string
+}
+
 // DraftModel is an auxiliary model alongside a target that proposes speculative
 // tokens.
 type DraftModel interface {
@@ -66,6 +73,21 @@ type BlockDraft interface {
 // target weights; it returns the head, or nil when the checkpoint shipped none.
 type SelfDraft interface {
 	SelfDraft() DraftModel
+}
+
+// BlockSelector is a BlockDraft with a learned selector that chooses each
+// proposal conditional on its predecessor. The runner owns sampling policy
+// and RNG; the model owns candidate scores.
+type BlockSelector interface {
+	BlockDraft
+
+	// Select proposes a block from the draft's hidden rows [B,L,H], their
+	// logits [B,L,V] and the anchor token [B] preceding the block. choose
+	// samples one of each row's unique candidate IDs, taking IDs and scores
+	// [N,K] and returning tokens [N] and probabilities [N,K]. Select returns
+	// tokens [B,L] and each position's candidate IDs and probabilities [B,L,K],
+	// which verification uses to correct the proposal.
+	Select(hidden, logits, anchor *mlx.Array, choose func(ids, scores *mlx.Array) (tokens, probs *mlx.Array)) (tokens, ids, probs *mlx.Array)
 }
 
 var (

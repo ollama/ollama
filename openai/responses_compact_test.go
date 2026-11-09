@@ -604,8 +604,8 @@ func TestCompactionForcesActiveToolOutputImage(t *testing.T) {
 
 func TestCompactionRejectsUnsupportedImageSources(t *testing.T) {
 	for name, image := range map[string]string{
-		"file id":    `{"type":"input_image","detail":"auto","file_id":"file_123"}`,
-		"remote URL": `{"type":"input_image","detail":"auto","image_url":"https://example.com/image.png"}`,
+		"missing source": `{"type":"input_image","detail":"auto"}`,
+		"remote URL":     `{"type":"input_image","detail":"auto","image_url":"https://example.com/image.png"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := []byte(`{"model":"test","stream":true,"input":[{"type":"message","role":"user","content":[` + image + `]},{"type":"compaction_trigger"}]}`)
@@ -614,6 +614,54 @@ func TestCompactionRejectsUnsupportedImageSources(t *testing.T) {
 				t.Fatalf("requested=%v err=%v", requested, err)
 			}
 		})
+	}
+}
+
+func TestCompactionReplaysUnavailableImageNotice(t *testing.T) {
+	body := []byte(`{"model":"test","stream":true,"input":[{"role":"user","content":[{"type":"input_text","text":"Keep this."},{"type":"input_image","file_id":"file_private"}]},{"role":"assistant","content":"Continue."},{"type":"compaction_trigger"}]}`)
+	original := bytes.Clone(body)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+	summaryRequest, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const notice = "[This image is unavailable. Attach the image again, or continue without the image.]"
+	if !bytes.Contains(summaryRequest, []byte(notice)) || bytes.Contains(summaryRequest, []byte("file_private")) {
+		t.Fatalf("summary request does not identify the unavailable image safely: %s", summaryRequest)
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "The user supplied an unavailable image reference.", "retain_item_ids": []string{"item_000001"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item, map[string]any{"role": "user", "content": "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expanded, changed, err := ExpandResponsesCompactionInput(request)
+	if err != nil || !changed {
+		t.Fatalf("expand: changed=%v err=%v", changed, err)
+	}
+	var replay ResponsesRequest
+	if err := json.Unmarshal(expanded, &replay); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := FromResponsesRequest(replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained bool
+	for _, msg := range chat.Messages {
+		if msg.Content == "Keep this.\n\n"+notice+"\n\n" && len(msg.Images) == 0 {
+			retained = true
+		}
+	}
+	if !retained || chat.Messages[len(chat.Messages)-1].Content != "hi" || !bytes.Equal(body, original) {
+		t.Fatalf("notice, follow-up or original history changed: %+v", chat.Messages)
 	}
 }
 
@@ -940,7 +988,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 		"content": [
 			{"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
 			{"type": "encrypted_content", "encrypted_content": "analyze the parser"},
-			{"type": "input_image", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
+			{"type": "input_image", "file_id": "file_stale", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 		]
 	}`), &item)
 	if err != nil {
@@ -953,7 +1001,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 	}
 	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
 	want = fmt.Sprintf(want, "/root", "/root/worker")
-	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 0 {
+	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 1 || string(msg.Images[0]) != "fixture" {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }
