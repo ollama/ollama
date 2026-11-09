@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -396,5 +397,37 @@ func TestGetInferenceInfoTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("unexpected error: %s", err)
+	}
+}
+
+func TestExposedHost(t *testing.T) {
+	cases := map[string]string{
+		"":                        "0.0.0.0",
+		"127.0.0.1":               "0.0.0.0",
+		"127.0.0.1:4090":          "0.0.0.0:4090",
+		"http://127.0.0.1:4090":   "0.0.0.0:4090",
+		"https://localhost:8443/": "0.0.0.0:8443",
+		"[::1]:11500":             "0.0.0.0:11500",
+		"0.0.0.0":                 "0.0.0.0",
+		":5000":                   "0.0.0.0:5000",
+	}
+	for in, want := range cases {
+		if got := exposedHost(in); got != want {
+			t.Errorf("exposedHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestServerCmdExposeKeepsPort(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:4090")
+	st := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	defer st.Close()
+	st.SetSettings(store.Settings{Expose: true})
+	cmd, err := (&Server{store: st}).cmd(t.Context())
+	if err != nil {
+		t.Fatalf("s.cmd() error = %v", err)
+	}
+	if !slices.Contains(cmd.Env, "OLLAMA_HOST=0.0.0.0:4090") {
+		t.Errorf("expected OLLAMA_HOST=0.0.0.0:4090 in %v", cmd.Env)
 	}
 }
