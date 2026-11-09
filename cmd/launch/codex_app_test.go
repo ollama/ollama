@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,8 +52,8 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 	oldStartID := codexAppStartID
 	oldCanOpenID := codexAppCanOpenID
 	oldExitTimeout := codexAppExitTimeout
-	codexAppIsRunning = isRunning
-	codexAppQuitApp = quit
+	codexAppIsRunning = func(context.Context) bool { return isRunning() }
+	codexAppQuitApp = func(context.Context) error { return quit() }
 	codexAppOpenApp = func([]string) error { return open() }
 	t.Cleanup(func() {
 		codexAppIsRunning = oldIsRunning
@@ -347,7 +348,7 @@ func TestCodexAppDesktopChecksRouterBeforeChangingProfile(t *testing.T) {
 	openCalls := 0
 	quitCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return true },
@@ -389,7 +390,7 @@ func TestCodexAppDesktopRequiresRestartConfirmationBeforeChangingProfile(t *test
 	openCalls := 0
 	quitCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return true },
@@ -431,10 +432,10 @@ func TestCodexAppDesktopRequiresConsentBeforeStoppingLegacyProfile(t *testing.T)
 	oldCanOpenID := codexAppCanOpenID
 	oldProfileRunning := codexAppProfileIsRunning
 	oldStopProfile := codexAppStopProfile
-	codexAppCanOpenID = func() bool { return true }
-	codexAppProfileIsRunning = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
+	codexAppProfileIsRunning = func(context.Context) (bool, error) { return true, nil }
 	stopCalls := 0
-	codexAppStopProfile = func() error { stopCalls++; return nil }
+	codexAppStopProfile = func(context.Context) error { stopCalls++; return nil }
 	t.Cleanup(func() {
 		codexAppCanOpenID = oldCanOpenID
 		codexAppProfileIsRunning = oldProfileRunning
@@ -481,7 +482,7 @@ func TestCodexAppDesktopRechecksRestartConfirmationBeforeProfileWrite(t *testing
 	openCalls := 0
 	quitCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool {
@@ -531,7 +532,7 @@ func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
 
 	openCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return false },
@@ -575,7 +576,7 @@ func codexAppRestoreFixture(t *testing.T) (*CodexApp, string) {
 	withCodexAppPlatform(t, "darwin")
 	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 	old := codexAppProfileIsRunning
-	codexAppProfileIsRunning = func() bool { return false }
+	codexAppProfileIsRunning = func(context.Context) (bool, error) { return false, nil }
 	t.Cleanup(func() { codexAppProfileIsRunning = old })
 	withCodexAppProcessHooks(t,
 		func() bool { return false },
@@ -738,7 +739,7 @@ func TestCodexAppDesktopUpdatesStoppedProfileWithoutOpening(t *testing.T) {
 
 	openCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return false },
@@ -868,7 +869,7 @@ func TestCodexAppDesktopAppliesProfileAfterRunningAppExits(t *testing.T) {
 	running := true
 	events := []string{}
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return running },
@@ -957,7 +958,7 @@ func TestCodexAppDesktopRestartRepairsCatalogWithoutLiveInventory(t *testing.T) 
 	quitCalls := 0
 	openCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return running },
@@ -1147,13 +1148,13 @@ func TestCodexAppLegacyProfileCleanupRejectsStalePID(t *testing.T) {
 	oldExecutable := codexAppProfileExecutable
 	oldCommand := codexAppProcessCommand
 	codexAppProfileExecutable = func() (string, error) { return "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", nil }
-	codexAppProcessCommand = func(int) (string, error) { return "/usr/bin/unrelated --serve", nil }
+	codexAppProcessCommand = func(context.Context, int) (string, error) { return "/usr/bin/unrelated --serve", nil }
 	t.Cleanup(func() {
 		codexAppProfileExecutable = oldExecutable
 		codexAppProcessCommand = oldCommand
 	})
 
-	err := defaultCodexAppStopOllamaProfile()
+	err := defaultCodexAppStopOllamaProfile(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "identity could not be verified") {
 		t.Fatalf("stale PID error = %v, want identity verification", err)
 	}
@@ -1205,8 +1206,8 @@ func TestCodexAppInstalledUsesWindowsStartMenuFallback(t *testing.T) {
 
 	oldStartID := codexAppStartID
 	oldIsRunning := codexAppIsRunning
-	codexAppStartID = func() string { return "OpenAI.Codex_12345!App" }
-	codexAppIsRunning = func() bool { return false }
+	codexAppStartID = func(context.Context) string { return "OpenAI.Codex_12345!App" }
+	codexAppIsRunning = func(context.Context) bool { return false }
 	t.Cleanup(func() {
 		codexAppStartID = oldStartID
 		codexAppIsRunning = oldIsRunning
@@ -1222,7 +1223,7 @@ func TestCodexAppInstalledUsesMacBundleIDFallback(t *testing.T) {
 
 	oldCanOpenID := codexAppCanOpenID
 	oldStat := codexAppStat
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	codexAppStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	t.Cleanup(func() {
 		codexAppCanOpenID = oldCanOpenID
@@ -1239,7 +1240,7 @@ func TestChatGPTMissingAppGivesDownloadRecovery(t *testing.T) {
 
 	oldCanOpenID := codexAppCanOpenID
 	oldStat := codexAppStat
-	codexAppCanOpenID = func() bool { return false }
+	codexAppCanOpenID = func(context.Context) bool { return false }
 	codexAppStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	t.Cleanup(func() {
 		codexAppCanOpenID = oldCanOpenID
@@ -2676,8 +2677,8 @@ func TestCodexAppConfigureMigratesLegacyManagedConfigWithoutPollutingRestoreStat
 	if efforts, ok := codexAppConfigReasoningEfforts(restoredConfig); !ok || !slices.Equal(efforts, []string{"low", "high"}) {
 		t.Fatalf("restored desktop reasoning efforts = %v, %v; want [low high]", efforts, ok)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -2742,8 +2743,8 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, restored)
 		}
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
 		t.Fatalf("restore state should be removed, got err=%v", err)
@@ -2919,8 +2920,8 @@ func TestCodexAppRestoreMissingConfigRemovesRestoreState(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(configPath), "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("managed auth should be removed when config is missing, got err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -3015,17 +3016,13 @@ func TestCodexAppConfigureRefreshesRestoreStateAfterManualProfileSwitch(t *testi
 			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, restored)
 		}
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
 func TestCodexAppRestoreRejectsMalformedTomlWithoutWriting(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withCodexAppPlatform(t, "darwin")
-
-	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	_, configPath := codexAppRestoreFixture(t)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -3134,8 +3131,8 @@ func TestCodexAppRestoreWithoutStateRemovesManagedRootModel(t *testing.T) {
 	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -3214,8 +3211,8 @@ func TestCodexAppRestoreDoesNotStompUserChangedRootConfig(t *testing.T) {
 	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -3322,7 +3319,7 @@ func TestCodexAppDesktopLaunchMode(t *testing.T) {
 			return nil
 		},
 	)
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 
 	app := &CodexApp{}
 	if err := app.UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false); err != nil {
@@ -3481,12 +3478,12 @@ func TestCodexAppRunNeverForcesAStuckAppToQuit(t *testing.T) {
 				},
 			)
 			if goos == "windows" {
-				codexAppStartID = func() string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
+				codexAppStartID = func(context.Context) string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
 			}
-			codexAppExitTimeout = 0
+			codexAppExitTimeout = 20 * time.Millisecond
 
 			err := (&CodexApp{}).Run("qwen3.5", nil, nil)
-			if err == nil || !strings.Contains(err.Error(), "did not quit") {
+			if err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT") {
 				t.Fatalf("Run error = %v, want a manual-close error", err)
 			}
 			if want := []string{"quit"}; !slices.Equal(calls, want) {
@@ -3498,7 +3495,6 @@ func TestCodexAppRunNeverForcesAStuckAppToQuit(t *testing.T) {
 
 func TestCodexAppDesktopRestartTimeoutPreservesProfile(t *testing.T) {
 	withCodexAppPlatform(t, "darwin")
-	codexAppExitTimeout = 0
 	changeCalls := 0
 	openCalls := 0
 	withCodexAppProcessHooks(t,
@@ -3506,12 +3502,15 @@ func TestCodexAppDesktopRestartTimeoutPreservesProfile(t *testing.T) {
 		func() error { return nil },
 		func() error { openCalls++; return nil },
 	)
+	codexAppExitTimeout = 0
 
-	err := codexAppApplyProfileFromDesktop(func() error {
+	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
+	defer stop()
+	err := codexAppApplyProfileChange(ctx, func() error {
 		changeCalls++
 		return nil
 	}, true, true)
-	if err == nil || !strings.Contains(err.Error(), "did not quit") {
+	if err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT") {
 		t.Fatalf("restart error = %v, want a manual-close error", err)
 	}
 	if changeCalls != 0 || openCalls != 0 {
@@ -3560,8 +3559,8 @@ func TestCodexAppRunRestartsWindowsStartAppID(t *testing.T) {
 		},
 	)
 
-	codexAppStartID = func() string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
-	codexAppRunPath = func() string {
+	codexAppStartID = func(context.Context) string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
+	codexAppRunPath = func(context.Context) string {
 		return `C:\Program Files\WindowsApps\OpenAI.Codex_26.429.8261.0_x64__2p2nqsd0c76g0\app\Codex.exe`
 	}
 	var openedStartID, openedPath string
@@ -3645,7 +3644,7 @@ func TestDefaultCodexAppIsRunningProcesses(t *testing.T) {
 			t.Setenv("OLLAMA_TEST_CODEX_APP_EXIT_CODE", tt.exitCode)
 			t.Setenv("OLLAMA_TEST_CODEX_APP_NAME_EXIT_CODE", tt.nameMatchExit)
 
-			if got := defaultCodexAppIsRunning(); got != tt.want {
+			if got := defaultCodexAppIsRunning(context.Background()); got != tt.want {
 				t.Fatalf("defaultCodexAppIsRunning() = %v, want %v", got, tt.want)
 			}
 		})
@@ -3662,7 +3661,7 @@ func TestDefaultCodexAppIsRunningDoesNotCallAppleScript(t *testing.T) {
 		"osascript": "printf called > \"$OLLAMA_TEST_CODEX_APP_OSASCRIPT_MARKER\"\nexec /bin/sleep 1\n",
 	})
 
-	if defaultCodexAppIsRunning() {
+	if defaultCodexAppIsRunning(context.Background()) {
 		t.Fatal("reported a running app with no matching processes")
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
