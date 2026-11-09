@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/x/tokenizer"
+	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 const (
@@ -369,7 +369,7 @@ Montréal
 	}
 }
 
-func TestQwen38RendererReasoningEffortMapping(t *testing.T) {
+func TestQwen38RendererReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name  string
 		think *api.ThinkValue
@@ -380,8 +380,10 @@ func TestQwen38RendererReasoningEffortMapping(t *testing.T) {
 		{name: "false", think: &api.ThinkValue{Value: false}, want: ""},
 		{name: "low", think: &api.ThinkValue{Value: "low"}, want: qwen38RefLow},
 		{name: "medium", think: &api.ThinkValue{Value: "medium"}, want: ""},
-		{name: "high", think: &api.ThinkValue{Value: "high"}, want: qwen38RefXHigh},
-		{name: "max", think: &api.ThinkValue{Value: "max"}, want: qwen38RefXHigh},
+		{name: "xhigh", think: &api.ThinkValue{Value: "xhigh"}, want: qwen38RefXHigh},
+		{name: "future uses renderer default", think: &api.ThinkValue{Value: "future"}, want: qwen38RefXHigh},
+		{name: "high uses renderer default", think: &api.ThinkValue{Value: "high"}, want: qwen38RefXHigh},
+		{name: "max uses renderer default", think: &api.ThinkValue{Value: "max"}, want: qwen38RefXHigh},
 	}
 
 	for _, tt := range tests {
@@ -602,6 +604,10 @@ type qwen38JinjaContentPart struct {
 }
 
 func renderQwen38Jinja(t *testing.T, messages []api.Message, tools []api.Tool, think *api.ThinkValue, effort string) string {
+	return renderQwenJinja(t, qwen38Template, messages, tools, think, effort)
+}
+
+func renderQwenJinja(t *testing.T, template string, messages []api.Message, tools []api.Tool, think *api.ThinkValue, effort string) string {
 	t.Helper()
 
 	jinjaMessages := make([]qwen38JinjaMessage, 0, len(messages))
@@ -634,7 +640,7 @@ func renderQwen38Jinja(t *testing.T, messages []api.Message, tools []api.Tool, t
 		t.Fatal(err)
 	}
 
-	templatePath, err := filepath.Abs(qwen38Template)
+	templatePath, err := filepath.Abs(template)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -696,6 +702,9 @@ func qwen38PythonCommand(t *testing.T, args ...string) *exec.Cmd {
 }
 
 func findQwen38VenvPython() (string, bool) {
+	if python := os.Getenv("JINJA_PYTHON"); python != "" {
+		return python, true
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", false

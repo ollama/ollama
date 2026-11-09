@@ -1,7 +1,6 @@
 package parsers
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -93,7 +92,7 @@ func TestGLM47ParserToolCallEscaping(t *testing.T) {
 			Arguments: args(`{"expr": "a < b && c > d"}`),
 		},
 	}
-	if !reflect.DeepEqual(toolCall, expected) {
+	if !toolCallEqual(toolCall, expected) {
 		t.Fatalf("expected %#v, got %#v", expected, toolCall)
 	}
 }

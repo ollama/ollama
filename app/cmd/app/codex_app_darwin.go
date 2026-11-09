@@ -35,6 +35,7 @@ var errCodexDesktopRestartConfirmationRequired = launch.ErrCodexAppRestartConfir
 type codexDesktopController interface {
 	Installed() bool
 	OllamaConfigured() bool
+	RestorePending() bool
 	Running() bool
 	OllamaRequestCount() uint64
 	UseOllamaFromDesktop(string, []launch.LaunchModel, bool) error
@@ -62,15 +63,16 @@ var (
 )
 
 type codexDesktopStatus struct {
-	Used      bool     `json:"used"`
-	Supported bool     `json:"supported"`
-	Installed bool     `json:"installed"`
-	Connected bool     `json:"connected"`
-	Running   bool     `json:"running"`
-	Model     string   `json:"model,omitempty"`
-	Models    []string `json:"models,omitempty"`
-	MaxModels int      `json:"maxModels"`
-	Requests  uint64   `json:"requests"`
+	Used              bool     `json:"used"`
+	Supported         bool     `json:"supported"`
+	Installed         bool     `json:"installed"`
+	Connected         bool     `json:"connected"`
+	DisconnectPending bool     `json:"disconnectPending,omitempty"`
+	Running           bool     `json:"running"`
+	Model             string   `json:"model,omitempty"`
+	Models            []string `json:"models,omitempty"`
+	MaxModels         int      `json:"maxModels"`
+	Requests          uint64   `json:"requests"`
 }
 
 type codexDesktopActionResult struct {
@@ -150,15 +152,16 @@ func getCodexDesktopStatus() codexDesktopStatus {
 		model = models[0]
 	}
 	return codexDesktopStatus{
-		Used:      hasUsedCodexDesktopIntegration(),
-		Supported: true,
-		Installed: codexDesktop.Installed(),
-		Connected: connected,
-		Running:   codexDesktop.Running(),
-		Model:     model,
-		Models:    models,
-		MaxModels: codexDesktopMaxModels,
-		Requests:  requests,
+		Used:              hasUsedCodexDesktopIntegration(),
+		Supported:         true,
+		Installed:         codexDesktop.Installed(),
+		Connected:         connected,
+		DisconnectPending: !connected && codexDesktop.RestorePending(),
+		Running:           codexDesktop.Running(),
+		Model:             model,
+		Models:            models,
+		MaxModels:         codexDesktopMaxModels,
+		Requests:          requests,
 	}
 }
 
@@ -166,7 +169,7 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 	codexDesktopMu.Lock()
 	defer codexDesktopMu.Unlock()
 
-	if enabled == codexDesktop.OllamaConfigured() {
+	if enabled == codexDesktop.OllamaConfigured() && (enabled || !codexDesktop.RestorePending()) {
 		return nil
 	}
 	if !enabled {
@@ -213,7 +216,31 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 	return nil
 }
 
+// Native and webview controls share the connection handler.
+func changeCodexDesktopConnection(enabled, restartConfirmed bool) codexDesktopActionResult {
+	err := setCodexDesktopConnection(enabled, restartConfirmed)
+	result := codexDesktopActionResult{Status: getCodexDesktopStatus()}
+	if err == nil {
+		return result
+	}
+	result.RestartConfirmationRequired = errors.Is(err, errCodexDesktopRestartConfirmationRequired)
+	result.Error = "Couldn’t disconnect ChatGPT. Try again."
+	if enabled {
+		result.Error = "Couldn’t connect ChatGPT. Try again."
+	}
+	if !result.RestartConfirmationRequired {
+		slog.Warn("failed to change ChatGPT integration", "connected", enabled, "error", err)
+	}
+	return result
+}
+
 func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return codexDesktopSettingsWithInventory(ctx, codexDesktopSettingsSummary())
+}
+
+func codexDesktopSettingsSummary() codexDesktopModelsSettings {
 	settings := codexDesktopModelsSettings{
 		Supported: true,
 		Installed: codexDesktop.Installed(),
@@ -230,8 +257,10 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	if len(settings.Selected) > codexDesktopMaxModels {
 		settings.Selected = settings.Selected[:codexDesktopMaxModels]
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	return settings
+}
+
+func codexDesktopSettingsWithInventory(ctx context.Context, settings codexDesktopModelsSettings) (codexDesktopModelsSettings, error) {
 	inventory, err := loadCodexDesktopModelInventory(ctx)
 	if err != nil {
 		return settings, err
@@ -365,7 +394,7 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
-// /api/show supplies capabilities and family metadata without replacing recommended thinking controls.
+// /api/show refreshes selected model metadata; recommendations remain the fallback.
 func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.LaunchModel) []launch.LaunchModel {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
@@ -383,6 +412,9 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 		}
 		if response.Details.Family != "" || len(response.Details.Families) > 0 {
 			hydrated[i].Details = response.Details
+		}
+		if response.Thinking.Valid() {
+			hydrated[i].Thinking = response.Thinking.Clone()
 		}
 	}
 	return hydrated

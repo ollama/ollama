@@ -9,7 +9,7 @@
 #
 # The payload also depends on Ollama's payload build rules (cmake glue and
 # carried mlx/compat patches) and the xgrammar native wrapper
-# (x/mlxrunner/xgrammar/native). Rule drift rebuilds the whole payload from
+# (mlxrunner/xgrammar/native). Rule drift rebuilds the whole payload from
 # source; wrapper-only drift rebuilds just libollama_xgrammar.dylib.
 #
 # If no release matches the MLX pins (e.g. right after a pin bump), the
@@ -52,9 +52,7 @@ read_pin() {
   tr -d '[:space:]' <"$1"
 }
 
-# Native wrapper sources compiled into libollama_xgrammar.dylib — keep in
-# sync with the ollama_xgrammar target in cmake/mlx/CMakeLists.txt.
-xgrammar_native_dir=x/mlxrunner/xgrammar/native
+xgrammar_native_dir=mlxrunner/xgrammar/native
 
 # Payload build rules beyond the MLX_VERSION/MLX_C_VERSION pins.
 payload_rule_files=(
@@ -62,7 +60,7 @@ payload_rule_files=(
   "cmake/apply-git-patches.cmake"
   "cmake/mlx/CMakeLists.txt"
   "cmake/mlx/CMakePresets.json"
-  "x/mlxrunner/mlx/CMakeLists.txt"
+  "mlx/CMakeLists.txt"
 )
 
 # Build-rule inputs: the rule files plus carried MLX/MLX-C patch content.

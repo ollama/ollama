@@ -11,15 +11,13 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
@@ -36,7 +34,7 @@ func TestGGUFMetadataExtraction(t *testing.T) {
 		perLayer[i] = int32(i)
 	}
 
-	path, _ := createBinFile(t, ggml.KV{
+	path, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":         "bert",
 		"bert.attention.softcap":       float32(math.Inf(-1)),
 		"general.file_type":            uint32(2),
@@ -97,7 +95,7 @@ func TestGGUFMetadataExtraction(t *testing.T) {
 func TestGGUFMetadataFileRoundTrip(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
 		"llama.block_count":    uint32(32),
 	}, nil)
@@ -137,7 +135,7 @@ func TestGGUFMetadataFileRoundTrip(t *testing.T) {
 func TestGGUFMetadataUnusableFile(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, ggml.KV{"general.architecture": "llama"}, nil)
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "llama"}, nil)
 	if _, err := readGGUFMetadata(digest); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +251,7 @@ func TestGGUFMetadataKeysIncludesOmitted(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	big := make([]string, ggufMetadataMaxArray+1)
-	path, _ := createBinFile(t, ggml.KV{
+	path, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":  "llama",
 		"llama.block_count":     uint32(4),
 		"tokenizer.ggml.tokens": big,
@@ -277,13 +275,13 @@ func TestProjectorAudioFromMetadata(t *testing.T) {
 
 	for _, tt := range []struct {
 		name  string
-		kv    ggml.KV
+		kv    gguftest.KV
 		audio bool
 	}{
-		{"bare key", ggml.KV{"general.architecture": "clip", "has_audio_encoder": true}, true},
-		{"prefixed key", ggml.KV{"general.architecture": "clip", "clip.has_audio_encoder": true}, true},
-		{"present but false", ggml.KV{"general.architecture": "clip", "has_audio_encoder": false}, false},
-		{"absent", ggml.KV{"general.architecture": "clip"}, false},
+		{"bare key", gguftest.KV{"general.architecture": "clip", "has_audio_encoder": true}, true},
+		{"prefixed key", gguftest.KV{"general.architecture": "clip", "clip.has_audio_encoder": true}, true},
+		{"present but false", gguftest.KV{"general.architecture": "clip", "has_audio_encoder": false}, false},
+		{"absent", gguftest.KV{"general.architecture": "clip"}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			path, _ := createBinFile(t, tt.kv, nil)
@@ -297,7 +295,7 @@ func TestProjectorAudioFromMetadata(t *testing.T) {
 		})
 	}
 
-	path, _ := createBinFile(t, ggml.KV{
+	path, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":       "clip",
 		"has_audio_encoder":          true,
 		"clip.vision.projector_type": "gemma3nv",
@@ -491,7 +489,7 @@ func TestGGUFMetadataRemovedWithLastReference(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
 		"llama.block_count":    uint32(1),
 	}, nil)
@@ -523,7 +521,7 @@ func TestGGUFMetadataRemovedOnReplacement(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, first := createBinFile(t, ggml.KV{
+	_, first := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
 		"llama.block_count":    uint32(1),
 	}, nil)
@@ -532,7 +530,7 @@ func TestGGUFMetadataRemovedOnReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, second := createBinFile(t, ggml.KV{
+	_, second := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
 		"llama.block_count":    uint32(2),
 	}, nil)
@@ -558,7 +556,7 @@ func TestGGUFMetadataRemovedOnReplacement(t *testing.T) {
 func TestGGUFMetadataRemovedForMissingBlob(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, orphan := createBinFile(t, ggml.KV{"general.architecture": "llama"}, nil)
+	_, orphan := createBinFile(t, gguftest.KV{"general.architecture": "llama"}, nil)
 	if _, err := readGGUFMetadata(orphan); err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +564,7 @@ func TestGGUFMetadataRemovedForMissingBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, live := createBinFile(t, ggml.KV{"general.architecture": "bert"}, nil)
+	_, live := createBinFile(t, gguftest.KV{"general.architecture": "bert"}, nil)
 	if _, err := readGGUFMetadata(live); err != nil {
 		t.Fatal(err)
 	}
@@ -590,57 +588,27 @@ func TestGGUFMetadataRemovedForMissingBlob(t *testing.T) {
 }
 
 func TestGGUFMetadataNotPublishedAfterDelete(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, ggml.KV{
-		"general.architecture": "llama",
-		"general.description":  strings.Repeat("x", 16<<20),
-	}, nil)
-	createModelFromBlob(t, "delete-during-load", digest, "")
-
-	loaded := make(chan error, 1)
-	go func() {
-		_, err := GetModel("delete-during-load")
-		loaded <- err
-	}()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		entries, err := os.ReadDir(ggufMetadataDir())
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Fatal(err)
-		}
-		if slices.ContainsFunc(entries, func(entry os.DirEntry) bool {
-			return strings.HasPrefix(entry.Name(), ".gguf-metadata-")
-		}) {
-			break
-		}
-		select {
-		case err := <-loaded:
-			t.Fatalf("GetModel completed before its metadata write could overlap deletion: %v", err)
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for metadata write")
-		}
-		runtime.Gosched()
+	// Deletion and publication can finish in either order. The deletion tests
+	// above cover metadata that already exists; put deletion first here to
+	// deterministically cover the writer's post-publication blob check.
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "llama"}, nil)
+	blob, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	deleteModelNamed(t, "delete-during-load")
-	select {
-	case err := <-loaded:
-		if err != nil {
-			t.Fatalf("GetModel: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for GetModel")
+	if err := os.Remove(blob); err != nil {
+		t.Fatal(err)
 	}
 
 	path, err := ggufMetadataPath(digest)
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeGGUFMetadata(path, blob, ggufMetadata{KV: map[string]any{
+		"general.architecture": "llama",
+	}})
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("metadata published after model deletion: %v", err)
 	}
@@ -654,7 +622,7 @@ func TestGetModelReadsNoBlob(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":  "bert",
 		"bert.pooling_type":     uint32(1),
 		"bert.context_length":   uint32(512),

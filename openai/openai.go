@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -126,6 +127,20 @@ type ChatCompletionRequest struct {
 	Logprobs         *bool           `json:"logprobs"`
 	TopLogprobs      int             `json:"top_logprobs"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	// Ollama extension: without it an OpenAI-API client cannot release a model.
+	KeepAlive *api.Duration `json:"keep_alive,omitempty"`
+}
+
+// Timings reports server-side inference performance metrics.
+type Timings struct {
+	PromptN             int     `json:"prompt_n"`
+	PromptMS            float64 `json:"prompt_ms"`
+	PromptPerTokenMS    float64 `json:"prompt_per_token_ms"`
+	PromptPerSecond     float64 `json:"prompt_per_second"`
+	PredictedN          int     `json:"predicted_n"`
+	PredictedMS         float64 `json:"predicted_ms"`
+	PredictedPerTokenMS float64 `json:"predicted_per_token_ms"`
+	PredictedPerSecond  float64 `json:"predicted_per_second"`
 }
 
 type ChatCompletion struct {
@@ -136,6 +151,7 @@ type ChatCompletion struct {
 	SystemFingerprint string         `json:"system_fingerprint"`
 	Choices           []Choice       `json:"choices"`
 	Usage             Usage          `json:"usage,omitempty"`
+	Timings           *Timings       `json:"timings,omitempty"`
 	DebugInfo         *api.DebugInfo `json:"_debug_info,omitempty"`
 }
 
@@ -147,21 +163,22 @@ type ChatCompletionChunk struct {
 	SystemFingerprint string        `json:"system_fingerprint"`
 	Choices           []ChunkChoice `json:"choices"`
 	Usage             *Usage        `json:"usage,omitempty"`
+	Timings           *Timings      `json:"timings,omitempty"`
 }
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
 type CompletionRequest struct {
 	Model            string         `json:"model"`
 	Prompt           string         `json:"prompt"`
-	FrequencyPenalty float32        `json:"frequency_penalty"`
+	FrequencyPenalty *float32       `json:"frequency_penalty"`
 	MaxTokens        *int           `json:"max_tokens"`
-	PresencePenalty  float32        `json:"presence_penalty"`
+	PresencePenalty  *float32       `json:"presence_penalty"`
 	Seed             *int           `json:"seed"`
 	Stop             any            `json:"stop"`
 	Stream           bool           `json:"stream"`
 	StreamOptions    *StreamOptions `json:"stream_options"`
 	Temperature      *float32       `json:"temperature"`
-	TopP             float32        `json:"top_p"`
+	TopP             *float32       `json:"top_p"`
 	Suffix           string         `json:"suffix"`
 	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
@@ -175,6 +192,7 @@ type Completion struct {
 	SystemFingerprint string                `json:"system_fingerprint"`
 	Choices           []CompleteChunkChoice `json:"choices"`
 	Usage             Usage                 `json:"usage,omitempty"`
+	Timings           *Timings              `json:"timings,omitempty"`
 }
 
 type CompletionChunk struct {
@@ -185,6 +203,7 @@ type CompletionChunk struct {
 	Model             string                `json:"model"`
 	SystemFingerprint string                `json:"system_fingerprint"`
 	Usage             *Usage                `json:"usage,omitempty"`
+	Timings           *Timings              `json:"timings,omitempty"`
 }
 
 type ToolCall struct {
@@ -252,6 +271,33 @@ func ToUsage(r api.ChatResponse) Usage {
 		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
 	}
 	return usage
+}
+
+// ToTimings converts api.Metrics to Timings
+func ToTimings(m api.Metrics) *Timings {
+	if m.PromptEvalCount == 0 && m.PromptEvalDuration == 0 && m.EvalCount == 0 && m.EvalDuration == 0 {
+		return nil
+	}
+
+	promptMS := float64(m.PromptEvalDuration.Milliseconds())
+	predictedMS := float64(m.EvalDuration.Milliseconds())
+	return &Timings{
+		PromptN:             m.PromptEvalCount,
+		PromptMS:            promptMS,
+		PromptPerTokenMS:    safeDiv(promptMS, float64(m.PromptEvalCount)),
+		PromptPerSecond:     safeDiv(float64(m.PromptEvalCount)*1000, promptMS),
+		PredictedN:          m.EvalCount,
+		PredictedMS:         predictedMS,
+		PredictedPerTokenMS: safeDiv(predictedMS, float64(m.EvalCount)),
+		PredictedPerSecond:  safeDiv(float64(m.EvalCount)*1000, predictedMS),
+	}
+}
+
+func safeDiv(a, b float64) float64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
 }
 
 // ToToolCalls converts api.ToolCall to OpenAI ToolCall format
@@ -461,7 +507,9 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 
 // ToListCompletion converts an api.ListResponse to ListCompletion
 func ToListCompletion(r api.ListResponse) ListCompletion {
-	var data []Model
+	// Keep Data non-nil so an empty model list is encoded as [] rather than
+	// null, which strongly-typed OpenAI clients cannot decode.
+	data := make([]Model, 0, len(r.Models))
 	for _, m := range r.Models {
 		id := m.Model
 		if id == "" {
@@ -533,33 +581,45 @@ func ToModel(r api.ShowResponse, m string) Model {
 	}
 }
 
-// thinkFromReasoningEffort converts an OpenAI reasoning effort to the equivalent
-// Ollama think value. An empty effort leaves thinking at the model's default.
-//
-// OpenAI's scale extends past both ends of Ollama's ("minimal" below "low",
-// "xhigh" above "high"), and clients built on it add tiers of their own
-// ("ultra"). Clamp those to the nearest Ollama tier rather than rejecting the
-// request, since the alternative is a 400 for an effort the client considers
-// perfectly valid.
-func thinkFromReasoningEffort(effort string) (*api.ThinkValue, error) {
+// ThinkingFromReasoningEffort preserves model-defined names when metadata is present.
+// Boolean-only models retain the OpenAI on/off controls; models without metadata
+// retain the legacy effort aliases.
+func ThinkingFromReasoningEffort(effort string, thinking ...*model.Thinking) (*api.ThinkValue, error) {
 	switch effort {
 	case "":
 		return nil, nil
 	case "none":
 		return &api.ThinkValue{Value: false}, nil
-	case "minimal":
-		return &api.ThinkValue{Value: "low"}, nil
-	case "low", "medium", "high", "max":
-		return &api.ThinkValue{Value: effort}, nil
-	case "xhigh", "ultra":
-		return &api.ThinkValue{Value: "max"}, nil
-	default:
-		return nil, fmt.Errorf("invalid reasoning value: %q (must be \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\", \"ultra\", \"max\", or \"none\")", effort)
 	}
+	requestedEffort := effort
+	switch effort {
+	case "minimal":
+		effort = "low"
+	case "xhigh", "ultra":
+		effort = "max"
+	}
+	think := &api.ThinkValue{Value: effort}
+	err := api.ValidateLegacyThinking(think)
+	if len(thinking) > 0 && thinking[0].Valid() {
+		if err == nil && thinking[0].Supports(true) {
+			for _, value := range thinking[0].Values {
+				if _, named := value.(string); named {
+					return &api.ThinkValue{Value: requestedEffort}, nil
+				}
+			}
+			return &api.ThinkValue{Value: true}, nil
+		}
+		return &api.ThinkValue{Value: requestedEffort}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("invalid reasoning value: %q (must be \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\", \"ultra\", \"max\", or \"none\")", requestedEffort)
+	}
+	return think, nil
 }
 
-// FromChatRequest converts a ChatCompletionRequest to api.ChatRequest
-func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
+// FromChatRequest converts a ChatCompletionRequest to api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
 		toolName := ""
@@ -569,7 +629,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
 			}
 		}
-		switch content := msg.Content.(type) {
+		content := msg.Content
+		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
+			content = ""
+		}
+		switch content := content.(type) {
 		case string:
 			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 			if err != nil {
@@ -577,6 +641,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			}
 			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
+			start := len(messages)
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -623,6 +688,25 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{audioBytes}})
 				default:
 					return nil, errors.New("invalid message format")
+				}
+			}
+			// a tool message is a single result, so every message built from it
+			// keeps the tool call it answers. text parts are merged into one
+			// message; parts with images stay split so each image keeps its
+			// position among the text
+			if strings.ToLower(msg.Role) == "tool" {
+				parts := messages[start:]
+				if slices.ContainsFunc(parts, func(m api.Message) bool { return len(m.Images) > 0 }) {
+					for i := range parts {
+						parts[i].ToolName = toolName
+						parts[i].ToolCallID = msg.ToolCallID
+					}
+				} else if len(parts) > 0 || toolName != "" || msg.ToolCallID != "" {
+					var sb strings.Builder
+					for _, part := range parts {
+						sb.WriteString(part.Content)
+					}
+					messages = append(messages[:start], api.Message{Role: msg.Role, Content: sb.String(), ToolName: toolName, ToolCallID: msg.ToolCallID})
 				}
 			}
 			// since we might have added multiple messages above, if we have tools
@@ -672,8 +756,6 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
@@ -690,8 +772,6 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else {
-		options["top_p"] = 1.0
 	}
 
 	var format json.RawMessage
@@ -715,7 +795,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		effort = *r.ReasoningEffort
 	}
 
-	think, err := thinkFromReasoningEffort(effort)
+	think, err := ThinkingFromReasoningEffort(effort, thinking...)
 	if err != nil {
 		return nil, err
 	}
@@ -731,6 +811,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
+		KeepAlive:       r.KeepAlive,
 	}, nil
 }
 
@@ -821,22 +902,22 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
 		options["seed"] = *r.Seed
 	}
 
-	options["frequency_penalty"] = r.FrequencyPenalty
+	if r.FrequencyPenalty != nil {
+		options["frequency_penalty"] = *r.FrequencyPenalty
+	}
 
-	options["presence_penalty"] = r.PresencePenalty
+	if r.PresencePenalty != nil {
+		options["presence_penalty"] = *r.PresencePenalty
+	}
 
-	if r.TopP != 0.0 {
-		options["top_p"] = r.TopP
-	} else {
-		options["top_p"] = 1.0
+	if r.TopP != nil {
+		options["top_p"] = *r.TopP
 	}
 
 	var logprobs bool
@@ -858,43 +939,25 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}, nil
 }
 
-// TranscriptionResponse is the response format for /v1/audio/transcriptions.
+// TranscriptionResponse is the response format for /v1/audio/transcriptions
+// and /v1/audio/translations.
 type TranscriptionResponse struct {
 	Text string `json:"text"`
 }
 
-// TranscriptionRequest holds parsed fields from the multipart form.
-type TranscriptionRequest struct {
-	Model          string
-	AudioData      []byte
-	ResponseFormat string // "json", "text", "verbose_json"
-	Language       string
-	Prompt         string
+// TranscriptionVerboseResponse is the verbose_json response format, with one
+// segment per transcribed clip.
+type TranscriptionVerboseResponse struct {
+	Task     string                 `json:"task"`
+	Language string                 `json:"language,omitempty"`
+	Duration float64                `json:"duration"`
+	Text     string                 `json:"text"`
+	Segments []TranscriptionSegment `json:"segments"`
 }
 
-// FromTranscriptionRequest converts a transcription request into a ChatRequest
-// by wrapping the audio with a system prompt for transcription.
-func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
-	// The audio may itself contain a question or instruction. Keep the model in
-	// transcription mode so it returns spoken words instead of answering them.
-	systemPrompt := "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio."
-	if r.Language != "" {
-		systemPrompt += " The audio is in " + r.Language + "."
-	}
-	if r.Prompt != "" {
-		systemPrompt += " Context: " + r.Prompt
-	}
-
-	stream := true
-	return &api.ChatRequest{
-		Model: r.Model,
-		Messages: []api.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "What exact words are spoken in this audio?", Images: []api.ImageData{r.AudioData}},
-		},
-		Stream: &stream,
-		Options: map[string]any{
-			"temperature": 0,
-		},
-	}, nil
+type TranscriptionSegment struct {
+	ID    int     `json:"id"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Text  string  `json:"text"`
 }

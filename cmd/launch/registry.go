@@ -113,14 +113,14 @@ var integrationSpecs = []*IntegrationSpec{
 		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				_, err := exec.LookPath("kimi")
+				_, err := findKimiBinary()
 				return err == nil
 			},
 			EnsureInstalled: func() error {
 				_, err := ensureKimiInstalled()
 				return err
 			},
-			URL: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+			URL: "https://moonshotai.github.io/kimi-code/en/guides/getting-started.html",
 		},
 	},
 	{

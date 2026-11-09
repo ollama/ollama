@@ -41,10 +41,11 @@ async function renderOnboarding(authenticated: boolean) {
   vi.stubGlobal("navigator", { platform: "MacIntel" });
   vi.stubGlobal("window", {
     OLLAMA_PLATFORM: "darwin",
+    location: { search: "" },
     setOnboardingWindow: vi.fn(),
   });
-  const settingsResponse = { settings: new Settings({ OnboardingVersion: 0 }) };
-  vi.spyOn(api, "getSettings").mockResolvedValue(settingsResponse);
+  let settingsResponse = { settings: new Settings({ OnboardingVersion: 0 }) };
+  vi.spyOn(api, "getSettings").mockImplementation(async () => settingsResponse);
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: Infinity },
@@ -88,6 +89,17 @@ async function renderOnboarding(authenticated: boolean) {
         renderer.update(element());
       });
     },
+    async receiveCompletion() {
+      settingsResponse = {
+        settings: new Settings({
+          OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+        }),
+      };
+      await act(async () => {
+        client.setQueryData(["settings"], { ...settingsResponse });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    },
     async unmount() {
       await act(async () => renderer.unmount());
       client.clear();
@@ -102,6 +114,42 @@ async function flushQueryNotifications() {
 }
 
 describe("Onboarding completion", () => {
+  it("leaves onboarding when CLI completion arrives", async () => {
+    const save = vi.spyOn(api, "updateSettings");
+    const onboarding = await renderOnboarding(true);
+    try {
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      await onboarding.receiveCompletion();
+      expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/" });
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      await onboarding.unmount();
+    }
+  });
+
+  it("keeps the app's own local completion screen visible", async () => {
+    const save = vi
+      .spyOn(api, "updateSettings")
+      .mockImplementation(async (settings) => ({ settings }));
+    const onboarding = await renderOnboarding(false);
+    try {
+      await onboarding.continue();
+      await act(async () => {
+        onboarding.root.findByType(WelcomeScreen).props.onLocal();
+      });
+      expect(save).toHaveBeenCalledOnce();
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+        }),
+      );
+      await onboarding.receiveCompletion();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    } finally {
+      await onboarding.unmount();
+    }
+  });
+
   it.each([true, false])(
     "saves once before opening Apps directly (already signed in: %s)",
     async (authenticated) => {

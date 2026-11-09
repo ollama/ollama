@@ -123,8 +123,8 @@ func TestDeepSeekHarnessConfigurePreservesSettingsAndIsIdempotent(t *testing.T) 
 		t.Fatalf("local model input = %#v", local["input"])
 	}
 	cloud, _ := configuredModels[1].(map[string]any)
-	if cloud["id"] != "kimi-k2.6:cloud" || cloud["contextWindow"] != 262144 || cloud["maxTokens"] != 262144 {
-		t.Fatalf("cloud model = %#v", cloud)
+	if cloud["id"] != "kimi-k2.6:cloud" || cloud["contextWindow"] != 262144 || cloud["maxTokens"] != 32768 {
+		t.Fatalf("cloud model = %#v, want maxTokens clamped to a quarter of the compaction budget", cloud)
 	}
 	web, _ := settings[deepSeekHarnessWebSettings].(map[string]any)
 	if web["baseURL"] != "http://127.0.0.1:12345/v1" || web["apiKeyEnv"] != deepSeekHarnessAPIKeyEnv || web["model"] != "qwen3.5:latest" {
@@ -552,5 +552,25 @@ func TestDeepSeekHarnessInstallDependencyError(t *testing.T) {
 	_, err := ensureDeepSeekHarnessInstalled()
 	if err == nil || !strings.Contains(err.Error(), "npm (Node.js) is required") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDeepSeekHarnessMaxTokensKeepsCompactionBudget(t *testing.T) {
+	tests := []struct {
+		name          string
+		contextLength int
+		maxOutput     int
+		want          int
+	}{
+		{"output below the fraction is kept", 262_144, 16_384, 16_384},
+		{"output equal to context is clamped", 262_144, 262_144, 32_768},
+		{"small context leaves no budget", 131_072, 131_072, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deepSeekHarnessMaxTokens(tt.contextLength, tt.maxOutput); got != tt.want {
+				t.Fatalf("deepSeekHarnessMaxTokens(%d, %d) = %d, want %d", tt.contextLength, tt.maxOutput, got, tt.want)
+			}
+		})
 	}
 }

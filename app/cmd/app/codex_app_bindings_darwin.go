@@ -29,28 +29,9 @@ func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("getCodexDesktopRequestCount", func() uint64 {
 		return codexDesktop.OllamaRequestCount()
 	})
-	wv.Bind("setCodexDesktopConnected", func(enabled, restartConfirmed bool) codexDesktopActionResult {
-		err := setCodexDesktopConnection(enabled, restartConfirmed)
-		result := codexDesktopActionResult{Status: getCodexDesktopStatus()}
-		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
-			result.RestartConfirmationRequired = true
-		} else if err != nil {
-			result.Error = err.Error()
-			slog.Warn("failed to change ChatGPT integration from Settings", "connected", enabled, "error", err)
-		}
-		return result
-	})
+	wv.Bind("setCodexDesktopConnected", changeCodexDesktopConnection)
 	wv.Bind("installCodexDesktop", func() codexDesktopInstallResult {
 		return requestCodexDesktopInstall()
-	})
-	wv.Bind("getCodexDesktopModelsSettings", func() codexDesktopModelsSettingsResult {
-		settings, err := getCodexDesktopModelsSettings()
-		result := codexDesktopModelsSettingsResult{Settings: settings}
-		if err != nil {
-			result.Warning = codexDesktopModelRefreshError(settings)
-			slog.Warn("failed to refresh available ChatGPT models", "error", err)
-		}
-		return result
 	})
 	wv.Bind("applyCodexDesktopModels", func(models []string, restartConfirmed bool) codexDesktopModelsSettingsResult {
 		err := applyCodexDesktopModels(models, restartConfirmed)

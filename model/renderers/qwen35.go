@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -126,10 +127,10 @@ func qwen38ReasoningInstructions(think *api.ThinkValue) (string, error) {
 		return qwen38LowReasoningInstructions, nil
 	case "medium":
 		return "", nil
-	case "high", "max":
+	case "xhigh":
 		return qwen38XHighReasoningInstructions, nil
 	default:
-		return "", fmt.Errorf("unsupported Qwen3.8 reasoning effort %q", think.String())
+		return qwen38XHighReasoningInstructions, nil
 	}
 }
 
@@ -357,4 +358,11 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 	}
 
 	return sb.String(), nil
+}
+
+func (r *Qwen35Renderer) Thinking() *model.Thinking {
+	if r.variant == qwen35Renderer38 {
+		return &model.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "xhigh"}
+	}
+	return &model.Thinking{Values: []any{false, true}, Default: r.isThinking}
 }

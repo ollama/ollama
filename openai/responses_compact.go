@@ -163,9 +163,9 @@ func PrepareStandaloneCompaction(body []byte) (*ResponsesCompactionPlan, error) 
 	return newResponsesCompactionPlan(req, items)
 }
 
-// ExpandResponsesCompactionInput replaces the newest Ollama compaction item
-// with its summary and retained messages. Items on either side of the
-// compaction item remain in their original order.
+// ExpandResponsesCompactionInput omits foreign compaction state and replaces the
+// newest Ollama compaction item with its summary and retained messages. Other
+// input items remain in their original order.
 func ExpandResponsesCompactionInput(body []byte) ([]byte, bool, error) {
 	req, items, err := decodeRawResponsesRequest(body)
 	if err != nil {
@@ -176,12 +176,12 @@ func ExpandResponsesCompactionInput(body []byte) ([]byte, bool, error) {
 		return body, changed, err
 	}
 
-	input, err := json.Marshal(items)
+	input, err := marshalCompactionInput(items)
 	if err != nil {
 		return nil, false, err
 	}
 	req.Fields["input"] = input
-	rewritten, err := json.Marshal(req.Fields)
+	rewritten, err := marshalCompactionInput(req.Fields)
 	return rewritten, true, err
 }
 
@@ -267,19 +267,66 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 		return items, false, nil
 	}
 
-	payload, err := decodeOllamaCompactionItem(items[boundary])
-	if err != nil {
-		return nil, false, err
+	retained := make([]json.RawMessage, 0, len(items))
+	var payload OllamaCompactionPayload
+	boundary = -1
+	for _, item := range items {
+		if rawInputItemType(item) == "compaction" {
+			var wire ResponsesCompactionItem
+			if err := json.Unmarshal(item, &wire); err != nil {
+				return nil, false, fmt.Errorf("invalid compaction item: %w", err)
+			}
+			if isForeignCompactionItem(wire) {
+				continue
+			}
+			var err error
+			payload, err = decodeOllamaCompactionItem(item)
+			if err != nil {
+				return nil, false, err
+			}
+			// The newest Ollama summary supersedes earlier Ollama summaries.
+			boundary = len(retained)
+			continue
+		}
+		retained = append(retained, item)
 	}
+	if boundary < 0 {
+		if len(retained) == 0 {
+			return nil, false, errors.New("input contains no items after removing foreign compaction state; resend conversation history")
+		}
+		return retained, true, nil
+	}
+
 	expanded, err := payloadToResponsesItems(payload)
 	if err != nil {
 		return nil, false, err
 	}
-	rewritten := make([]json.RawMessage, 0, len(items)-1+len(expanded))
-	rewritten = append(rewritten, items[:boundary]...)
+	rewritten := make([]json.RawMessage, 0, len(retained)+len(expanded))
+	rewritten = append(rewritten, retained[:boundary]...)
 	rewritten = append(rewritten, expanded...)
-	rewritten = append(rewritten, items[boundary+1:]...)
+	rewritten = append(rewritten, retained[boundary:]...)
 	return rewritten, true, nil
+}
+
+// Only a successfully parsed discriminator identifies native state. Its version
+// and fields are validated by decodeOllamaCompactionItem.
+func isForeignCompactionItem(item ResponsesCompactionItem) bool {
+	var payload struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(item.EncryptedContent), &payload) != nil || payload.Type != OllamaCompactionPayloadType
+}
+
+// Preserve literal HTML-sensitive characters in client input and other fields
+// when rewriting a request for local conversion or cloud forwarding.
+func marshalCompactionInput(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, error) {
@@ -506,9 +553,6 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 	switch value := item.(type) {
 	case ResponsesInputMessage:
-		if err := validateCompactionContent(value.Content); err != nil {
-			return api.Message{}, "", err
-		}
 		message, err := convertInputMessage(value)
 		return message, "message", err
 	case ResponsesFunctionCall:
@@ -526,9 +570,6 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 		content := value.Output
 		var images []api.ImageData
 		if len(value.OutputItems) > 0 {
-			if err := validateCompactionContent(value.OutputItems); err != nil {
-				return api.Message{}, "", err
-			}
 			var err error
 			content, images, err = convertResponsesContent(value.OutputItems)
 			if err != nil {
@@ -559,45 +600,26 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 		}
 		return api.Message{Role: "assistant", Content: content}, "web_search_call", nil
 	case ResponsesReasoningInput:
-		var summary strings.Builder
-		for _, part := range value.Summary {
-			summary.WriteString(part.Text)
-		}
-		thinking := summary.String()
+		thinking := value.text()
 		if thinking == "" && value.EncryptedContent != "" {
 			thinking = "[opaque reasoning state omitted during Ollama compaction]"
 		}
 		return api.Message{Role: "assistant", Thinking: thinking}, "reasoning", nil
 	case ResponsesAgentMessageInput:
-		content, _, err := convertResponsesContent(value.Content)
+		content, images, err := convertResponsesContent(value.Content)
 		if err != nil {
 			return api.Message{}, "", err
 		}
 		return api.Message{
 			Role:    "user",
 			Content: agentMessageContent(value.Author, value.Recipient, content),
+			Images:  images,
 		}, "message", nil
 	case ResponsesCompactionItem, ResponsesCompactionTrigger:
 		return api.Message{}, "", errors.New("unexpected compaction control item")
 	default:
 		return api.Message{}, "", fmt.Errorf("unsupported compaction input type %T", item)
 	}
-}
-
-func validateCompactionContent(contents []ResponsesContent) error {
-	for _, content := range contents {
-		image, ok := content.(ResponsesImageContent)
-		if !ok {
-			continue
-		}
-		if image.FileID != "" {
-			return errors.New("file_id image inputs are not supported by Ollama compaction")
-		}
-		if image.ImageURL == "" {
-			return errors.New("compaction image input is missing image_url")
-		}
-	}
-	return nil
 }
 
 func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionToolGroup, map[string]struct{}, error) {

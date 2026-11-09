@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -389,11 +390,6 @@ func (h *CodexDesktop) modifyResponse(resp *http.Response) error {
 			h.chatGPTRequests.Add(1)
 		}
 	}
-	if state.routed {
-		if err := h.rewriteAccessErrors(resp); err != nil {
-			return err
-		}
-	}
 	if !state.autoReview.buffersResponse(resp.StatusCode) {
 		return nil
 	}
@@ -574,6 +570,7 @@ type routingThinkingMetadata struct {
 	Supported bool                       `json:"supported"`
 	Levels    []string                   `json:"levels,omitempty"`
 	Values    map[string]json.RawMessage `json:"values,omitempty"`
+	Controls  *model.Thinking            `json:"controls,omitempty"`
 }
 
 type routingModel struct {

@@ -27,6 +27,10 @@ type fakeCodexDesktopController struct {
 	installed            bool
 	running              bool
 	configured           bool
+	restorePending       bool
+	restores             int
+	restoreErrs          []error
+	restoreBeforeError   bool
 	launched             string
 	models               []string
 	stopped              bool
@@ -43,7 +47,8 @@ func (f *fakeCodexDesktopController) Installed() bool { return f.installed }
 func (f *fakeCodexDesktopController) OllamaConfigured() bool {
 	return f.configured
 }
-func (f *fakeCodexDesktopController) Running() bool { return f.running }
+func (f *fakeCodexDesktopController) RestorePending() bool { return f.restorePending }
+func (f *fakeCodexDesktopController) Running() bool        { return f.running }
 func (f *fakeCodexDesktopController) OllamaRequestCount() uint64 {
 	return f.requests
 }
@@ -133,9 +138,22 @@ func (f *fakeCodexDesktopController) RestoreFromDesktop(restartConfirmed bool) e
 	if f.running && !restartConfirmed {
 		return errCodexDesktopRestartConfirmationRequired
 	}
+	f.restores++
+	if len(f.restoreErrs) > 0 {
+		err := f.restoreErrs[0]
+		f.restoreErrs = f.restoreErrs[1:]
+		if err != nil {
+			if f.restoreBeforeError {
+				f.configured = false
+				f.restorePending = true
+			}
+			return err
+		}
+	}
 	f.stopped = true
 	f.running = false
 	f.configured = false
+	f.restorePending = false
 	return nil
 }
 
@@ -261,6 +279,56 @@ func TestSetCodexDesktopConnectionRestoresProfileAfterPartialSwitchFailure(t *te
 	}
 	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 1 || got[0] != "old-model" {
 		t.Fatalf("saved models = %v, want previous selection", got)
+	}
+}
+
+func TestChangeCodexDesktopConnectionReportsPartialCleanupAndRetry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	fake := &fakeCodexDesktopController{
+		installed: true, configured: true, restoreBeforeError: true,
+		restoreErrs: []error{errors.New("/private/fixture cleanup obstruction")},
+	}
+	codexDesktop = fake
+	result := changeCodexDesktopConnection(false, false)
+	if result.Error == "" || result.Status.Connected || !result.Status.DisconnectPending {
+		t.Fatalf("partial disconnect reported as complete: %+v", result)
+	}
+	if result.Error != "Couldn’t disconnect ChatGPT. Try again." {
+		t.Fatalf("unexpected recovery message: %q", result.Error)
+	}
+	result = changeCodexDesktopConnection(false, false)
+	if result.Error != "" || result.Status.Connected || result.Status.DisconnectPending || fake.restores != 2 {
+		t.Fatalf("cleanup retry did not finish: result=%+v, restores=%d", result, fake.restores)
+	}
+}
+
+func TestChangeCodexDesktopConnectionPendingCleanupRequiresRestartConsent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	fake := &fakeCodexDesktopController{installed: true, running: true, restorePending: true}
+	codexDesktop = fake
+	result := changeCodexDesktopConnection(false, false)
+	if !result.RestartConfirmationRequired || !result.Status.DisconnectPending || fake.restores != 0 {
+		t.Fatalf("pending cleanup bypassed restart consent: %+v", result)
+	}
+	result = changeCodexDesktopConnection(false, true)
+	if result.Error != "" || result.Status.DisconnectPending || fake.restores != 1 {
+		t.Fatalf("confirmed cleanup did not finish: %+v", result)
+	}
+}
+
+func TestChangeCodexDesktopConnectionHidesErrorDetails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	original := codexDesktop
+	t.Cleanup(func() { codexDesktop = original })
+	stubCodexDesktopModelLoader(t)
+	codexDesktop = &fakeCodexDesktopController{installed: true, launchErrs: []error{errors.New("/private/fixture token=secret")}}
+	result := changeCodexDesktopConnection(true, false)
+	if result.Error != "Couldn’t connect ChatGPT. Try again." {
+		t.Fatalf("unexpected connection message: %q", result.Error)
 	}
 }
 
@@ -1258,6 +1326,55 @@ func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T
 	}
 	if models[0].Thinking == nil || !slices.Equal(models[0].Thinking.Values, []any{"low", "high", "max"}) || models[0].Thinking.Default != "max" {
 		t.Fatalf("thinking = %#v, want recommendation endpoint metadata", models[0].Thinking)
+	}
+}
+
+func TestLoadCodexDesktopModelsThinkingDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		load            func(context.Context, []string) (string, []launch.LaunchModel, error)
+		recommendations []api.ModelRecommendation
+	}{
+		{"new connection discovers local controls", loadCodexDesktopConnectionModels, nil},
+		{"update overrides stale recommendation", loadCodexDesktopModels, []api.ModelRecommendation{{Model: "custom-local:latest", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubCodexDesktopCatalogSources(t, tc.recommendations, proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"custom-local:latest","capabilities":["completion","tools","thinking"]}]}`)
+				case "/api/show":
+					fmt.Fprint(w, `{"capabilities":["completion","thinking","tools"],"thinking":{"values":[false,"low","medium","xhigh"],"default":"medium"}}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			base, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := api.NewClient(base, server.Client())
+			originalFactory, originalCloudModels := codexDesktopClientFactory, codexDesktopCloudModels
+			t.Cleanup(func() { codexDesktopClientFactory = originalFactory; codexDesktopCloudModels = originalCloudModels })
+			codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+			codexDesktopCloudModels = func(context.Context) ([]string, error) { return nil, nil }
+			primary, models, err := tc.load(t.Context(), []string{"custom-local:latest"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if primary != "custom-local:latest" || len(models) != 1 {
+				t.Fatalf("primary=%q models=%+v", primary, models)
+			}
+			thinking := models[0].Thinking
+			if !thinking.Valid() || thinking.Default != "medium" || !slices.Equal(thinking.Values, []any{false, "low", "medium", "xhigh"}) {
+				t.Fatalf("desktop lost discovered controls: %+v", thinking)
+			}
+			if len(tc.recommendations) > 0 && tc.recommendations[0].Thinking.Default != true {
+				t.Fatal("discovery mutated recommendation metadata")
+			}
+		})
 	}
 }
 
