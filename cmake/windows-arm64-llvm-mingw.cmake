@@ -31,7 +31,14 @@ if(NOT CMAKE_CXX_COMPILER)
         REQUIRED)
 endif()
 
+# llama.cpp's win-app manifest object needs a windres that compiles for
+# the target machine; the unprefixed host one defaults to x64.
 get_filename_component(_ollama_llvm_mingw_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+find_program(CMAKE_RC_COMPILER
+    NAMES aarch64-w64-mingw32-windres
+    HINTS "${_ollama_llvm_mingw_bin_dir}"
+    NO_DEFAULT_PATH
+    REQUIRED)
 
 if(NOT HOST_CXX_COMPILER)
     find_program(_ollama_path_host_cxx

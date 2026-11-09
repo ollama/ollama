@@ -441,6 +441,8 @@ static NSImage *ollamaApplicationIcon(void) {
             if (path && ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"])) {
                 // Special case: handle connect by opening browser instead of app
                 handleConnectURL();
+            } else if (path && ([path isEqualToString:@"/apps"] || [url.host isEqualToString:@"apps"])) {
+                [self appsUI];
             } else {
                 [self openUI];
             }
@@ -547,7 +549,7 @@ static NSImage *ollamaApplicationIcon(void) {
                          context:nil];
 
     self.statusItem.menu = menu;
-    [self showIcon];
+    [self refreshStatusItem];
 
     // Application menu
     NSString *appName = @"Ollama";
@@ -593,7 +595,7 @@ static NSImage *ollamaApplicationIcon(void) {
     [fileMenu addItem:newChatItem];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *closeItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(hide:) keyEquivalent:@"w"];
+    NSMenuItem *closeItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"w"];
     [fileMenu addItem:closeItem];
     [fileMenuItem setSubmenu:fileMenu];
     [mainMenu addItem:fileMenuItem];
@@ -713,6 +715,7 @@ static NSImage *ollamaApplicationIcon(void) {
 - (void)refreshCodexAppState {
     BOOL installed = IsCodexDesktopInstalled();
     BOOL connected = IsCodexDesktopConnected();
+    BOOL disconnectPending = IsCodexDesktopDisconnectPending();
     unsigned long long requests = connected ? CodexDesktopRequestCount() : 0;
     NSString *activeStatus = requests == 1
         ? @"1 request this session"
@@ -720,9 +723,12 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.codexAppRow setActiveStatusText:connected
         ? activeStatus
         : nil];
-    [self.codexAppRow setInactiveStatusText:installed
-        ? @"Use Ollama models in ChatGPT"
-        : @"Not installed"];
+    [self.codexAppRow setInactiveStatusText:disconnectPending
+        ? @"Try disconnecting again"
+        : (installed ? @"Use Ollama models in ChatGPT" : @"Not installed")];
+    [self.codexAppRow.integrationSwitch setAccessibilityLabel:disconnectPending
+        ? @"Retry disconnecting ChatGPT"
+        : @"Use Ollama with ChatGPT"];
     [self.codexAppRow setIntegrationActive:connected];
     [self.codexAppRow setIntegrationReady:installed && connected];
     [self applyShowAppsInMenu:shouldShowAppsInMenu()];
@@ -746,9 +752,7 @@ static NSImage *ollamaApplicationIcon(void) {
 
 - (void)showUpdateAvailable {
     self.updateAvailable = YES;
-    [self.updateAvailableMenuItem setHidden:NO];
-    [self.restartMenuItem setHidden:NO];
-    [self showIcon];
+    [self refreshStatusItem];
 }
 
 - (void)aboutOllama {
@@ -1353,7 +1357,11 @@ didCompleteWithError:(NSError *)error {
 }
 
 - (void)toggleCodexApp:(NSButton *)sender {
-    BOOL enabled = sender.state == NSControlStateValueOn;
+    BOOL disconnectPending = IsCodexDesktopDisconnectPending();
+    BOOL enabled = sender.state == NSControlStateValueOn && !disconnectPending;
+    if (disconnectPending) {
+        sender.state = NSControlStateValueOff;
+    }
     if (enabled && !IsCodexDesktopInstalled()) {
         [self refreshCodexAppState];
         NSAlert *installAlert = [[NSAlert alloc] init];
@@ -1399,10 +1407,18 @@ didCompleteWithError:(NSError *)error {
                 [alert setAlertStyle:NSAlertStyleWarning];
                 [alert setIcon:ollamaApplicationIcon()];
                 [alert setMessageText:enabled
-                    ? @"Unable to add Ollama models to ChatGPT"
-                    : @"Unable to remove Ollama models from ChatGPT"];
-                [alert setInformativeText:
-                    @"ChatGPT could not complete the model update. Check the Ollama log for details, then try again."];
+                    ? @"Couldn’t connect ChatGPT"
+                    : @"Couldn’t disconnect ChatGPT"];
+                [alert setInformativeText:@"Please try again."];
+                if (!enabled && (IsCodexDesktopConnected() || IsCodexDesktopDisconnectPending())) {
+                    [alert addButtonWithTitle:@"Retry"];
+                    [alert addButtonWithTitle:@"Not Now"];
+                    if ([alert runModal] == NSAlertFirstButtonReturn) {
+                        sender.state = NSControlStateValueOff;
+                        [self toggleCodexApp:sender];
+                    }
+                    return;
+                }
                 [alert runModal];
                 return;
             }
@@ -1484,11 +1500,15 @@ didCompleteWithError:(NSError *)error {
 }
 
 - (BOOL)windowShouldClose:(id)sender {
-    [NSApp hide:nil];
+    // Keep the webview alive without restoring the window on app activation.
+    [sender orderOut:nil];
     return NO;
 }
 
-- (void)showIcon {
+- (void)refreshStatusItem {
+    [self.updateAvailableMenuItem setHidden:!self.updateAvailable];
+    [self.restartMenuItem setHidden:!self.updateAvailable];
+
     NSAppearance *appearance = self.statusItem.button.effectiveAppearance;
     NSString *appearanceName = (NSString *)(appearance.name);
     NSString *iconName = @"ollama";
@@ -1515,7 +1535,7 @@ didCompleteWithError:(NSError *)error {
                       ofObject:(id)object
                         change:(NSDictionary<NSKeyValueChangeKey, id> *)change
                        context:(void *)context {
-    [self showIcon];
+    [self refreshStatusItem];
 }
 
 - (void)hide {
@@ -1865,9 +1885,10 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
 
 AppDelegate *appDelegate;
 void run(bool so, bool sh) {
+    // Retain update notifications that arrive while AppKit initializes.
+    appDelegate = [[AppDelegate alloc] init];
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-    appDelegate = [[AppDelegate alloc] init];
     [NSApp setDelegate:appDelegate];
     showOnboarding = so;
     startHidden = sh;

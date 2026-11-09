@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,9 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/internal/proxy"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -49,8 +52,8 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 	oldStartID := codexAppStartID
 	oldCanOpenID := codexAppCanOpenID
 	oldExitTimeout := codexAppExitTimeout
-	codexAppIsRunning = isRunning
-	codexAppQuitApp = quit
+	codexAppIsRunning = func(context.Context) bool { return isRunning() }
+	codexAppQuitApp = func(context.Context) error { return quit() }
 	codexAppOpenApp = func([]string) error { return open() }
 	t.Cleanup(func() {
 		codexAppIsRunning = oldIsRunning
@@ -63,6 +66,22 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 		codexAppCanOpenID = oldCanOpenID
 		codexAppExitTimeout = oldExitTimeout
 	})
+}
+
+func stubCodexAppProcessCommands(t *testing.T, commands map[string]string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("test commands require a POSIX shell")
+	}
+
+	binDir := t.TempDir()
+	for name, script := range commands {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Never fall back to the real osascript or another system command.
+	t.Setenv("PATH", binDir)
 }
 
 func TestCodexAppIntegration(t *testing.T) {
@@ -329,7 +348,7 @@ func TestCodexAppDesktopChecksRouterBeforeChangingProfile(t *testing.T) {
 	openCalls := 0
 	quitCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return true },
@@ -371,7 +390,7 @@ func TestCodexAppDesktopRequiresRestartConfirmationBeforeChangingProfile(t *test
 	openCalls := 0
 	quitCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return true },
@@ -413,10 +432,10 @@ func TestCodexAppDesktopRequiresConsentBeforeStoppingLegacyProfile(t *testing.T)
 	oldCanOpenID := codexAppCanOpenID
 	oldProfileRunning := codexAppProfileIsRunning
 	oldStopProfile := codexAppStopProfile
-	codexAppCanOpenID = func() bool { return true }
-	codexAppProfileIsRunning = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
+	codexAppProfileIsRunning = func(context.Context) (bool, error) { return true, nil }
 	stopCalls := 0
-	codexAppStopProfile = func() error { stopCalls++; return nil }
+	codexAppStopProfile = func(context.Context) error { stopCalls++; return nil }
 	t.Cleanup(func() {
 		codexAppCanOpenID = oldCanOpenID
 		codexAppProfileIsRunning = oldProfileRunning
@@ -463,7 +482,7 @@ func TestCodexAppDesktopRechecksRestartConfirmationBeforeProfileWrite(t *testing
 	openCalls := 0
 	quitCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool {
@@ -513,7 +532,7 @@ func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
 
 	openCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return false },
@@ -550,6 +569,159 @@ func TestCodexAppDesktopUsesAndRestoresRegularProfile(t *testing.T) {
 	}
 }
 
+func codexAppRestoreFixture(t *testing.T) (*CodexApp, string) {
+	t.Helper()
+	home := t.TempDir()
+	setTestHome(t, home)
+	withCodexAppPlatform(t, "darwin")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	old := codexAppProfileIsRunning
+	codexAppProfileIsRunning = func(context.Context) (bool, error) { return false, nil }
+	t.Cleanup(func() { codexAppProfileIsRunning = old })
+	withCodexAppProcessHooks(t,
+		func() bool { return false },
+		func() error { t.Fatal("unexpected process quit"); return nil },
+		func() error { t.Fatal("unexpected app launch"); return nil },
+	)
+	return &CodexApp{}, filepath.Join(home, ".codex", "config.toml")
+}
+
+func TestCodexAppDesktopCleanupFailureCanRetry(t *testing.T) {
+	app, configPath := codexAppRestoreFixture(t)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		must(err)
+		return string(data)
+	}
+	original := "model = \"native-fixture\"\nmodel_provider = \"openai\"\n\n[mcp_servers.fixture]\ncommand = \"fixture-before\"\n"
+	must(os.MkdirAll(filepath.Dir(configPath), 0o700))
+	must(os.WriteFile(configPath, []byte(original), 0o600))
+	must(app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")))
+	restoreState := read(codexAppRestoreStatePath())
+	must(os.WriteFile(configPath, []byte(strings.ReplaceAll(read(configPath), "fixture-before", "fixture-after")), 0o600))
+	catalog := codexAppModelCatalogPathForConfig(configPath)
+	must(os.Remove(catalog))
+	must(os.Mkdir(catalog, 0o700))
+	blocker := filepath.Join(catalog, "fixture-obstruction")
+	must(os.WriteFile(blocker, []byte("fixture"), 0o600))
+
+	if err := app.RestoreFromDesktop(false); err == nil {
+		t.Fatal("expected cleanup failure")
+	}
+	if app.OllamaConfigured() || !app.RestorePending() || read(codexAppRestoreStatePath()) != restoreState {
+		t.Fatal("partial disconnect lost or replaced its recovery state")
+	}
+	must(os.WriteFile(configPath, []byte(strings.ReplaceAll(read(configPath), "native-fixture", "native-after-failure")), 0o600))
+	must(os.Remove(blocker))
+	must(app.RestoreFromDesktop(false))
+	if app.RestorePending() {
+		t.Fatal("cleanup remained pending after retry")
+	}
+	want, err := codexParseConfigText(strings.NewReplacer("fixture-before", "fixture-after", "native-fixture", "native-after-failure").Replace(original))
+	must(err)
+	got, err := codexParseConfigText(read(configPath))
+	must(err)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("retry changed user settings (-want +got):\n%s", diff)
+	}
+}
+
+func TestCodexAppDesktopCleanupWithoutRestoreStateCanRetry(t *testing.T) {
+	for _, missingConfig := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing_config=%v", missingConfig), func(t *testing.T) {
+			app, configPath := codexAppRestoreFixture(t)
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			read := func(path string) string {
+				t.Helper()
+				data, err := os.ReadFile(path)
+				must(err)
+				return string(data)
+			}
+			must(app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")))
+			must(os.WriteFile(configPath, []byte(codexAppSetReasoningEfforts(read(configPath), []string{"medium"})), 0o600))
+			for _, path := range []string{codexAppRestoreStatePath(), codexAppModelCatalogPathForConfig(configPath), codexAppRoutingCatalogPathForConfig(configPath)} {
+				must(os.Remove(path))
+			}
+			if missingConfig {
+				must(os.Remove(configPath))
+			}
+			authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
+			must(os.Remove(authPath))
+			must(os.Mkdir(authPath, 0o700))
+			blocker := filepath.Join(authPath, "fixture-obstruction")
+			must(os.WriteFile(blocker, []byte("fixture"), 0o600))
+			history := filepath.Join(filepath.Dir(configPath), "sessions", "fixture.jsonl")
+			must(os.MkdirAll(filepath.Dir(history), 0o700))
+			must(os.WriteFile(history, []byte("fixture history"), 0o600))
+
+			if err := app.RestoreFromDesktop(false); err == nil {
+				t.Fatal("expected auth cleanup failure")
+			}
+			if app.OllamaConfigured() || !app.RestorePending() {
+				t.Fatal("retry disappeared without catalogs or an original restore record")
+			}
+			edited := "model = \"native-after-failure\"\n"
+			if !missingConfig {
+				parsed, err := codexParseConfig(read(configPath))
+				must(err)
+				if efforts, ok := codexAppConfigReasoningEfforts(parsed); !ok || !slices.Equal(efforts, []string{"medium"}) {
+					t.Fatal("legacy restore changed desktop settings")
+				}
+				must(os.WriteFile(configPath, []byte(edited), 0o600))
+			}
+			must(os.Remove(blocker))
+			must(os.Remove(authPath))
+			must(os.WriteFile(authPath, []byte(`{"fixture":"replacement user auth"}`), 0o600))
+			must(app.RestoreFromDesktop(false))
+			if app.RestorePending() {
+				t.Fatal("cleanup remained pending after retry")
+			}
+			if missingConfig {
+				if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+					t.Fatal("retry recreated missing config")
+				}
+			} else if read(configPath) != edited {
+				t.Fatal("retry overwrote user edits")
+			}
+			if read(authPath) != `{"fixture":"replacement user auth"}` || read(history) != "fixture history" {
+				t.Fatal("retry changed user auth or history")
+			}
+		})
+	}
+}
+
+func TestCodexAppRestorePendingKeepsReferencedCatalog(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	catalogPath := codexAppModelCatalogPathForConfig(configPath)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, []byte(`{"models":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	text := fmt.Sprintf("model = \"native-fixture\"\nmodel_catalog_json = %q\n", catalogPath)
+	if err := os.WriteFile(configPath, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if (&CodexApp{}).RestorePending() {
+		t.Fatal("a catalog still referenced by the user's config must not be treated as abandoned cleanup")
+	}
+}
+
 func TestCodexAppDesktopUpdatesStoppedProfileWithoutOpening(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -567,7 +739,7 @@ func TestCodexAppDesktopUpdatesStoppedProfileWithoutOpening(t *testing.T) {
 
 	openCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return false },
@@ -697,7 +869,7 @@ func TestCodexAppDesktopAppliesProfileAfterRunningAppExits(t *testing.T) {
 	running := true
 	events := []string{}
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return running },
@@ -786,7 +958,7 @@ func TestCodexAppDesktopRestartRepairsCatalogWithoutLiveInventory(t *testing.T) 
 	quitCalls := 0
 	openCalls := 0
 	oldCanOpenID := codexAppCanOpenID
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	t.Cleanup(func() { codexAppCanOpenID = oldCanOpenID })
 	withCodexAppProcessHooks(t,
 		func() bool { return running },
@@ -904,6 +1076,11 @@ func TestCodexAppCountsOnlyOllamaRequestsInRegularProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Keep session files newer than the cutoff even with coarse file timestamps.
+	start = start.Add(-time.Minute)
+	if err := os.WriteFile(startPath, []byte(start.Format(time.RFC3339Nano)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	configPath, err := codexConfigPath()
 	if err != nil {
 		t.Fatal(err)
@@ -971,13 +1148,13 @@ func TestCodexAppLegacyProfileCleanupRejectsStalePID(t *testing.T) {
 	oldExecutable := codexAppProfileExecutable
 	oldCommand := codexAppProcessCommand
 	codexAppProfileExecutable = func() (string, error) { return "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", nil }
-	codexAppProcessCommand = func(int) (string, error) { return "/usr/bin/unrelated --serve", nil }
+	codexAppProcessCommand = func(context.Context, int) (string, error) { return "/usr/bin/unrelated --serve", nil }
 	t.Cleanup(func() {
 		codexAppProfileExecutable = oldExecutable
 		codexAppProcessCommand = oldCommand
 	})
 
-	err := defaultCodexAppStopOllamaProfile()
+	err := defaultCodexAppStopOllamaProfile(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "identity could not be verified") {
 		t.Fatalf("stale PID error = %v, want identity verification", err)
 	}
@@ -1029,8 +1206,8 @@ func TestCodexAppInstalledUsesWindowsStartMenuFallback(t *testing.T) {
 
 	oldStartID := codexAppStartID
 	oldIsRunning := codexAppIsRunning
-	codexAppStartID = func() string { return "OpenAI.Codex_12345!App" }
-	codexAppIsRunning = func() bool { return false }
+	codexAppStartID = func(context.Context) string { return "OpenAI.Codex_12345!App" }
+	codexAppIsRunning = func(context.Context) bool { return false }
 	t.Cleanup(func() {
 		codexAppStartID = oldStartID
 		codexAppIsRunning = oldIsRunning
@@ -1046,7 +1223,7 @@ func TestCodexAppInstalledUsesMacBundleIDFallback(t *testing.T) {
 
 	oldCanOpenID := codexAppCanOpenID
 	oldStat := codexAppStat
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 	codexAppStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	t.Cleanup(func() {
 		codexAppCanOpenID = oldCanOpenID
@@ -1063,7 +1240,7 @@ func TestChatGPTMissingAppGivesDownloadRecovery(t *testing.T) {
 
 	oldCanOpenID := codexAppCanOpenID
 	oldStat := codexAppStat
-	codexAppCanOpenID = func() bool { return false }
+	codexAppCanOpenID = func(context.Context) bool { return false }
 	codexAppStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	t.Cleanup(func() {
 		codexAppCanOpenID = oldCanOpenID
@@ -2017,10 +2194,10 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 			t.Fatalf("supported_reasoning_levels for %q = %T, want list", slug, model["supported_reasoning_levels"])
 		}
 		if slug == "gemma4" {
-			if model["default_reasoning_level"] != "medium" {
-				t.Fatalf("default_reasoning_level for %q = %v, want medium", slug, model["default_reasoning_level"])
+			if model["default_reasoning_level"] != "high" {
+				t.Fatalf("default_reasoning_level for %q = %v, want high", slug, model["default_reasoning_level"])
 			}
-			wantEfforts := []string{"none", "medium"}
+			wantEfforts := []string{"none", "high"}
 			gotEfforts := make([]string, 0, len(levels))
 			for _, level := range levels {
 				entry, ok := level.(map[string]any)
@@ -2093,10 +2270,10 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 		t.Fatalf("routing catalog models = %#v, want 3 selected Ollama models", routingCatalog.Models)
 	}
 	gemmaThinking := routingCatalog.Models[0].Thinking
-	if routingCatalog.Models[0].Slug != "gemma4" || !gemmaThinking.Supported || !slices.Equal(gemmaThinking.Levels, []string{"none", "medium"}) {
-		t.Fatalf("gemma4 routing thinking = %+v, want binary off/medium metadata", gemmaThinking)
+	if routingCatalog.Models[0].Slug != "gemma4" || !gemmaThinking.Supported || !slices.Equal(gemmaThinking.Levels, []string{"none", "high"}) {
+		t.Fatalf("gemma4 routing thinking = %+v, want binary off/high metadata", gemmaThinking)
 	}
-	if gemmaThinking.Values["none"] != false || gemmaThinking.Values["medium"] != true {
+	if gemmaThinking.Values["none"] != false || gemmaThinking.Values["high"] != true {
 		t.Fatalf("gemma4 routing thinking values = %#v, want exact false/true values", gemmaThinking.Values)
 	}
 	for _, routed := range routingCatalog.Models[1:] {
@@ -2118,7 +2295,14 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 		wantValues     map[string]any
 	}{
 		{name: "non-thinking model"},
-		{name: "binary fallback", thinking: true, wantInitial: "medium", wantLevels: []string{"none", "medium"}, wantValues: map[string]any{"none": false, "medium": true}},
+		{
+			name:           "harmony descriptor without family fallback",
+			recommendation: renderers.ThinkingForRenderer("harmony"),
+			wantInitial:    "medium",
+			wantLevels:     []string{"low", "medium", "high"},
+			wantValues:     map[string]any{"low": "low", "medium": "medium", "high": "high"},
+		},
+		{name: "binary fallback", thinking: true, wantInitial: "high", wantLevels: []string{"none", "high"}, wantValues: map[string]any{"none": false, "high": true}},
 		{
 			name:           "recommendation with adjustable strings",
 			recommendation: &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "high"},
@@ -2129,16 +2313,39 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 		{
 			name:           "recommendation with mixed boolean and string values",
 			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true, "max"}, Default: true},
-			wantInitial:    "medium",
-			wantLevels:     []string{"none", "medium", "max"},
-			wantValues:     map[string]any{"none": false, "medium": true, "max": "max"},
+			wantInitial:    "high",
+			wantLevels:     []string{"none", "high", "max"},
+			wantValues:     map[string]any{"none": false, "high": true, "max": "max"},
+		},
+		{
+			name:           "boolean on is distinct from named medium",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: true},
+			wantInitial:    "high",
+			wantLevels:     []string{"none", "high", "medium"},
+			wantValues:     map[string]any{"none": false, "high": true, "medium": "medium"},
 		},
 		{
 			name:           "recommendation with binary thinking off by default",
 			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false},
 			wantInitial:    "none",
-			wantLevels:     []string{"none", "medium"},
-			wantValues:     map[string]any{"none": false, "medium": true},
+			wantLevels:     []string{"none", "high"},
+			wantValues:     map[string]any{"none": false, "high": true},
+		},
+		{
+			name:           "xhigh is retained",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"},
+			wantInitial:    "medium", wantLevels: []string{"none", "low", "medium", "xhigh"},
+			wantValues: map[string]any{"none": false, "low": "low", "medium": "medium", "xhigh": "xhigh"},
+		},
+		{
+			name:           "partial catalog keeps controls with unrepresentable default",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{"low", "high", "turbo"}, Default: "turbo"},
+			wantLevels:     []string{"low", "high"}, wantValues: map[string]any{"low": "low", "high": "high"},
+		},
+		{
+			name:           "literal high takes its label",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true, "high"}, Default: true},
+			wantLevels:     []string{"none", "high"}, wantValues: map[string]any{"none": false, "high": "high"},
 		},
 		{
 			name:           "explicit non-thinking recommendation",
@@ -2149,12 +2356,12 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 			name:           "invalid recommendation uses capability fallback",
 			thinking:       true,
 			recommendation: &api.ModelRecommendationThinking{Values: []any{"low", "high"}, Default: "max"},
-			wantInitial:    "medium",
-			wantLevels:     []string{"none", "medium"},
-			wantValues:     map[string]any{"none": false, "medium": true},
+			wantInitial:    "high",
+			wantLevels:     []string{"none", "high"},
+			wantValues:     map[string]any{"none": false, "high": true},
 		},
 		{name: "model name alone does not infer thinking", modelName: "glm-5.3-flash:cloud"},
-		{name: "similar unverified tag uses fallback", modelName: "glm-5.3-flash:custom", thinking: true, wantInitial: "medium", wantLevels: []string{"none", "medium"}},
+		{name: "similar unverified tag uses fallback", modelName: "glm-5.3-flash:custom", thinking: true, wantInitial: "high", wantLevels: []string{"none", "high"}},
 		{name: "GLM 5.3 Flash family fallback", family: "glm5_next", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
 		{name: "GLM 5.3 family fallback", modelName: "glm-5.3:cloud", family: "glm_dsa_moe", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
 		{name: "GPT-OSS family", family: "gpt-oss", thinking: true, wantInitial: "medium", wantLevels: []string{"low", "medium", "high"}},
@@ -2215,15 +2422,15 @@ func TestCodexAppConfigureWritesRecommendationThinkingContract(t *testing.T) {
 	if len(catalog.Models) == 0 || catalog.Models[0].Slug != model.Name {
 		t.Fatalf("catalog models = %#v, want selected model first", catalog.Models)
 	}
-	if got := catalog.Models[0].DefaultReasoningLevel; got != "medium" {
-		t.Fatalf("default reasoning level = %q, want medium for Ollama true", got)
+	if got := catalog.Models[0].DefaultReasoningLevel; got != "high" {
+		t.Fatalf("default reasoning level = %q, want high for Ollama true", got)
 	}
 	var levels []string
 	for _, level := range catalog.Models[0].SupportedReasoningLevels {
 		levels = append(levels, level.Effort)
 	}
-	if !slices.Equal(levels, []string{"none", "medium", "max"}) {
-		t.Fatalf("reasoning levels = %v, want none/medium/max", levels)
+	if !slices.Equal(levels, []string{"none", "high", "max"}) {
+		t.Fatalf("reasoning levels = %v, want none/high/max", levels)
 	}
 
 	configPath, err := codexConfigPath()
@@ -2237,7 +2444,8 @@ func TestCodexAppConfigureWritesRecommendationThinkingContract(t *testing.T) {
 	var routing struct {
 		Models []struct {
 			Thinking struct {
-				Values map[string]any `json:"values"`
+				Values   map[string]any                   `json:"values"`
+				Controls *api.ModelRecommendationThinking `json:"controls"`
 			} `json:"thinking"`
 		} `json:"models"`
 	}
@@ -2245,7 +2453,10 @@ func TestCodexAppConfigureWritesRecommendationThinkingContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := routing.Models[0].Thinking.Values
-	if values["none"] != false || values["medium"] != true || values["max"] != "max" {
+	if diff := cmp.Diff(model.Thinking, routing.Models[0].Thinking.Controls); diff != "" {
+		t.Fatalf("routing lost the model contract: %s", diff)
+	}
+	if values["none"] != false || values["high"] != true || values["max"] != "max" {
 		t.Fatalf("routing thinking values = %#v, want exact endpoint values", values)
 	}
 }
@@ -2466,8 +2677,8 @@ func TestCodexAppConfigureMigratesLegacyManagedConfigWithoutPollutingRestoreStat
 	if efforts, ok := codexAppConfigReasoningEfforts(restoredConfig); !ok || !slices.Equal(efforts, []string{"low", "high"}) {
 		t.Fatalf("restored desktop reasoning efforts = %v, %v; want [low high]", efforts, ok)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -2532,8 +2743,8 @@ func TestCodexAppRestoreRestoresPreviousProfile(t *testing.T) {
 			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, restored)
 		}
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
 		t.Fatalf("restore state should be removed, got err=%v", err)
@@ -2548,8 +2759,8 @@ func TestCodexAppRestoreRestoresDesktopReasoningEffortsExactly(t *testing.T) {
 	}{
 		{
 			name:         "existing user choices",
-			desktopValue: `enabled-reasoning-efforts = ["minimal", "high", "persistent"]` + "\n",
-			wantOriginal: []string{"minimal", "high", "persistent"},
+			desktopValue: `enabled-reasoning-efforts = ["minimal", "persistent"]` + "\n",
+			wantOriginal: []string{"minimal", "persistent"},
 		},
 		{name: "setting originally absent"},
 	}
@@ -2575,10 +2786,10 @@ func TestCodexAppRestoreRestoresDesktopReasoningEffortsExactly(t *testing.T) {
 			}
 
 			app := &CodexApp{}
-			if err := app.ConfigureWithModels("gemma4", []LaunchModel{{
-				Name:         "gemma4",
-				Capabilities: []model.Capability{model.CapabilityThinking},
-			}}); err != nil {
+			if err := app.ConfigureWithModels("gemma4", []LaunchModel{
+				{Name: "gemma4", Capabilities: []model.Capability{model.CapabilityThinking}},
+				{Name: "custom-qwen", Thinking: &api.ModelRecommendationThinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}},
+			}); err != nil {
 				t.Fatalf("ConfigureWithModels returned error: %v", err)
 			}
 
@@ -2593,6 +2804,11 @@ func TestCodexAppRestoreRestoresDesktopReasoningEffortsExactly(t *testing.T) {
 			managedEfforts, ok := codexAppConfigReasoningEfforts(managedConfig)
 			if !ok || !slices.Contains(managedEfforts, "none") || !slices.Contains(managedEfforts, "max") {
 				t.Fatalf("managed reasoning efforts = %v, %v; want none and max enabled", managedEfforts, ok)
+			}
+			for _, level := range append(slices.Clone(tt.wantOriginal), "high", "low", "medium", "xhigh") {
+				if !slices.Contains(managedEfforts, level) {
+					t.Errorf("managed efforts %v hide %q", managedEfforts, level)
+				}
 			}
 
 			if err := app.Restore(); err != nil {
@@ -2704,8 +2920,8 @@ func TestCodexAppRestoreMissingConfigRemovesRestoreState(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(configPath), "auth.json")); !os.IsNotExist(err) {
 		t.Fatalf("managed auth should be removed when config is missing, got err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -2800,17 +3016,13 @@ func TestCodexAppConfigureRefreshesRestoreStateAfterManualProfileSwitch(t *testi
 			t.Fatalf("root %s = %q, want %q in:\n%s", key, got, want, restored)
 		}
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
 func TestCodexAppRestoreRejectsMalformedTomlWithoutWriting(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withCodexAppPlatform(t, "darwin")
-
-	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	_, configPath := codexAppRestoreFixture(t)
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2919,8 +3131,8 @@ func TestCodexAppRestoreWithoutStateRemovesManagedRootModel(t *testing.T) {
 	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -2999,8 +3211,8 @@ func TestCodexAppRestoreDoesNotStompUserChangedRootConfig(t *testing.T) {
 	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 		t.Fatalf("owned catalog should be removed when unused, err=%v", err)
 	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
+	if openCalls != 0 {
+		t.Fatalf("open calls = %d, want 0", openCalls)
 	}
 }
 
@@ -3107,7 +3319,7 @@ func TestCodexAppDesktopLaunchMode(t *testing.T) {
 			return nil
 		},
 	)
-	codexAppCanOpenID = func() bool { return true }
+	codexAppCanOpenID = func(context.Context) bool { return true }
 
 	app := &CodexApp{}
 	if err := app.UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false); err != nil {
@@ -3266,12 +3478,12 @@ func TestCodexAppRunNeverForcesAStuckAppToQuit(t *testing.T) {
 				},
 			)
 			if goos == "windows" {
-				codexAppStartID = func() string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
+				codexAppStartID = func(context.Context) string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
 			}
-			codexAppExitTimeout = 0
+			codexAppExitTimeout = 20 * time.Millisecond
 
 			err := (&CodexApp{}).Run("qwen3.5", nil, nil)
-			if err == nil || !strings.Contains(err.Error(), "did not quit") {
+			if err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT") {
 				t.Fatalf("Run error = %v, want a manual-close error", err)
 			}
 			if want := []string{"quit"}; !slices.Equal(calls, want) {
@@ -3283,7 +3495,6 @@ func TestCodexAppRunNeverForcesAStuckAppToQuit(t *testing.T) {
 
 func TestCodexAppDesktopRestartTimeoutPreservesProfile(t *testing.T) {
 	withCodexAppPlatform(t, "darwin")
-	codexAppExitTimeout = 0
 	changeCalls := 0
 	openCalls := 0
 	withCodexAppProcessHooks(t,
@@ -3291,12 +3502,15 @@ func TestCodexAppDesktopRestartTimeoutPreservesProfile(t *testing.T) {
 		func() error { return nil },
 		func() error { openCalls++; return nil },
 	)
+	codexAppExitTimeout = 0
 
-	err := codexAppApplyProfileFromDesktop(func() error {
+	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
+	defer stop()
+	err := codexAppApplyProfileChange(ctx, func() error {
 		changeCalls++
 		return nil
 	}, true, true)
-	if err == nil || !strings.Contains(err.Error(), "did not quit") {
+	if err == nil || !strings.Contains(err.Error(), "Timed out waiting for ChatGPT") {
 		t.Fatalf("restart error = %v, want a manual-close error", err)
 	}
 	if changeCalls != 0 || openCalls != 0 {
@@ -3345,8 +3559,8 @@ func TestCodexAppRunRestartsWindowsStartAppID(t *testing.T) {
 		},
 	)
 
-	codexAppStartID = func() string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
-	codexAppRunPath = func() string {
+	codexAppStartID = func(context.Context) string { return "OpenAI.Codex_2p2nqsd0c76g0!App" }
+	codexAppRunPath = func(context.Context) string {
 		return `C:\Program Files\WindowsApps\OpenAI.Codex_26.429.8261.0_x64__2p2nqsd0c76g0\app\Codex.exe`
 	}
 	var openedStartID, openedPath string
@@ -3378,6 +3592,80 @@ func TestCodexAppRunRejectsExtraArgs(t *testing.T) {
 	err := (&CodexApp{}).Run("qwen3.5", nil, []string{"--foo"})
 	if err == nil || !strings.Contains(err.Error(), "does not accept extra arguments") {
 		t.Fatalf("Run error = %v, want extra args rejection", err)
+	}
+}
+
+func TestDefaultCodexAppIsRunningProcesses(t *testing.T) {
+	otherPID := os.Getpid() + 1
+	for _, tt := range []struct {
+		name          string
+		goos          string
+		output        string
+		exitCode      string
+		nameMatchExit string
+		want          bool
+	}{
+		{name: "no processes", goos: "darwin"},
+		{name: "apps stopped or absent", goos: "darwin", output: "1 /sbin/launchd\n100 /Applications/Ollama.app/Contents/MacOS/Ollama\n"},
+		{name: "ChatGPT main", goos: "darwin", output: fmt.Sprintf("%d /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n", otherPID), want: true},
+		{name: "Codex main", goos: "darwin", output: fmt.Sprintf("%d /Applications/Codex.app/Contents/MacOS/Codex\n", otherPID), want: true},
+		{name: "renamed ChatGPT bundle", goos: "darwin", output: fmt.Sprintf("%d /Applications/ChatGPT Preview.app/Contents/MacOS/ChatGPT\n", otherPID), nameMatchExit: "0", want: true},
+		{name: "renamed Codex bundle", goos: "darwin", output: fmt.Sprintf("%d /Applications/Codex Preview.app/Contents/MacOS/Codex\n", otherPID), nameMatchExit: "0", want: true},
+		{name: "Codex installed as ChatGPT", goos: "darwin", output: fmt.Sprintf("%d /Applications/ChatGPT.app/Contents/MacOS/Codex\n", otherPID), nameMatchExit: "0", want: true},
+		{name: "ChatGPT app server", goos: "darwin", output: fmt.Sprintf("%d /Applications/ChatGPT.app/Contents/Resources/codex app-server --analytics-default-enabled\n", otherPID), want: true},
+		{name: "Codex app server", goos: "darwin", output: fmt.Sprintf("%d /Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled\n", otherPID), want: true},
+		{name: "ChatGPT helper only", goos: "darwin", output: "105 /Applications/ChatGPT.app/Contents/Frameworks/ChatGPT Helper.app/Contents/MacOS/ChatGPT Helper\n"},
+		{name: "Codex helpers only", goos: "darwin", output: "106 /Applications/Codex.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper\n107 /Applications/Codex.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler\n"},
+		{name: "current process", goos: "darwin", output: fmt.Sprintf("%d /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n", os.Getpid())},
+		{name: "malformed process list", goos: "darwin", output: "\n108\ninvalid /Applications/Codex.app/Contents/MacOS/Codex\n"},
+		{name: "failed process lookup", goos: "darwin", output: fmt.Sprintf("%d /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n", otherPID), exitCode: "1"},
+		{name: "name match with failed process lookup", goos: "darwin", exitCode: "1", nameMatchExit: "0", want: true},
+		{name: "failed name lookup falls back to process list", goos: "darwin", output: fmt.Sprintf("%d /Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n", otherPID), nameMatchExit: "3", want: true},
+		{name: "Windows stopped", goos: "windows"},
+		{name: "Windows running", goos: "windows", output: fmt.Sprintf("%d\r\n", otherPID), want: true},
+		{name: "Windows current process", goos: "windows", output: fmt.Sprintf("%d\r\n", os.Getpid())},
+		{name: "unsupported platform", goos: "linux", output: fmt.Sprintf("%d /Applications/Codex.app/Contents/MacOS/Codex\n", otherPID)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			withCodexAppPlatform(t, tt.goos)
+			command := "ps"
+			if tt.goos == "windows" {
+				command = "powershell.exe"
+			}
+			commands := map[string]string{
+				command: "printf '%s' \"$OLLAMA_TEST_CODEX_APP_PROCESSES\"\nexit \"${OLLAMA_TEST_CODEX_APP_EXIT_CODE:-0}\"\n",
+			}
+			if tt.goos == "darwin" {
+				// Exact names exclude helpers; -a includes the app if it launched Ollama.
+				commands["pgrep"] = "[ \"$*\" = '-a -x ChatGPT|Codex' ] || exit 2\nexit \"${OLLAMA_TEST_CODEX_APP_NAME_EXIT_CODE:-1}\"\n"
+			}
+			stubCodexAppProcessCommands(t, commands)
+			t.Setenv("OLLAMA_TEST_CODEX_APP_PROCESSES", tt.output)
+			t.Setenv("OLLAMA_TEST_CODEX_APP_EXIT_CODE", tt.exitCode)
+			t.Setenv("OLLAMA_TEST_CODEX_APP_NAME_EXIT_CODE", tt.nameMatchExit)
+
+			if got := defaultCodexAppIsRunning(context.Background()); got != tt.want {
+				t.Fatalf("defaultCodexAppIsRunning() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultCodexAppIsRunningDoesNotCallAppleScript(t *testing.T) {
+	withCodexAppPlatform(t, "darwin")
+	marker := filepath.Join(t.TempDir(), "osascript-called")
+	t.Setenv("OLLAMA_TEST_CODEX_APP_OSASCRIPT_MARKER", marker)
+	stubCodexAppProcessCommands(t, map[string]string{
+		"ps": "exit 0\n",
+		// Simulate slow System Events without contacting the real application.
+		"osascript": "printf called > \"$OLLAMA_TEST_CODEX_APP_OSASCRIPT_MARKER\"\nexec /bin/sleep 1\n",
+	})
+
+	if defaultCodexAppIsRunning(context.Background()) {
+		t.Fatal("reported a running app with no matching processes")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("running-state detection invoked osascript: %v", err)
 	}
 }
 

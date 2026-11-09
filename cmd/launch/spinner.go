@@ -8,7 +8,7 @@ import (
 )
 
 // SpinnerFrames are the braille spinner frames used by the bubbletea TUIs in
-// this codebase (sign-in, upgrade). StartSpinner uses the same frames for its
+// this codebase (sign-in). StartSpinner uses the same frames for its
 // fallback so the restart spinner matches the look of those flows.
 var SpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 

@@ -9,11 +9,15 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
+
+const responsesUnavailableImageNotice = "[This image is unavailable. Attach the image again, or continue without the image.]"
 
 // ResponsesContent is a discriminated union for input content types.
 // Concrete types: ResponsesTextContent, ResponsesImageContent,
-// ResponsesOutputTextContent, ResponsesFileContent.
+// ResponsesOutputTextContent, ResponsesRefusalContent, ResponsesFileContent,
+// ResponsesEncryptedContent.
 type ResponsesContent interface {
 	responsesContent() // unexported marker method
 }
@@ -43,6 +47,14 @@ type ResponsesOutputTextContent struct {
 }
 
 func (ResponsesOutputTextContent) responsesContent() {}
+
+// ResponsesRefusalContent preserves a prior assistant refusal as visible text.
+type ResponsesRefusalContent struct {
+	Type    string `json:"type"`
+	Refusal string `json:"refusal"`
+}
+
+func (ResponsesRefusalContent) responsesContent() {}
 
 type ResponsesFileContent struct {
 	Type     string `json:"type"` // always "input_file"
@@ -142,6 +154,17 @@ func unmarshalResponsesContent(data []byte) (ResponsesContent, error) {
 			return nil, err
 		}
 		return content, nil
+	case "refusal":
+		var content struct {
+			Refusal *string `json:"refusal"`
+		}
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+		if content.Refusal == nil {
+			return nil, errors.New("refusal content requires refusal")
+		}
+		return ResponsesRefusalContent{Type: "refusal", Refusal: *content.Refusal}, nil
 	case "input_file":
 		var content ResponsesFileContent
 		if err := json.Unmarshal(data, &content); err != nil {
@@ -209,6 +232,15 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	if aux.Type == "custom_tool_call_output" {
+		if aux.CallID == nil || strings.TrimSpace(*aux.CallID) == "" {
+			return errors.New("custom tool output requires a non-empty call_id")
+		}
+		if len(aux.Output) == 0 || string(aux.Output) == "null" {
+			return errors.New("custom tool output requires output")
+		}
+	}
+
 	if aux.CallID != nil && strings.TrimSpace(*aux.CallID) == "" {
 		return errors.New("function output call_id must not be empty")
 	}
@@ -249,6 +281,8 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 			outputText.WriteString(v.Text)
 		case ResponsesOutputTextContent:
 			outputText.WriteString(v.Text)
+		case ResponsesRefusalContent:
+			outputText.WriteString(v.Refusal)
 		}
 	}
 	o.Output = outputText.String()
@@ -287,10 +321,46 @@ type ResponsesReasoningInput struct {
 	ID               string                      `json:"id,omitempty"`
 	Type             string                      `json:"type"` // always "reasoning"
 	Summary          []ResponsesReasoningSummary `json:"summary,omitempty"`
+	Content          []ResponsesReasoningContent `json:"content,omitempty"`
 	EncryptedContent string                      `json:"encrypted_content,omitempty"`
 }
 
 func (ResponsesReasoningInput) responsesInputItem() {}
+
+type ResponsesReasoningContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func (c *ResponsesReasoningContent) UnmarshalJSON(data []byte) error {
+	var part struct {
+		Type string  `json:"type"`
+		Text *string `json:"text"`
+	}
+	if err := json.Unmarshal(data, &part); err != nil {
+		return err
+	}
+	// Codex history can mix reasoning_text and text parts in the same item.
+	if part.Type != "reasoning_text" && part.Type != "text" {
+		return fmt.Errorf("unsupported reasoning content type %q", part.Type)
+	}
+	if part.Text == nil {
+		return errors.New("reasoning content requires text")
+	}
+	*c = ResponsesReasoningContent{Type: part.Type, Text: *part.Text}
+	return nil
+}
+
+func (r ResponsesReasoningInput) text() string {
+	var parts []string
+	for _, part := range r.Summary {
+		parts = append(parts, part.Text)
+	}
+	for _, part := range r.Content {
+		parts = append(parts, part.Text)
+	}
+	return strings.Join(parts, "\n")
+}
 
 // AgentMessageEnvelopeFormat is the routing prefix for converted agent
 // messages; internal/proxy uses the same text (cross-pinned by tests).
@@ -371,11 +441,36 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return fc, nil
-	case "function_call_output":
+	case "custom_tool_call":
+		var call struct {
+			ResponsesFunctionCall
+			Input *string `json:"input"`
+		}
+		if err := json.Unmarshal(data, &call); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(call.CallID) == "" {
+			return nil, errors.New("custom tool call requires a non-empty call_id")
+		}
+		if strings.TrimSpace(call.Name) == "" {
+			return nil, errors.New("custom tool call requires a non-empty name")
+		}
+		if call.Input == nil {
+			return nil, errors.New("custom tool call requires input")
+		}
+		arguments, err := json.Marshal(map[string]string{"input": *call.Input})
+		if err != nil {
+			return nil, err
+		}
+		call.Type = "function_call"
+		call.Arguments = string(arguments)
+		return call.ResponsesFunctionCall, nil
+	case "function_call_output", "custom_tool_call_output":
 		var output ResponsesFunctionCallOutput
 		if err := json.Unmarshal(data, &output); err != nil {
 			return nil, err
 		}
+		output.Type = "function_call_output"
 		return output, nil
 	case "tool_search_call":
 		var call ResponsesToolSearchCall
@@ -551,8 +646,9 @@ type ResponsesRequest struct {
 	Stream *bool `json:"stream,omitempty"`
 }
 
-// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest
-func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
+// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	var messages []api.Message
 	availableTools := responsesRequestTools(r)
 
@@ -575,20 +671,52 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	// Handle array of input items
 	// Track pending reasoning to merge with the next assistant message
 	var pendingThinking string
+	flushThinking := func() {
+		if pendingThinking == "" {
+			return
+		}
+		if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" && len(messages[len(messages)-1].ToolCalls) > 0 {
+			last := &messages[len(messages)-1]
+			if last.Thinking != "" {
+				last.Thinking += "\n"
+			}
+			last.Thinking += pendingThinking
+		} else {
+			messages = append(messages, api.Message{Role: "assistant", Thinking: pendingThinking})
+		}
+		pendingThinking = ""
+	}
 
 	for i, item := range r.Input.Items {
 		switch v := item.(type) {
+		case ResponsesInputMessage:
+			if v.Role != "assistant" {
+				flushThinking()
+			}
+		case ResponsesReasoningInput, ResponsesWebSearchCall, ResponsesFunctionCall, ResponsesToolSearchCall:
+			// These items can carry the preceding reasoning.
+		default:
+			flushThinking()
+		}
+		switch v := item.(type) {
 		case ResponsesReasoningInput:
-			// Store thinking to merge with the next assistant message
-			pendingThinking = v.EncryptedContent
+			// Preserve both readable fields. Another provider's encrypted_content
+			// is opaque and must not be interpreted as plaintext reasoning.
+			if text := v.text(); text != "" {
+				if pendingThinking != "" {
+					pendingThinking += "\n"
+				}
+				pendingThinking += text
+			}
 		case ResponsesAgentMessageInput:
-			content, _, err := convertResponsesContent(v.Content)
+			content, images, err := convertResponsesContent(v.Content)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, api.Message{
 				Role:    "user",
 				Content: agentMessageContent(v.Author, v.Recipient, content),
+				Images:  images,
 			})
 		case ResponsesInputMessage:
 			msg, err := convertInputMessage(v)
@@ -623,7 +751,10 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 						lastMsg.Content += msg.Content
 						lastMsg.Images = append(lastMsg.Images, msg.Images...)
 						if msg.Thinking != "" {
-							lastMsg.Thinking = msg.Thinking
+							if lastMsg.Thinking != "" {
+								lastMsg.Thinking += "\n"
+							}
+							lastMsg.Thinking += msg.Thinking
 						}
 						merged = true
 						break
@@ -714,30 +845,16 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	// If there's trailing reasoning without a following message, emit it
-	if pendingThinking != "" {
-		messages = append(messages, api.Message{
-			Role:     "assistant",
-			Thinking: pendingThinking,
-		})
-	}
+	flushThinking()
 
 	options := make(map[string]any)
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else { //nolint:staticcheck // SA9003: empty branch
-		// TODO(drifkin): OpenAI defaults to 1.0 here, but we don't follow that here
-		// in case the model has a different default. It would be best if we
-		// understood whether there was a model-specific default and if not, we
-		// should also default to 1.0, but that will require some additional
-		// plumbing
 	}
 
 	if r.MaxOutputTokens != nil {
@@ -749,8 +866,13 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		if !think.IsValid() {
 			return nil, fmt.Errorf("invalid think value")
 		}
+		if len(thinking) == 0 || !thinking[0].Valid() {
+			if err := api.ValidateLegacyThinking(think); err != nil {
+				return nil, err
+			}
+		}
 	} else {
-		converted, err := thinkFromReasoningEffort(r.Reasoning.Effort)
+		converted, err := ThinkingFromReasoningEffort(r.Reasoning.Effort, thinking...)
 		if err != nil {
 			return nil, err
 		}
@@ -803,6 +925,23 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
+	var truncate *bool
+	if r.Truncation != nil {
+		switch *r.Truncation {
+		case "auto":
+			t := true
+			truncate = &t
+		case "disabled":
+			t := false
+			truncate = &t
+		default:
+			return nil, fmt.Errorf("unknown truncation strategy: %q", *r.Truncation)
+		}
+	} else {
+		t := false
+		truncate = &t
+	}
+
 	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
@@ -810,6 +949,7 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		Tools:    tools,
 		Format:   format,
 		Think:    think,
+		Truncate: truncate,
 	}, nil
 }
 
@@ -818,7 +958,10 @@ func appendResponseToolCall(messages []api.Message, toolCall api.ToolCall, pendi
 		last := &messages[len(messages)-1]
 		last.ToolCalls = append(last.ToolCalls, toolCall)
 		if *pendingThinking != "" {
-			last.Thinking = *pendingThinking
+			if last.Thinking != "" {
+				last.Thinking += "\n"
+			}
+			last.Thinking += *pendingThinking
 			*pendingThinking = ""
 		}
 		return messages
@@ -1046,17 +1189,23 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 	var content string
 	var images []api.ImageData
 
-	for _, c := range contents {
+	for i, c := range contents {
 		switch v := c.(type) {
 		case ResponsesTextContent:
 			content += v.Text
 		case ResponsesOutputTextContent:
 			content += v.Text
+		case ResponsesRefusalContent:
+			content += v.Refusal
 		case ResponsesEncryptedContent:
 			content += v.EncryptedContent
 		case ResponsesImageContent:
 			if v.ImageURL == "" {
-				continue // Skip if no URL (FileID not supported)
+				if strings.TrimSpace(v.FileID) != "" {
+					content += "\n\n" + responsesUnavailableImageNotice + "\n\n"
+					continue
+				}
+				return "", nil, fmt.Errorf("content[%d]: image input requires image_url as a base64 data URL", i)
 			}
 			img, err := decodeImageURL(v.ImageURL)
 			if err != nil {
@@ -1097,6 +1246,8 @@ type ResponsesIncompleteDetails struct {
 	Reason string `json:"reason"`
 }
 
+// ResponsesResponse is a Responses API response. TopP and Temperature are nil
+// (null) when the request left them to the model's defaults.
 type ResponsesResponse struct {
 	ID                 string                      `json:"id"`
 	Object             string                      `json:"object"`
@@ -1114,11 +1265,11 @@ type ResponsesResponse struct {
 	Truncation         string                      `json:"truncation"`
 	ParallelToolCalls  bool                        `json:"parallel_tool_calls"`
 	Text               ResponsesTextField          `json:"text"`
-	TopP               float64                     `json:"top_p"`
+	TopP               *float64                    `json:"top_p"`
 	PresencePenalty    float64                     `json:"presence_penalty"`
 	FrequencyPenalty   float64                     `json:"frequency_penalty"`
 	TopLogprobs        int                         `json:"top_logprobs"`
-	Temperature        float64                     `json:"temperature"`
+	Temperature        *float64                    `json:"temperature"`
 	Reasoning          *ResponsesReasoningOutput   `json:"reasoning"`
 	Usage              *ResponsesUsage             `json:"usage"`
 	MaxOutputTokens    *int                        `json:"max_output_tokens"`
@@ -1212,16 +1363,10 @@ func intValue(v *int) int {
 	return *v
 }
 
-// derefFloat64 returns the value of a float64 pointer, or a default if nil.
-func derefFloat64(p *float64, def float64) float64 {
-	if p != nil {
-		return *p
-	}
-	return def
-}
-
 // ToResponse converts an api.ChatResponse to a Responses API response.
-// The request is used to echo back request parameters in the response.
+// The request is used to echo back request parameters in the response; a
+// caller that knows the model's resolved sampling defaults sets them on the
+// request so the response reports what ran.
 func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse, request ResponsesRequest) ResponsesResponse {
 	var output []ResponsesOutputItem
 
@@ -1335,11 +1480,11 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		Truncation:         truncation,
 		ParallelToolCalls:  true, // Default value
 		Text:               text,
-		TopP:               derefFloat64(request.TopP, 1.0),
+		TopP:               request.TopP,
 		PresencePenalty:    0, // Default value
 		FrequencyPenalty:   0, // Default value
 		TopLogprobs:        0, // Default value
-		Temperature:        derefFloat64(request.Temperature, 1.0),
+		Temperature:        request.Temperature,
 		Reasoning:          reasoning,
 		Usage: &ResponsesUsage{
 			InputTokens:        chatResponse.PromptEvalCount,
@@ -1393,6 +1538,7 @@ type ResponsesStreamConverter struct {
 	toolCallsSent   bool
 	accumulatedText string
 	sequenceNumber  int
+	terminated      bool
 
 	// Reasoning/thinking state
 	accumulatedThinking string
@@ -1401,6 +1547,10 @@ type ResponsesStreamConverter struct {
 
 	// Items completed before the final message, in streamed output-index order.
 	completedItems []any
+
+	// A server-side search reserves its output index before execution finishes.
+	webSearchCall        *ResponsesWebSearchCall
+	webSearchOutputIndex int
 }
 
 // newEvent creates a ResponsesStreamEvent with the sequence number included in the data.
@@ -1414,7 +1564,9 @@ func (c *ResponsesStreamConverter) newEvent(eventType string, data map[string]an
 	}
 }
 
-// NewResponsesStreamConverter creates a new converter with the given configuration.
+// NewResponsesStreamConverter creates a new converter with the given
+// configuration. As with ToResponse, the request's sampling settings are
+// reported, null when left to the model's defaults.
 func NewResponsesStreamConverter(responseID, itemID, model string, request ResponsesRequest) *ResponsesStreamConverter {
 	return &ResponsesStreamConverter{
 		responseID: responseID,
@@ -1429,6 +1581,9 @@ func NewResponsesStreamConverter(responseID, itemID, model string, request Respo
 // Events are returned in order. The caller is responsible for serializing
 // and sending these events.
 func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
 	var events []ResponsesStreamEvent
 
 	hasToolCalls := len(r.Message.ToolCalls) > 0
@@ -1460,6 +1615,7 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// Done - emit closing events
 	if r.Done {
 		events = append(events, c.processCompletion(r)...)
+		c.terminated = true
 	}
 
 	return events
@@ -1514,16 +1670,6 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		reasoning = r
 	}
 
-	// Build top_p and temperature with defaults
-	topP := 1.0
-	if c.request.TopP != nil {
-		topP = *c.request.TopP
-	}
-	temperature := 1.0
-	if c.request.Temperature != nil {
-		temperature = *c.request.Temperature
-	}
-
 	return map[string]any{
 		"id":                   c.responseID,
 		"object":               "response",
@@ -1541,11 +1687,11 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"truncation":           truncation,
 		"parallel_tool_calls":  true,
 		"text":                 map[string]any{"format": textFormat},
-		"top_p":                topP,
+		"top_p":                c.request.TopP,
 		"presence_penalty":     0,
 		"frequency_penalty":    0,
 		"top_logprobs":         0,
-		"temperature":          temperature,
+		"temperature":          c.request.Temperature,
 		"reasoning":            reasoning,
 		"usage":                usage,
 		"max_output_tokens":    c.request.MaxOutputTokens,
@@ -1644,7 +1790,10 @@ func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
 }
 
 func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
+	events := c.finishReasoning()
+	// A preceding text item must close before a tool uses the next output index.
+	events = append(events, c.FinishMessageItem()...)
+	return append(events, c.emitFunctionCallEvents(toolCalls)...)
 }
 
 // emitFunctionCallEvents emits function_call stream events for the given tool
@@ -1745,6 +1894,8 @@ func (c *ResponsesStreamConverter) StartWebSearchCall(call ResponsesWebSearchCal
 	events := c.finishReasoning()
 	outputIndex := c.outputIndex
 	c.outputIndex++
+	c.webSearchCall = &call
+	c.webSearchOutputIndex = outputIndex
 	events = append(events,
 		c.newEvent("response.output_item.added", map[string]any{
 			"output_index": outputIndex,
@@ -1765,6 +1916,7 @@ func (c *ResponsesStreamConverter) StartWebSearchCall(call ResponsesWebSearchCal
 
 // FinishWebSearchCall emits the events that follow a successful server-side search.
 func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCall, outputIndex int) []ResponsesStreamEvent {
+	c.webSearchCall = nil
 	item := webSearchCallMap(call)
 	c.completedItems = append(c.completedItems, item)
 	return []ResponsesStreamEvent{
@@ -1778,9 +1930,34 @@ func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCa
 	}
 }
 
-// ResponseFailed emits a terminal failure using this stream's sequence counter.
-func (c *ResponsesStreamConverter) ResponseFailed(response map[string]any) ResponsesStreamEvent {
-	return c.newEvent("response.failed", map[string]any{"response": response})
+// ResponseFailed closes open output items and ends the response, preserving
+// partial output and the supplied error/usage metadata. Late failures are ignored.
+func (c *ResponsesStreamConverter) ResponseFailed(details map[string]any) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
+	// A failure can arrive before the first model chunk.
+	events := c.Process(api.ChatResponse{})
+	events = append(events, c.finishReasoning()...)
+	events = append(events, c.finishMessageItem("incomplete")...)
+	if c.webSearchCall != nil {
+		item := webSearchCallMap(*c.webSearchCall)
+		item["status"] = "failed"
+		c.completedItems = append(c.completedItems, item)
+		events = append(events, c.newEvent("response.output_item.done", map[string]any{
+			"output_index": c.webSearchOutputIndex,
+			"item":         item,
+		}))
+		c.webSearchCall = nil
+	}
+	output := c.buildFinalOutput()
+	response := c.buildResponseObject("failed", output, nil)
+	for key, value := range details {
+		response[key] = value
+	}
+	response["output"] = output
+	c.terminated = true
+	return append(events, c.newEvent("response.failed", map[string]any{"response": response}))
 }
 
 func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
@@ -1797,6 +1974,10 @@ func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
 // and reserves its place in the final output. This allows pre-search content
 // to be emitted as a distinct message item before web_search_call events.
 func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
+	return c.finishMessageItem("completed")
+}
+
+func (c *ResponsesStreamConverter) finishMessageItem(status string) []ResponsesStreamEvent {
 	if !c.contentStarted {
 		return nil
 	}
@@ -1810,7 +1991,7 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	item := map[string]any{
 		"id":     itemID,
 		"type":   "message",
-		"status": "completed",
+		"status": status,
 		"role":   "assistant",
 		"content": []map[string]any{{
 			"type":        "output_text",
@@ -1850,12 +2031,11 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	}
 }
 
-// EmitFunctionCallItems emits function_call events for client-provided tool
-// calls that accompanied a web_search call (mixed responses). Unlike
-// processToolCalls, this does not set toolCallsSent, so subsequent text
-// content can still be processed.
+// EmitFunctionCallItems emits client-provided tool calls from the web-search
+// wrapper, closing any open reasoning item first. It does not set toolCallsSent,
+// so subsequent text content can still be processed.
 func (c *ResponsesStreamConverter) EmitFunctionCallItems(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return c.emitFunctionCallEvents(toolCalls)
+	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
 }
 
 func (c *ResponsesStreamConverter) processTextContent(content string) []ResponsesStreamEvent {
@@ -1910,7 +2090,7 @@ func (c *ResponsesStreamConverter) processTextContent(content string) []Response
 }
 
 func (c *ResponsesStreamConverter) buildFinalOutput() []any {
-	output := append([]any(nil), c.completedItems...)
+	output := append([]any{}, c.completedItems...)
 	if c.contentStarted {
 		// Add message item if we had text content
 		output = append(output, map[string]any{

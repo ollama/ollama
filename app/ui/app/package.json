@@ -13,6 +13,7 @@
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "test": "vitest",
+    "test:browser": "vitest run --mode browser",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage"
   },

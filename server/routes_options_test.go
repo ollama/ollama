@@ -191,10 +191,11 @@ func TestModelOptionsEmbeddingNumBatchDefault(t *testing.T) {
 			expectedNumBatch: llm.DefaultEmbeddingNumBatch,
 		},
 		{
-			name:             "embedding default is capped by context",
-			defaultNumCtx:    1024,
+			name:             "embedding default is capped at launch, not by num_ctx",
+			defaultNumCtx:    40960,
 			capabilities:     []string{string(model.CapabilityEmbedding)},
-			expectedNumBatch: 1024,
+			requestOpts:      map[string]any{"num_ctx": float64(30)},
+			expectedNumBatch: llm.DefaultEmbeddingNumBatch,
 		},
 		{
 			name:             "model num_batch overrides embedding default",
