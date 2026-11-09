@@ -1538,6 +1538,7 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 		{Name: "named-none", Thinking: &api.ModelRecommendationThinking{Values: []any{"none", "high"}, Default: "none"}},
 		{Name: "off-with-named-none", Thinking: &api.ModelRecommendationThinking{Values: []any{false, "none", "high"}, Default: "none"}},
 		{Name: "mixed-only-reserved-named", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "none"}, Default: false}},
+		{Name: "levels", Thinking: &api.ModelRecommendationThinking{Values: []any{true, "zeta", "max", "high", false, "alpha", "medium", "xhigh", "minimal", "low"}, Default: true}},
 	}
 	content, err := buildInlineConfig(models[0], models)
 	if err != nil {
@@ -1603,13 +1604,16 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 				"named-none":                {"high": "high"},
 				"off-with-named-none":       {"high": "high", "none-2": false},
 				"mixed-only-reserved-named": {"none-2": false},
+				"levels":                    {"none": false, "thinking": true, "minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max", "alpha": "alpha", "zeta": "zeta"},
 			} {
 				entry := entries[name].(map[string]any)
 				variants := map[string]map[string]any{}
+				var labels []string
 				var efforts []any
 				if version == "v2.2.6" {
 					for _, raw := range entry["variants"].([]any) {
 						variant := raw.(map[string]any)
+						labels = append(labels, variant["id"].(string))
 						variants[variant["id"].(string)] = variant["settings"].(map[string]any)
 					}
 					reasoning := entry["capabilities"].(map[string]any)["reasoning"].(map[string]any)
@@ -1629,6 +1633,16 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 				}
 				if len(variants) != len(want) {
 					t.Fatalf("%s variants = %v, want %v", name, variants, want)
+				}
+				if name == "levels" {
+					wantEfforts := []any{"none", "minimal", "low", "medium", "high", "xhigh", "max", "alpha", "zeta"}
+					if !slices.Equal(efforts, wantEfforts) {
+						t.Errorf("native efforts = %v, want %v", efforts, wantEfforts)
+					}
+					wantLabels := []string{"none", "thinking", "minimal", "low", "medium", "high", "xhigh", "max", "alpha", "zeta"}
+					if version == "v2.2.6" && !slices.Equal(labels, wantLabels) {
+						t.Errorf("native variants = %v, want %v", labels, wantLabels)
+					}
 				}
 				model, _ := findLaunchModel(models, name)
 				for label, variant := range variants {
@@ -1666,7 +1680,6 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 					t.Fatalf("boolean-on default no longer clears inherited effort: %v", variants)
 				}
 			}
-
 		})
 	}
 }

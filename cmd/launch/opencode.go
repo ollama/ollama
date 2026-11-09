@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -611,6 +612,13 @@ func openCodeConfigForVersion(content, version string, modelList []LaunchModel) 
 	}
 	provider := config.Provider["ollama"]
 	models, _ := provider["models"].(map[string]any)
+	rank := func(label string) int {
+		order := []string{"none", "thinking", "minimal", "low", "medium", "high", "xhigh", "max"}
+		if i := slices.Index(order, label); i >= 0 {
+			return i
+		}
+		return len(order)
+	}
 	for name, raw := range models {
 		model, _ := findLaunchModel(modelList, name)
 		metadataKnown := model.Thinking.Valid()
@@ -621,7 +629,10 @@ func openCodeConfigForVersion(content, version string, modelList []LaunchModel) 
 		variants, _ := entry["variants"].(map[string]any)
 		efforts := []string{}
 		nativeVariants := []any{}
-		for _, label := range slices.Sorted(maps.Keys(variants)) {
+		labels := slices.SortedFunc(maps.Keys(variants), func(a, b string) int {
+			return cmp.Or(cmp.Compare(rank(a), rank(b)), strings.Compare(a, b))
+		})
+		for _, label := range labels {
 			variant := variants[label].(map[string]any)
 			if variant["disabled"] == true {
 				delete(variants, label)
