@@ -2352,14 +2352,16 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 		return
 	}
 
+	// -v is a plain "what am I running" query: if there is no server to ask,
+	// the client version is still the answer, so don't turn the missing
+	// heartbeat into two warnings.
 	serverVersion, err := client.Version(cmd.Context())
-	if err != nil {
-		fmt.Println("Warning: could not connect to a running Ollama instance")
+	if err != nil || serverVersion == "" {
+		fmt.Printf("ollama version is %s\n", version.Version)
+		return
 	}
 
-	if serverVersion != "" {
-		fmt.Printf("ollama version is %s\n", serverVersion)
-	}
+	fmt.Printf("ollama version is %s\n", serverVersion)
 
 	if serverVersion != version.Version {
 		fmt.Printf("Warning: client version is %s\n", version.Version)
