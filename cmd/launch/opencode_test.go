@@ -1336,6 +1336,9 @@ func TestOpenCodeEdit_DefaultVariant(t *testing.T) {
 	}{
 		{"seeds boolean on", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, "", "thinking"},
 		{"seeds boolean off", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}, "", "none"},
+		{"mixed metadata seeds off", &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: false}, "", "none"},
+		{"mixed metadata preserves named selection", &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: false}, "medium", "medium"},
+		{"reserved named none preserves off label", &api.ModelRecommendationThinking{Values: []any{false, true, "none"}, Default: false}, "", "none-2"},
 		{"preserves an existing selection", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, "none", "none"},
 		{"does not seed a named default", &api.ModelRecommendationThinking{Values: []any{"low", "high"}, Default: "high"}, "", ""},
 	}
@@ -1520,12 +1523,21 @@ func TestOpenCodeEdit_FalseOnlyThinking(t *testing.T) {
 }
 
 func TestOpenCodeConfigForVersion(t *testing.T) {
+	reservedThinking := &api.ModelRecommendationThinking{Values: []any{"default", "default-2", "high"}, Default: "high"}
 	models := []LaunchModel{
 		{Name: "glm", ContextLength: 1024, MaxOutputTokens: 256, Thinking: &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "max"}},
 		{Name: "gemma", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}},
 		{Name: "nemotron", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: true}},
 		{Name: "coder", Thinking: &api.ModelRecommendationThinking{Values: []any{false}, Default: false}},
 		{Name: "collision", Capabilities: []model.Capability{model.CapabilityVision}, Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "thinking"}, Default: true}},
+		{Name: "unknown"},
+		{Name: "thinking-unknown", Capabilities: []model.Capability{model.CapabilityThinking}},
+		{Name: "reserved", Thinking: reservedThinking},
+		{Name: "mixed-off", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: false}},
+		{Name: "mixed-named", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "low", "high"}, Default: "low"}},
+		{Name: "named-none", Thinking: &api.ModelRecommendationThinking{Values: []any{"none", "high"}, Default: "none"}},
+		{Name: "off-with-named-none", Thinking: &api.ModelRecommendationThinking{Values: []any{false, "none", "high"}, Default: "none"}},
+		{Name: "mixed-only-reserved-named", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "none"}, Default: false}},
 	}
 	content, err := buildInlineConfig(models[0], models)
 	if err != nil {
@@ -1533,7 +1545,7 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 	}
 	for _, version := range []string{"", "v1.18.35", "v1.19.2", "v1.19.3-beta.1", "v1.19.3", "v2.2.6"} {
 		t.Run(version, func(t *testing.T) {
-			got, err := openCodeConfigForVersion(content, version)
+			got, err := openCodeConfigForVersion(content, version, models)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1559,6 +1571,16 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 				t.Fatal("provider connection settings lost")
 			}
 			entries := provider["models"].(map[string]any)
+			for _, name := range []string{"unknown", "thinking-unknown"} {
+				entry := entries[name].(map[string]any)
+				if version == "v2.2.6" {
+					if _, exists := entry["capabilities"].(map[string]any)["reasoning"]; exists {
+						t.Fatalf("%s replaces configured reasoning without metadata", name)
+					}
+				} else if _, exists := entry["reasoning_options"]; exists {
+					t.Fatalf("%s replaces configured reasoning without metadata", name)
+				}
+			}
 			limits := entries["glm"].(map[string]any)["limit"].(map[string]any)
 			if limits["context"] != float64(1024) || limits["output"] != float64(256) {
 				t.Fatalf("model limits changed: %v", limits)
@@ -1569,9 +1591,18 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 					t.Fatalf("vision capability changed: %v", input)
 				}
 			}
-			for name, want := range map[string][]string{
-				"glm": {"high", "low", "max"}, "gemma": {"none", "thinking"},
-				"nemotron": {"medium", "none", "thinking"}, "coder": {}, "collision": {"none", "thinking", "thinking-2"},
+			for name, want := range map[string]map[string]any{
+				"glm":                       {"high": "high", "low": "low", "max": "max"},
+				"gemma":                     {"none": false, "thinking": true},
+				"nemotron":                  {"medium": "medium", "none": false, "thinking": true},
+				"coder":                     {},
+				"collision":                 {"none": false, "thinking": "thinking", "thinking-2": true},
+				"reserved":                  {"default-2": "default-2", "default-3": "default", "high": "high"},
+				"mixed-off":                 {"medium": "medium", "none": false},
+				"mixed-named":               {"high": "high", "low": "low", "none": false},
+				"named-none":                {"high": "high"},
+				"off-with-named-none":       {"high": "high", "none-2": false},
+				"mixed-only-reserved-named": {"none-2": false},
 			} {
 				entry := entries[name].(map[string]any)
 				variants := map[string]map[string]any{}
@@ -1596,27 +1627,46 @@ func TestOpenCodeConfigForVersion(t *testing.T) {
 						efforts = options[0].(map[string]any)["values"].([]any)
 					}
 				}
-				labels := make([]string, 0, len(variants))
+				if len(variants) != len(want) {
+					t.Fatalf("%s variants = %v, want %v", name, variants, want)
+				}
+				model, _ := findLaunchModel(models, name)
 				for label, variant := range variants {
-					labels = append(labels, label)
-					if variant["disabled"] != nil {
-						t.Fatalf("%s still has a disabled variant: %v", name, variant)
+					wantValue, exists := want[label]
+					if !exists || variant["disabled"] != nil {
+						t.Fatalf("%s has unexpected variant %s: %v", name, label, variant)
+					}
+					effort, _ := variant["reasoningEffort"].(string)
+					requested, err := openai.ThinkingFromReasoningEffort(effort, model.Thinking)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if resolved := renderers.ResolveThinking(requested, model.Thinking); resolved == nil || resolved.Value != wantValue {
+						t.Fatalf("%s variant %s resolved to %v, want %v", name, label, resolved, wantValue)
 					}
 				}
-				slices.Sort(labels)
-				if !slices.Equal(labels, want) {
-					t.Fatalf("%s variants = %v, want %v", name, labels, want)
+				options, _ := entry[optionsKey].(map[string]any)
+				defaultEffort, _ := options["reasoningEffort"].(string)
+				requested, err := openai.ThinkingFromReasoningEffort(defaultEffort, model.Thinking)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if name == "gemma" && (variants["thinking"]["reasoningEffort"] != "high" || slices.Contains(efforts, any("high"))) {
-					t.Fatalf("boolean-on alias changed or became an extra high control: %v, %v", variants, efforts)
+				if resolved := renderers.ResolveThinking(requested, model.Thinking); resolved == nil || resolved.Value != model.Thinking.Default {
+					t.Fatalf("%s default resolved to %v, want %v", name, resolved, model.Thinking.Default)
+				}
+				if model.Thinking.Default == "none" && options["reasoningEffort"] != "" {
+					t.Fatalf("%s must clear inherited effort to use its named default", name)
+				}
+				if (name == "gemma" && slices.Contains(efforts, any("high"))) ||
+					(name == "reserved" && slices.Contains(efforts, any("default"))) ||
+					(model.Thinking.Supports("none") && slices.Contains(efforts, any("none"))) {
+					t.Fatalf("%s native efforts introduce an unsupported or duplicate control: %v", name, efforts)
 				}
 				if name == "nemotron" && variants["thinking"]["reasoningEffort"] != "" {
-					t.Fatalf("boolean-on default changed: %v", variants)
-				}
-				if name == "glm" && (len(efforts) != 3 || entry[optionsKey].(map[string]any)["reasoningEffort"] != "max") {
-					t.Fatalf("named efforts or default changed: %v", entry)
+					t.Fatalf("boolean-on default no longer clears inherited effort: %v", variants)
 				}
 			}
+
 		})
 	}
 }

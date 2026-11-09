@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/mod/semver"
@@ -67,7 +66,7 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 		return err
 	}
 	version := openCodeVersion(opencodePath)
-	content, err = openCodeConfigForVersion(content, version)
+	content, err = openCodeConfigForVersion(content, version, models)
 	if err != nil {
 		return err
 	}
@@ -597,7 +596,7 @@ func buildInlineConfig(primary LaunchModel, models []LaunchModel) (string, error
 
 // Newer clients can declare the supported efforts, replacing their fallback list.
 // Older v1 clients still need the legacy disabled variants.
-func openCodeConfigForVersion(content, version string) (string, error) {
+func openCodeConfigForVersion(content, version string, modelList []LaunchModel) (string, error) {
 	v2 := semver.Major(version) == "v2"
 	if content == "" || (!v2 && (semver.Major(version) != "v1" || semver.Compare(version, "v1.19.3") < 0)) {
 		return content, nil
@@ -612,7 +611,12 @@ func openCodeConfigForVersion(content, version string) (string, error) {
 	}
 	provider := config.Provider["ollama"]
 	models, _ := provider["models"].(map[string]any)
-	for _, raw := range models {
+	for name, raw := range models {
+		model, _ := findLaunchModel(modelList, name)
+		metadataKnown := model.Thinking.Valid()
+		if !v2 && !metadataKnown {
+			continue
+		}
 		entry := raw.(map[string]any)
 		variants, _ := entry["variants"].(map[string]any)
 		efforts := []string{}
@@ -641,11 +645,15 @@ func openCodeConfigForVersion(content, version string) (string, error) {
 		if capabilities == nil {
 			capabilities = map[string]any{}
 		}
-		reasoning := map[string]any{"supported": entry["reasoning"] == true}
-		if entry["reasoning"] == true {
-			reasoning["effort"] = efforts
+		if metadataKnown {
+			// Native reasoning declarations replace existing variants. Without metadata,
+			// retain user-configured controls instead of declaring the fallback authoritative.
+			reasoning := map[string]any{"supported": entry["reasoning"] == true}
+			if entry["reasoning"] == true {
+				reasoning["effort"] = efforts
+			}
+			capabilities["reasoning"] = reasoning
 		}
-		capabilities["reasoning"] = reasoning
 		entry["capabilities"] = capabilities
 		entry["variants"] = nativeVariants
 		if options, ok := entry["options"]; ok {
@@ -755,13 +763,30 @@ func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any
 			if !ok {
 				continue
 			}
+			if label == "none" {
+				// The API reserves none for boolean off. Reserve its label too, so
+				// any supported boolean-off collision keeps its existing identifier.
+				variants[label] = map[string]any{"disabled": true}
+				continue
+			}
 			variants[label] = map[string]any{"reasoningEffort": label}
 		}
+		if variant, exists := variants["default"]; exists {
+			// OpenCode reserves "default" for the absence of a selected variant.
+			variants[openCodeVariantLabel("default", variants)] = variant
+			delete(variants, "default")
+		}
 
+		hasNamedLevels := len(variants) > 0
 		booleanLabels := make(map[bool]string)
 		for _, value := range thinking.Values {
 			boolean, ok := value.(bool)
 			if !ok {
+				continue
+			}
+			// Mixed metadata has no distinct boolean-on effort unless omission uses
+			// a boolean-on default. Offer its named levels instead of relabeling one.
+			if boolean && hasNamedLevels && thinking.Default != true {
 				continue
 			}
 			base := "thinking"
@@ -773,7 +798,11 @@ func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any
 			label := openCodeVariantLabel(base, variants)
 			booleanLabels[boolean] = label
 			if boolean {
-				variant["reasoningEffort"] = openCodeBooleanOnEffort(thinking)
+				variant["reasoningEffort"] = "high" // Existing OpenAI alias for binary on.
+				if thinking.Default == true {
+					// Clear inherited off options and use the backend's boolean-on default.
+					variant["reasoningEffort"] = ""
+				}
 			}
 			variants[label] = variant
 		}
@@ -792,6 +821,10 @@ func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any
 		switch defaultLevel := thinking.Default.(type) {
 		case string:
 			defaults["reasoningEffort"] = defaultLevel
+			if defaultLevel == "none" {
+				// Clear inherited effort and let omission resolve the named default.
+				defaults["reasoningEffort"] = ""
+			}
 		case bool:
 			// Boolean defaults launch with a variant instead of a model option, which
 			// lets on and off choices reset the inherited reasoning effort.
@@ -810,23 +843,6 @@ func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any
 	}
 
 	return nil, nil, ""
-}
-
-func openCodeBooleanOnEffort(thinking *api.ModelRecommendationThinking) string {
-	if thinking == nil || thinking.Default == true {
-		// An explicit empty effort clears inherited off options and lets the backend
-		// use its boolean-on default without selecting a named level.
-		return ""
-	}
-	if thinking.Supports("high") {
-		return "high"
-	}
-	for _, value := range thinking.Values {
-		if name, ok := value.(string); ok && name != "" {
-			return name
-		}
-	}
-	return "high"
 }
 
 func openCodeVariantLabel(base string, variants map[string]any) string {

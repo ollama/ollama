@@ -542,7 +542,7 @@ printf '%s\n' "$OPENCODE_CONFIG_CONTENT" "$@" > "$OPENCODE_LAUNCH_TEST_OUTPUT"
 			if tt.versionExit != "0" {
 				version = ""
 			}
-			versionContent, err := openCodeConfigForVersion(content, version)
+			versionContent, err := openCodeConfigForVersion(content, version, models)
 			if err != nil {
 				t.Fatal(err)
 			}
