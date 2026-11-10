@@ -4,7 +4,8 @@ import StreamingMarkdownContent from "./StreamingMarkdownContent";
 import { ImageThumbnail } from "./ImageThumbnail";
 import { isImageFile } from "@/utils/imageUtils";
 import CopyButton from "./CopyButton";
-import React, { useState, useMemo, useRef } from "react";
+import ReadAloudButton from "./ReadAloudButton";
+import React, { useState, useMemo, useRef, useCallback } from "react";
 
 const Message = React.memo(
   ({
@@ -12,6 +13,8 @@ const Message = React.memo(
     onEditMessage,
     messageIndex,
     isStreaming,
+    autoStart,
+    readAloudOwnerKey,
     isFaded,
     browserToolResult,
     lastToolQuery,
@@ -20,6 +23,8 @@ const Message = React.memo(
     onEditMessage?: (content: string, index: number) => void;
     messageIndex?: number;
     isStreaming: boolean;
+    autoStart?: boolean;
+    readAloudOwnerKey?: string;
     isFaded?: boolean;
     // TODO(drifkin): this type isn't right
     browserToolResult?: BrowserToolResult;
@@ -39,6 +44,8 @@ const Message = React.memo(
         <OtherRoleMessage
           message={message}
           isStreaming={isStreaming}
+          autoStart={autoStart}
+          readAloudOwnerKey={readAloudOwnerKey}
           isFaded={isFaded}
           browserToolResult={browserToolResult}
           lastToolQuery={lastToolQuery}
@@ -52,6 +59,8 @@ const Message = React.memo(
       prevProps.onEditMessage === nextProps.onEditMessage &&
       prevProps.messageIndex === nextProps.messageIndex &&
       prevProps.isStreaming === nextProps.isStreaming &&
+      prevProps.autoStart === nextProps.autoStart &&
+      prevProps.readAloudOwnerKey === nextProps.readAloudOwnerKey &&
       prevProps.isFaded === nextProps.isFaded &&
       prevProps.browserToolResult === nextProps.browserToolResult
     );
@@ -877,6 +886,8 @@ function UserMessage({
 function OtherRoleMessage({
   message,
   isStreaming,
+  autoStart,
+  readAloudOwnerKey,
   isFaded,
   browserToolResult,
   lastToolQuery,
@@ -884,12 +895,18 @@ function OtherRoleMessage({
   message: MessageType;
   previousMessage?: MessageType;
   isStreaming: boolean;
+  autoStart?: boolean;
+  readAloudOwnerKey?: string;
   isFaded?: boolean;
   // TODO(drifkin): this type isn't right
   browserToolResult?: BrowserToolResult;
   lastToolQuery?: string;
 }) {
   const messageRef = useRef<HTMLDivElement>(null);
+  const getReadAloudText = useCallback(
+    () => messageRef.current?.innerText || message.content,
+    [message.content],
+  );
 
   return (
     <div
@@ -973,7 +990,12 @@ function OtherRoleMessage({
         message.content.trim() &&
         (!message.tool_calls || message.tool_calls.length === 0) &&
         !message.tool_call && (
-          <div className="-ml-1">
+          <div className="-ml-1 flex items-center gap-1">
+            <ReadAloudButton
+              ownerKey={readAloudOwnerKey ?? "unknown"}
+              autoStart={autoStart}
+              getText={getReadAloudText}
+            />
             <CopyButton
               content={message.content || ""}
               copyRef={messageRef as React.RefObject<HTMLElement>}

@@ -303,4 +303,77 @@ describe("Settings reset interactions", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("saves the selected read aloud voice", async () => {
+    mocks.settings = new SettingsType({
+      ContextLength: 65_536,
+      SpeechVoice: "com.example.old-voice",
+      SpeechRate: 1,
+      SpeechVolume: 1,
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+
+      const voiceSelect = renderer!.root.findByProps({
+        "aria-label": "Read aloud voice",
+      });
+      expect(voiceSelect.props.value).toBe("com.example.old-voice");
+
+      await act(async () => {
+        voiceSelect.props.onChange({
+          target: { value: "com.example.new-voice" },
+        });
+        await Promise.resolve();
+      });
+
+      expect(mocks.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ SpeechVoice: "com.example.new-voice" }),
+      );
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("saves the auto read preference", async () => {
+    mocks.settings = new SettingsType({
+      ContextLength: 65_536,
+      SpeechAutoRead: false,
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+
+      const autoReadSwitch = renderer!.root.findByProps({
+        "aria-label": "Auto read new responses",
+      });
+      expect(autoReadSwitch.props.checked).toBe(false);
+
+      await act(async () => {
+        autoReadSwitch.props.onChange(true);
+        await Promise.resolve();
+      });
+
+      expect(mocks.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ SpeechAutoRead: true }),
+      );
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
 });
