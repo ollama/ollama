@@ -484,7 +484,7 @@ func TestShowInfoRendersRunnerAlternates(t *testing.T) {
     quantization         nvfp4
     runner               mlx
     available runners    mlx:sha256:aaaaaaaaaaaa,
-                           llamacpp:sha256:111111111111
+                           gguf:sha256:111111111111
 
 `
 	trimLinePadding := func(s string) string {
@@ -512,7 +512,7 @@ func TestShowRunnerSummaries(t *testing.T) {
 		{Digest: "sha256:aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffffffff", Runner: "mlx", Format: "safetensors", Selected: true},
 		{Digest: "sha256:1111111111112222222222223333333333334444444444445555555555556666", Runner: "llamacpp", Format: "gguf"},
 	})
-	if available != "mlx:sha256:aaaaaaaaaaaa, llamacpp:sha256:111111111111" {
+	if available != "mlx:sha256:aaaaaaaaaaaa, gguf:sha256:111111111111" {
 		t.Fatalf("available = %q", available)
 	}
 }
@@ -873,7 +873,7 @@ func TestRunHandlerRunnerFlag(t *testing.T) {
 	cmd.Flags().String("runner", "", "")
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
-	if err := cmd.Flags().Set("runner", "llamacpp"); err != nil {
+	if err := cmd.Flags().Set("runner", "gguf"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -887,16 +887,16 @@ func TestRunHandlerRunnerFlag(t *testing.T) {
 
 	select {
 	case req := <-showReqCh:
-		if req.Runner != "llamacpp" {
-			t.Fatalf("show runner = %q, want %q", req.Runner, "llamacpp")
+		if req.Runner != "gguf" {
+			t.Fatalf("show runner = %q, want %q", req.Runner, "gguf")
 		}
 	default:
 		t.Fatal("server did not receive show request")
 	}
 	select {
 	case req := <-generateReqCh:
-		if req.Runner != "llamacpp" {
-			t.Fatalf("generate runner = %q, want %q", req.Runner, "llamacpp")
+		if req.Runner != "gguf" {
+			t.Fatalf("generate runner = %q, want %q", req.Runner, "gguf")
 		}
 	default:
 		t.Fatal("server did not receive generate request")

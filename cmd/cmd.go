@@ -1695,6 +1695,9 @@ func showAvailableRunners(manifests []api.ManifestSummary) string {
 }
 
 func showRunnerName(m api.ManifestSummary) string {
+	if m.Format == manifest.FormatGGUF {
+		return manifest.FormatGGUF
+	}
 	if m.Runner != "" {
 		return m.Runner
 	}

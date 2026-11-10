@@ -231,7 +231,7 @@ func normalizeRunner(runner string) (string, error) {
 		return manifest.RunnerMLX, nil
 	case manifest.RunnerGGML:
 		return manifest.RunnerGGML, nil
-	case manifest.RunnerLlamaCPP, "llama.cpp", "llama-cpp", "llama_cpp":
+	case manifest.FormatGGUF, manifest.RunnerLlamaCPP, "llama.cpp", "llama-cpp", "llama_cpp":
 		return manifest.RunnerLlamaCPP, nil
 	default:
 		return "", fmt.Errorf("unknown runner %q", runner)

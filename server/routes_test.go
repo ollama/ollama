@@ -605,6 +605,7 @@ func TestNormalizeRunner(t *testing.T) {
 		{name: "mlx", runner: "mlx", want: manifest.RunnerMLX},
 		{name: "mlxrunner alias", runner: "mlxrunner", want: manifest.RunnerMLX},
 		{name: "ggml", runner: "ggml", want: manifest.RunnerGGML},
+		{name: "gguf", runner: "gguf", want: manifest.RunnerLlamaCPP},
 		{name: "llamacpp", runner: "llamacpp", want: manifest.RunnerLlamaCPP},
 		{name: "llama.cpp alias", runner: "llama.cpp", want: manifest.RunnerLlamaCPP},
 		{name: "llama-cpp alias", runner: "llama-cpp", want: manifest.RunnerLlamaCPP},
