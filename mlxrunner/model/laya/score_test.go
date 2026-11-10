@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/model"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
@@ -73,7 +77,7 @@ func TestPrepareScoreInputLimits(t *testing.T) {
 		{Question: &llm.ScoreQuestion{Type: "choice", Options: []string{"x", "x"}}},
 		{Question: &llm.ScoreQuestion{Type: "choice", Options: []string{"x", strings.Repeat("x", 48)}}},
 	}}
-	result, err := m.Score(t.Context(), input)
+	result, err := m.Score(t.Context(), input, scoreForward(&m))
 	var status api.StatusError
 	if !errors.As(err, &status) || status.StatusCode != http.StatusBadRequest || !strings.Contains(status.ErrorMessage, "question 1: option 1") || len(result.Logits) != 0 || result.InputTokens != 0 {
 		t.Fatalf("Score returned result=%+v error=%v, want rejection before inference", result, err)
@@ -115,7 +119,7 @@ func TestScoreRejectsInvalidInputs(t *testing.T) {
 		{MaxTokens: 512, Rows: []llm.ScoreRow{{Question: &llm.ScoreQuestion{Type: "chat"}}}},
 		{MaxTokens: 512, Rows: []llm.ScoreRow{{Question: &llm.ScoreQuestion{Type: "choice", Options: []string{"one"}}}}},
 	} {
-		_, err := m.Score(t.Context(), input)
+		_, err := m.Score(t.Context(), input, scoreForward(&m))
 		var status api.StatusError
 		if !errors.As(err, &status) || status.StatusCode != http.StatusBadRequest {
 			t.Errorf("Score(%+v) error = %v, want bad request", input, err)
@@ -123,7 +127,7 @@ func TestScoreRejectsInvalidInputs(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := m.Score(ctx, llm.ScoreRequest{MaxTokens: 512, Rows: []llm.ScoreRow{{}}}); !errors.Is(err, context.Canceled) {
+	if _, err := m.Score(ctx, llm.ScoreRequest{MaxTokens: 512, Rows: []llm.ScoreRow{{}}}, scoreForward(&m)); !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled score: %v", err)
 	}
 }
@@ -138,5 +142,16 @@ func TestPrepareScoreCancellation(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) || rows != nil {
 		t.Fatalf("cancelled preparation: rows=%v, err=%v", rows, err)
+	}
+}
+
+func scoreForward(m *Model) model.ScoreForward {
+	return func(ctx context.Context, input *model.PreparedRequest, _ []model.Segment, readout func(*mlx.Array) error) (int, error) {
+		var err error
+		mlx.Scoped(func() {
+			h, _ := m.Forward(&batch.Batch{InputIDs: mlx.FromValues(input.Tokens, 1, len(input.Tokens)), SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(len(input.Tokens))}, Layout: []any{input.Layout}}, nil)
+			err = readout(h)
+		})
+		return 0, err
 	}
 }

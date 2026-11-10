@@ -607,10 +607,10 @@ const maxContextLength = 8192
 // artifact — see maxContextLength.
 func (m *Model) MaxContextLength() int { return maxContextLength }
 
-// NewCaches returns nil slots per layer: embedding forward is a single
+// NewCaches returns no state: embedding forward is a single
 // cache-free bidirectional pass.
 func (m *Model) NewCaches() []cache.Cache {
-	return make([]cache.Cache, m.Cfg.NumHiddenLayers)
+	return nil
 }
 
 // EmbeddingDim returns the output embedding size (after projection).
@@ -618,13 +618,6 @@ func (m *Model) EmbeddingDim() int { return int(m.Cfg.TextConfig.EmbeddingDim) }
 
 // HiddenSize reports the text stack's hidden width for allocation estimates.
 func (m *Model) HiddenSize() int32 { return m.Cfg.TextConfig.HiddenSize }
-
-// MediaTokenStrings returns the special-token spellings the runner expands
-// in user content when media is present.
-func (m *Model) MediaTokenStrings() (boi, eoi, image, boa, eoa, audio string) {
-	t := m.Cfg.TokenStrings
-	return t.BOI, t.EOI, t.Image, t.BOA, t.EOA, t.Audio
-}
 
 // SupportsImages / SupportsAudio report tower presence; the runner 400s a
 // media request against a text-only checkpoint.

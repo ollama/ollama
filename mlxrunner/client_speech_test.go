@@ -84,21 +84,32 @@ type speechTestModel struct {
 	generated chan struct{}
 }
 
-func (m speechTestModel) Speak(_ context.Context, _ llm.SpeechRequest, emit func([]float32) error) error {
-	defer close(m.generated)
-	samples := make([]float32, 1<<16)
-	for range m.chunks {
-		if err := emit(samples); err != nil {
-			return err
-		}
+func (m speechTestModel) NewSpeech(context.Context, llm.SpeechRequest) (model.SpeechState, error) {
+	return &speechTestState{model: m}, nil
+}
+
+type speechTestState struct {
+	model     speechTestModel
+	generated int
+}
+
+func (s *speechTestState) Close() { close(s.model.generated) }
+
+func (m speechTestModel) DecodeSpeech(states []model.SpeechState) ([]model.SpeechOutput, error) {
+	out := make([]model.SpeechOutput, len(states))
+	for i, state := range states {
+		s := state.(*speechTestState)
+		s.generated++
+		out[i] = model.SpeechOutput{Samples: make([]float32, 1<<16), Done: s.generated == m.chunks}
 	}
-	return nil
+	return out, nil
 }
 
 // A client reading at playback speed must not hold the MLX worker.
 func TestSpeechDoesNotWaitForClient(t *testing.T) {
 	m := speechTestModel{chunks: 256, generated: make(chan struct{})} // 32 MiB, more than socket buffers hold
-	r := &Runner{Model: m, mlxThread: mlxtest.Worker(t)}
+	r := &Runner{Model: m, mlxThread: mlxtest.Worker(t), parallel: 2}
+	defer startTestScheduler(t, r)()
 	srv := httptest.NewServer(http.HandlerFunc(r.speechHandler))
 	defer srv.Close()
 	res, err := srv.Client().Post(srv.URL, "application/json", strings.NewReader("{}"))

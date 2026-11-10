@@ -78,11 +78,36 @@ func floats(a *mlx.Array) []float32 {
 }
 
 func maxDiff(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return math.NaN()
+	}
 	var m float64
 	for i := range a {
 		m = math.Max(m, math.Abs(float64(a[i]-b[i])))
 	}
 	return m
+}
+
+func TestMaxDiffRejectsInvalidComparisons(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		a, b []float32
+	}{
+		{name: "empty"},
+		{name: "length mismatch", a: []float32{1}, b: []float32{1, 2}},
+		{name: "actual nan", a: []float32{float32(math.NaN())}, b: []float32{0}},
+		{name: "expected nan", a: []float32{0}, b: []float32{float32(math.NaN())}},
+		{name: "matching infinity", a: []float32{float32(math.Inf(1))}, b: []float32{float32(math.Inf(1))}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := maxDiff(tt.a, tt.b); !math.IsNaN(got) {
+				t.Fatalf("maxDiff = %g, want NaN for invalid comparison", got)
+			}
+		})
+	}
+	if got := maxDiff([]float32{1, 2}, []float32{1, 2}); got != 0 {
+		t.Fatalf("valid maxDiff = %g, want 0", got)
+	}
 }
 
 func TestDepthDecoderMasking(t *testing.T) {
@@ -99,7 +124,7 @@ func TestDepthDecoderMasking(t *testing.T) {
 		// Revealing the last slot changes the first slot's logits: the trunk
 		// attends both ways.
 		c := floats(d.Logits(h, []int32{0, 0, 3}, []bool{true, true, false}))
-		if maxDiff(a[:5], c[:5]) < 1e-4 {
+		if delta := maxDiff(a[:5], c[:5]); math.IsNaN(delta) || delta < 1e-4 {
 			t.Fatal("slot 0 ignores a later slot; attention is not bidirectional")
 		}
 	})
@@ -214,6 +239,53 @@ func TestCodeEmbeddingSum(t *testing.T) {
 		}
 		if _, err := e.Forward([]int32{0, 5, 0}); err == nil {
 			t.Fatal("accepted a code past the codebook")
+		}
+	})
+}
+
+func TestDepthBatchMatchesIndependent(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		d, _, _ := tinyDepth(t)
+		h := randArray(rand.New(rand.NewPCG(31, 32)), 1, 2, 1, 6)
+		if got := d.project(h).Dims(); !slices.Equal(got, []int{2, 3, 8}) {
+			t.Fatalf("depth input lost batch dimension: %v", got)
+		}
+		codes := []int32{0, 1, 2, 3, 2, 1}
+		masked := []bool{true, false, true, false, true, false}
+		got := floats(d.Logits(h, codes, masked))
+		for i := range 2 {
+			want := floats(d.Logits(h.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice()), codes[i*3:(i+1)*3], masked[i*3:(i+1)*3]))
+			if delta := maxDiff(got[i*15:(i+1)*15], want); delta > 1e-5 || math.IsNaN(delta) {
+				t.Fatalf("row %d logits differ: %g", i, delta)
+			}
+		}
+		var together, alone []*FrameSampler
+		for i := range 2 {
+			opts := SampleOptions{Temperature: .7, RepetitionPenalty: 1.2, RepetitionWindow: 4}
+			a, err := NewFrameSampler(d.cfg, opts, rand.New(rand.NewPCG(uint64(i+1), 50)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := NewFrameSampler(d.cfg, opts, rand.New(rand.NewPCG(uint64(i+1), 50)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			together, alone = append(together, a), append(alone, b)
+		}
+		for _, order := range [][]int{{0, 1}, {1, 0}, {1}, {0, 1}} {
+			var inputs []*mlx.Array
+			var samplers []*FrameSampler
+			for _, i := range order {
+				inputs = append(inputs, h.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice()))
+				samplers = append(samplers, together[i])
+			}
+			frames, eos := d.DecodeFrames(mlx.Concatenate(inputs, 0), samplers)
+			for row, i := range order {
+				want, end := d.DecodeFrame(inputs[row], alone[i])
+				if eos[row] != end || !slices.Equal(frames[row], want) {
+					t.Fatalf("order %v row %d frame=%v eos=%v, want %v/%v", order, i, frames[row], eos[row], want, end)
+				}
+			}
 		}
 	})
 }

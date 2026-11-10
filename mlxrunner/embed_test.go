@@ -2,14 +2,17 @@ package mlxrunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -23,7 +26,7 @@ type stubModel struct{}
 
 func (s *stubModel) LoadWeights(map[string]*mlx.Array) error { return nil }
 func (s *stubModel) NewCaches() []cache.Cache                { return nil }
-func (s *stubModel) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (s *stubModel) Forward(*batch.Batch, []cache.Layer) (*mlx.Array, *mlx.Array) {
 	return nil, nil
 }
 func (s *stubModel) Unembed(*mlx.Array) *mlx.Array   { return nil }
@@ -45,9 +48,7 @@ func TestHandleEmbedGate(t *testing.T) {
 		t.Fatalf("gate: got %d, want 501; body=%q", w.Code, w.Body.String())
 	}
 
-	// Embedding-capable model but nil channels: expect goroutine-safe write
-	// path. We can't fully run the handler without the runner loop, so stop
-	// at decoding validation: bad JSON -> 400; empty content -> 400.
+	// Invalid wire input must be rejected before scheduling a forward.
 	for _, body := range []string{`{`, `{"content":""}`} {
 		r := &Runner{Model: &stubEmbeddingModel{}}
 		req := httptest.NewRequest("POST", "/v1/embeddings", strings.NewReader(body))
@@ -59,12 +60,11 @@ func TestHandleEmbedGate(t *testing.T) {
 	}
 }
 
-func TestEmbeddingRequestChannelContext(t *testing.T) {
+func TestHandleEmbedCancellation(t *testing.T) {
 	// Cancellation before the runner consumes: the handler must not panic or
 	// hang when the request context is already done.
 	r := &Runner{
-		Model:         &stubEmbeddingModel{},
-		EmbedRequests: make(chan EmbeddingRequest),
+		Model: &stubEmbeddingModel{},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -80,12 +80,10 @@ func TestEmbeddingRequestChannelContext(t *testing.T) {
 }
 
 // TestEmbedMediaWireDecode covers the base64 boundary in handleEmbed: the
-// runner is never reached on decode failure, and a valid entry is queued
-// onto EmbedRequests untouched for the model side to reject (runEmbed 501s
-// until Task 4). A stub consumer drains the channel so the handler returns.
+// model is never reached on decode failure; a valid entry reaches capability validation.
 func TestEmbedMediaWireDecode(t *testing.T) {
 	t.Run("bad base64 rejected with index", func(t *testing.T) {
-		r := &Runner{Model: &stubEmbeddingModel{}, EmbedRequests: make(chan EmbeddingRequest, 1)}
+		r := &Runner{Model: &stubEmbeddingModel{}}
 		body := `{"content":"hi","media":["aGVsbG8=","!!!not base64!!!","d29ybGQ="]}`
 		req := httptest.NewRequest("POST", "/v1/embeddings", strings.NewReader(body))
 		w := httptest.NewRecorder()
@@ -99,13 +97,8 @@ func TestEmbedMediaWireDecode(t *testing.T) {
 	})
 
 	t.Run("valid base64 reaches runner then 501s", func(t *testing.T) {
-		r := &Runner{Model: &stubEmbeddingModel{}, EmbedRequests: make(chan EmbeddingRequest, 1)}
-		// Drain the channel in the background and run the current 501 stub.
-		go func() {
-			for req := range r.EmbedRequests {
-				_ = r.runEmbed(req.Ctx, req)
-			}
-		}()
+		r := &Runner{Model: &stubEmbeddingModel{}}
+
 		body := `{"content":"hi","media":["aGVsbG8="]}`
 		req := httptest.NewRequest("POST", "/v1/embeddings", strings.NewReader(body))
 		w := httptest.NewRecorder()
@@ -115,32 +108,6 @@ func TestEmbedMediaWireDecode(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "media embedding not supported") {
 			t.Errorf("501 body should say media is not supported, got %q", w.Body.String())
-		}
-	})
-
-	t.Run("no media flows through untouched", func(t *testing.T) {
-		r := &Runner{Model: &stubEmbeddingModel{}, EmbedRequests: make(chan EmbeddingRequest, 1)}
-		captured := make(chan EmbeddingRequest, 1)
-		go func() {
-			for req := range r.EmbedRequests {
-				captured <- req
-				req.EmbedResponses <- EmbedResponse{Embedding: []float32{0}, PromptEvalCount: 1}
-			}
-		}()
-		body := `{"content":"hi"}`
-		req := httptest.NewRequest("POST", "/v1/embeddings", strings.NewReader(body))
-		w := httptest.NewRecorder()
-		r.handleEmbed(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("got %d, want 200; body=%q", w.Code, w.Body.String())
-		}
-		select {
-		case got := <-captured:
-			if len(got.Media) != 0 {
-				t.Errorf("expected empty Media, got %d entries", len(got.Media))
-			}
-		case <-time.After(time.Second):
-			t.Fatal("runner consumer never received request")
 		}
 	})
 }
@@ -196,16 +163,12 @@ const (
 	stubPlaceholdersN    = 2
 )
 
-func (s *stubEmbedMediaModel) MediaTokenStrings() (boi, eoi, image, boa, eoa, audio string) {
-	return "<boi>", "<eoi>", "<img>", "<boa>", "<eoa>", "<aud>"
-}
-
 func (s *stubEmbedMediaModel) SupportsImages() bool { return true }
 func (s *stubEmbedMediaModel) SupportsAudio() bool  { return false }
 
 func (s *stubEmbedMediaModel) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
 	prepared := &model.PreparedRequest{}
-	for _, seg := range segments {
+	for i, seg := range segments {
 		switch seg.Kind {
 		case "":
 			prepared.Tokens = append(prepared.Tokens, seg.Tokens...)
@@ -215,8 +178,9 @@ func (s *stubEmbedMediaModel) PrepareMedia(segments []model.Segment) (*model.Pre
 				prepared.Tokens = append(prepared.Tokens, stubPlaceholderToken)
 			}
 			prepared.Items = append(prepared.Items, model.PreparedItem{
-				Range:  [2]int{start, start + stubPlaceholdersN},
-				Source: 0,
+				Range:     [2]int{start, start + stubPlaceholdersN},
+				Source:    i,
+				MediaData: []float32{0}, Dims: []int{1},
 			})
 		default:
 			return nil, fmt.Errorf("unsupported segment kind %q", seg.Kind)
@@ -226,24 +190,16 @@ func (s *stubEmbedMediaModel) PrepareMedia(segments []model.Segment) (*model.Pre
 	return prepared, nil
 }
 
-func (s *stubEmbedMediaModel) EncodeMedia(prepared *model.PreparedRequest) ([]batch.MediaItem, error) {
-	items := make([]batch.MediaItem, len(prepared.Items))
-	for i, item := range prepared.Items {
-		rows := item.Range[1] - item.Range[0]
-		vals := make([]float32, rows*s.EmbeddingDim())
-		for j := range vals {
-			vals[j] = float32((j*13)%31) / 31
-		}
-		items[i] = batch.MediaItem{
-			Seq:      0,
-			Pos:      item.Range[0],
-			Features: mlx.FromValues(vals, rows, s.EmbeddingDim()),
-		}
+func (s *stubEmbedMediaModel) EncodeMedia(item *model.PreparedItem, _ *mlx.Array) *mlx.Array {
+	rows := item.Range[1] - item.Range[0]
+	vals := make([]float32, rows*s.EmbeddingDim())
+	for j := range vals {
+		vals[j] = float32((j*13)%31) / 31
 	}
-	return items, nil
+	return mlx.FromValues(vals, rows, s.EmbeddingDim())
 }
 
-func (s *stubEmbedMediaModel) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (s *stubEmbedMediaModel) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
 	s.lastBatch = b
 	// Scope-safe capture: runEmbed frees the batch's arrays at scope exit,
 	// so copy what the assertions need as CPU data now.
@@ -278,19 +234,15 @@ func TestEmbedMediaRunEmbedExercises(t *testing.T) {
 	t.Run("marker-less text plus one image blob", func(t *testing.T) {
 		mlxtest.Run(t, func(t *mlxtest.T) {
 			m := &stubEmbedMediaModel{}
-			r := &Runner{Model: m, Tokenizer: tok}
-			req := EmbeddingRequest{
-				Content:        "ab",
-				Media:          [][]byte{stubPNG},
-				EmbedResponses: make(chan EmbedResponse, 1),
-				Ctx:            context.Background(),
+			r := newScoreTestRunner(m)
+			r.Tokenizer = tok
+			req := embeddingRequest{
+				Content: "ab",
+				Media:   [][]byte{stubPNG},
 			}
-			if err := r.runEmbed(req.Ctx, req); err != nil {
+			resp, err := r.runEmbed(context.Background(), req)
+			if err != nil {
 				t.Fatalf("runEmbed: %v", err)
-			}
-			resp := <-req.EmbedResponses
-			if resp.Error != nil {
-				t.Fatalf("unexpected error: %+v", resp.Error)
 			}
 			if len(resp.Embedding) != m.EmbeddingDim() {
 				t.Fatalf("embedding len %d, want %d", len(resp.Embedding), m.EmbeddingDim())
@@ -306,33 +258,21 @@ func TestEmbedMediaRunEmbedExercises(t *testing.T) {
 				t.Fatalf("Forward batch Media len %d, want 1", len(m.capturedMedia))
 			}
 			item := m.capturedMedia[0]
-			// The prepared tokens carry the placeholder run at item.Range;
-			// the batch's media Pos must point at that run's start, offset by
-			// the BOS token the runner prepends.
+			// Construct the expected stream from caller text, not from the
+			// prepared object that runEmbed has already rebased in place.
+			text := tok.Encode(req.Content, false)
+			wantPos := 1 + len(text)
 			rng := m.prepared.Items[0].Range
-			wantPos := rng[0] + 1 // +1 for BOS
-			if item.Pos != wantPos {
-				t.Errorf("media Pos = %d, want %d (placeholder start after BOS)", item.Pos, wantPos)
+			if item.Pos != wantPos || rng != [2]int{wantPos, wantPos + stubPlaceholdersN} {
+				t.Fatalf("media pos %d range %v, want [%d,%d)", item.Pos, rng, wantPos, wantPos+stubPlaceholdersN)
 			}
-			// The token stream reaching Forward must be exactly BOS + prepared
-			// tokens + EOS, with the placeholder IDs at the media position.
-			// (Captured as CPU data inside the stub: runEmbed frees the batch
-			// arrays at scope exit.)
-			gotToks := m.capturedTokens
-			wantLen := 1 + len(m.prepared.Tokens) + 1 // BOS + prepared + EOS
-			if len(gotToks) != wantLen {
-				t.Fatalf("forward token len %d, want %d", len(gotToks), wantLen)
+			wantTokens := append([]int32{tok.BOS()}, text...)
+			for range stubPlaceholdersN {
+				wantTokens = append(wantTokens, stubPlaceholderToken)
 			}
-			for i := rng[0]; i < rng[1]; i++ {
-				if gotToks[i+1] != stubPlaceholderToken {
-					t.Errorf("token at placeholder %d = %d, want %d", i+1, gotToks[i+1], stubPlaceholderToken)
-				}
-			}
-			if gotToks[0] != tok.BOS() {
-				t.Errorf("first token %d, want BOS %d", gotToks[0], tok.BOS())
-			}
-			if gotToks[len(gotToks)-1] != tok.EOS() {
-				t.Errorf("last token %d, want EOS %d", gotToks[len(gotToks)-1], tok.EOS())
+			wantTokens = append(wantTokens, tok.EOS())
+			if !slices.Equal(m.capturedTokens, wantTokens) {
+				t.Fatalf("forward tokens %v, want %v", m.capturedTokens, wantTokens)
 			}
 			// Feature rows must equal the placeholder-run length. runEmbed
 			// frees the feature arrays at scope exit, so the stub captured
@@ -349,21 +289,17 @@ func TestEmbedMediaRunEmbedExercises(t *testing.T) {
 // twin of this gate is already covered in TestEmbedMediaWireDecode).
 func TestEmbedMediaRunEmbedNotSupported(t *testing.T) {
 	r := &Runner{Model: &stubEmbeddingModel{}, Tokenizer: miniEmbedTokenizer(t)}
-	req := EmbeddingRequest{
-		Content:        "a<boi><eoi>b",
-		Media:          [][]byte{stubPNG},
-		EmbedResponses: make(chan EmbedResponse, 1),
-		Ctx:            context.Background(),
+	req := embeddingRequest{
+		Content: "a<boi><eoi>b",
+		Media:   [][]byte{stubPNG},
 	}
-	if err := r.runEmbed(req.Ctx, req); err != nil {
-		t.Fatalf("runEmbed: %v", err)
+	_, err := r.runEmbed(t.Context(), req)
+	var status api.StatusError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("error = %v, want 501", err)
 	}
-	resp := <-req.EmbedResponses
-	if resp.Error == nil || resp.Error.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("resp = %+v, want 501", resp)
-	}
-	if !strings.Contains(resp.Error.ErrorMessage, "media embedding not supported") {
-		t.Errorf("501 body %q, want 'media embedding not supported'", resp.Error.ErrorMessage)
+	if !strings.Contains(status.ErrorMessage, "media embedding not supported") {
+		t.Errorf("501 body %q, want 'media embedding not supported'", status.ErrorMessage)
 	}
 }
 
@@ -391,7 +327,7 @@ type stubLongEmbedModel struct{ stubEmbeddingModel }
 
 func (s *stubLongEmbedModel) MaxContextLength() int { return 1 << 24 }
 
-func (s *stubLongEmbedModel) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (s *stubLongEmbedModel) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
 	L := b.InputIDs.Dim(1)
 	h := mlx.Zeros(mlx.DTypeFloat32, len(b.SeqOffsets), L, 1)
 	return h, h
@@ -403,7 +339,8 @@ func (s *stubLongEmbedModel) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Arra
 func TestRunEmbedRejectsOversizedAllocation(t *testing.T) {
 	tok := miniEmbedTokenizer(t)
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		r := &Runner{Model: &stubLongEmbedModel{}, Tokenizer: tok}
+		r := newScoreTestRunner(&stubLongEmbedModel{})
+		r.Tokenizer = tok
 
 		// Token count guaranteeing predicted > budget: solve
 		// L*L*4 > budget for L (mask dominates).
@@ -411,38 +348,21 @@ func TestRunEmbedRejectsOversizedAllocation(t *testing.T) {
 		L := int(math.Sqrt(float64(budget)/4)) + 64
 		content := strings.Repeat("ab ", L/2+1) // ~L tokens for this vocab
 
-		req := EmbeddingRequest{
-			Content:        content,
-			EmbedResponses: make(chan EmbedResponse, 1),
-			Ctx:            context.Background(),
+		req := embeddingRequest{
+			Content: content,
 		}
-		if err := r.runEmbed(req.Ctx, req); err != nil {
-			t.Fatalf("runEmbed: %v", err)
+		_, err := r.runEmbed(context.Background(), req)
+		var status api.StatusError
+		if !errors.As(err, &status) || status.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Fatalf("error = %v, want 413", err)
 		}
-		resp := <-req.EmbedResponses
-		if resp.Error == nil {
-			t.Fatal("oversized request produced no error")
-		}
-		if resp.Error.StatusCode != http.StatusRequestEntityTooLarge {
-			t.Errorf("status = %d, want 413; msg=%q", resp.Error.StatusCode, resp.Error.ErrorMessage)
-		}
-		if !strings.Contains(resp.Error.ErrorMessage, "would allocate") {
-			t.Errorf("message should name the allocation: %q", resp.Error.ErrorMessage)
+		if !strings.Contains(status.ErrorMessage, "would allocate") {
+			t.Errorf("message should name the allocation: %q", status.ErrorMessage)
 		}
 
-		// A small request on the same runner still succeeds — the gate does
-		// not wedge the runner after a rejection.
-		ok := EmbeddingRequest{
-			Content:        "hello",
-			EmbedResponses: make(chan EmbedResponse, 1),
-			Ctx:            context.Background(),
-		}
-		if err := r.runEmbed(ok.Ctx, ok); err != nil {
+		// Rejection must leave the slot usable.
+		if _, err := r.runEmbed(context.Background(), embeddingRequest{Content: "hello"}); err != nil {
 			t.Fatalf("runEmbed after reject: %v", err)
-		}
-		okResp := <-ok.EmbedResponses
-		if okResp.Error != nil {
-			t.Errorf("small request failed after rejection: %+v", okResp.Error)
 		}
 	})
 }
