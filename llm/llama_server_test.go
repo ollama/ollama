@@ -2152,7 +2152,9 @@ func TestAppendLoadModeArgs(t *testing.T) {
 
 	integratedCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}}
 	integratedROCm := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "rocm"}, Integrated: true}}
+	integratedVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true}}
 	discreteCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	discreteVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}}}
 	integratedMetal := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}}
 
 	// Direct I/O is only selected on Linux, so the expectation depends on the host.
@@ -2204,6 +2206,24 @@ func TestAppendLoadModeArgs(t *testing.T) {
 			opts: api.DefaultOptions(),
 			gpus: integratedMetal,
 			want: []string{"base"},
+		},
+		{
+			name: "integrated vulkan selects mmap",
+			opts: api.DefaultOptions(),
+			gpus: integratedVulkan,
+			want: []string{"base", "--load-mode", "mmap"},
+		},
+		{
+			name: "discrete vulkan does not select mmap",
+			opts: api.DefaultOptions(),
+			gpus: discreteVulkan,
+			want: []string{"base"},
+		},
+		{
+			name: "vulkan mmap wins over disabled mmap",
+			opts: mmapOff,
+			gpus: integratedVulkan,
+			want: []string{"base", "--load-mode", "mmap"},
 		},
 		{
 			name: "discrete cuda does not select dio",
@@ -3147,6 +3167,14 @@ func TestMemoryParsingWriter(t *testing.T) {
 			},
 			wantGPU:   4.00 + 23.04,
 			wantTotal: 4.00 + 23.04 + 2.00,
+		},
+		{
+			name: "new b12257 kind: h_nextn",
+			lines: []string{
+				"h_nextn_dev_alloc:       MTL0 h_nextn buffer size =    16.01 MiB\n",
+			},
+			wantGPU:   16.01,
+			wantTotal: 16.01,
 		},
 		{
 			name: "fit probe buffers are replaced by final load",

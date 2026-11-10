@@ -74,8 +74,11 @@ func piHasOption(args []string, options ...string) bool {
 			}
 		}
 		switch args[i] {
+		case "--":
+			return headlessMode
 		case "--provider", "--model", "--mode", "--api-key", "--system-prompt", "--append-system-prompt",
-			"--session", "--fork", "--session-dir", "--models", "--tools", "-t",
+			"--name", "-n", "--session", "--session-id", "--fork", "--session-dir",
+			"--models", "--tools", "-t", "--exclude-tools", "-xt",
 			"--thinking", "--export", "--extension", "-e", "--skill", "--prompt-template", "--theme":
 			// These Pi options consume a value, even when it looks like a flag.
 			i++
@@ -130,7 +133,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			defer cancelDiscovery()
 		}
 		remaining := piModelDiscoveryTimeout
-		model, err := c.piTargetModel(discoveryCtx, target, &remaining)
+		model, retryAfterAuth, err := c.piTargetModel(discoveryCtx, target, &remaining, nil)
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			err = nil
 		}
@@ -146,7 +149,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			if err := pullMissingModelWithPolicy(ctx, c.apiClient, target, c.policy.missingModelPolicy()); err != nil {
 				return err
 			}
-			model, err = c.piTargetModel(ctx, target, &remaining)
+			model, retryAfterAuth, err = c.piTargetModel(ctx, target, &remaining, nil)
 		}
 		if err != nil {
 			return err
@@ -187,14 +190,25 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			if err := ensureCloudAuth(ctx, c.apiClient, target); err != nil {
 				return err
 			}
-			if len(model.Capabilities) == 0 {
-				// Authentication may make previously unavailable metadata readable.
-				model, err = c.piTargetModel(discoveryCtx, target, &remaining)
+			if retryAfterAuth || model.ContextLength <= 0 || len(model.Capabilities) == 0 {
+				// Sign-in may outlive discovery; retry with a fresh bounded window.
+				cancelDiscovery()
+				discoveryCtx, cancelDiscovery = context.WithTimeout(ctx, piModelDiscoveryTimeout)
+				defer cancelDiscovery()
+				remaining = piModelDiscoveryTimeout
+				model, _, err = c.piTargetModel(discoveryCtx, target, &remaining, &model)
 				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 					err = nil
 				}
 				if err != nil {
 					return err
+				}
+				if !piSupportsChat(model) {
+					if !picked && req.ModelOverride == "" {
+						pick = true
+						continue
+					}
+					return fmt.Errorf("model %q does not support chat; choose a chat model", target)
 				}
 			}
 		}
@@ -253,22 +267,27 @@ func (p *Pi) currentModel() (string, error) {
 	return model, nil
 }
 
-// piTargetModel retains remote routing metadata even when /show requires sign-in.
-func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration) (LaunchModel, error) {
+// piTargetModel retains inventory fallback metadata when /show requires sign-in.
+// Its second result marks an authorization failure that needs a fresh lookup.
+// A fallback forces a fresh lookup without discarding already resolved metadata.
+func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration, fallback *LaunchModel) (LaunchModel, bool, error) {
 	var inventory []LaunchModel
 	if c.inventory != nil {
 		inventory = c.inventory.snapshot()
 	}
 	model, _ := findLaunchModel(inventory, name)
+	if fallback != nil {
+		model = *fallback
+	}
 	model.Name = name
 	model.Remote = model.Remote || isCloudModelName(name)
 	if model.Remote {
 		if disabled, _ := cloudStatusDisabled(ctx, c.apiClient); disabled {
-			return model, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
+			return model, false, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
 		}
 	}
-	if model.ContextLength > 0 && len(model.Capabilities) > 0 {
-		return model, nil
+	if fallback == nil && model.ContextLength > 0 && len(model.Capabilities) > 0 {
+		return model, false, nil
 	}
 	showCtx, cancel := context.WithTimeout(ctx, *budget)
 	defer cancel()
@@ -277,9 +296,9 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 	*budget -= time.Since(started)
 	if err != nil {
 		if showCtx.Err() != nil {
-			return model, showCtx.Err()
+			return model, false, showCtx.Err()
 		}
-		if len(inventory) == 0 {
+		if len(inventory) == 0 && fallback == nil {
 			inventory, _ = c.modelInventory().Load(ctx)
 			if listed, ok := findLaunchModel(inventory, name); ok {
 				model = listed
@@ -289,9 +308,10 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 		}
 		var status api.StatusError
 		if model.Remote && !(errors.As(err, &status) && status.StatusCode == http.StatusNotFound) {
-			return model, nil
+			var auth api.AuthorizationError
+			return model, errors.As(err, &auth), nil
 		}
-		return model, err
+		return model, false, err
 	}
 	if show.RemoteModel != "" {
 		model.RemoteModel = show.RemoteModel
@@ -299,16 +319,18 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 	if !model.Remote && (show.RemoteModel != "" || show.RemoteHost != "") {
 		model.Remote = true
 		if disabled, _ := cloudStatusDisabled(ctx, c.apiClient); disabled {
-			return model, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
+			return model, false, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
 		}
 	}
 	if len(show.Capabilities) > 0 {
 		model.Capabilities = slices.Clone(show.Capabilities)
 	}
-	if model.ContextLength <= 0 {
-		model.ContextLength, _ = modelInfoContextLength(show.ModelInfo)
+	if model.ContextLength <= 0 || fallback != nil {
+		if length, ok := modelInfoContextLength(show.ModelInfo); ok {
+			model.ContextLength = length
+		}
 	}
-	return model, nil
+	return model, false, nil
 }
 
 func piSupportsChat(model LaunchModel) bool {
@@ -326,6 +348,9 @@ func (c *launcherClient) piSelectableModels(ctx context.Context, items []ModelIt
 
 func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel, budget time.Duration) ([]LaunchModel, error) {
 	inventory, err := c.modelInventory().Load(ctx)
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		inventory, err = c.modelInventory().Refresh(ctx)
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return []LaunchModel{primary}, nil
 	}

@@ -46,9 +46,8 @@ func foldValue(data []byte, dims []int) uint32 {
 // use, released when the expansion is fully evaluated. A nil
 // *requestMedia is a text-only request; every method is nil-safe.
 type requestMedia struct {
-	model    model.MediaModel
-	items    []mediaItem
-	inputLen int
+	model model.MediaModel
+	items []mediaItem
 
 	// manifest is the request-scoped batch view of items; Features is
 	// toggled in place so every batch shares the same slice.
@@ -61,17 +60,18 @@ type requestMedia struct {
 	layout []any
 }
 
-func (r *Runner) openMedia(request Request) *requestMedia {
-	if len(request.MediaItems) == 0 {
+func (r *Runner) openMedia(request request) *requestMedia {
+	if len(request.MediaItems) == 0 && request.Layout == nil {
 		return nil
 	}
 	m := &requestMedia{
-		model:    r.Model.(model.MediaModel),
 		items:    request.MediaItems,
-		inputLen: len(request.Tokens),
 		manifest: make([]batch.MediaItem, len(request.MediaItems)),
 		features: make([]*mlx.Array, len(request.MediaItems)),
 		scope:    mlx.NewScope(),
+	}
+	if len(request.MediaItems) > 0 {
+		m.model = r.Model.(model.MediaModel)
 	}
 	if request.Layout != nil {
 		m.layout = []any{request.Layout}
@@ -94,8 +94,8 @@ func (item *mediaItem) atomic() bool { return !item.item.Causal }
 
 // extendChunk keeps a chunk from ending strictly inside an atomic
 // expansion: cut before one starting inside the chunk, else grow to its
-// end, clipped one short of the prompt to preserve the decode seed.
-func (m *requestMedia) extendChunk(pos, n int) int {
+// end, clipped to the caller's prefill boundary.
+func (m *requestMedia) extendChunk(pos, n, limit int) int {
 	if m == nil {
 		return n
 	}
@@ -109,7 +109,7 @@ func (m *requestMedia) extendChunk(pos, n int) int {
 			if item.pos > pos {
 				return item.pos - pos
 			}
-			return min(item.pos+item.length, m.inputLen-1) - pos
+			return min(item.pos+item.length, limit) - pos
 		}
 	}
 	return n

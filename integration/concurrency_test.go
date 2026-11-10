@@ -20,9 +20,13 @@ import (
 )
 
 // Send multiple requests in parallel (concurrently) to a single model and ensure responses are expected
-func runConcurrentChat(t *testing.T) {
-	// Assumes all requests have the same model
+func runConcurrentChat(t *testing.T, modelName string) {
 	req, resp := ChatRequests()
+	for i := range req {
+		req[i].Model = modelName
+		req[i].Think = &api.ThinkValue{Value: false}
+		req[i].Options = map[string]any{"num_predict": 256, "num_ctx": 4096}
+	}
 	numParallel := int(envconfig.NumParallel() + 1)
 	iterLimit := 3
 
@@ -31,13 +35,9 @@ func runConcurrentChat(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	pullOrSkip(ctx, t, client, req[0].Model)
-
-	// Get the server running (if applicable) warm the model up with a single initial request
-	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: req[0].Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}})
+	preloadConcurrentModel(ctx, t, client, api.GenerateRequest{Model: modelName, Options: req[0].Options})
 
 	var wg sync.WaitGroup
-	r := rand.New(rand.NewSource(0))
 	wg.Add(numParallel)
 	for i := range numParallel {
 		go func(i int) {
@@ -47,7 +47,7 @@ func runConcurrentChat(t *testing.T) {
 					slog.Info("exceeded soft timeout, winding down test")
 					return
 				}
-				k := r.Int() % len(req)
+				k := (i + j) % len(req)
 				slog.Info("Starting", "thread", i, "iter", j)
 				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
@@ -56,6 +56,28 @@ func runConcurrentChat(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// Load before starting clients so unsupported platforms skip on the test goroutine.
+func preloadConcurrentModel(ctx context.Context, t *testing.T, client *api.Client, req api.GenerateRequest) {
+	t.Helper()
+	pullOrSkip(ctx, t, client, req.Model)
+	info, err := client.Show(ctx, &api.ShowRequest{Model: req.Model, Runner: req.Runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	isMLX := info.Details.Format == "safetensors"
+	if isMLX {
+		skipRegisteredMinVRAM(t, req.Model)
+	}
+	if req.KeepAlive == nil {
+		req.KeepAlive = &api.Duration{Duration: 10 * time.Second}
+	}
+	preloadGenerateModel(ctx, t, client, req)
+	// Full GPU residency is required only for the MLX concurrency cases.
+	if isMLX {
+		skipIfNotGPULoaded(ctx, t, client, req.Model, 100)
+	}
 }
 
 // Stress the scheduler and attempt to load more models than will fit to cause thrashing
