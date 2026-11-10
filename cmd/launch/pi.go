@@ -40,18 +40,48 @@ var (
 )
 
 func piHasModelArgs(args []string) bool {
+	return piHasOption(args, "--provider", "--model")
+}
+
+func piHasSubcommand(args []string) bool {
+	return len(args) > 0 && slices.Contains([]string{"install", "remove", "uninstall", "update", "list", "config"}, args[0])
+}
+
+func piControlsLaunch(args []string) bool {
+	return piHasSubcommand(args) || piHasOption(args,
+		"--continue", "-c", "--resume", "-r", "--session", "--fork", "--models",
+		"--mode", "--print", "-p", "--export", "--help", "-h", "--version", "-v", "--list-models")
+}
+
+func piHasOption(args []string, options ...string) bool {
+	headlessMode := false
 	for i := 0; i < len(args); i++ {
+		if slices.Contains(options, args[i]) {
+			switch args[i] {
+			case "--continue", "-c", "--resume", "-r", "--print", "-p", "--help", "-h", "--version", "-v", "--list-models":
+				return true
+			case "--mode":
+				if i+1 < len(args) {
+					switch args[i+1] {
+					case "json", "rpc":
+						headlessMode = true
+					case "text":
+						headlessMode = false
+					}
+				}
+			default:
+				return i+1 < len(args)
+			}
+		}
 		switch args[i] {
-		case "--provider", "--model":
-			return i+1 < len(args)
-		case "--mode", "--api-key", "--system-prompt", "--append-system-prompt",
+		case "--provider", "--model", "--mode", "--api-key", "--system-prompt", "--append-system-prompt",
 			"--session", "--fork", "--session-dir", "--models", "--tools", "-t",
 			"--thinking", "--export", "--extension", "-e", "--skill", "--prompt-template", "--theme":
 			// These Pi options consume a value, even when it looks like a flag.
 			i++
 		}
 	}
-	return false
+	return headlessMode
 }
 
 // launchPiIntegration saves one starting model and synchronizes Pi's catalog
@@ -67,9 +97,10 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	if target == "" && !req.ForceConfigure && !req.ConfigureOnly {
 		target = current
 	}
+	pick := req.ForceConfigure || req.ConfigureOnly || (req.ModelOverride == "" && isInteractiveSession())
 	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, piModelDiscoveryTimeout)
 	defer cancelDiscovery()
-	if isCloudModelName(target) && !req.ForceConfigure && !req.ConfigureOnly {
+	if isCloudModelName(target) && !pick {
 		if disabled, _ := cloudStatusDisabled(discoveryCtx, c.apiClient); disabled {
 			return fmt.Errorf("cloud is disabled; enable cloud to use %s", target)
 		}
@@ -83,7 +114,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	if target == "" {
 		target = current
 	}
-	pick := req.ForceConfigure || req.ConfigureOnly || target == ""
+	pick = pick || target == ""
 	picked := false
 	var models []LaunchModel
 	for {
@@ -177,7 +208,8 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 		break
 	}
 
-	configured, err := pi.writeConfig(models, discoveryCtx.Err() != nil)
+	configure := req.ForceConfigure || req.ConfigureOnly || req.ModelOverride != ""
+	configured, err := pi.writeConfig(models, discoveryCtx.Err() != nil, configure)
 	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -191,18 +223,28 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	return launchAfterConfiguration("pi", pi, runtimeModel, models, req)
 }
 
-func (p *Pi) currentModel() (string, error) {
+func piAgentDir() (string, error) {
+	dir := os.Getenv("PI_CODING_AGENT_DIR")
+	if dir != "" && dir != "~" && !strings.HasPrefix(dir, "~/") {
+		return dir, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(home, ".pi", "agent", "settings.json")
-	settings, err := fileutil.ReadJSON(path)
-	if os.IsNotExist(err) {
-		return "", nil
+	if dir == "" {
+		return filepath.Join(home, ".pi", "agent"), nil
 	}
-	if err != nil {
-		return "", fmt.Errorf("read Pi config %s: %w", path, err)
+	if dir == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(dir, "~/")), nil
+}
+
+func (p *Pi) currentModel() (string, error) {
+	settings, err := piModelSettings()
+	if err != nil && settings == nil {
+		return "", err
 	}
 	if provider, _ := settings["defaultProvider"].(string); provider != "ollama" {
 		return "", nil
@@ -379,10 +421,22 @@ queue:
 	models = slices.DeleteFunc(models, func(model LaunchModel) bool {
 		return model.Name == "" || !piSupportsChat(model) || (cloudDisabled && model.Remote)
 	})
+	// Keep the starting model first, with cloud alternatives before long local inventories.
+	if len(models) > 1 {
+		slices.SortStableFunc(models[1:], func(a, b LaunchModel) int {
+			if a.Remote == b.Remote {
+				return 0
+			}
+			if a.Remote {
+				return -1
+			}
+			return 1
+		})
+	}
 	return models, nil
 }
 
-func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
+func (p *Pi) Run(model string, models []LaunchModel, args []string) error {
 	fmt.Fprintf(os.Stderr, "\n%sPreparing Pi...%s\n", ansiGray, ansiReset)
 	if err := ensureNpmInstalled(); err != nil {
 		return err
@@ -394,11 +448,16 @@ func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
 		return err
 	}
 
-	ensurePiWebSearchPackage(bin)
+	if (model != "" || len(models) > 0) && !piControlsLaunch(args) && !piHasModelArgs(args) {
+		ensurePiWebSearchPackage(bin)
+	}
 
 	fmt.Fprintf(os.Stderr, "\n%sLaunching Pi...%s\n\n", ansiGray, ansiReset)
 
-	if model != "" && !piHasModelArgs(args) {
+	if piUseDefaultModelScope(args) {
+		args = append([]string{"--models", "ollama/*"}, args...)
+	}
+	if model != "" && !piHasModelArgs(args) && !piHasSubcommand(args) {
 		args = append([]string{"--provider", "ollama", "--model", model}, args...)
 	}
 	cmd := exec.Command(bin, args...)
@@ -865,17 +924,17 @@ func npmLatestPackageVersion(pkg string) (string, error) {
 }
 
 func (p *Pi) Paths() []string {
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return nil
 	}
 
 	var paths []string
-	modelsPath := filepath.Join(home, ".pi", "agent", "models.json")
+	modelsPath := filepath.Join(dir, "models.json")
 	if _, err := os.Stat(modelsPath); err == nil {
 		paths = append(paths, modelsPath)
 	}
-	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	settingsPath := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(settingsPath); err == nil {
 		paths = append(paths, settingsPath)
 	}
@@ -887,23 +946,23 @@ func piBaseURL() string {
 }
 
 func (p *Pi) Edit(models []LaunchModel) error {
-	_, err := p.writeConfig(models, false)
+	_, err := p.writeConfig(models, false, true)
 	return err
 }
 
-func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, error) {
+func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog, forceDefault bool) (string, error) {
 	if len(models) == 0 {
 		return "", nil
 	}
 
 	primary := models[0].Name
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return "", err
 	}
 
-	configPath := filepath.Join(home, ".pi", "agent", "models.json")
-	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	configPath := filepath.Join(dir, "models.json")
+	settingsPath := filepath.Join(dir, "settings.json")
 	configs := make([]map[string]any, 2)
 	for i, path := range []string{configPath, settingsPath} {
 		data, err := fileutil.ReadJSON(path)
@@ -1009,8 +1068,10 @@ func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, er
 
 	// The first catalog entry is the separately selected starting model.
 
-	settings["defaultProvider"] = "ollama"
-	settings["defaultModel"] = primary
+	if provider, _ := settings["defaultProvider"].(string); forceDefault || provider == "" || provider == "ollama" {
+		settings["defaultProvider"] = "ollama"
+		settings["defaultModel"] = primary
+	}
 
 	settingsData, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -1023,12 +1084,12 @@ func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, er
 }
 
 func (p *Pi) Models() []string {
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return nil
 	}
 
-	configPath := filepath.Join(home, ".pi", "agent", "models.json")
+	configPath := filepath.Join(dir, "models.json")
 	config, err := fileutil.ReadJSON(configPath)
 	if err != nil {
 		return nil

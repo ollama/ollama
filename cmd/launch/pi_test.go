@@ -346,7 +346,7 @@ exit 0
 		})
 
 		p := &Pi{}
-		if err := p.Run("ignored", nil, []string{"--version"}); err != nil {
+		if err := p.Run("ignored", nil, []string{"fixture-prompt"}); err != nil {
 			npmCalls, _ := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
 			t.Fatalf("Run() error = %v\nnpm calls:\n%s", err, npmCalls)
 		}
@@ -370,7 +370,7 @@ exit 0
 		if !strings.Contains(got, "install "+piWebSearchSource+"\n") {
 			t.Fatalf("expected pi web search install call, got:\n%s", got)
 		}
-		if !strings.Contains(got, "--version\n") {
+		if !strings.Contains(got, "fixture-prompt\n") {
 			t.Fatalf("expected final pi launch call, got:\n%s", got)
 		}
 	})
