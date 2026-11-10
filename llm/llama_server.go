@@ -661,12 +661,19 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 	}
 }
 
-// appendLoadModeArgs selects llama-server's single model loading mode. Direct I/O
-// skips the page cache on load for integrated CUDA/ROCm GPUs, which share system
-// memory with the CPU and would otherwise double-buffer weights.
+// appendLoadModeArgs selects llama-server's single model loading mode. Integrated
+// GPUs share memory with the CPU: Linux CUDA/ROCm use direct I/O to skip the page
+// cache, while Vulkan uses mmap because non-mmap loads place CPU-resident tensors
+// in a host buffer drawn from the same device budget as the weights.
 func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
 	for _, g := range gpus {
-		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+		if !g.Integrated {
+			continue
+		}
+		if strings.EqualFold(g.Library, "Vulkan") {
+			return append(params, "--load-mode", "mmap")
+		}
+		if runtime.GOOS == "linux" && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
 			return append(params, "--load-mode", "dio")
 		}
 	}
