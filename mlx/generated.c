@@ -333,8 +333,16 @@ int (*mlx_distributed_init_)(
     mlx_distributed_group* res,
     bool strict,
     const char* bk /* may be null */) = NULL;
-int (*mlx_distributed_group_rank_)(mlx_distributed_group group) = NULL;
-int (*mlx_distributed_group_size_)(mlx_distributed_group group) = NULL;
+int (*mlx_distributed_init_with_all_gather_)(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk,
+    mlx_distributed_all_gather_fn all_gather,
+    void* payload,
+    void (*dtor)(void*)) = NULL;
+int (*mlx_distributed_clear_backends_)(void) = NULL;
+int (*mlx_distributed_group_get_rank_)(int* res, mlx_distributed_group group) = NULL;
+int (*mlx_distributed_group_get_size_)(int* res, mlx_distributed_group group) = NULL;
 int (*mlx_distributed_group_split_)(
     mlx_distributed_group* res,
     mlx_distributed_group group,
@@ -2748,8 +2756,10 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_distributed_group_new);
     CHECK_LOAD(handle, mlx_distributed_group_free);
     CHECK_LOAD(handle, mlx_distributed_init);
-    CHECK_LOAD(handle, mlx_distributed_group_rank);
-    CHECK_LOAD(handle, mlx_distributed_group_size);
+    CHECK_LOAD(handle, mlx_distributed_init_with_all_gather);
+    CHECK_LOAD(handle, mlx_distributed_clear_backends);
+    CHECK_LOAD(handle, mlx_distributed_group_get_rank);
+    CHECK_LOAD(handle, mlx_distributed_group_get_size);
     CHECK_LOAD(handle, mlx_distributed_group_split);
     CHECK_LOAD(handle, mlx_distributed_is_available);
     CHECK_LOAD(handle, mlx_set_error_handler);
