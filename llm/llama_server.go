@@ -666,8 +666,22 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 // memory with the CPU and would otherwise double-buffer weights.
 func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
 	for _, g := range gpus {
-		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
-			return append(params, "--load-mode", "dio")
+		if g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+			if runtime.GOOS == "linux" {
+				return append(params, "--load-mode", "dio")
+			}
+			// On Windows an iGPU's device buffers and pinned host buffers
+			// (cudaMallocHost/hipHostMalloc) both come out of the same WDDM
+			// shared-memory budget (about half of system RAM). llama-server
+			// disables mmap for iGPUs and places CPU-side weights in pinned
+			// host memory, which --fit does not count, so a partially
+			// offloaded model overflows the budget and the KV cache or
+			// compute buffer allocation fails ("unable to allocate ROCm0
+			// buffer"). Keep CPU-side weights in ordinary pageable memory.
+			if runtime.GOOS == "windows" {
+				params = append(params, "--no-host")
+			}
+			break
 		}
 	}
 
