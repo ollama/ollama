@@ -59,16 +59,16 @@ func TestSchedulerMixedRequests(t *testing.T) {
 				}()
 				generation := request{Ctx: ctx, Tokens: []int32{1, 1, 1}, Responses: make(chan CompletionResponse, 16), CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 8}}}
 				var embedding []float32
-				readouts := 0
-				readout := &readoutRequest{ctx: ctx, done: make(chan error, 1), open: func(slot *batchSlot) (*readoutState, error) {
-					return r.openReadout(slot, &model.PreparedRequest{Tokens: []int32{2, 2}}, nil, func(hidden *mlx.Array) error {
-						readouts++
+				evaluations := 0
+				evaluation := &evaluationRequest{ctx: ctx, done: make(chan error, 1), open: func(slot *batchSlot) (*evaluationState, error) {
+					return r.openEvaluation(slot, &model.PreparedRequest{Tokens: []int32{2, 2}}, nil, func(hidden *mlx.Array) error {
+						evaluations++
 						embedding = meanPoolAndNormalize(hidden.Reshape(2, mtpTestVocab), 2)
 						return nil
 					}), nil
 				}}
 				speech := &speechRequest{ctx: ctx, input: llm.SpeechRequest{Input: "3"}, queue: &audioQueue{ready: make(chan struct{}, 1)}, done: make(chan error, 1)}
-				requests := []queuedRequest{generation, readout, speech}
+				requests := []queuedRequest{generation, evaluation, speech}
 				for _, i := range order {
 					r.Requests <- requests[i]
 				}
@@ -82,9 +82,9 @@ func TestSchedulerMixedRequests(t *testing.T) {
 						if slot.request == nil || slot.request.request.Responses != want.Responses {
 							t.Fatal("generation was admitted out of order")
 						}
-					case *readoutRequest:
-						if slot.readout == nil || slot.readout.request != want {
-							t.Fatal("readout was admitted out of order")
+					case *evaluationRequest:
+						if slot.evaluation == nil || slot.evaluation.request != want {
+							t.Fatal("evaluation was admitted out of order")
 						}
 					case *speechRequest:
 						if slot.speech != want {
@@ -118,11 +118,11 @@ func TestSchedulerMixedRequests(t *testing.T) {
 				if !final.Done || final.EvalCount != 8 || text.String() != strings.Repeat(tok.Decode([]int32{1}), 8) {
 					t.Fatalf("generation mixed results: %q, %+v", text.String(), final)
 				}
-				if err := <-readout.done; err != nil {
+				if err := <-evaluation.done; err != nil {
 					t.Fatal(err)
 				}
-				if readouts != 1 || !slices.Equal(embedding, []float32{0, 0, 1, 0, 0, 0, 0, 0}) {
-					t.Fatalf("readout count %d, embedding %v", readouts, embedding)
+				if evaluations != 1 || !slices.Equal(embedding, []float32{0, 0, 1, 0, 0, 0, 0, 0}) {
+					t.Fatalf("evaluation count %d, embedding %v", evaluations, embedding)
 				}
 				if err := <-speech.done; err != nil {
 					t.Fatal(err)
@@ -141,7 +141,7 @@ func TestSchedulerMixedRequests(t *testing.T) {
 // worker rejects dispatch. Every request type must release its waiting caller.
 func TestSchedulerRejectsUnadmittedRequests(t *testing.T) {
 	for _, reason := range []string{"canceled", "stopped-worker"} {
-		for _, kind := range []string{"generation", "readout", "speech"} {
+		for _, kind := range []string{"generation", "evaluation", "speech"} {
 			t.Run(reason+"/"+kind, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
@@ -154,8 +154,8 @@ func TestSchedulerRejectsUnadmittedRequests(t *testing.T) {
 				switch kind {
 				case "generation":
 					pending = request{Ctx: requestCtx, Responses: responses, Grammar: grammar}
-				case "readout":
-					pending = &readoutRequest{ctx: requestCtx, done: completed}
+				case "evaluation":
+					pending = &evaluationRequest{ctx: requestCtx, done: completed}
 				case "speech":
 					pending = &speechRequest{ctx: requestCtx, done: completed}
 				}

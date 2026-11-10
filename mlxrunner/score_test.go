@@ -257,7 +257,7 @@ func TestScoreHandlerScratchCache(t *testing.T) {
 }
 
 // Value tests already own an MLX thread. Drive the real admission/step methods
-// there while the CPU scoring caller waits for its readout.
+// there while the CPU scoring caller waits for its evaluation.
 type scoreTestRunner struct {
 	Runner
 	batchSlot
@@ -277,8 +277,8 @@ func (r *scoreTestRunner) run(f func() error) error {
 			return err
 		case req := <-r.Requests:
 			s.admit(req)
-			for r.readout != nil {
-				s.stepReadout(&r.batchSlot)
+			for r.evaluation != nil {
+				s.stepEvaluation(&r.batchSlot)
 			}
 		}
 	}

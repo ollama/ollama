@@ -10,24 +10,24 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 )
 
-type activeReadout struct {
-	request *readoutRequest
-	state   *readoutState
+type activeEvaluation struct {
+	request *evaluationRequest
+	state   *evaluationState
 }
 
-func (r *Runner) scheduleReadout(ctx context.Context, open func(*batchSlot) (*readoutState, error)) error {
-	request := &readoutRequest{ctx: ctx, open: open, done: make(chan error, 1)}
+func (r *Runner) scheduleEvaluation(ctx context.Context, open func(*batchSlot) (*evaluationState, error)) error {
+	request := &evaluationRequest{ctx: ctx, open: open, done: make(chan error, 1)}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case r.Requests <- request:
 	}
-	// Once admitted, wait for cleanup even on cancellation. A readout may still
+	// Once admitted, wait for cleanup even on cancellation. An evaluation may still
 	// be writing CPU results captured by the caller while its GPU step ends.
 	return <-request.done
 }
 
-func (s *batchScheduler) admitReadout(request *readoutRequest) {
+func (s *batchScheduler) admitEvaluation(request *evaluationRequest) {
 	if err := request.ctx.Err(); err != nil {
 		request.reject(err)
 		return
@@ -45,21 +45,21 @@ func (s *batchScheduler) admitReadout(request *readoutRequest) {
 			request.done <- err
 			return
 		}
-		slot.readout = &activeReadout{request: request, state: p}
+		slot.evaluation = &activeEvaluation{request: request, state: p}
 		return
 	}
-	panic("scheduler admitted readout request without a free slot")
+	panic("scheduler admitted evaluation request without a free slot")
 }
 
-func (s *batchScheduler) finishReadout(slot *batchSlot, err error) {
-	p := slot.readout
+func (s *batchScheduler) finishEvaluation(slot *batchSlot, err error) {
+	p := slot.evaluation
 	s.keepScratch = p.state.keepScratch && err == nil
 	p.state.close()
-	slot.readout = nil
+	slot.evaluation = nil
 	p.request.done <- err
 }
 
-func (s *batchScheduler) stepReadout(slot *batchSlot) {
+func (s *batchScheduler) stepEvaluation(slot *batchSlot) {
 	if rows, n := s.cachedForwardSlots(slot); len(rows) > 1 {
 		s.cachedForward(rows, n)
 		return
@@ -68,23 +68,23 @@ func (s *batchScheduler) stepReadout(slot *batchSlot) {
 		s.wholeForward(rows)
 		return
 	}
-	done, err := slot.readout.state.step(slot.readout.request.ctx)
+	done, err := slot.evaluation.state.step(slot.evaluation.request.ctx)
 	if done || err != nil {
-		s.finishReadout(slot, err)
+		s.finishEvaluation(slot, err)
 	}
 }
 
-// forwardHidden schedules a model input and its readout together. No MLX array
-// crosses back to the handler goroutine. Cacheless models consume whole rows;
+// forwardHidden evaluates the input and consumes its hidden states on the MLX
+// worker. No MLX array crosses back to the handler. Cacheless models consume whole rows;
 // causal models retain prefix reuse and yield between prompt chunks.
-func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest, segments []model.Segment, readout func(*mlx.Array) error) (int, error) {
+func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest, segments []model.Segment, consume func(*mlx.Array) error) (int, error) {
 	items, err := bindItems(input, segments)
 	if err != nil {
 		return 0, err
 	}
 	cached := 0
-	err = r.scheduleReadout(ctx, func(slot *batchSlot) (*readoutState, error) {
-		p := r.openReadout(slot, input, items, readout)
+	err = r.scheduleEvaluation(ctx, func(slot *batchSlot) (*evaluationState, error) {
+		p := r.openEvaluation(slot, input, items, consume)
 		p.keepScratch = true
 		cached = p.position
 		return p, nil
@@ -92,8 +92,8 @@ func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest
 	return cached, err
 }
 
-func (r *Runner) openReadout(slot *batchSlot, input *model.PreparedRequest, items []mediaItem, readout func(*mlx.Array) error) *readoutState {
-	p := &readoutState{r: r, input: input, readout: readout}
+func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, items []mediaItem, consume func(*mlx.Array) error) *evaluationState {
+	p := &evaluationState{r: r, input: input, consume: consume}
 	p.media = r.openMedia(request{Tokens: input.Tokens, MediaItems: items, Layout: input.Layout})
 	if slot.scoreCache == nil {
 		cs := r.Model.NewCaches()
@@ -113,10 +113,10 @@ func (r *Runner) openReadout(slot *batchSlot, input *model.PreparedRequest, item
 	return p
 }
 
-type readoutState struct {
+type evaluationState struct {
 	r           *Runner
 	input       *model.PreparedRequest
-	readout     func(*mlx.Array) error
+	consume     func(*mlx.Array) error
 	session     *cacheSession
 	hidden      *cache.HiddenCache
 	media       *requestMedia
@@ -124,7 +124,7 @@ type readoutState struct {
 	keepScratch bool
 }
 
-func (p *readoutState) step(ctx context.Context) (bool, error) {
+func (p *evaluationState) step(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -134,7 +134,7 @@ func (p *readoutState) step(ctx context.Context) (bool, error) {
 			h, _ := p.r.Model.Forward(b, nil)
 			return []*mlx.Array{h}
 		})[0]
-		return true, p.readout(out)
+		return true, p.consume(out)
 	}
 	if p.position < len(p.input.Tokens) {
 		n := p.media.extendChunk(p.position, min(prefillChunkSize(), len(p.input.Tokens)-p.position), len(p.input.Tokens))
@@ -158,10 +158,10 @@ func (p *readoutState) step(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	return true, p.readout(p.hidden.State()[0])
+	return true, p.consume(p.hidden.State()[0])
 }
 
-func (p *readoutState) inputBatch(offset, n int) *batch.Batch {
+func (p *evaluationState) inputBatch(offset, n int) *batch.Batch {
 	return &batch.Batch{
 		InputIDs:   mlx.FromValues(p.input.Tokens[offset:offset+n], 1, n),
 		SeqOffsets: []int32{int32(offset)}, SeqQueryLens: []int32{int32(n)},
@@ -169,19 +169,19 @@ func (p *readoutState) inputBatch(offset, n int) *batch.Batch {
 	}
 }
 
-func (p *readoutState) close() {
+func (p *evaluationState) close() {
 	if p.session != nil {
 		p.session.close()
 	}
 	p.media.close()
 }
 
-// wholeForward evaluates compatible cacheless rows together. Each readout gets
+// wholeForward evaluates compatible cacheless rows together. Each evaluation gets
 // only its real tokens; padding never reaches pooling or a decision head.
 func (s *batchScheduler) wholeForward(slots []*batchSlot) {
 	length := 0
 	for _, slot := range slots {
-		p := slot.readout.state
+		p := slot.evaluation.state
 		length = max(length, len(p.input.Tokens))
 	}
 	logutil.Trace("mlx whole forward batch", "rows", len(slots), "tokens", length)
@@ -191,29 +191,29 @@ func (s *batchScheduler) wholeForward(slots []*batchSlot) {
 		return []*mlx.Array{h}
 	})[0]
 	for i, slot := range slots {
-		p := slot.readout.state
-		err := slot.readout.request.ctx.Err()
+		p := slot.evaluation.state
+		err := slot.evaluation.request.ctx.Err()
 		if err == nil {
-			err = p.readout(hidden.Slice(mlx.Slice(i, i+1), mlx.Slice(0, len(p.input.Tokens)), mlx.Slice()))
+			err = p.consume(hidden.Slice(mlx.Slice(i, i+1), mlx.Slice(0, len(p.input.Tokens)), mlx.Slice()))
 		}
-		s.finishReadout(slot, err)
+		s.finishEvaluation(slot, err)
 	}
 }
 
 // Whole rows cannot be chunked without changing bidirectional attention. Keep
 // padding plus real tokens within one prompt chunk when combining requests.
 func (s *batchScheduler) wholeForwardSlots(first *batchSlot) []*batchSlot {
-	p := first.readout.state
+	p := first.evaluation.state
 	if p.session != nil {
 		return nil
 	}
 	slots := []*batchSlot{first}
 	length := len(p.input.Tokens)
 	for _, slot := range s.slots {
-		if slot == nil || slot == first || slot.readout == nil || slot.readout.request.ctx.Err() != nil {
+		if slot == nil || slot == first || slot.evaluation == nil || slot.evaluation.request.ctx.Err() != nil {
 			continue
 		}
-		other := slot.readout.state
+		other := slot.evaluation.state
 		if other.session != nil {
 			continue
 		}
@@ -232,7 +232,7 @@ func forwardBatch(slots []*batchSlot, length int) *batch.Batch {
 	tokens := make([]int32, len(slots)*length)
 	b := &batch.Batch{SeqOffsets: make([]int32, len(slots)), SeqQueryLens: make([]int32, len(slots)), Layout: make([]any, len(slots))}
 	for i, slot := range slots {
-		p := slot.readout.state
+		p := slot.evaluation.state
 		n := min(length, len(p.input.Tokens)-p.position)
 		copy(tokens[i*length:], p.input.Tokens[p.position:p.position+n])
 		b.SeqOffsets[i], b.SeqQueryLens[i] = int32(p.position), int32(n)
@@ -247,17 +247,17 @@ func forwardBatch(slots []*batchSlot, length int) *batch.Batch {
 }
 
 func (s *batchScheduler) cachedForwardSlots(first *batchSlot) ([]*batchSlot, int) {
-	p := first.readout.state
+	p := first.evaluation.state
 	if p.session == nil || p.position == len(p.input.Tokens) {
 		return nil, 0
 	}
 	slots := []*batchSlot{first}
 	n := min(prefillChunkSize(), len(p.input.Tokens)-p.position)
 	for _, slot := range s.slots {
-		if slot == nil || slot == first || slot.readout == nil || slot.readout.request.ctx.Err() != nil {
+		if slot == nil || slot == first || slot.evaluation == nil || slot.evaluation.request.ctx.Err() != nil {
 			continue
 		}
-		other := slot.readout.state
+		other := slot.evaluation.state
 		if other.session == nil || other.position == len(other.input.Tokens) {
 			continue
 		}
@@ -268,7 +268,7 @@ func (s *batchScheduler) cachedForwardSlots(first *batchSlot) ([]*batchSlot, int
 		for candidate > 0 {
 			before := candidate
 			for _, row := range rows {
-				p := row.readout.state
+				p := row.evaluation.state
 				boundary := p.media.extendChunk(p.position, candidate, len(p.input.Tokens))
 				if boundary > candidate {
 					candidate = 0 // An atomic expansion cannot fit this cohort.
@@ -291,13 +291,13 @@ func (s *batchScheduler) cachedForward(slots []*batchSlot, n int) {
 	logutil.Trace("mlx cached forward batch", "rows", len(slots), "tokens", n)
 	rows := make([][]cache.Cache, len(slots))
 	for i, slot := range slots {
-		cs := slot.readout.state.session.caches
+		cs := slot.evaluation.state.session.caches
 		rows[i] = cs[:len(cs)-1] // Hidden outputs are appended after the forward.
 	}
 	layers, err := cache.Batch(rows)
 	if err != nil {
 		for _, slot := range slots {
-			s.finishReadout(slot, err)
+			s.finishEvaluation(slot, err)
 		}
 		return
 	}
@@ -308,7 +308,7 @@ func (s *batchScheduler) cachedForward(slots []*batchSlot, n int) {
 	})[0]
 	var state []*mlx.Array
 	for i, slot := range slots {
-		p := slot.readout.state
+		p := slot.evaluation.state
 		// A completed request must not retain its peers' hidden allocations.
 		p.hidden.Append(hidden.TakeAxis(mlx.FromValues([]int32{int32(i)}, 1), 0))
 		for _, c := range p.session.caches {
@@ -319,15 +319,15 @@ func (s *batchScheduler) cachedForward(slots []*batchSlot, n int) {
 	}
 	mlx.Eval(state...)
 	for _, slot := range slots {
-		p := slot.readout.state
+		p := slot.evaluation.state
 		p.position += n
 		p.media.free(p.position)
-		err := slot.readout.request.ctx.Err()
+		err := slot.evaluation.request.ctx.Err()
 		if err == nil && p.position == len(p.input.Tokens) {
-			err = p.readout(p.hidden.State()[0])
+			err = p.consume(p.hidden.State()[0])
 		}
 		if err != nil || p.position == len(p.input.Tokens) {
-			s.finishReadout(slot, err)
+			s.finishEvaluation(slot, err)
 		}
 	}
 }

@@ -65,15 +65,15 @@ func completionStatusError(err error) *api.StatusError {
 	return &statusErr
 }
 
-// A readout evaluates the supplied input and consumes its hidden states without
+// An evaluation computes embeddings or decision scores from the supplied input without
 // entering the token decode loop. Its callback runs on the MLX worker.
-type readoutRequest struct {
+type evaluationRequest struct {
 	ctx  context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
-	open func(*batchSlot) (*readoutState, error)
+	open func(*batchSlot) (*evaluationState, error)
 	done chan error
 }
 
-func (r *readoutRequest) reject(err error) { r.done <- err }
+func (r *evaluationRequest) reject(err error) { r.done <- err }
 
 type speechRequest struct {
 	ctx   context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.

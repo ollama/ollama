@@ -14,7 +14,7 @@ import (
 )
 
 // A cacheless forward exposes the row's tokens, layout and media in its output,
-// making cross-request wiring and padded readouts observable without weights.
+// making cross-request wiring and padded evaluations observable without weights.
 type rowTestModel struct {
 	stubModel
 	batches []int
@@ -58,8 +58,8 @@ func TestWholeForwardRows(t *testing.T) {
 					}
 				}
 				done[id] = make(chan error, 1)
-				r.Requests <- &readoutRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*readoutState, error) {
-					return r.openReadout(slot, input, items, func(h *mlx.Array) error { result[id] = h.Floats(); return nil }), nil
+				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*evaluationState, error) {
+					return r.openEvaluation(slot, input, items, func(h *mlx.Array) error { result[id] = h.Floats(); return nil }), nil
 				}}
 			}
 			s.admitPending()
@@ -80,7 +80,7 @@ func TestWholeForwardRows(t *testing.T) {
 	})
 }
 
-func TestReadoutCancellationAndSlotReuse(t *testing.T) {
+func TestEvaluationCancellationAndSlotReuse(t *testing.T) {
 	testCtx := t.Context()
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		m := &rowTestModel{}
@@ -89,15 +89,15 @@ func TestReadoutCancellationAndSlotReuse(t *testing.T) {
 		ctx, cancel := context.WithCancel(testCtx)
 		defer cancel()
 		results := make([][]float32, 3)
-		requests := make([]*readoutRequest, 3)
+		requests := make([]*evaluationRequest, 3)
 		for i := range requests {
 			requestCtx := testCtx
 			if i == 0 {
 				requestCtx = ctx
 			}
-			requests[i] = &readoutRequest{ctx: requestCtx, done: make(chan error, 1), open: func(slot *batchSlot) (*readoutState, error) {
+			requests[i] = &evaluationRequest{ctx: requestCtx, done: make(chan error, 1), open: func(slot *batchSlot) (*evaluationState, error) {
 				input := &model.PreparedRequest{Tokens: []int32{int32(i + 1)}, Layout: float32(10)}
-				return r.openReadout(slot, input, nil, func(h *mlx.Array) error {
+				return r.openEvaluation(slot, input, nil, func(h *mlx.Array) error {
 					results[i] = h.Floats()
 					return nil
 				}), nil
@@ -119,11 +119,11 @@ func TestReadoutCancellationAndSlotReuse(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(results[0]) != 0 || !slices.Equal(results[1], []float32{12}) || !slices.Equal(results[2], []float32{13}) {
-			t.Fatalf("readouts after cancellation/reuse: %v", results)
+			t.Fatalf("evaluations after cancellation/reuse: %v", results)
 		}
 		for _, slot := range s.slots {
 			if slot.busy() {
-				t.Fatal("completed readout still owns a slot")
+				t.Fatal("completed evaluation still owns a slot")
 			}
 		}
 		s.step()
@@ -185,8 +185,8 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 			cached := make([]int, 2)
 			for id, tokens := range prompts {
 				done[id] = make(chan error, 1)
-				r.Requests <- &readoutRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*readoutState, error) {
-					p := r.openReadout(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 2 - id}, nil, func(h *mlx.Array) error { got[id] = h.Floats(); return nil })
+				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*evaluationState, error) {
+					p := r.openEvaluation(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 2 - id}, nil, func(h *mlx.Array) error { got[id] = h.Floats(); return nil })
 					cached[id] = p.position
 					return p, nil
 				}}
@@ -245,8 +245,8 @@ func TestCachedForwardChunkBoundaries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &batchScheduler{slots: make([]*batchSlot, 2)}
 			for i, n := range tt.length {
-				p := &readoutState{input: &model.PreparedRequest{Tokens: make([]int32, n)}, session: &cacheSession{}, media: &requestMedia{items: tt.media[i]}}
-				s.slots[i] = &batchSlot{readout: &activeReadout{request: &readoutRequest{ctx: t.Context()}, state: p}}
+				p := &evaluationState{input: &model.PreparedRequest{Tokens: make([]int32, n)}, session: &cacheSession{}, media: &requestMedia{items: tt.media[i]}}
+				s.slots[i] = &batchSlot{evaluation: &activeEvaluation{request: &evaluationRequest{ctx: t.Context()}, state: p}}
 			}
 			rows, n := s.cachedForwardSlots(s.slots[0])
 			if len(rows) != tt.rows || n != tt.tokens {

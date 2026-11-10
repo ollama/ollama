@@ -731,6 +731,8 @@ func (s *Sampler) sampleTokensUniform(slots []*slotState, opts Options, logits *
 	}
 
 	ctx := &slotCtx{opts: opts, history: hist}
+	// Use the first slot to sample all rows with their shared options.
+	// canBatch routes seeded stochastic batches through per-slot sampling.
 	token := slots[0].sample(ctx, logits)
 	if !opts.usesHistory() {
 		return token

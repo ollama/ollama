@@ -19,14 +19,14 @@ type batchSlot struct {
 	targets     []cache.Cache
 	speculation *speculation
 	request     *batchRequest
-	readout     *activeReadout
+	evaluation  *activeEvaluation
 	speech      *speechRequest
 	scoreCache  *prefixCache
 	scoreHidden *cache.HiddenCache
 }
 
 func (slot *batchSlot) busy() bool {
-	return slot.request != nil || slot.readout != nil || slot.speech != nil
+	return slot.request != nil || slot.evaluation != nil || slot.speech != nil
 }
 
 type batchRequest struct {
@@ -72,8 +72,8 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 						s.finish(slot, context.Canceled)
 						close(slot.request.request.Responses)
 					}
-					if slot.readout != nil {
-						s.finishReadout(slot, context.Canceled)
+					if slot.evaluation != nil {
+						s.finishEvaluation(slot, context.Canceled)
 					}
 					if slot.speech != nil {
 						s.finishSpeech(slot, context.Canceled)
@@ -169,8 +169,8 @@ func (s *batchScheduler) admit(pending queuedRequest) {
 	switch req := pending.(type) {
 	case request:
 		s.admitGeneration(req)
-	case *readoutRequest:
-		s.admitReadout(req)
+	case *evaluationRequest:
+		s.admitEvaluation(req)
 	case *speechRequest:
 		s.admitSpeech(req)
 	default:
@@ -288,9 +288,9 @@ func (s *batchScheduler) step() bool {
 		}
 	}
 	for _, slot := range s.slots {
-		if slot != nil && slot.readout != nil {
-			if err := slot.readout.request.ctx.Err(); err != nil {
-				s.finishReadout(slot, err)
+		if slot != nil && slot.evaluation != nil {
+			if err := slot.evaluation.request.ctx.Err(); err != nil {
+				s.finishEvaluation(slot, err)
 				progressed = true
 			}
 		}
@@ -300,9 +300,9 @@ func (s *batchScheduler) step() bool {
 	for n := range len(s.slots) {
 		i := (s.nextPrefill + n) % len(s.slots)
 		slot := s.slots[i]
-		if slot != nil && slot.readout != nil {
+		if slot != nil && slot.evaluation != nil {
 			s.nextPrefill = (i + 1) % len(s.slots)
-			s.stepReadout(slot)
+			s.stepEvaluation(slot)
 			progressed = true
 			break
 		}
