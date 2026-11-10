@@ -2894,6 +2894,16 @@ type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+
+	// llama.cpp prints one line per buffer, so a key can repeat within one
+	// load: mmapped weights arrive as many model lines, and an iSWA model
+	// reports its full and sliding-window caches as two KV lines, with a
+	// rotation line after each when the cache is quantized. Lines add up
+	// within a pass. A model line after any other kind starts a new pass,
+	// and a key's first line in a new pass replaces its old value, so a
+	// fit probe's buffers give way to the final load's.
+	pass     int
+	lastKind string
 }
 
 type memoryBufferKey struct {
@@ -2904,6 +2914,7 @@ type memoryBufferKey struct {
 
 type memoryBuffer struct {
 	bytes uint64
+	pass  int
 }
 
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
@@ -2984,11 +2995,21 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
-					w.buffers[memoryBufferKey{
+					key := memoryBufferKey{
 						component: string(match[1]),
 						backend:   backendName,
 						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+					}
+					if key.kind == "model" && w.lastKind != "" && w.lastKind != "model" {
+						w.pass++
+					}
+					w.lastKind = key.kind
+
+					bytes := uint64(mib * 1024 * 1024)
+					if prev, ok := w.buffers[key]; ok && prev.pass == w.pass {
+						bytes += prev.bytes
+					}
+					w.buffers[key] = memoryBuffer{bytes: bytes, pass: w.pass}
 					w.updateRunnerMemoryLocked()
 				}
 			}
