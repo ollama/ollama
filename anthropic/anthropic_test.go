@@ -839,6 +839,36 @@ func TestFromMessagesRequest_ThinkingOnlyBlock(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_MultipleThinkingBlocks(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{Role: "user", Content: textContent("q")},
+			{
+				Role: "assistant",
+				Content: []ContentBlock{
+					{Type: "thinking", Thinking: ptr("FIRST reasoning")},
+					{Type: "text", Text: ptr("Let me search.")},
+					{Type: "thinking", Thinking: ptr("SECOND reasoning")},
+					{Type: "tool_use", ID: "t1", Name: "f"},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assistantMsg := result.Messages[1]
+	want := "FIRST reasoning\nSECOND reasoning"
+	if assistantMsg.Thinking != want {
+		t.Errorf("expected thinking %q, got %q", want, assistantMsg.Thinking)
+	}
+}
+
 func TestFromMessagesRequest_ToolUseMissingID(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
