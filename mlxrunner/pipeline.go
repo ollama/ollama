@@ -256,10 +256,10 @@ type decoder interface {
 	close()
 }
 
-// decode drives either decoder and owns where generation stops — at an EOS
-// or the NumPredict budget. Every produced token is recorded so the caches
-// never rest ahead of session.outputs; tokens past the stop are recorded but
-// not streamed or counted.
+// decode drives either decoder and owns where generation stops — at an EOS,
+// a stop sequence, or the NumPredict budget. Every produced token is recorded
+// so the caches never rest ahead of session.outputs; tokens past the stop are
+// recorded but not streamed or counted.
 func (r *Runner) decode(ctx context.Context, request Request, session *cacheSession, d decoder, promptEval time.Duration) error {
 	// A sampled-but-undelivered result is still a produced token; record it.
 	defer skipCleanupOnPanic(func() {
@@ -274,6 +274,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		wantLogprobs:    request.SamplerOpts.Logprobs,
 		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
 	}
+	stops := newStopMatcher(request.Options.Stop)
 
 	cachedPromptCount := len(session.inputs) - len(session.remaining)
 	final := CompletionResponse{
@@ -330,16 +331,27 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 				}
 			}
 
-			for _, res := range results[:stream] {
+			for i, res := range results[:stream] {
 				resp, ok := detok.detokenize(res)
 				if !ok {
 					continue
 				}
-				select {
-				case <-ctx.Done():
-					err = ctx.Err()
-					return
-				case request.Responses <- resp:
+				ready, matched := stops.push(resp)
+				for _, resp := range ready {
+					select {
+					case <-ctx.Done():
+						err = ctx.Err()
+						return
+					case request.Responses <- resp:
+					}
+				}
+				if matched {
+					// A stop sequence ends generation like an EOS: the rest of
+					// this run is recorded but not streamed or counted.
+					final.DoneReason = 0
+					generated -= stream - (i + 1)
+					done = true
+					break
 				}
 			}
 		})
@@ -353,6 +365,16 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 
 		if generated/clearCacheInterval != before/clearCacheInterval {
 			mlx.ClearCache()
+		}
+	}
+
+	// Text held back as a possible stop sequence is ordinary output when
+	// generation ends without one.
+	for _, resp := range stops.flush() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case request.Responses <- resp:
 		}
 	}
 
