@@ -278,7 +278,8 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			cudaFlashAttentionSupported(gpu) ||
 			gpu.Library == "ROCm" ||
-			gpu.Library == "Vulkan"
+			gpu.Library == "Vulkan" ||
+			gpu.Library == "Rocket"
 
 		if !supportsFA {
 			return false
@@ -384,6 +385,9 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	// that implementation can live here.
 
 	if d.Library == "CUDA" || d.Library == "ROCm" {
+		return true
+	}
+	if d.Library == "Rocket" && other.Library == "Vulkan" {
 		return true
 	}
 	return false

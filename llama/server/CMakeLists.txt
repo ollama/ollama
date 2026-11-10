@@ -295,6 +295,8 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     endif()
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../rocket/rocket.cmake)
+
 # Find GPU toolkits for runtime dependency bundling.
 # The llama.cpp build finds these internally, but we need the
 # variables (CUDAToolkit_LIBRARY_DIR, etc.) in our install scope.
@@ -594,6 +596,14 @@ if(OLLAMA_RUNNER_DIR)
             )
         endif()
     endif()
+    if(GGML_ROCKET)
+        if(TARGET ggml-rocket)
+            install(TARGETS ggml-rocket
+                RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
+                LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
+            )
+        endif()
+    endif()
 else()
     # CPU/base build — install llama-server, llama-quantize + all shared libs + CPU backend modules
     # RUNTIME covers executables and Windows DLLs; LIBRARY covers .so on Linux
@@ -614,6 +624,12 @@ else()
     install(TARGETS ${_llama_server_base_libs}
         RUNTIME DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL
         LIBRARY DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL)
+
+    if(GGML_ROCKET AND TARGET ggml-rocket)
+        install(TARGETS ggml-rocket
+            RUNTIME DESTINATION "${_base_dest}/rocket" COMPONENT llama-server OPTIONAL
+            LIBRARY DESTINATION "${_base_dest}/rocket" COMPONENT llama-server OPTIONAL)
+    endif()
 
     get_target_property(_llama_cpp_license_source llama SOURCE_DIR)
     if(NOT _llama_cpp_license_source OR _llama_cpp_license_source MATCHES "-NOTFOUND$")

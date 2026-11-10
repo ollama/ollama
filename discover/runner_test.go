@@ -135,6 +135,7 @@ func TestRecordPersistentRunnerEnv(t *testing.T) {
 func TestFilterIntegratedGPUs(t *testing.T) {
 	devices := []ml.DeviceInfo{
 		{DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"}, Description: "NVIDIA integrated", Integrated: true},
+		{DeviceID: ml.DeviceID{Library: "Rocket", ID: "0"}, Description: "Rockchip RK3588 NPU (rknpu)", Integrated: true},
 		{DeviceID: ml.DeviceID{Library: "Metal", ID: "0"}, Description: "Apple GPU", Integrated: true},
 		{DeviceID: ml.DeviceID{Library: "Vulkan", ID: "0"}, Description: "AMD Radeon(TM) Graphics", Integrated: true},
 		{DeviceID: ml.DeviceID{Library: "ROCm", ID: "0"}, Description: "AMD Radeon 780M", Integrated: true, GFXTarget: "gfx1103"},
@@ -147,6 +148,7 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
 		want := []ml.DeviceID{
 			{Library: "CUDA", ID: "0"},
+			{Library: "Rocket", ID: "0"},
 			{Library: "Metal", ID: "0"},
 			{Library: "Vulkan", ID: "0"},
 			{Library: "ROCm", ID: "0"},
@@ -161,6 +163,7 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
 		want := []ml.DeviceID{
 			{Library: "CUDA", ID: "0"},
+			{Library: "Rocket", ID: "0"},
 			{Library: "ROCm", ID: "1"},
 			{Library: "Vulkan", ID: "1"},
 		}
@@ -172,6 +175,7 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
 		want := []ml.DeviceID{
 			{Library: "CUDA", ID: "0"},
+			{Library: "Rocket", ID: "0"},
 			{Library: "Metal", ID: "0"},
 			{Library: "Vulkan", ID: "0"},
 			{Library: "ROCm", ID: "0"},

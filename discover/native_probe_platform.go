@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	ggmlBackendDeviceTypeGPU  = 1
-	ggmlBackendDeviceTypeIGPU = 2
+	ggmlBackendDeviceTypeGPU   = 1
+	ggmlBackendDeviceTypeIGPU  = 2
+	ggmlBackendDeviceTypeAccel = 3
 )
 
 func ggmlDeviceTypeIntegrated(deviceType int32) bool {
@@ -30,6 +31,8 @@ func ggmlProbeLibraryName(name string) string {
 		return "ROCm"
 	case "vulkan":
 		return "Vulkan"
+	case "rocket":
+		return "Rocket"
 	case "metal":
 		return "Metal"
 	default:
@@ -85,6 +88,7 @@ func nativeProbeBackendPatterns(dir string) []string {
 		filepath.Join(dir, "libggml-cuda.so"),
 		filepath.Join(dir, "libggml-hip.so"),
 		filepath.Join(dir, "libggml-vulkan.so"),
+		filepath.Join(dir, "libggml-rocket.so"),
 	}
 }
 

@@ -86,6 +86,7 @@ FROM cpu-deps AS llama-server-cpu
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset cpu \
@@ -102,10 +103,25 @@ RUN --mount=type=cache,target=/root/.ccache \
 FROM scratch AS publish-llama-server-cpu
 COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
 
+FROM cpu-deps AS llama-server-rocket
+COPY LLAMA_CPP_VERSION .
+COPY llama/server llama/server
+COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
+COPY cmake cmake
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake -S llama/server --preset rocket \
+        && cmake --build build/llama-server-rocket --target ggml-rocket -- -l $(nproc) \
+        && cmake --install build/llama-server-rocket --component llama-server --strip
+
+FROM scratch AS publish-llama-server-rocket
+COPY --from=llama-server-rocket dist/lib/ollama /lib/ollama/
+
 FROM cuda-12-deps AS llama-server-cuda_v12
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v12_linux \
@@ -119,6 +135,7 @@ FROM cuda-13-deps AS llama-server-cuda_v13
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v13_linux \
@@ -133,6 +150,7 @@ ENV CC=clang CXX=clang++ CXXFLAGS=--gcc-toolchain=/opt/rh/gcc-toolset-13/root/us
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset rocm_v7_2_linux \
@@ -147,6 +165,7 @@ FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset vulkan \
@@ -174,6 +193,7 @@ ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack5 \
@@ -197,6 +217,7 @@ ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY llama/rocket llama/rocket
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack6 \
@@ -294,6 +315,7 @@ COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-rocket dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/

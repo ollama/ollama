@@ -136,6 +136,21 @@ Available devices:
 				}},
 			},
 			{
+				name: "Rockchip NPU (Rocket)",
+				output: `load_backend: loaded ROCKET backend from /lib/ollama/rocket/libggml-rocket.so
+Available devices:
+  ROCKET: Rockchip RK3588 NPU (rknpu) (32768 MiB, 28672 MiB free)
+`,
+				libDirs: []string{"/lib/ollama", "/lib/ollama/rocket"},
+				want: []wantDevice{{
+					name:            "ROCKET",
+					library:         "Rocket",
+					totalMiB:        32768,
+					checkIntegrated: true,
+					integrated:      true,
+				}},
+			},
+			{
 				name: "CUDA device filtered by compiled archs",
 				output: `ggml_cuda_init: found 1 CUDA devices (Total VRAM: 6063 MiB):
   Device 0: NVIDIA GeForce GTX 1060 6GB, compute capability 6.1, VMM: yes, VRAM: 6063 MiB

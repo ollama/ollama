@@ -107,6 +107,8 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 					continue
 				} else if !envconfig.EnableVulkan(true) && strings.Contains(filepath.Base(dir), "vulkan") {
 					continue
+				} else if !envconfig.EnableRocket(true) && strings.Contains(filepath.Base(dir), "rocket") {
+					continue
 				}
 				dirs = []string{ml.LibOllamaPath, dir}
 			} else {
@@ -425,7 +427,7 @@ func integratedGPUAdmission() (allow, explicit bool) {
 
 func integratedGPUAllowedByDefault(device ml.DeviceInfo) bool {
 	switch device.Library {
-	case "CUDA":
+	case "CUDA", "Rocket":
 		return true
 	case "ROCm":
 		_, ok := defaultIntegratedROCmGFXTargets[device.GFXTarget]
