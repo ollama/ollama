@@ -216,6 +216,88 @@ func TestMainGPUParsingFromJSON(t *testing.T) {
 	}
 }
 
+func TestOptionsFromMapTypes(t *testing.T) {
+	t.Run("integer types", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    map[string]any
+			expected int
+		}{
+			{"int", map[string]any{"seed": int(42)}, 42},
+			{"int32", map[string]any{"seed": int32(42)}, 42},
+			{"int64", map[string]any{"seed": int64(42)}, 42},
+			{"float64", map[string]any{"seed": float64(42)}, 42},
+			{"json.Number", map[string]any{"seed": json.Number("42")}, 42},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				opts := DefaultOptions()
+				err := opts.FromMap(tc.input)
+				require.NoError(t, err)
+				assert.Equal(t, tc.expected, opts.Seed)
+			})
+		}
+	})
+
+	t.Run("float types", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    map[string]any
+			expected float32
+		}{
+			{"float32", map[string]any{"temperature": float32(0.7)}, 0.7},
+			{"float64", map[string]any{"temperature": float64(0.7)}, 0.7},
+			{"int", map[string]any{"temperature": int(1)}, 1.0},
+			{"int64", map[string]any{"temperature": int64(1)}, 1.0},
+			{"json.Number", map[string]any{"temperature": json.Number("0.7")}, 0.7},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				opts := DefaultOptions()
+				err := opts.FromMap(tc.input)
+				require.NoError(t, err)
+				assert.InDelta(t, tc.expected, opts.Temperature, 1e-4)
+			})
+		}
+	})
+
+	t.Run("pointer int types", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			input    map[string]any
+			expected int
+		}{
+			{"int", map[string]any{"main_gpu": int(1)}, 1},
+			{"int32", map[string]any{"main_gpu": int32(1)}, 1},
+			{"int64", map[string]any{"main_gpu": int64(1)}, 1},
+			{"float64", map[string]any{"main_gpu": float64(1)}, 1},
+			{"json.Number", map[string]any{"main_gpu": json.Number("1")}, 1},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				opts := DefaultOptions()
+				err := opts.FromMap(tc.input)
+				require.NoError(t, err)
+				require.NotNil(t, opts.MainGPU)
+				assert.Equal(t, tc.expected, *opts.MainGPU)
+			})
+		}
+	})
+
+	t.Run("invalid types", func(t *testing.T) {
+		opts := DefaultOptions()
+		assert.Error(t, opts.FromMap(map[string]any{"seed": "not-an-int"}))
+		assert.Error(t, opts.FromMap(map[string]any{"seed": json.Number("invalid")}))
+		assert.Error(t, opts.FromMap(map[string]any{"temperature": "not-a-float"}))
+		assert.Error(t, opts.FromMap(map[string]any{"temperature": json.Number("invalid")}))
+		assert.Error(t, opts.FromMap(map[string]any{"main_gpu": "not-an-int"}))
+		assert.Error(t, opts.FromMap(map[string]any{"main_gpu": json.Number("invalid")}))
+	})
+}
+
 func TestGenerationDefaultMappingsAreOptions(t *testing.T) {
 	jsonOpts := make(map[string]struct{})
 	for _, field := range reflect.VisibleFields(reflect.TypeOf(Options{})) {
