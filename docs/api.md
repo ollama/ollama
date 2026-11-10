@@ -1683,6 +1683,23 @@ Advanced parameters:
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `dimensions`: number of dimensions for the embedding
 
+### Embedding dimensions
+
+The number of dimensions is determined by the model. There are three ways to discover it:
+
+- Read `model_info` from [Show Model Information](#show-model-information). The model's native
+  embedding size is exposed as `<architecture>.embedding_length`, for example
+  `"llama.embedding_length": 4096`.
+- Read the length of a vector in the `embeddings` array of an `/api/embed` response. The
+  response type is `[][]float32` (one vector per input), so `len(embeddings[0])` is the
+  dimension actually returned for that request.
+- Set the `dimensions` parameter to request a different output size.
+
+When `dimensions` is omitted, the returned vector length equals the model's native dimension.
+When it is set and honoured, the vector length equals the requested value instead. Prefer
+`len(embeddings[0])` over a hard-coded constant, because the dimension can differ between
+models and between requests.
+
 ### Examples
 
 #### Request
