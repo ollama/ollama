@@ -227,6 +227,7 @@ console.log(response.message.content);
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
 - [oxi](https://github.com/maziluiosif/oxi) - Native Rust desktop coding agent with editor, Git panel and terminal
+- [Theia IDE](https://theia-ide.org/docs/user_ai/#ollama) - Open-source AI-native IDE for desktop and browser, BYOK for any LLM including local models
 
 ### Libraries & SDKs
 
