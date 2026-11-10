@@ -3169,6 +3169,14 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantTotal: 4.00 + 23.04 + 2.00,
 		},
 		{
+			name: "new b12257 kind: h_nextn",
+			lines: []string{
+				"h_nextn_dev_alloc:       MTL0 h_nextn buffer size =    16.01 MiB\n",
+			},
+			wantGPU:   16.01,
+			wantTotal: 16.01,
+		},
+		{
 			name: "fit probe buffers are replaced by final load",
 			lines: []string{
 				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
