@@ -628,6 +628,10 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 
 func normalizeFilePath(fp string) string {
 	return strings.NewReplacer(
+		// A shell single-quoted drop spells an apostrophe as '\'':
+		// close the quote, escape one, reopen. Collapse the whole
+		// four-character sequence back to a single apostrophe.
+		"'\\''", "'",
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
