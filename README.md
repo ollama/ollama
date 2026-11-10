@@ -194,6 +194,7 @@ console.log(response.message.content);
 - [Reins](https://github.com/ibrahimcetin/reins) - Parameter tuning and reasoning model support
 - [ConfiChat](https://github.com/1runeberg/confichat) - Privacy-focused with optional encryption
 - [LLocal.in](https://github.com/kartikm7/llocal) - Electron desktop client
+- [Quo](https://github.com/quo-ai/quo) - Private assistant for desktop, browser and Android
 - [MindMac](https://mindmac.app) - AI chat client for Mac
 - [Msty](https://msty.app) - Multi-model desktop client
 - [BoltAI for Mac](https://boltai.com) - AI chat client for Mac
