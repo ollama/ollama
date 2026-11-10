@@ -110,6 +110,106 @@ func TestCompactionTrimPreservesPriorSummaryAndLatestItem(t *testing.T) {
 	}
 }
 
+// A prior summary is replayed as a call/result pair. That pair is deliberately
+// absent from the trim groups so trimming never drops a summary, which also
+// means the selection pairing below cannot see it: retaining only the summary
+// text used to carry the result into the next payload without the call it
+// answers, and the compaction after that rejects the orphaned output.
+func TestCompactionKeepsPriorSummaryCallWithRetainedResult(t *testing.T) {
+	prior, err := json.Marshal(OllamaCompactionPayload{
+		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: "prior summary",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "test", "input": []any{
+			ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(prior)},
+			map[string]any{"type": "message", "role": "user", "content": "user request"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// item_000002 is the replayed summary result; the call is item_000001.
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "next summary", "retain_item_ids": []string{"item_000002"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+
+	retainedCalls := make(map[string]struct{}, len(payload.Retained))
+	for _, message := range payload.Retained {
+		for _, call := range message.ToolCalls {
+			retainedCalls[call.ID] = struct{}{}
+		}
+	}
+	if len(retainedCalls) != 1 {
+		t.Fatalf("retained calls = %v, want the summary call kept with its result", retainedCalls)
+	}
+	for _, message := range payload.Retained {
+		if message.Role == "tool" && message.ToolCallID != "" {
+			if _, ok := retainedCalls[message.ToolCallID]; !ok {
+				t.Errorf("retained tool output for call %q without that call", message.ToolCallID)
+			}
+		}
+	}
+
+	// The payload must be valid input for the next compaction.
+	replay, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := json.Marshal(map[string]any{
+		"model": "test", "input": []any{
+			ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(replay)},
+			map[string]any{"type": "message", "role": "user", "content": "follow-up"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareStandaloneCompaction(next); err != nil {
+		t.Fatalf("compaction output rejected by the next compaction: %v", err)
+	}
+}
+
+// Older payloads can already carry a summary output whose call was dropped.
+// Replaying one must not fail: the next compaction reports the orphan as
+// invalid tool state, which is the 400 in the report, so expansion rebuilds
+// the missing call from the message that answers it.
+func TestCompactionReplaysOlderPayloadWithOrphanedSummaryOutput(t *testing.T) {
+	prior, err := json.Marshal(OllamaCompactionPayload{
+		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion,
+		Summary: "prior summary",
+		Retained: []api.Message{{
+			Role: "tool", Content: "earlier summary result", ToolCallID: "call_ollama_compaction_000000000000",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "test", "input": []any{
+			ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(prior)},
+			map[string]any{"type": "message", "role": "user", "content": "follow-up"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareStandaloneCompaction(body); err != nil {
+		t.Fatalf("older payload rejected: %v", err)
+	}
+}
+
 func TestCompactionTrimKeepsToolPairsAcrossInterleavedResults(t *testing.T) {
 	plan, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[
 		{"type":"function_call","call_id":"a","name":"shell","arguments":"{}"},

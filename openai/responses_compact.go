@@ -388,10 +388,33 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 		return nil, err
 	}
 	items = append(items, call, result)
+	// A payload written before the call/result pairing fix can retain a summary
+	// output whose call was dropped. Rebuild the call from the message that
+	// answers it, so an older session does not fail its next compaction with
+	// "function output has no matching call".
+	retainedCalls := make(map[string]struct{})
+	for _, message := range payload.Retained {
+		for _, call := range message.ToolCalls {
+			retainedCalls[call.ID] = struct{}{}
+		}
+	}
 	for i, message := range payload.Retained {
 		converted, err := messageToResponsesItems(message, payload.StandaloneNames[i])
 		if err != nil {
 			return nil, fmt.Errorf("invalid retained message: %w", err)
+		}
+		if message.Role == "tool" && strings.HasPrefix(message.ToolCallID, "call_ollama_compaction_") {
+			if _, ok := retainedCalls[message.ToolCallID]; !ok {
+				rebuilt, err := json.Marshal(map[string]any{
+					"type": "function_call", "call_id": message.ToolCallID,
+					"name": compactionSummaryToolName, "arguments": string(args),
+				})
+				if err != nil {
+					return nil, err
+				}
+				items = append(items, rebuilt)
+				retainedCalls[message.ToolCallID] = struct{}{}
+			}
 		}
 		items = append(items, converted...)
 	}
@@ -930,6 +953,32 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 			if group.ResultRef != "" {
 				selected[group.ResultRef] = struct{}{}
 			}
+		}
+	}
+
+	// A prior summary is replayed as a call/result pair that is intentionally
+	// absent from p.groups so trimming never drops it. Selection still has to
+	// keep the pair together: the result on its own is a tool output whose call
+	// is missing, which the next compaction rejects as invalid tool state.
+	summaryCalls := make(map[string]string)
+	for _, item := range p.items {
+		if item.Type != "function_call" || len(item.Message.ToolCalls) != 1 {
+			continue
+		}
+		call := item.Message.ToolCalls[0]
+		if call.Function.Name == compactionSummaryToolName && strings.HasPrefix(call.ID, "call_ollama_compaction_") {
+			summaryCalls[call.ID] = item.Ref
+		}
+	}
+	for _, item := range p.items {
+		if item.Type != "function_call_output" {
+			continue
+		}
+		if _, ok := selected[item.Ref]; !ok {
+			continue
+		}
+		if ref, ok := summaryCalls[item.Message.ToolCallID]; ok {
+			selected[ref] = struct{}{}
 		}
 	}
 
