@@ -223,6 +223,62 @@ func TestClientStreamReportsReadErrors(t *testing.T) {
 	}
 }
 
+func TestClientStreamEmptyErrorResponse(t *testing.T) {
+	testCases := []struct {
+		name       string
+		statusCode int
+		checkErr   func(t *testing.T, err error)
+	}{
+		{
+			name:       "http 500 empty body",
+			statusCode: http.StatusInternalServerError,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				var statusErr StatusError
+				if !errors.As(err, &statusErr) {
+					t.Fatalf("expected StatusError, got %T: %v", err, err)
+				}
+				if statusErr.StatusCode != http.StatusInternalServerError {
+					t.Fatalf("expected status code %d, got %d", http.StatusInternalServerError, statusErr.StatusCode)
+				}
+			},
+		},
+		{
+			name:       "http 401 empty body",
+			statusCode: http.StatusUnauthorized,
+			checkErr: func(t *testing.T, err error) {
+				t.Helper()
+				var authErr AuthorizationError
+				if !errors.As(err, &authErr) {
+					t.Fatalf("expected AuthorizationError, got %T: %v", err, err)
+				}
+				if authErr.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("expected status code %d, got %d", http.StatusUnauthorized, authErr.StatusCode)
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.statusCode)
+			}))
+			defer ts.Close()
+
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+
+			err := client.stream(t.Context(), http.MethodPost, "/api/chat", nil, func([]byte) error {
+				return nil
+			})
+			if err == nil {
+				t.Fatal("expected error but got nil")
+			}
+			tc.checkErr(t, err)
+		})
+	}
+}
+
 func TestClientDo(t *testing.T) {
 	testCases := []struct {
 		name           string
