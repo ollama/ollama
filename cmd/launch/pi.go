@@ -102,7 +102,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			defer cancelDiscovery()
 		}
 		remaining := piModelDiscoveryTimeout
-		model, retryAfterAuth, err := c.piTargetModel(discoveryCtx, target, &remaining, false)
+		model, retryAfterAuth, err := c.piTargetModel(discoveryCtx, target, &remaining, nil)
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			err = nil
 		}
@@ -118,7 +118,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			if err := pullMissingModelWithPolicy(ctx, c.apiClient, target, c.policy.missingModelPolicy()); err != nil {
 				return err
 			}
-			model, retryAfterAuth, err = c.piTargetModel(ctx, target, &remaining, false)
+			model, retryAfterAuth, err = c.piTargetModel(ctx, target, &remaining, nil)
 		}
 		if err != nil {
 			return err
@@ -165,12 +165,19 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 				discoveryCtx, cancelDiscovery = context.WithTimeout(ctx, piModelDiscoveryTimeout)
 				defer cancelDiscovery()
 				remaining = piModelDiscoveryTimeout
-				model, _, err = c.piTargetModel(discoveryCtx, target, &remaining, true)
+				model, _, err = c.piTargetModel(discoveryCtx, target, &remaining, &model)
 				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 					err = nil
 				}
 				if err != nil {
 					return err
+				}
+				if !piSupportsChat(model) {
+					if !picked && req.ModelOverride == "" {
+						pick = true
+						continue
+					}
+					return fmt.Errorf("model %q does not support chat; choose a chat model", target)
 				}
 			}
 		}
@@ -220,12 +227,16 @@ func (p *Pi) currentModel() (string, error) {
 
 // piTargetModel retains inventory fallback metadata when /show requires sign-in.
 // Its second result marks an authorization failure that needs a fresh lookup.
-func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration, forceShow bool) (LaunchModel, bool, error) {
+// A fallback forces a fresh lookup without discarding already resolved metadata.
+func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration, fallback *LaunchModel) (LaunchModel, bool, error) {
 	var inventory []LaunchModel
 	if c.inventory != nil {
 		inventory = c.inventory.snapshot()
 	}
 	model, _ := findLaunchModel(inventory, name)
+	if fallback != nil {
+		model = *fallback
+	}
 	model.Name = name
 	model.Remote = model.Remote || isCloudModelName(name)
 	if model.Remote {
@@ -233,7 +244,7 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 			return model, false, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
 		}
 	}
-	if !forceShow && model.ContextLength > 0 && len(model.Capabilities) > 0 {
+	if fallback == nil && model.ContextLength > 0 && len(model.Capabilities) > 0 {
 		return model, false, nil
 	}
 	showCtx, cancel := context.WithTimeout(ctx, *budget)
@@ -245,7 +256,7 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 		if showCtx.Err() != nil {
 			return model, false, showCtx.Err()
 		}
-		if len(inventory) == 0 {
+		if len(inventory) == 0 && fallback == nil {
 			inventory, _ = c.modelInventory().Load(ctx)
 			if listed, ok := findLaunchModel(inventory, name); ok {
 				model = listed
@@ -272,7 +283,7 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 	if len(show.Capabilities) > 0 {
 		model.Capabilities = slices.Clone(show.Capabilities)
 	}
-	if model.ContextLength <= 0 || forceShow {
+	if model.ContextLength <= 0 || fallback != nil {
 		if length, ok := modelInfoContextLength(show.ModelInfo); ok {
 			model.ContextLength = length
 		}

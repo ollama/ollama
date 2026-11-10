@@ -348,11 +348,14 @@ func (transport piMetadataTestTransport) RoundTrip(r *http.Request) (*http.Respo
 	}
 	w := httptest.NewRecorder()
 	transport.handler.ServeHTTP(w, r)
+	if err := r.Context().Err(); err != nil {
+		return nil, err
+	}
 	return w.Result(), nil
 }
 
 func TestPiMetadataAfterSlowSignIn(t *testing.T) {
-	for _, outcome := range []string{"success", "partial metadata", "inventory fallback", "cancelled", "deadline"} {
+	for _, outcome := range []string{"success", "partial metadata", "inventory fallback", "decision model", "decision model with inventory timeout", "cancelled", "deadline"} {
 		t.Run(outcome, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				home := t.TempDir()
@@ -392,7 +395,10 @@ func TestPiMetadataAfterSlowSignIn(t *testing.T) {
 					case "/api/status":
 						fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
 					case "/api/tags":
-						if outcome == "partial metadata" {
+						if outcome == "decision model with inventory timeout" {
+							<-r.Context().Done()
+							return
+						} else if outcome == "partial metadata" {
 							fmt.Fprint(w, `{"models":[{"name":"vision:cloud","capabilities":["completion"]}]}`)
 						} else if outcome == "inventory fallback" {
 							fmt.Fprint(w, `{"models":[{"name":"vision:cloud","details":{"context_length":8192},"capabilities":["completion"]}]}`)
@@ -415,7 +421,11 @@ func TestPiMetadataAfterSlowSignIn(t *testing.T) {
 						if req.Model == "vision:cloud" {
 							authenticatedShows.Add(1)
 						}
-						fmt.Fprint(w, `{"capabilities":["completion","vision","thinking"],"model_info":{"fixture.context_length":262144}}`)
+						if strings.HasPrefix(outcome, "decision model") {
+							fmt.Fprint(w, `{"capabilities":["decision","vision"],"model_info":{"fixture.context_length":262144}}`)
+						} else {
+							fmt.Fprint(w, `{"capabilities":["completion","vision","thinking"],"model_info":{"fixture.context_length":262144}}`)
+						}
 					default:
 						t.Errorf("unexpected request: %s", r.URL.Path)
 						http.NotFound(w, r)
@@ -429,18 +439,34 @@ func TestPiMetadataAfterSlowSignIn(t *testing.T) {
 				// Keep HTTP in-process so only the simulated sign-in advances time.
 				c.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "pi.test"}, &http.Client{Transport: piMetadataTestTransport{handler: handler}})
 				c.inventory = newModelInventory(c.apiClient)
-				if outcome == "inventory fallback" {
+				if outcome == "inventory fallback" || outcome == "decision model with inventory timeout" {
 					t.Setenv("PATH", t.TempDir())
 					err = c.launchPiIntegration(ctx, &Pi{}, nil, IntegrationLaunchRequest{ModelOverride: "vision:cloud"})
-					if err == nil || !strings.Contains(err.Error(), "npm") {
-						t.Fatalf("launch error = %v, want missing npm dependency", err)
+					if outcome == "inventory fallback" {
+						if err == nil || !strings.Contains(err.Error(), "npm") {
+							t.Fatalf("launch error = %v, want missing npm dependency", err)
+						}
+						err = nil
 					}
-					err = nil
 				} else {
 					err = c.launchPiIntegration(ctx, &Pi{}, nil, IntegrationLaunchRequest{ConfigureOnly: true})
 				}
 				if signIns != 1 {
 					t.Fatalf("sign-ins = %d, want 1", signIns)
+				}
+				if strings.HasPrefix(outcome, "decision model") {
+					if err == nil || !strings.Contains(err.Error(), "does not support chat") {
+						t.Fatalf("launch error = %v, want non-chat model rejection", err)
+					}
+					if authenticatedShows.Load() != 1 {
+						t.Fatalf("authenticated /show calls = %d, want 1", authenticatedShows.Load())
+					}
+					for _, path := range []string{".pi", ".ollama/config.json"} {
+						if _, err := os.Stat(filepath.Join(home, path)); !os.IsNotExist(err) {
+							t.Fatalf("config written for non-chat model at %s: %v", path, err)
+						}
+					}
+					return
 				}
 				if outcome == "cancelled" || outcome == "deadline" {
 					want := context.Canceled
@@ -469,6 +495,85 @@ func TestPiMetadataAfterSlowSignIn(t *testing.T) {
 				entry := models[0].(map[string]any)
 				if authenticatedShows.Load() != 1 || fmt.Sprint(entry["input"]) != "[text image]" || entry["reasoning"] != true || entry["contextWindow"] != float64(262144) {
 					t.Fatalf("authenticated /show calls = %d; model config = %v", authenticatedShows.Load(), entry)
+				}
+			})
+		})
+	}
+}
+
+func TestPiMetadataRefreshPreservesKnownCapabilities(t *testing.T) {
+	for _, outcome := range []string{"timeout", "unavailable", "partial metadata", "decision model"} {
+		t.Run(outcome, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				home := t.TempDir()
+				setLaunchTestHome(t, home)
+				withLauncherHooks(t)
+				t.Setenv("PATH", t.TempDir())
+				shows := 0
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/status":
+						fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+					case "/api/tags":
+						fmt.Fprint(w, `{"models":[]}`)
+					case "/api/me":
+						fmt.Fprint(w, `{"name":"fixture"}`)
+					case "/api/experimental/model-recommendations":
+						fmt.Fprint(w, `{"recommendations":[]}`)
+					case "/api/show":
+						var req apiShowRequest
+						_ = json.NewDecoder(r.Body).Decode(&req)
+						if req.Model != "vision:cloud" {
+							fmt.Fprint(w, `{"capabilities":["completion","tools"]}`)
+							return
+						}
+						shows++
+						if shows == 1 {
+							fmt.Fprint(w, `{"capabilities":["completion","vision","thinking"]}`)
+							return
+						}
+						switch outcome {
+						case "timeout":
+							<-r.Context().Done()
+						case "unavailable":
+							http.Error(w, `{"error":"unavailable"}`, http.StatusServiceUnavailable)
+						case "partial metadata":
+							fmt.Fprint(w, `{"model_info":{"fixture.context_length":262144}}`)
+						case "decision model":
+							fmt.Fprint(w, `{"capabilities":["decision","vision"]}`)
+						}
+					default:
+						t.Errorf("unexpected request: %s", r.URL.Path)
+					}
+				})
+				client := api.NewClient(&url.URL{Scheme: "http", Host: "pi.test"}, &http.Client{Transport: piMetadataTestTransport{handler: handler}})
+				c := &launcherClient{apiClient: client, inventory: newModelInventory(client), policy: defaultLaunchPolicy(true, false)}
+				err := c.launchPiIntegration(t.Context(), &Pi{}, nil, IntegrationLaunchRequest{ModelOverride: "vision:cloud"})
+				if shows != 2 {
+					t.Fatalf("/show calls = %d, want 2", shows)
+				}
+				if outcome == "decision model" {
+					if err == nil || !strings.Contains(err.Error(), "does not support chat") {
+						t.Fatalf("launch error = %v, want non-chat model rejection", err)
+					}
+					if _, err := os.Stat(filepath.Join(home, ".pi")); !os.IsNotExist(err) {
+						t.Fatalf("Pi config written for non-chat model: %v", err)
+					}
+					return
+				}
+				if err == nil || !strings.Contains(err.Error(), "npm") {
+					t.Fatalf("launch error = %v, want missing npm dependency", err)
+				}
+				data, err := fileutil.ReadJSON(filepath.Join(home, ".pi", "agent", "models.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				entry := data["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)[0].(map[string]any)
+				if fmt.Sprint(entry["input"]) != "[text image]" || entry["reasoning"] != true {
+					t.Fatalf("known capabilities lost: %v", entry)
+				}
+				if outcome == "partial metadata" && entry["contextWindow"] != float64(262144) {
+					t.Fatalf("refreshed context length lost: %v", entry)
 				}
 			})
 		})
@@ -789,7 +894,7 @@ func TestPiResolvedPrimaryIsNotShownTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	remaining := modelShowTimeout
-	primary, _, err := c.piTargetModel(t.Context(), "primary", &remaining, false)
+	primary, _, err := c.piTargetModel(t.Context(), "primary", &remaining, nil)
 	if err != nil || !primary.HasCapability(modelpkg.CapabilityCompletion) {
 		t.Fatalf("target resolution = %+v, %v", primary, err)
 	}
