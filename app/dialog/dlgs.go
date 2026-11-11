@@ -115,7 +115,7 @@ func (b *FileBuilder) SetStartFile(startFile string) *FileBuilder {
 	return b
 }
 
-// ShowHiddenFiles sets whether hidden files should be visible in the dialog.
+// ShowHidden sets whether hidden files should be visible in the dialog.
 func (b *FileBuilder) ShowHidden(show bool) *FileBuilder {
 	b.ShowHiddenFiles = show
 	return b
@@ -169,13 +169,13 @@ func (b *DirectoryBuilder) Title(title string) *DirectoryBuilder {
 	return b
 }
 
-// StartDir specifies the initial directory to be used for the dialog.
+// SetStartDir specifies the initial directory to be used for the dialog.
 func (b *DirectoryBuilder) SetStartDir(dir string) *DirectoryBuilder {
 	b.StartDir = dir
 	return b
 }
 
-// ShowHiddenFiles sets whether hidden files should be visible in the dialog.
+// ShowHidden sets whether hidden files should be visible in the dialog.
 func (b *DirectoryBuilder) ShowHidden(show bool) *DirectoryBuilder {
 	b.ShowHiddenFiles = show
 	return b
