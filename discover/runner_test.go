@@ -95,6 +95,59 @@ func TestFilterOverlapByLibrary(t *testing.T) {
 			},
 			exp: []bool{false, false},
 		},
+		{
+			name: "partial overlap pick newer",
+			inp: map[string]map[string]map[string]int{
+				"CUDA": {
+					"cuda_v13": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 0,
+						"GPU-cd6c3216-03d2-a8eb-8235-2ffbf571712e": 1,
+					},
+					"cuda_v12": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 2,
+					},
+				},
+			},
+			exp: []bool{false, false, true},
+		},
+		{
+			name: "three versions pick middle",
+			inp: map[string]map[string]map[string]int{
+				"CUDA": {
+					"cuda_v13": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 0,
+					},
+					"cuda_v12": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 1,
+						"GPU-cd6c3216-03d2-a8eb-8235-2ffbf571712e": 2,
+					},
+					"cuda_v11": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 3,
+						"GPU-cd6c3216-03d2-a8eb-8235-2ffbf571712e": 4,
+					},
+				},
+			},
+			exp: []bool{true, false, false, true, true},
+		},
+		{
+			name: "three versions pick newest",
+			inp: map[string]map[string]map[string]int{
+				"CUDA": {
+					"cuda_v13": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 0,
+						"GPU-cd6c3216-03d2-a8eb-8235-2ffbf571712e": 1,
+					},
+					"cuda_v12": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 2,
+						"GPU-cd6c3216-03d2-a8eb-8235-2ffbf571712e": 3,
+					},
+					"cuda_v11": {
+						"GPU-d7b00605-c0c8-152d-529d-e03726d5dc52": 4,
+					},
+				},
+			},
+			exp: []bool{false, false, true, true, true},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			needsDelete := make([]bool, len(tc.exp))
