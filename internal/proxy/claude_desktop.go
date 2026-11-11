@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/anthropic"
+	"github.com/ollama/ollama/internal/modelref"
+	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 // DefaultClaudeDesktopListenAddr supports clients using the legacy app-owned gateway.
@@ -51,6 +54,7 @@ type gatewayModel struct {
 // ClaudeDesktopConfig configures a Claude Desktop proxy instance.
 type ClaudeDesktopConfig struct {
 	PathPrefix         string
+	RoutingCatalogPath string
 	ListenAddr         string
 	OllamaURL          string
 	Model              string
@@ -78,6 +82,7 @@ type upstreamReadinessCheck struct {
 // interception or system trust changes are necessary.
 type ClaudeDesktop struct {
 	pathPrefix         string
+	routingCatalogPath string
 	listenAddr         string
 	ollamaURL          *url.URL
 	ollamaProxy        *httputil.ReverseProxy
@@ -134,6 +139,7 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 	proxy.FlushInterval = -1
 	p := &ClaudeDesktop{
 		pathPrefix:         strings.TrimRight(config.PathPrefix, "/"),
+		routingCatalogPath: config.RoutingCatalogPath,
 		listenAddr:         config.ListenAddr,
 		ollamaURL:          ollamaURL,
 		logger:             logger,
@@ -306,17 +312,17 @@ func claudeDesktopModelsEqual(left, right []ClaudeDesktopModel) bool {
 }
 
 func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if p.pathPrefix != "" && !isLoopbackRequest(r) {
+	if p.pathPrefix != "" && !isLocalClaudeDesktopRequest(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if !p.allowsHost(r.Host) {
+	if !p.allowsHost(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	// Claude Desktop uses a native HTTP client, not a browser. Reject every
 	// request carrying an Origin so the upstream OLLAMA_ORIGINS policy cannot
-	// enable CORS on this loopback-only gateway.
+	// enable CORS on this local gateway.
 	if r.Header.Get("Origin") != "" {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -344,7 +350,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, models := p.modelSnapshot()
 	if p.pathPrefix != "" {
 		var err error
-		models, err = p.refreshModelCatalog(r.Context())
+		models, err = loadClaudeDesktopRoutingCatalog(p.routingCatalogPath)
 		if err != nil {
 			writeAnthropicError(w, http.StatusServiceUnavailable, err)
 			return
@@ -361,7 +367,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if p.pathPrefix == "" && hasCloudClaudeDesktopModel(models) {
-			if _, err := p.refreshModelCatalog(r.Context()); err != nil {
+			if err := p.refreshModelCatalog(r.Context()); err != nil {
 				p.logger.Debug("could not refresh Claude model catalog", "error", err)
 			}
 			_, models = p.modelSnapshot()
@@ -399,7 +405,11 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("Authorization")
 	r.Header.Del("Cookie")
 	r.Header.Del("Proxy-Authorization")
-	r.Header.Set("X-Api-Key", "ollama")
+	if p.pathPrefix == "" {
+		r.Header.Set("X-Api-Key", "ollama")
+	} else {
+		r.Header.Del("X-Api-Key")
+	}
 	r.Host = p.ollamaURL.Host
 
 	if err := p.waitForUpstream(r.Context()); err != nil {
@@ -414,34 +424,31 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.ollamaProxy.ServeHTTP(w, r)
 }
 
-func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) ([]ClaudeDesktopModel, error) {
-	generation, current := p.modelSnapshotWithGeneration()
+func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) error {
 	if p.refreshModels == nil {
-		return current, nil
+		return nil
 	}
+	generation, current := p.modelSnapshotWithGeneration()
 	models, err := p.refreshModels(ctx, current)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if len(models) == 0 && p.pathPrefix == "" {
-		return nil, errors.New("Claude Desktop model refresh returned no models")
+	if len(models) == 0 {
+		return errors.New("Claude Desktop model refresh returned no models")
 	}
 	models = SelectClaudeDesktopModels(models, nil)
 	p.modelsMu.Lock()
 	defer p.modelsMu.Unlock()
 	if p.modelsGeneration != generation {
-		return models, nil
+		return nil
 	}
 	if claudeDesktopModelsEqual(p.models, models) {
-		return models, nil
+		return nil
 	}
 	p.models = cloneClaudeDesktopModels(models)
-	p.model = ""
-	if len(models) > 0 {
-		p.model = models[0].OllamaModel
-	}
+	p.model = models[0].OllamaModel
 	p.modelsGeneration++
-	return models, nil
+	return nil
 }
 
 func hasCloudClaudeDesktopModel(models []ClaudeDesktopModel) bool {
@@ -453,14 +460,43 @@ func hasCloudClaudeDesktopModel(models []ClaudeDesktopModel) bool {
 	return false
 }
 
-func (p *ClaudeDesktop) allowsHost(host string) bool {
+func isLocalClaudeDesktopRequest(r *http.Request) bool {
+	if isLoopbackRequest(r) {
+		return true
+	}
+	peer, err := netip.ParseAddrPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		return false
+	}
+	local, ok := claudeDesktopLocalIP(r)
+	return ok && peer.Addr().Unmap().WithZone("") == local
+}
+
+func claudeDesktopLocalIP(r *http.Request) (netip.Addr, bool) {
+	// net/http supplies the socket's local address; forwarded headers cannot
+	// make a different machine appear to be the listener itself.
+	local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	addr, err := netip.ParseAddrPort(local.String())
+	return addr.Addr().Unmap().WithZone(""), err == nil
+}
+
+func (p *ClaudeDesktop) allowsHost(r *http.Request) bool {
+	host := r.Host
 	if p.pathPrefix != "" {
-		hostname, _, err := net.SplitHostPort(host)
+		hostname := (&url.URL{Host: host}).Hostname()
+		if strings.EqualFold(hostname, p.ollamaURL.Hostname()) || strings.EqualFold(hostname, "localhost") {
+			return true
+		}
+		ip, err := netip.ParseAddr(hostname)
 		if err != nil {
 			return false
 		}
-		ip := net.ParseIP(hostname)
-		return strings.EqualFold(hostname, "localhost") || ip != nil && ip.IsLoopback()
+		ip = ip.Unmap().WithZone("")
+		local, ok := claudeDesktopLocalIP(r)
+		return ip.IsLoopback() || ok && ip == local
 	}
 	_, listenerPort, err := net.SplitHostPort(p.Addr())
 	if err != nil {
@@ -567,7 +603,7 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context, 
 	var inventoryKnown bool
 	if hasCloudClaudeDesktopModel(configured) {
 		state, localModels, inventoryKnown = p.accessFacts(ctx)
-	} else {
+	} else if len(configured) > 0 {
 		localModels, inventoryKnown = p.localModelFacts(ctx)
 	}
 
@@ -616,7 +652,7 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if selected.Cloud && p.pathPrefix == "" {
-		if _, err := p.refreshModelCatalog(r.Context()); err != nil {
+		if err := p.refreshModelCatalog(r.Context()); err != nil {
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}
 	}
@@ -654,7 +690,7 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, models []ClaudeDesktopModel)
 		return err
 	}
 	if selected.Cloud && p.pathPrefix == "" {
-		if _, err := p.refreshModelCatalog(r.Context()); err != nil {
+		if err := p.refreshModelCatalog(r.Context()); err != nil {
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}
 	}
@@ -663,6 +699,7 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, models []ClaudeDesktopModel)
 	if access := p.modelAccess(r.Context(), selected); access.Availability != ClaudeDesktopAvailabilityAvailable {
 		return newClaudeDesktopAccessError(selected, access)
 	}
+	*r = *r.WithContext(context.WithValue(r.Context(), claudeDesktopRequestModelKey{}, selected.gateway))
 	targetModel := selected.OllamaModel
 	if targetModel == requestedModel {
 		setRequestBody(r, body)
@@ -677,6 +714,8 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, models []ClaudeDesktopModel)
 	setRequestBody(r, rewritten)
 	return nil
 }
+
+type claudeDesktopRequestModelKey struct{}
 
 func (p *ClaudeDesktop) retryWithoutUnsupportedImages(response *http.Response, transport http.RoundTripper) (bool, error) {
 	if response.StatusCode != http.StatusBadRequest || response.Request.Method != http.MethodPost || response.Request.URL.Path != "/v1/messages" || response.Request.GetBody == nil {
@@ -703,12 +742,7 @@ func (p *ClaudeDesktop) retryWithoutUnsupportedImages(response *http.Response, t
 	if err := json.Unmarshal(rewrittenBody, &payload); err != nil {
 		return false, nil
 	}
-	var targetModel string
-	if err := json.Unmarshal(payload["model"], &targetModel); err != nil {
-		return false, nil
-	}
-	_, models := p.modelSnapshot()
-	selected, _ := gatewayModelForOllamaModel(models, targetModel)
+	selected, _ := response.Request.Context().Value(claudeDesktopRequestModelKey{}).(gatewayModel)
 	if selected.SupportsVision {
 		return false, nil
 	}
@@ -785,7 +819,12 @@ func (p *ClaudeDesktop) modelForClaudeID(id string) (ClaudeDesktopModel, error) 
 
 func claudeDesktopModelForID(models []ClaudeDesktopModel, id string) (ClaudeDesktopModel, error) {
 	for _, model := range models {
-		if model.gateway.ID == id || model.OllamaModel == id {
+		if model.gateway.ID == id {
+			return model, nil
+		}
+	}
+	for _, model := range models {
+		if model.OllamaModel == id {
 			return model, nil
 		}
 	}
@@ -836,7 +875,20 @@ func (p *ClaudeDesktop) modelAccess(ctx context.Context, model ClaudeDesktopMode
 }
 
 func evaluateClaudeDesktopAccess(model ClaudeDesktopModel, state ClaudeDesktopAccessState, localModels map[string]struct{}, inventoryKnown bool) ClaudeDesktopModelAccess {
-	_, installed := localModels[model.OllamaModel]
+	installedName := model.OllamaModel
+	if ref, err := modelref.ParseRef(installedName); err == nil && ref.Source == modelref.ModelSourceLocal {
+		installedName = ref.Base
+	}
+	_, installed := localModels[installedName]
+	if !model.Cloud && !installed {
+		name := modelpkg.ParseName(installedName)
+		for localName := range localModels {
+			if name.EqualFold(modelpkg.ParseName(localName)) {
+				installed = true
+				break
+			}
+		}
+	}
 	if localModels == nil && inventoryKnown {
 		installed = true
 	}
@@ -875,15 +927,6 @@ func (e *claudeDesktopAccessError) Error() string {
 	default:
 		return "Ollama could not verify access to this model. Try again."
 	}
-}
-
-func gatewayModelForOllamaModel(models []ClaudeDesktopModel, route string) (gatewayModel, bool) {
-	for _, model := range models {
-		if model.OllamaModel == route {
-			return model.gateway, true
-		}
-	}
-	return gatewayModel{}, false
 }
 
 func replaceUnsupportedImages(payload map[string]json.RawMessage) (bool, error) {

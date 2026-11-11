@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/proxy"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/version"
@@ -163,6 +166,48 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		return srv, capture
 	}
+
+	t.Run("claude shared gateway", func(t *testing.T) {
+		upstream, capture := newUpstream(t, `{"type":"message"}`)
+		defer upstream.Close()
+		originalBase, originalSigner := cloudProxyBaseURL, cloudProxySignRequest
+		cloudProxyBaseURL = upstream.URL
+		cloudProxySignRequest = func(_ context.Context, req *http.Request) error {
+			req.Header.Set("Authorization", "fixture-signature")
+			return nil
+		}
+		t.Cleanup(func() { cloudProxyBaseURL, cloudProxySignRequest = originalBase, originalSigner })
+		router, err := (&Server{}).GenerateRoutes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+		path := filepath.Join(t.TempDir(), "routing.json")
+		if err := os.WriteFile(path, []byte(`{"models":[{"route":"claude-sonnet-5","model":"test:cloud","required_plan":"free"}]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
+			PathPrefix: proxy.ClaudeDesktopPathPrefix, RoutingCatalogPath: path, OllamaURL: local.URL,
+			ResolveAccessState: func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}, nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = gateway.Close(context.Background()) })
+		req := httptest.NewRequest(http.MethodPost, "http://localhost:11434/api/claude/v1/messages", strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`))
+		req.RemoteAddr = "127.0.0.1:1234"
+		for _, header := range []string{"Authorization", "Cookie", "Proxy-Authorization", "X-Api-Key"} {
+			req.Header.Set(header, "private-placeholder")
+		}
+		response := httptest.NewRecorder()
+		gateway.ServeHTTP(response, req)
+		if response.Code != http.StatusOK || capture.header.Get("Authorization") != "fixture-signature" || capture.header.Get("X-Api-Key") != "" || capture.header.Get("Cookie") != "" || capture.header.Get("Proxy-Authorization") != "" {
+			t.Fatalf("cloud credentials/status: %v / %d %s", capture.header, response.Code, response.Body.String())
+		}
+	})
 
 	t.Run("api generate", func(t *testing.T) {
 		upstream, capture := newUpstream(t, `{"ok":"api"}`)

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -845,10 +847,7 @@ func TestGatewayDiscardsRefreshThatRacesWithModelUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() {
-		_, err := p.refreshModelCatalog(context.Background())
-		done <- err
-	}()
+	go func() { done <- p.refreshModelCatalog(context.Background()) }()
 	<-started
 	if err := p.SetModels(updated); err != nil {
 		t.Fatal(err)
@@ -1633,27 +1632,45 @@ func TestGatewayAllowsVisionForSupportedModel(t *testing.T) {
 }
 
 func TestGatewayDoesNotRetryVisionModelBadRequest(t *testing.T) {
-	upstreamCalls := 0
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamCalls++
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"bad request"}}`)
-	}))
-	defer upstream.Close()
-	p := startTestGateway(t, upstream.URL)
-
-	body := `{"model":"kimi-k3:cloud","messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`
-	resp, err := http.Post("http://"+p.Addr()+"/v1/messages", "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", resp.StatusCode)
-	}
-	if upstreamCalls != 1 {
-		t.Fatalf("upstream calls = %d, want 1", upstreamCalls)
+	for _, test := range []struct {
+		name   string
+		shared bool
+		vision bool
+		calls  int
+	}{
+		{"standalone", false, true, 1},
+		{"shared vision", true, true, 1},
+		{"shared without vision", true, false, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var upstreamCalls atomic.Int32
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamCalls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"model does not support images"}}`)
+			}))
+			defer upstream.Close()
+			var gateway *ClaudeDesktop
+			endpoint, model := "http://localhost:11434"+ClaudeDesktopPathPrefix, "kimi-k3:cloud"
+			if test.shared {
+				path := filepath.Join(t.TempDir(), "routing.json")
+				writeClaudeRoutingCatalog(t, path, fmt.Sprintf(`{"models":[{"route":"claude-sonnet-5","model":"vision-test:cloud","required_plan":"pro","supports_vision":%t},{"route":"claude-opus-5","model":"vision-test:cloud","required_plan":"pro","supports_vision":%t}]}`, test.vision, !test.vision))
+				gateway = startTestGateway(t, upstream.URL, ClaudeDesktopConfig{PathPrefix: ClaudeDesktopPathPrefix, RoutingCatalogPath: path})
+				model = "claude-sonnet-5"
+			} else {
+				gateway = startTestGateway(t, upstream.URL)
+				endpoint = "http://" + gateway.Addr()
+			}
+			body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}`, model)
+			req := httptest.NewRequest(http.MethodPost, endpoint+"/v1/messages", strings.NewReader(body))
+			req.RemoteAddr = "127.0.0.1:1234"
+			response := httptest.NewRecorder()
+			gateway.ServeHTTP(response, req)
+			if response.Code != http.StatusBadRequest || upstreamCalls.Load() != int32(test.calls) {
+				t.Fatalf("status/calls = %d/%d, want 400/%d", response.Code, upstreamCalls.Load(), test.calls)
+			}
+		})
 	}
 }
 
