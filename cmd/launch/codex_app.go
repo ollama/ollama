@@ -81,7 +81,9 @@ type CodexApp struct{}
 // ChatGPT profile would interrupt a running task.
 var ErrCodexAppRestartConfirmationRequired = errors.New("ChatGPT restart confirmation is required before changing its profile")
 
-var errCodexAppProfileUnchanged = errors.New("ChatGPT settings were not changed")
+// ErrCodexAppProfileUnchanged means an update failed before changing settings.
+// Recovery must leave the existing connection intact.
+var ErrCodexAppProfileUnchanged = errors.New("ChatGPT settings were not changed")
 
 func (c *CodexApp) String() string { return "ChatGPT" }
 
@@ -729,7 +731,7 @@ func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []Launch
 }
 
 func (c *CodexApp) updateOllamaModels(ctx context.Context, primary string, models []LaunchModel, openWhenStopped, restartConfirmed bool) error {
-	unchanged := func(err error) error { return fmt.Errorf("%w: %w", errCodexAppProfileUnchanged, err) }
+	unchanged := func(err error) error { return fmt.Errorf("%w: %w", ErrCodexAppProfileUnchanged, err) }
 	if err := codexAppSupported(); err != nil {
 		return unchanged(err)
 	}
@@ -926,7 +928,7 @@ func (c *CodexApp) Restore() error {
 		}
 	}
 	restore := func(confirmed bool, cancel <-chan struct{}) error {
-		unlock, err := chatGPTConfigurationLock()
+		unlock, err := config.LockChatGPTConfiguration()
 		if err != nil {
 			return err
 		}

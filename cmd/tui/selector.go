@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -748,8 +747,6 @@ type multiSelectorModel struct {
 	// the existing list. Tab toggles between modes.
 	multi     bool
 	singleAdd string // model picked in single mode
-	listOnly  bool
-	limit     int
 }
 
 func newMultiSelectorModel(title string, items []SelectItem, preChecked []string) multiSelectorModel {
@@ -782,38 +779,6 @@ func newMultiSelectorModel(title string, items []SelectItem, preChecked []string
 	}
 
 	return m
-}
-
-func newModelListSelectorModel(title string, items []SelectItem, preChecked []string, limit int) multiSelectorModel {
-	m := newMultiSelectorModel(title, items, preChecked)
-	m.multi, m.listOnly, m.limit = true, true, limit
-	m.checkOrder = nil
-	for _, name := range preChecked {
-		if idx, ok := m.itemIndex[name]; ok {
-			if !slices.Contains(m.checkOrder, idx) {
-				m.checkOrder = append(m.checkOrder, idx)
-			}
-		}
-	}
-	return m
-}
-
-func (m multiSelectorModel) checkedModelNames() []string {
-	if m.listOnly {
-		result := make([]string, 0, len(m.checkOrder))
-		for _, idx := range m.checkOrder {
-			result = append(result, m.items[idx].Name)
-		}
-		return result
-	}
-	last := m.checkOrder[len(m.checkOrder)-1]
-	result := []string{m.items[last].Name}
-	for _, idx := range m.checkOrder {
-		if idx != last {
-			result = append(result, m.items[idx].Name)
-		}
-	}
-	return result
 }
 
 func (m *multiSelectorModel) rebuildItemIndex() {
@@ -922,7 +887,7 @@ func (m *multiSelectorModel) toggleItem() {
 				break
 			}
 		}
-		if wasDefault && !m.listOnly {
+		if wasDefault {
 			// When removing the default, pick the nearest checked model above it
 			// (or below if none above) so default fallback follows list order.
 			newDefault := -1
@@ -951,9 +916,6 @@ func (m *multiSelectorModel) toggleItem() {
 			}
 		}
 	} else {
-		if m.limit > 0 && len(m.checkOrder) >= m.limit {
-			return
-		}
 		m.checked[origIdx] = true
 		m.checkOrder = append(m.checkOrder, origIdx)
 	}
@@ -994,9 +956,7 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyTab:
-			if !m.listOnly {
-				m.multi = !m.multi
-			}
+			m.multi = !m.multi
 
 		case tea.KeyEnter:
 			if !m.multi {
@@ -1006,9 +966,6 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				}
 			} else if len(m.checkOrder) > 0 {
-				if m.limit > 0 && len(m.checkOrder) > m.limit {
-					return m, nil
-				}
 				m.confirmed = true
 				return m, tea.Quit
 			}
@@ -1094,7 +1051,7 @@ func (m multiSelectorModel) renderMultiItem(s *strings.Builder, item SelectItem,
 	}
 
 	suffix := ""
-	if !m.listOnly && len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx {
+	if len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx {
 		suffix = " " + selectorDefaultTagStyle.Render("(default)")
 	}
 
@@ -1209,19 +1166,13 @@ func (m multiSelectorModel) View() string {
 		}
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
 	} else {
-		if m.listOnly && m.limit > 0 && count > m.limit {
-			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("Select up to %d models.", m.limit)))
-		} else if count == 0 {
+		if count == 0 {
 			s.WriteString(sectionHeaderStyle.Render("Select at least one model."))
 		} else {
 			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press enter to continue", count)))
 		}
 		s.WriteString("\n\n")
-		if m.listOnly {
-			s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • enter confirm • ← back"))
-		} else {
-			s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
-		}
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
 	}
 
 	result := s.String()
@@ -1266,22 +1217,12 @@ func SelectMultipleWithUpdates(title string, items []SelectItem, preChecked []st
 	}
 
 	// Multi-edit mode: last checked is default (first in result)
-	return fm.checkedModelNames(), nil
-}
-
-// SelectModelList starts directly in bounded checkbox editing mode. The
-// selected order is retained and carries no primary/default-model meaning.
-func SelectModelList(title string, items []SelectItem, preChecked []string, limit int) ([]string, error) {
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no items to select from")
+	last := fm.checkOrder[len(fm.checkOrder)-1]
+	result := []string{fm.items[last].Name}
+	for _, idx := range fm.checkOrder {
+		if idx != last {
+			result = append(result, fm.items[idx].Name)
+		}
 	}
-	finalModel, err := tea.NewProgram(newModelListSelectorModel(title, items, preChecked, limit)).Run()
-	if err != nil {
-		return nil, fmt.Errorf("error running selector: %w", err)
-	}
-	m := finalModel.(multiSelectorModel)
-	if m.cancelled || !m.confirmed {
-		return nil, ErrCancelled
-	}
-	return m.checkedModelNames(), nil
+	return result, nil
 }

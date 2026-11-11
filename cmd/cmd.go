@@ -76,16 +76,6 @@ func init() {
 	launch.DefaultMultiSelectorWithUpdates = func(title string, items []launch.SelectionItem, preChecked []string, updates <-chan []launch.SelectionItem) ([]string, error) {
 		return runTUIMultiSelector(title, items, preChecked, updates)
 	}
-	launch.DefaultModelListSelector = func(title string, items []launch.SelectionItem, preChecked []string, limit int) ([]string, error) {
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
-		}
-		result, err := tui.SelectModelList(title, tui.ReorderItems(tui.ConvertItems(items)), preChecked, limit)
-		if errors.Is(err, tui.ErrCancelled) {
-			return nil, launch.ErrCancelled
-		}
-		return result, err
-	}
 
 	launch.DefaultSignIn = func(modelName, signInURL string) (string, error) {
 		userName, err := tui.RunSignIn(modelName, signInURL)

@@ -580,7 +580,7 @@ func prepareIntegrationLaunch(name string, policy LaunchPolicy) (*launcherClient
 		return nil, nil, err
 	}
 	saved, err := loadStoredIntegrationConfig(name)
-	if name == "pi" && err != nil && !errors.Is(err, os.ErrNotExist) {
+	if (name == "pi" || name == chatGPTIntegrationName) && err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, err
 	}
 	return launchClient, saved, nil
@@ -681,9 +681,6 @@ func (c *launcherClient) launcherManagedModelState(ctx context.Context, name str
 		cfg, loadErr := loadStoredIntegrationConfig(name)
 		if loadErr == nil {
 			current = primaryModelFromConfig(cfg)
-			if name == chatGPTIntegrationName && cfg.Primary != "" {
-				current = cfg.Primary
-			}
 		}
 		if current != "" {
 			return current, false, nil
@@ -833,10 +830,8 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 }
 
 func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
-	if name == chatGPTIntegrationName {
-		if controller, ok := managed.(ChatGPTController); ok {
-			return c.launchChatGPTIntegration(ctx, controller, req)
-		}
+	if app, ok := managed.(*CodexApp); ok && name == chatGPTIntegrationName {
+		return c.launchChatGPT(ctx, app, saved, req)
 	}
 	current := managed.CurrentModel()
 	selectionCurrent := current
@@ -1582,8 +1577,22 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 	defer cancel()
 	for i := range resolved {
 		if showCtx.Err() == nil {
-			if show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: resolved[i].Name}); err == nil && show.Thinking.Valid() {
-				resolved[i].Thinking = show.Thinking.Clone()
+			if show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: resolved[i].Name}); err == nil {
+				if show.Thinking.Valid() {
+					resolved[i].Thinking = show.Thinking.Clone()
+				}
+				if integration == chatGPTIntegrationName {
+					if len(show.Capabilities) > 0 {
+						resolved[i].Capabilities = slices.Clone(show.Capabilities)
+						resolved[i].ToolCapable = slices.Contains(show.Capabilities, modelpkg.CapabilityTools)
+					}
+					if resolved[i].ContextLength <= 0 {
+						resolved[i].ContextLength, _ = modelInfoContextLength(show.ModelInfo)
+					}
+					if show.Details.Family != "" || len(show.Details.Families) > 0 {
+						resolved[i].Details = show.Details
+					}
+				}
 			}
 		}
 	}

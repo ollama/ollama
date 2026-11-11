@@ -11,51 +11,6 @@ import (
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
-func TestPrimaryModelSelectionPreservesUnknownFieldsAndConditionalRollback(t *testing.T) {
-	setTestHome(t, t.TempDir())
-	path, _ := configPath()
-	os.MkdirAll(filepath.Dir(path), 0700)
-	original := `{"future":{"enabled":true},"integrations":{"other":{"models":["keep"],"secret":"synthetic"},"chatgpt":{"models":["old"],"primary":"old","aliases":{"keep":"original"},"automode":false,"onboarded":true,"future":"keep"}}}`
-	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
-		t.Fatal(err)
-	}
-	before := &IntegrationConfig{Models: []string{"old"}, Primary: "old"}
-	applied := &IntegrationConfig{Models: []string{"new"}, Primary: "new"}
-	if err := SwapPrimaryModelSelection("chatgpt", before, applied); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveIntegrationAutoMode("chatgpt", true); err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	data, _ := os.ReadFile(path)
-	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatal(err)
-	}
-	integrations := document["integrations"].(map[string]any)
-	entry := integrations["chatgpt"].(map[string]any)
-	if document["future"] == nil || entry["automode"] != true || entry["onboarded"] != true || entry["future"] != "keep" || entry["aliases"].(map[string]any)["keep"] != "original" || integrations["other"].(map[string]any)["secret"] != "synthetic" {
-		t.Fatalf("unrelated data changed: %s", data)
-	}
-	if err := SwapPrimaryModelSelection("chatgpt", applied, before); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := LoadIntegration("chatgpt")
-	if err != nil || restored.AutoMode == nil || !*restored.AutoMode {
-		t.Fatalf("selection rollback changed the later auto-mode preference: %+v, %v", restored, err)
-	}
-	if err := SwapPrimaryModelSelection("chatgpt", before, &IntegrationConfig{Models: []string{"later-user-choice"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := SwapPrimaryModelSelection("chatgpt", applied, before); err == nil {
-		t.Fatal("rollback replaced a later user change")
-	}
-	current, err := LoadIntegration("chatgpt")
-	if err != nil || len(current.Models) != 1 || current.Models[0] != "later-user-choice" {
-		t.Fatalf("current = %+v, %v", current, err)
-	}
-}
-
 func TestPrimaryModelSelectionConcurrentLauncherUpdatesPreserveAllFields(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	path, _ := configPath()
@@ -117,20 +72,6 @@ func TestPrimaryModelSelectionConcurrentLauncherUpdatesPreserveAllFields(t *test
 	integrations := document["integrations"].(map[string]any)
 	if document["future"] != "keep" || integrations["chatgpt"].(map[string]any)["future"] != "keep" || integrations["codex"].(map[string]any)["future"] != "keep" {
 		t.Fatalf("concurrent updates lost unrelated fields: %s", data)
-	}
-}
-
-func TestPrimaryModelSelectionRemovesNewEntry(t *testing.T) {
-	setTestHome(t, t.TempDir())
-	applied := &IntegrationConfig{Models: []string{"local"}}
-	if err := SwapPrimaryModelSelection("chatgpt", nil, applied); err != nil {
-		t.Fatal(err)
-	}
-	if err := SwapPrimaryModelSelection("chatgpt", applied, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadIntegration("chatgpt"); !os.IsNotExist(err) {
-		t.Fatalf("new entry survived rollback: %v", err)
 	}
 }
 

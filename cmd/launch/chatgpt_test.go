@@ -1,0 +1,279 @@
+package launch
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
+)
+
+type chatGPTFixtureTransport struct {
+	t      *testing.T
+	reject bool
+}
+
+func (f chatGPTFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if f.reject {
+		f.t.Fatalf("ordinary relaunch rediscovered models: %s", r.URL.Path)
+	}
+	body := `{}`
+	switch r.URL.Path {
+	case "/api/status":
+		body = `{"cloud":{"disabled":false}}`
+	case "/api/tags":
+		body = `{"models":[{"name":"first"},{"name":"second"},{"name":"other"}]}`
+	case "/api/show":
+		body = `{"capabilities":["completion","tools"],"model_info":{"general.context_length":32768}}`
+	default:
+		f.t.Fatalf("unexpected fixture request %s", r.URL.Path)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+}
+
+func chatGPTFixture(t *testing.T) (string, *CodexApp, *launcherClient, *int) {
+	t.Helper()
+	home := t.TempDir()
+	setTestHome(t, home)
+	withInteractiveSession(t, true)
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
+	withLauncherHooks(t)
+	// Only a configuration value. API transport and native actions are mocked.
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:1")
+	oldStat, oldProfile := codexAppStat, codexAppProfileIsRunning
+	codexAppStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	codexAppProfileIsRunning = func(context.Context) (bool, error) { return false, nil }
+	t.Cleanup(func() { codexAppStat, codexAppProfileIsRunning = oldStat, oldProfile })
+	opens := 0
+	withCodexAppProcessHooks(t, func() bool { return false }, func() error { t.Fatal("unexpected quit"); return nil }, func() error { opens++; return nil })
+	codexAppCanOpenID = func(context.Context) bool { return true }
+	client, err := newLauncherClient(defaultLaunchPolicy(true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "fixture.invalid"}, &http.Client{Transport: chatGPTFixtureTransport{t: t}})
+	client.inventory, client.recommendationsLoaded = nil, true
+	return home, &CodexApp{}, client, &opens
+}
+
+func TestChatGPTSharedConfigurationLifecycle(t *testing.T) {
+	home, app, client, opens := chatGPTFixture(t)
+	path := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := "model = \"native-model\"\nmodel_provider = \"openai\"\n\n[profiles.terminal]\nmodel = \"terminal-model\"\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"auth.json": `{"OPENAI_API_KEY":"fixture-key"}`, "history.jsonl": "fixture-history"} {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(path), name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := config.SaveIntegration("codex", []string{"terminal-model"}); err != nil {
+		t.Fatal(err)
+	}
+	// Existing app connections predate the separate starting-model field.
+	saved := &config.IntegrationConfig{Models: []string{"second", "first"}}
+	if err := config.SwapPrimaryModelSelection(chatGPTIntegrationName, nil, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.ConfigureWithModels("first", testLaunchModels(saved.Models...)); err != nil {
+		t.Fatal(err)
+	}
+	for i, request := range []IntegrationLaunchRequest{{}, {ModelOverride: "second", ConfigureOnly: true}, {}} {
+		before, _ := chatGPTSavedSelection()
+		if err := client.launchChatGPT(t.Context(), app, before, request); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 && app.CurrentModel() != "first" {
+			t.Fatal("upgrade changed the app's existing starting model")
+		}
+	}
+	saved, _ = chatGPTSavedSelection()
+	if !slices.Equal(saved.Models, []string{"second", "first"}) || saved.Primary != "second" || app.CurrentModel() != "second" || *opens != 2 {
+		t.Fatalf("shared selection=%+v native=%s opens=%d", saved, app.CurrentModel(), *opens)
+	}
+	if err := app.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), `model = "native-model"`) || !strings.Contains(string(data), "[profiles.terminal]") || *opens != 2 {
+		t.Fatalf("disconnect changed unrelated state or opened the stopped app: %s, %v", data, err)
+	}
+	if err := client.launchChatGPT(t.Context(), app, saved, IntegrationLaunchRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	models, _ := codexAppRoutingModels()
+	if app.CurrentModel() != "second" || !slices.Equal(models, saved.Models) || !slices.Equal(config.IntegrationModels("codex"), []string{"terminal-model"}) {
+		t.Fatalf("reconnect lost the shared selection: %s %v", app.CurrentModel(), models)
+	}
+	for name, want := range map[string]string{"auth.json": `{"OPENAI_API_KEY":"fixture-key"}`, "history.jsonl": "fixture-history"} {
+		got, err := os.ReadFile(filepath.Join(filepath.Dir(path), name))
+		if err != nil || string(got) != want {
+			t.Fatalf("fixture %s changed", name)
+		}
+	}
+}
+
+func TestChatGPTSharedConfigurationRestart(t *testing.T) {
+	for _, changeModel := range []bool{false, true} {
+		for _, cancelRestart := range []bool{false, true} {
+			t.Run(fmt.Sprintf("change=%t/cancel=%t", changeModel, cancelRestart), func(t *testing.T) {
+				home, app, client, opens := chatGPTFixture(t)
+				saved := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "first"}
+				if err := config.SwapPrimaryModelSelection(chatGPTIntegrationName, nil, saved); err != nil {
+					t.Fatal(err)
+				}
+				if err := app.ConfigureWithModels(saved.Primary, testLaunchModels(saved.Models...)); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(home, ".codex", "config.toml")
+				profile, _ := os.ReadFile(path)
+				cancel := make(chan struct{})
+				oldSpinner, oldSleep := DefaultSpinner, codexAppSleep
+				stopped := false
+				DefaultSpinner = func(string) *Spinner { return NewSpinner(func() { stopped = true }, cancel) }
+				t.Cleanup(func() { DefaultSpinner, codexAppSleep = oldSpinner, oldSleep })
+				running, quits := true, 0
+				withCodexAppProcessHooks(t, func() bool { return running }, func() error { return nil }, func() error { *opens++; return nil })
+				codexAppQuitApp = func(ctx context.Context) error {
+					if _, bounded := ctx.Deadline(); bounded {
+						t.Fatal("interactive CLI inherited the desktop quit deadline")
+					}
+					quits++
+					return nil
+				}
+				codexAppSleep = func(time.Duration) {
+					if cancelRestart {
+						close(cancel)
+					} else {
+						running = false
+					}
+				}
+				DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+				request := IntegrationLaunchRequest{}
+				if changeModel {
+					request.ModelOverride = "second"
+				} else {
+					client.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "fixture.invalid"}, &http.Client{Transport: chatGPTFixtureTransport{t: t, reject: true}})
+				}
+				err := client.launchChatGPT(t.Context(), app, saved, request)
+				if cancelRestart {
+					after, _ := os.ReadFile(path)
+					latest, _ := chatGPTSavedSelection()
+					if !errors.Is(err, ErrCancelled) || !chatGPTSelectionEqual(saved, latest) || !slices.Equal(profile, after) || *opens != 0 {
+						t.Fatalf("cancel changed state: err=%v saved=%+v opens=%d", err, latest, *opens)
+					}
+				} else if err != nil || *opens != 1 {
+					t.Fatalf("restart err=%v opens=%d", err, *opens)
+				}
+				if !stopped || quits != 1 {
+					t.Fatalf("spinner stopped=%t quits=%d", stopped, quits)
+				}
+			})
+		}
+	}
+}
+
+func TestChatGPTSharedConfigurationPreservesNewerChoice(t *testing.T) {
+	_, app, client, opens := chatGPTFixture(t)
+	saved := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "first"}
+	if err := config.SwapPrimaryModelSelection(chatGPTIntegrationName, nil, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.ConfigureWithModels(saved.Primary, testLaunchModels(saved.Models...)); err != nil {
+		t.Fatal(err)
+	}
+	codexAppIsRunning = func(context.Context) bool { return true }
+	later := &config.IntegrationConfig{Models: saved.Models, Primary: "second"}
+	DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) {
+		return true, config.SwapPrimaryModelSelection(chatGPTIntegrationName, saved, later)
+	}
+	err := client.launchChatGPT(t.Context(), app, saved, IntegrationLaunchRequest{})
+	latest, _ := chatGPTSavedSelection()
+	if err == nil || !strings.Contains(err.Error(), "changed") || !chatGPTSelectionEqual(latest, later) || *opens != 0 {
+		t.Fatalf("stale confirmation overwrote later choice: %v %+v", err, latest)
+	}
+}
+
+func TestChatGPTSharedConfigurationModelOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		models    []string
+		primary   string
+		override  string
+		wantError bool
+	}{
+		{"add alias", []string{"first", "second"}, "first", "other:latest", false},
+		{"app defaults", nil, "", "second", false},
+		{"full list", []string{"first", "second", "third", "fourth", "fifth"}, "first", "other", true},
+		{"invalid saved primary", []string{"first", "second"}, "missing", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, app, client, opens := chatGPTFixture(t)
+			saved := &config.IntegrationConfig{Models: tc.models, Primary: tc.primary}
+			if err := config.SwapPrimaryModelSelection(chatGPTIntegrationName, nil, saved); err != nil {
+				t.Fatal(err)
+			}
+			if tc.models == nil {
+				if err := app.ConfigureWithModels("first", testLaunchModels("first", "second")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := client.launchChatGPT(t.Context(), app, saved, IntegrationLaunchRequest{ModelOverride: tc.override})
+			latest, _ := chatGPTSavedSelection()
+			if tc.wantError {
+				if err == nil || !chatGPTSelectionEqual(saved, latest) || *opens != 0 {
+					t.Fatalf("invalid override changed state: %v %+v", err, latest)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantModels := append(slices.Clone(tc.models), tc.override)
+			if tc.models == nil {
+				wantModels = []string{"first", "second"}
+			}
+			if !slices.Equal(latest.Models, wantModels) || latest.Primary != tc.override {
+				t.Fatalf("override replaced app selection: %+v", latest)
+			}
+			data, _ := os.ReadFile(mustCodexAppModelCatalogPath(t))
+			var catalog struct {
+				Models []struct {
+					Slug    string `json:"slug"`
+					Context int    `json:"context_window"`
+				}
+			}
+			if err := json.Unmarshal(data, &catalog); err != nil {
+				t.Fatal(err)
+			}
+			matches := 0
+			for _, model := range catalog.Models {
+				if codexAppCatalogModelKey(model.Slug) == codexAppCatalogModelKey(tc.override) {
+					matches++
+					if model.Context != 32768 {
+						t.Fatalf("lost model metadata: %+v", model)
+					}
+				}
+			}
+			if matches != 1 {
+				t.Fatalf("primary alias has %d catalog entries", matches)
+			}
+		})
+	}
+}

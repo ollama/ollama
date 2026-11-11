@@ -120,109 +120,6 @@ func stubCodexDesktopModelLoader(t *testing.T) {
 	codexDesktopLoadConnectionModels = loader
 }
 
-func TestApplyCodexDesktopModelsKeepsCLIPrimaryAndListOrder(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	previousController := codexDesktop
-	t.Cleanup(func() { codexDesktop = previousController })
-	stubCodexDesktopModelLoader(t)
-	selected := []string{"picker-first", "cli-primary"}
-	saved := &config.IntegrationConfig{Models: selected, Primary: "cli-primary"}
-	if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
-		t.Fatal(err)
-	}
-	fake := &fakeCodexDesktopController{installed: true, configured: true}
-	codexDesktop = fake
-	if err := applyCodexDesktopModels(selected, false); err != nil {
-		t.Fatal(err)
-	}
-	if fake.launched != "cli-primary" || !slices.Equal(fake.models, selected) {
-		t.Fatalf("Settings applied primary=%s models=%v, want CLI primary and exact picker order", fake.launched, fake.models)
-	}
-	status := getCodexDesktopStatus()
-	if status.Model != "cli-primary" || !slices.Equal(status.Models, selected) {
-		t.Fatalf("Settings status=%+v, want separate primary and picker order", status)
-	}
-}
-
-func TestChatGPTFlowSettingsAliasHasOneCheckedRow(t *testing.T) {
-	selected := []string{"fixture:8b-cloud"}
-	inventory := codexDesktopModelInventory{Catalog: []codexDesktopCatalogModel{{Model: launch.LaunchModel{Name: "fixture:8b:cloud"}, Availability: proxy.ClaudeDesktopAvailabilityAvailable}}}
-	rows := codexDesktopModelStatuses(inventory, selected)
-	if len(rows) != 1 || rows[0].Name != selected[0] || !rows[0].Selected {
-		t.Fatalf("Settings cannot match its saved chip to one checked catalog row: %+v", rows)
-	}
-}
-
-func TestChatGPTFlowSettingsConfirmationPreservesLaterChanges(t *testing.T) {
-	for _, disconnect := range []bool{false, true} {
-		t.Run(fmt.Sprintf("disconnect=%t", disconnect), func(t *testing.T) {
-			t.Setenv("HOME", t.TempDir())
-			previousController := codexDesktop
-			t.Cleanup(func() { codexDesktop = previousController })
-			stubCodexDesktopModelLoader(t)
-			before := &config.IntegrationConfig{Models: []string{"first"}, Primary: "first"}
-			if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, before); err != nil {
-				t.Fatal(err)
-			}
-			fake := &fakeCodexDesktopController{installed: true, configured: true, running: true, models: before.Models}
-			codexDesktop = fake
-			err := applyCodexDesktopModels(before.Models, false)
-			if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
-				t.Fatalf("first apply error=%v, want consent", err)
-			}
-			var confirmation interface{ ConfirmationVersion() string }
-			if !errors.As(err, &confirmation) || confirmation.ConfirmationVersion() == "" {
-				t.Fatal("restart consent did not identify the settings being confirmed")
-			}
-			later := before
-			if disconnect {
-				fake.configured = false
-			} else {
-				later = &config.IntegrationConfig{Models: []string{"later"}, Primary: "later"}
-				if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, before, later); err != nil {
-					t.Fatal(err)
-				}
-				fake.models = later.Models
-			}
-			err = applyCodexDesktopModels(before.Models, true, confirmation.ConfirmationVersion())
-			if err == nil || !strings.Contains(err.Error(), "changed") {
-				t.Errorf("stale Settings confirmation applied over a newer action: %v", err)
-			}
-			after, err := launch.LoadChatGPTConfiguration()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(after.Models, later.Models) || after.Primary != later.Primary || len(fake.launches) != 0 || fake.configured == disconnect {
-				t.Fatalf("stale confirmation overwrote newer state: saved=%+v controller=%+v", after, fake)
-			}
-		})
-	}
-}
-
-func TestChatGPTFlowSettingsConfirmationAppliesMatchingVersion(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	previousController := codexDesktop
-	t.Cleanup(func() { codexDesktop = previousController })
-	stubCodexDesktopModelLoader(t)
-	saved := &config.IntegrationConfig{Models: []string{"first"}, Primary: "first"}
-	if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
-		t.Fatal(err)
-	}
-	fake := &fakeCodexDesktopController{installed: true, configured: true, running: true}
-	codexDesktop = fake
-	err := applyCodexDesktopModels(saved.Models, false)
-	var confirmation interface{ ConfirmationVersion() string }
-	if !errors.As(err, &confirmation) || confirmation.ConfirmationVersion() == "" {
-		t.Fatalf("restart confirmation did not identify the saved version: %v", err)
-	}
-	if err := applyCodexDesktopModels(saved.Models, true, confirmation.ConfirmationVersion()); err != nil {
-		t.Fatal(err)
-	}
-	if len(fake.launches) != 1 || fake.launched != saved.Primary || !slices.Equal(fake.models, saved.Models) {
-		t.Fatalf("confirmed Settings action did not apply its saved models: %+v", fake)
-	}
-}
-
 func stubCodexDesktopCatalogSources(t *testing.T, recommendations []api.ModelRecommendation, access proxy.ClaudeDesktopAccessState) {
 	originalRecommendations := codexDesktopRecommendations
 	originalAccessState := codexDesktopAccessState
@@ -544,66 +441,6 @@ func TestApplyCodexDesktopModelsCanRestartWhenInventoryIsUnavailable(t *testing.
 	}
 	if fake.restarts != 1 || len(fake.launches) != 0 {
 		t.Fatalf("controller = %#v, want one catalog-independent restart", fake)
-	}
-}
-
-func TestChatGPTSharedRestartSurvivesInventoryTimeout(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
-		previousController := codexDesktop
-		t.Cleanup(func() { codexDesktop = previousController })
-		stubCodexDesktopModelLoader(t)
-		saved := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "second"}
-		if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
-			t.Fatal(err)
-		}
-		codexDesktopLoadModels = func(ctx context.Context, _ []string) (string, []launch.LaunchModel, error) {
-			<-ctx.Done()
-			return "", nil, ctx.Err()
-		}
-		fake := &fakeCodexDesktopController{installed: true, configured: true, running: true}
-		codexDesktop = fake
-		err := applyCodexDesktopModels(saved.Models, false)
-		var confirmation interface{ ConfirmationVersion() string }
-		if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) || !errors.As(err, &confirmation) {
-			t.Fatalf("inventory timeout hid restart consent: %v", err)
-		}
-		if err := applyCodexDesktopModels(saved.Models, true, confirmation.ConfirmationVersion()); err != nil {
-			t.Fatal(err)
-		}
-		after, err := launch.LoadChatGPTConfiguration()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if fake.restarts != 1 || len(fake.launches) != 0 || len(fake.updates) != 0 || fake.restores != 0 || after.Primary != saved.Primary || !slices.Equal(after.Models, saved.Models) {
-			t.Fatalf("restart changed shared configuration: saved=%+v controller=%+v", after, fake)
-		}
-	})
-}
-
-func TestChatGPTSharedConfigurationSurvivesAppReconnect(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	previousController := codexDesktop
-	t.Cleanup(func() { codexDesktop = previousController })
-	stubCodexDesktopModelLoader(t)
-	saved := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "second"}
-	if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
-		t.Fatal(err)
-	}
-	fake := &fakeCodexDesktopController{installed: true, configured: true, models: saved.Models, launched: saved.Primary}
-	codexDesktop = fake
-	if err := setCodexDesktopConnection(false, false); err != nil {
-		t.Fatal(err)
-	}
-	after, err := launch.LoadChatGPTConfiguration()
-	if err != nil || after.Primary != saved.Primary || !slices.Equal(after.Models, saved.Models) {
-		t.Fatalf("disconnect changed the CLI/app configuration: saved=%+v error=%v", after, err)
-	}
-	if err := setCodexDesktopConnection(true, false); err != nil {
-		t.Fatal(err)
-	}
-	if fake.launched != saved.Primary || !slices.Equal(fake.models, saved.Models) || !fake.configured {
-		t.Fatalf("reconnect did not reuse the CLI/app configuration: %+v", fake)
 	}
 }
 
@@ -1703,5 +1540,186 @@ func TestCodexDesktopUsedUnavailable(t *testing.T) {
 	appStore = nil
 	if err := markCodexDesktopIntegrationUsed(); err == nil {
 		t.Fatal("expected unavailable store error")
+	}
+}
+
+func TestApplyCodexDesktopModelsKeepsCLIPrimaryAndListOrder(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousController := codexDesktop
+	t.Cleanup(func() { codexDesktop = previousController })
+	stubCodexDesktopModelLoader(t)
+	selected := []string{"picker-first", "cli-primary"}
+	saved := &config.IntegrationConfig{Models: selected, Primary: "cli-primary"}
+	if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCodexDesktopController{installed: true, configured: true}
+	codexDesktop = fake
+	if err := applyCodexDesktopModels(selected, false); err != nil {
+		t.Fatal(err)
+	}
+	if fake.launched != "cli-primary" || !slices.Equal(fake.models, selected) {
+		t.Fatalf("Settings applied primary=%s models=%v, want CLI primary and exact picker order", fake.launched, fake.models)
+	}
+	status := getCodexDesktopStatus()
+	if status.Model != "cli-primary" || !slices.Equal(status.Models, selected) {
+		t.Fatalf("Settings status=%+v, want separate primary and picker order", status)
+	}
+}
+
+func TestChatGPTFlowSettingsConfirmationPreservesLaterChanges(t *testing.T) {
+	for _, disconnect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disconnect=%t", disconnect), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			previousController := codexDesktop
+			t.Cleanup(func() { codexDesktop = previousController })
+			stubCodexDesktopModelLoader(t)
+			before := &config.IntegrationConfig{Models: []string{"first"}, Primary: "first"}
+			if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, before); err != nil {
+				t.Fatal(err)
+			}
+			fake := &fakeCodexDesktopController{installed: true, configured: true, running: true, models: before.Models}
+			codexDesktop = fake
+			err := applyCodexDesktopModels(before.Models, false)
+			if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+				t.Fatalf("first apply error=%v, want consent", err)
+			}
+			var confirmation interface{ ConfirmationVersion() string }
+			if !errors.As(err, &confirmation) || confirmation.ConfirmationVersion() == "" {
+				t.Fatal("restart consent did not identify the settings being confirmed")
+			}
+			later := before
+			if disconnect {
+				fake.configured = false
+			} else {
+				later = &config.IntegrationConfig{Models: []string{"later"}, Primary: "later"}
+				if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, before, later); err != nil {
+					t.Fatal(err)
+				}
+				fake.models = later.Models
+			}
+			err = applyCodexDesktopModels(before.Models, true, confirmation.ConfirmationVersion())
+			if err == nil || !strings.Contains(err.Error(), "changed") {
+				t.Errorf("stale Settings confirmation applied over a newer action: %v", err)
+			}
+			after, err := config.LoadIntegration(codexDesktopIntegrationName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(after.Models, later.Models) || after.Primary != later.Primary || len(fake.launches) != 0 || fake.configured == disconnect {
+				t.Fatalf("stale confirmation overwrote newer state: saved=%+v controller=%+v", after, fake)
+			}
+		})
+	}
+}
+
+func TestChatGPTFlowSettingsConfirmationAppliesMatchingVersion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousController := codexDesktop
+	t.Cleanup(func() { codexDesktop = previousController })
+	stubCodexDesktopModelLoader(t)
+	saved := &config.IntegrationConfig{Models: []string{"first"}, Primary: "first"}
+	if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCodexDesktopController{installed: true, configured: true, running: true}
+	codexDesktop = fake
+	err := applyCodexDesktopModels(saved.Models, false)
+	var confirmation interface{ ConfirmationVersion() string }
+	if !errors.As(err, &confirmation) || confirmation.ConfirmationVersion() == "" {
+		t.Fatalf("restart confirmation did not identify the saved version: %v", err)
+	}
+	if err := applyCodexDesktopModels(saved.Models, true, confirmation.ConfirmationVersion()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.launches) != 1 || fake.launched != saved.Primary || !slices.Equal(fake.models, saved.Models) {
+		t.Fatalf("confirmed Settings action did not apply its saved models: %+v", fake)
+	}
+}
+
+func TestChatGPTSharedRestartSurvivesInventoryTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		previousController := codexDesktop
+		t.Cleanup(func() { codexDesktop = previousController })
+		stubCodexDesktopModelLoader(t)
+		saved := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "second"}
+		if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
+			t.Fatal(err)
+		}
+		codexDesktopLoadModels = func(ctx context.Context, _ []string) (string, []launch.LaunchModel, error) {
+			<-ctx.Done()
+			return "", nil, ctx.Err()
+		}
+		fake := &fakeCodexDesktopController{installed: true, configured: true, running: true}
+		codexDesktop = fake
+		err := applyCodexDesktopModels(saved.Models, false)
+		var confirmation interface{ ConfirmationVersion() string }
+		if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) || !errors.As(err, &confirmation) {
+			t.Fatalf("inventory timeout hid restart consent: %v", err)
+		}
+		if err := applyCodexDesktopModels(saved.Models, true, confirmation.ConfirmationVersion()); err != nil {
+			t.Fatal(err)
+		}
+		after, err := config.LoadIntegration(codexDesktopIntegrationName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fake.restarts != 1 || len(fake.launches) != 0 || len(fake.updates) != 0 || fake.restores != 0 || after.Primary != saved.Primary || !slices.Equal(after.Models, saved.Models) {
+			t.Fatalf("restart changed shared configuration: saved=%+v controller=%+v", after, fake)
+		}
+	})
+}
+
+func TestChatGPTSharedConfigurationSurvivesAppReconnect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousController := codexDesktop
+	t.Cleanup(func() { codexDesktop = previousController })
+	stubCodexDesktopModelLoader(t)
+	saved := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "second"}
+	if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, saved); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCodexDesktopController{installed: true, configured: true, models: saved.Models, launched: saved.Primary}
+	codexDesktop = fake
+	if err := setCodexDesktopConnection(false, false); err != nil {
+		t.Fatal(err)
+	}
+	after, err := config.LoadIntegration(codexDesktopIntegrationName)
+	if err != nil || after.Primary != saved.Primary || !slices.Equal(after.Models, saved.Models) {
+		t.Fatalf("disconnect changed the CLI/app configuration: saved=%+v error=%v", after, err)
+	}
+	if err := setCodexDesktopConnection(true, false); err != nil {
+		t.Fatal(err)
+	}
+	if fake.launched != saved.Primary || !slices.Equal(fake.models, saved.Models) || !fake.configured {
+		t.Fatalf("reconnect did not reuse the CLI/app configuration: %+v", fake)
+	}
+}
+
+func TestChatGPTFlowSettingsAliasHasOneCheckedRow(t *testing.T) {
+	selected := []string{"fixture:8b-cloud"}
+	inventory := codexDesktopModelInventory{Catalog: []codexDesktopCatalogModel{{Model: launch.LaunchModel{Name: "fixture:8b:cloud"}, Availability: proxy.ClaudeDesktopAvailabilityAvailable}}}
+	rows := codexDesktopModelStatuses(inventory, selected)
+	if len(rows) != 1 || rows[0].Name != selected[0] || !rows[0].Selected {
+		t.Fatalf("Settings cannot match its saved chip to one checked catalog row: %+v", rows)
+	}
+}
+
+func TestChatGPTSharedPreflightFailureKeepsConnection(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previous := codexDesktop
+	t.Cleanup(func() { codexDesktop = previous })
+	stubCodexDesktopModelLoader(t)
+	before := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "second"}
+	if err := config.SwapPrimaryModelSelection(codexDesktopIntegrationName, nil, before); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeCodexDesktopController{installed: true, configured: true, running: true, launchErrs: []error{launch.ErrCodexAppProfileUnchanged}}
+	codexDesktop = fake
+	err := applyCodexDesktopModels([]string{"new-model"}, true)
+	after, _ := config.LoadIntegration(codexDesktopIntegrationName)
+	if !errors.Is(err, launch.ErrCodexAppProfileUnchanged) || fake.restores != 0 || len(fake.launches) != 1 || !fake.configured || after.Primary != before.Primary || !slices.Equal(after.Models, before.Models) {
+		t.Fatalf("preflight failure disrupted the connection: err=%v controller=%+v saved=%+v", err, fake, after)
 	}
 }

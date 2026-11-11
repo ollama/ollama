@@ -13,11 +13,16 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
-	"github.com/ollama/ollama/internal/launchconfig"
 	"github.com/ollama/ollama/internal/onboarding"
 )
 
-type integration = launchconfig.Integration
+type integration struct {
+	Models    []string          `json:"models"`
+	Primary   string            `json:"primary,omitempty"`
+	Aliases   map[string]string `json:"aliases,omitempty"`
+	Onboarded bool              `json:"onboarded,omitempty"`
+	AutoMode  *bool             `json:"automode,omitempty"`
+}
 
 // IntegrationConfig is the persisted config for one integration.
 type IntegrationConfig = integration
@@ -85,7 +90,11 @@ func completeWelcomeInConfig() error {
 }
 
 func configPath() (string, error) {
-	return launchconfig.Path()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".ollama", "config.json"), nil
 }
 
 // updateIntegrationFields keeps one integration's changes under the same lock
