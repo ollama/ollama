@@ -1859,14 +1859,21 @@ func TestGatewayCloseCancelsUpstreamReadinessCheck(t *testing.T) {
 	}
 }
 
-func startTestGateway(t *testing.T, upstreamURL string) *ClaudeDesktop {
+func startTestGateway(t *testing.T, upstreamURL string, configs ...ClaudeDesktopConfig) *ClaudeDesktop {
 	t.Helper()
-	p, err := NewClaudeDesktop(ClaudeDesktopConfig{ListenAddr: "127.0.0.1:0", OllamaURL: upstreamURL, Model: "glm-5.2:cloud"})
+	config := ClaudeDesktopConfig{ListenAddr: "127.0.0.1:0", OllamaURL: upstreamURL, Model: "glm-5.2:cloud"}
+	if len(configs) > 0 {
+		config = configs[0]
+		config.OllamaURL = upstreamURL
+	}
+	p, err := NewClaudeDesktop(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Start(); err != nil {
-		t.Fatal(err)
+	if config.PathPrefix == "" {
+		if err := p.Start(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)

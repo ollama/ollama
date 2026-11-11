@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestLoadIntegrationReadsLegacyConfigWithoutMigration(t *testing.T) {
+func TestLoadIntegration(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -30,14 +30,6 @@ func TestLoadIntegrationReadsLegacyConfigWithoutMigration(t *testing.T) {
 	if err != nil || string(after) != string(data) {
 		t.Fatalf("legacy config changed: %q %v", after, err)
 	}
-}
-
-func TestLoadIntegrationRejectsMalformedSavedState(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	path, _ := Path()
-	os.MkdirAll(filepath.Dir(path), 0o700)
 	for _, data := range []string{`null`, `{`, `{"integrations":{"claude-desktop":null}}`, `{"integrations":{"claude-desktop":{"models":"wrong"}}}`} {
 		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
