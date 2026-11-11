@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/fs/gguf"
@@ -158,6 +159,22 @@ func TestReadFileMetadataValidatesTensorData(t *testing.T) {
 	}
 	if _, err := gguf.ReadFileMetadata(path, 0); !errors.Is(err, gguf.ErrUnsupported) {
 		t.Fatalf("ReadFileMetadata() error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestReadFileMetadataRejectsDuplicateTensor(t *testing.T) {
+	path := writeMetadataFixture(t, gguftest.KV{
+		"general.architecture": "llama",
+	}, []*gguftest.Tensor{
+		{Name: "blk.0.attn_q.weight", Type: gguf.TensorTypeF32, Shape: []uint64{8}},
+		{Name: "blk.0.attn_q.weight", Type: gguf.TensorTypeF32, Shape: []uint64{8}},
+	})
+	_, err := gguf.ReadFileMetadata(path, 0)
+	if !errors.Is(err, gguf.ErrUnsupported) {
+		t.Fatalf("ReadFileMetadata() error = %v, want ErrUnsupported for duplicate tensor", err)
+	}
+	if !strings.Contains(err.Error(), "duplicate tensor") {
+		t.Fatalf("ReadFileMetadata() error = %v, want error containing %q", err, "duplicate tensor")
 	}
 }
 
