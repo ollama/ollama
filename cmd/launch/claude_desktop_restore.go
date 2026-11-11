@@ -24,6 +24,8 @@ type claudeOwnedValue struct {
 	Before   json.RawMessage `json:"before,omitempty"`
 	Applied  json.RawMessage `json:"applied,omitempty"`
 	Previous json.RawMessage `json:"previous,omitempty"`
+	// PreviousSet distinguishes an absent rollback target from no pending change.
+	PreviousSet bool `json:"previousSet,omitempty"`
 }
 
 type claudeOwnedFile struct {
@@ -138,6 +140,7 @@ func (snapshot *claudeRestartProfile) recordAfterQuit(ctx context.Context) error
 		for key, value := range file.Values {
 			owned := state.Files[path].Values[key]
 			owned.Previous = value.Before
+			owned.PreviousSet = true
 			owned.Applied = claudeField(current, key)
 			state.Files[path].Values[key] = owned
 		}
@@ -274,7 +277,7 @@ func claudePutField(cfg map[string]any, key string, raw json.RawMessage) {
 }
 
 func claudeValueOwned(current json.RawMessage, value claudeOwnedValue) bool {
-	return claudeJSONEqual(current, value.Applied) || value.Previous != nil && claudeJSONEqual(current, value.Previous)
+	return claudeJSONEqual(current, value.Applied) || (value.PreviousSet || value.Previous != nil) && claudeJSONEqual(current, value.Previous)
 }
 
 func claudeValueRestorable(current json.RawMessage, value claudeOwnedValue) bool {
@@ -370,6 +373,7 @@ func claudeWriteOwned(path string, desired map[string]any, keys ...string) error
 			// Retain the first rollback target until the entire change commits.
 			// Recovery can then recognize keys rolled back before a later failure.
 			value.Previous = before
+			value.PreviousSet = true
 			attempt.Values[key] = claudeOwnedValue{Before: before, Applied: after}
 		} else {
 			v := attempt.Values[key]
@@ -501,6 +505,7 @@ func withClaudeProfileChangesContext(ctx context.Context, targets claudeDesktopT
 			for key := range attempt.Values {
 				value := state.Files[file].Values[key]
 				value.Previous = nil
+				value.PreviousSet = false
 				state.Files[file].Values[key] = value
 			}
 		}

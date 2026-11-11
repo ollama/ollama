@@ -604,3 +604,58 @@ func TestClaudeLegacyPartialRestoreReconnectPreservesNewEdit(t *testing.T) {
 		t.Fatalf("deploymentDisplayName = %v, want preserved user edit", got)
 	}
 }
+
+func TestClaudePartialRollbackRestoresAbsentInFlightValue(t *testing.T) {
+	paths, targets := claudeRestoreFixture(t)
+	if err := writeClaudeDesktopJSON(paths.profile, map[string]any{"autoModeEnabled": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := snapshotClaudeProfileForRestart(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Claude removes this owned value while quitting. The original value is
+	// still true, but this attempt must roll back to the post-quit absence.
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	delete(profile, "autoModeEnabled")
+	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.recordAfterQuit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("later profile update failed")
+	err = withClaudeProfileChanges(targets, func() error {
+		profile["autoModeEnabled"] = false
+		if err := claudeWriteOwned(paths.profile, profile, "autoModeEnabled"); err != nil {
+			return err
+		}
+		if err := writeClaudeDesktopDeploymentMode(paths.normalConfig, "3p"); err != nil {
+			return err
+		}
+		// An independent user edit prevents full rollback and leaves recovery
+		// pending after the profile has already been rolled back.
+		if err := writeClaudeDesktopJSON(paths.normalConfig, map[string]any{"deploymentMode": "1p"}); err != nil {
+			return err
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("partial rollback error = %v", err)
+	}
+	if _, exists := claudeDesktopReadJSON(t, paths.profile)["autoModeEnabled"]; exists {
+		t.Fatal("attempt rollback did not restore the missing post-quit value")
+	}
+	if err := restoreClaudeDesktopTargets(targets); err == nil {
+		t.Fatal("restore should preserve the independent deployment-mode edit")
+	}
+	if got := claudeDesktopReadJSON(t, paths.profile)["autoModeEnabled"]; got != true {
+		t.Fatalf("original autoModeEnabled was not recovered after partial rollback: %v", got)
+	}
+	if got := readClaudeDesktopDeploymentMode(paths.normalConfig); got != "1p" {
+		t.Fatalf("later user edit was not preserved: %v", got)
+	}
+}
