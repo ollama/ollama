@@ -29,6 +29,7 @@ func (m *schedulingModel) NewCaches() []cache.Cache { return []cache.Cache{cache
 func (m *schedulingModel) Forward(b *batch.Batch, cs []cache.Layer) (*mlx.Array, *mlx.Array) {
 	B, L := b.InputIDs.Dim(0), b.InputIDs.Dim(1)
 	m.batches = append(m.batches, B)
+	m.forwards = append(m.forwards, forwardCall{offset: b.SeqOffsets[0], n: int32(L)})
 	m.layouts = append(m.layouts, b.Layout)
 	kv := b.InputIDs.AsType(mlx.DTypeFloat32).Reshape(B, 1, L, 1)
 	cs[0].(cache.Attention).Update(b, kv, kv)
@@ -417,11 +418,15 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 						break
 					}
 				}
-				if !first.finished || second.finished || first.spec.stats.drafted != before {
+				if !first.finished || second.finished || first.spec.stats.drafted <= before {
 					t.Fatalf("unexpected overlapping phase: first done=%t second done=%t drafts=%d->%d", first.finished, second.finished, before, first.spec.stats.drafted)
 				}
-				if !slices.Contains(m.batches, 2) {
-					t.Fatal("requests never shared a forward")
+				sharedVerification := false
+				for i, rows := range m.batches {
+					sharedVerification = sharedVerification || rows == 2 && m.forwards[i].n > 1
+				}
+				if !sharedVerification {
+					t.Fatal("requests never shared a multi-token verification forward")
 				}
 				for range 3 {
 					step()
@@ -437,8 +442,8 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 				third := s.slots[0].request
 				step()
 				step()
-				if second.spec.stats.drafted != before {
-					t.Fatal("second request kept drafting while third was active")
+				if second.spec.stats.drafted <= before {
+					t.Fatal("second request stopped drafting while third was active")
 				}
 				cancel()
 				for range 70 {
@@ -676,12 +681,17 @@ func (m *recurrentSchedulingModel) NewCaches() []cache.Cache {
 func (m *recurrentSchedulingModel) Forward(b *batch.Batch, cs []cache.Layer) (*mlx.Array, *mlx.Array) {
 	c := cs[0].(cache.Recurrent)
 	h := c.Get(b, mlx.DTypeFloat32)
-	delta := mlx.AddScalar(h.DeltaState(), 1)
-	c.Put(b, []*mlx.Array{h.ConvState()}, []*mlx.Array{delta})
+	boundaries := append(c.SnapshotSplits(b.InputIDs.Dim(1)), b.InputIDs.Dim(1))
+	conv, delta := make([]*mlx.Array, len(boundaries)), make([]*mlx.Array, len(boundaries))
+	for i, boundary := range boundaries {
+		conv[i] = h.ConvState()
+		delta[i] = mlx.AddScalar(h.DeltaState(), float32(boundary))
+	}
+	c.Put(b, conv, delta)
 	out := oneHotLogits(b.InputIDs.Ints()).Reshape(b.InputIDs.Dim(0), b.InputIDs.Dim(1), mtpTestVocab)
 	// Like a recurrent kernel, producing hidden state evaluates the shared
 	// state allocation, but need not evaluate the cache's row copies.
-	out = out.Add(mlx.Sum(delta.Reshape(-1), 0, false).Multiply(mlx.FromValue(float32(0))))
+	out = out.Add(mlx.Sum(delta[len(delta)-1].Reshape(-1), 0, false).Multiply(mlx.FromValue(float32(0))))
 	return out, out
 }
 
@@ -726,4 +736,103 @@ func TestBatchSchedulerMaterializesParkedState(t *testing.T) {
 			t.Fatalf("parked row retained %d bytes, want one %d-byte state plus small sampling buffers", held, rowBytes)
 		}
 	})
+}
+
+// Cold slots must discover a useful speculative depth while both clients remain
+// active, without learning peer costs as single-request costs.
+func TestBatchSchedulerLearnsDraftDepth(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		logprobs, parked bool
+	}{
+		{name: "drafting peers"},
+		{name: "plain peer", logprobs: true},
+		{name: "parked probes", parked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logprobs := tc.logprobs
+			mlxtest.Run(t, func(t *mlxtest.T) {
+				tok := newTestTokenizer(t, []int32{7})
+				m := &schedulingModel{fakeMTPModel: fakeMTPModel{tok: tok}}
+				r := &Runner{Model: m, Tokenizer: tok, Sampler: sample.New(4096), parallel: 2}
+				r.cache = newPrefixCache(m.NewCaches())
+				r.spec = newSpeculation(r, pipelineSlot, &fakeMTPDraft{}, r.cache.caches, nil)
+				s := &batchScheduler{r: r, slots: make([]*batchSlot, 2)}
+				if tc.parked {
+					c := newDepthController()
+					c.drafterLimit = 1
+					c.cost.observe(0, time.Microsecond)
+					c.cost.observe(1, time.Second)
+					s.drafting.depths = map[draftBatchSize]*depthController{{rows: 2, drafting: 2}: c}
+				}
+				defer func() {
+					for _, slot := range s.slots {
+						if slot.request != nil {
+							s.finish(slot, context.Canceled)
+						}
+						slot.cache.close()
+					}
+					r.cache.close()
+					r.Sampler.Free()
+				}()
+				mlx.Scoped(func() {
+					for i, token := range []int32{1, 2} {
+						s.admit(request{
+							Ctx: context.Background(), Tokens: []int32{token, token}, Responses: make(chan CompletionResponse, 256),
+							CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 1000}},
+							SamplerOpts:       sample.Options{Temperature: 0, Logprobs: logprobs && i == 0},
+						})
+					}
+				})
+				for range 40 {
+					mlx.Scoped(func() { s.step() })
+				}
+				drafting := 2
+				if logprobs {
+					drafting = 1
+				}
+				c := s.drafting.depths[draftBatchSize{rows: 2, drafting: drafting}]
+				if c == nil || !c.cost.sampled(0) || !c.cost.sampled(1) {
+					t.Fatal("concurrent controller did not sample plain and speculative costs")
+				}
+				shared := false
+				for i, rows := range m.batches {
+					shared = shared || rows == drafting && m.forwards[i].n > 1
+				}
+				if !shared {
+					t.Fatal("cold slots never shared speculative verification")
+				}
+				for _, slot := range s.slots {
+					req := slot.request
+					if req == nil || req.finished || req.spec.enabled && req.spec.stats.drafted == 0 {
+						t.Fatalf("slot %d did not draft while continuously contending", slot.id)
+					}
+					if tc.parked && req.spec.stats.drafted < 3 {
+						t.Fatalf("slot %d lost parked probes: drafted %d", slot.id, req.spec.stats.drafted)
+					}
+					if !req.spec.enabled && req.spec.stats.drafted != 0 {
+						t.Fatalf("slot %d drafted despite requesting logprobs", slot.id)
+					}
+					if slot.speculation.depth.cost.ready() || slot.speculation.depth.scheduled != 0 {
+						t.Fatalf("slot %d learned peer costs as isolated costs", slot.id)
+					}
+				}
+				// A stalled reader must not contribute an elapsed-time sample for the
+				// previous two-row batch, or prevent the other request from progressing.
+				a, b := s.slots[0].request, s.slots[1].request
+				for len(a.request.Responses) < cap(a.request.Responses) {
+					a.request.Responses <- CompletionResponse{}
+				}
+				a.responses = append(a.responses, CompletionResponse{})
+				before := b.output.generated
+				costs := maps.Clone(c.cost.ewma)
+				for range 6 {
+					mlx.Scoped(func() { s.step() })
+				}
+				if b.output.generated <= before || !maps.Equal(costs, c.cost.ewma) {
+					t.Fatal("backpressure stalled the peer or contaminated two-row costs")
+				}
+			})
+		})
+	}
 }

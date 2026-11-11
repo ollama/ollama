@@ -50,6 +50,71 @@ type batchScheduler struct {
 	slots       []*batchSlot
 	nextPrefill int
 	keepScratch bool
+	drafting    batchDrafting
+}
+
+type draftBatchSize struct {
+	rows, drafting int
+}
+
+// batchDrafting learns shared-verification costs for each batch width and mix
+// of drafting and plain rows. A round spans consecutive decode calls, including
+// pipelined GPU work. Prefill, backpressure and shape transitions break samples.
+type batchDrafting struct {
+	depths         map[draftBatchSize]*depthController
+	requests       []*batchRequest
+	started        time.Time
+	drafts         int
+	previousDrafts int
+}
+
+func (b *batchDrafting) reset() {
+	b.requests = nil
+	b.started = time.Time{}
+}
+
+func (b *batchDrafting) begin(slots []*batchSlot) *depthController {
+	requests := make([]*batchRequest, len(slots))
+	size := draftBatchSize{rows: len(slots)}
+	for i, slot := range slots {
+		req := slot.request
+		if req.spec == nil || req.spec.fixedDepth {
+			b.reset()
+			return nil
+		}
+		requests[i] = req
+		if req.spec.enabled {
+			size.drafting++
+		}
+	}
+	if size.drafting == 0 {
+		b.reset()
+		return nil
+	}
+	if b.depths == nil {
+		b.depths = make(map[draftBatchSize]*depthController)
+	}
+	c := b.depths[size]
+	if c == nil {
+		c = newDepthController()
+		c.plainTokens = float64(size.rows-size.drafting) / float64(size.drafting)
+		c.drafterLimit = slots[0].speculation.drafter.draftLimit()
+		b.depths[size] = c
+	}
+	now := time.Now()
+	if !b.started.IsZero() && slices.Equal(requests, b.requests) {
+		if b.drafts == b.previousDrafts {
+			c.cost.observe(b.drafts, now.Sub(b.started))
+		}
+		b.previousDrafts = b.drafts
+	} else {
+		b.previousDrafts = -1
+	}
+	b.requests, b.started, b.drafts = requests, now, c.scheduled
+	if slog.Default().Enabled(context.Background(), logutil.LevelTrace) {
+		logutil.Trace("mlx batch draft depth", "rows", len(slots), "drafting", size.drafting, "depth", b.drafts, "cost", c.cost.sampleString())
+	}
+	return c
 }
 
 func (r *Runner) onMLX(ctx context.Context, f func() error) error {
@@ -89,7 +154,7 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 			return nil
 		})
 	})
-	slog.Info("MLX request scheduler", "parallel", r.parallel, "drafting", "when-alone", "attention", "per-request")
+	slog.Info("MLX request scheduler", "parallel", r.parallel, "drafting", "shared-verification", "attention", "per-request")
 	for {
 		var pending queuedRequest
 		var incoming chan queuedRequest
@@ -302,6 +367,7 @@ func (s *batchScheduler) step() bool {
 		slot := s.slots[i]
 		if slot != nil && slot.evaluation != nil {
 			s.nextPrefill = (i + 1) % len(s.slots)
+			s.drafting.reset()
 			s.stepEvaluation(slot)
 			progressed = true
 			break
@@ -310,6 +376,7 @@ func (s *batchScheduler) step() bool {
 			continue
 		}
 		req := slot.request
+		s.drafting.reset()
 		before := req.prefill.processed
 		ready, err := req.prefill.step(req.request.Ctx)
 		progressed = progressed || req.prefill.processed != before
@@ -355,7 +422,10 @@ func (s *batchScheduler) step() bool {
 		}
 		break
 	}
-	progressed = s.decodeSpeech() || progressed
+	if s.decodeSpeech() {
+		s.drafting.reset()
+		progressed = true
+	}
 	var ready []*batchSlot
 	active := 0
 	for _, slot := range s.slots {
@@ -368,9 +438,11 @@ func (s *batchScheduler) step() bool {
 		}
 	}
 	if len(ready) == 0 {
+		s.drafting.reset()
 		return progressed
 	}
 	if active == 1 {
+		s.drafting.reset()
 		slot := ready[0]
 		req := slot.request
 		results, err := req.decoder.next(req.output.limit - req.output.generated)
@@ -403,10 +475,96 @@ func (s *batchScheduler) emit(slot *batchSlot, results []sample.Result, err erro
 	}
 }
 
-// decode advances the same pipelined decoders used for an isolated request, sharing
-// one model forward and sample across their rows. A speculative decoder parks
-// through its usual pipeline; when alone again its next call resumes drafting.
+// decode groups equal-length speculative rounds for a shared target forward.
+// Proposals, sampling and rollback still belong to each request. Plain rows keep
+// their pipelined forward; no request waits for a peer to choose the same depth.
 func (s *batchScheduler) decode(ready []*batchSlot) error {
+	if s.r.spec == nil {
+		return s.decodePlain(ready)
+	}
+	type group struct {
+		slots  []*batchSlot
+		rounds []draftRound
+	}
+	controller := s.drafting.begin(ready)
+	var groups []group
+	var plain []*batchSlot
+	for _, slot := range ready {
+		req := slot.request
+		d, ok := req.decoder.(*speculativeDecoder)
+		limit := 0
+		if ok {
+			limit = d.s.limit
+			if controller != nil && d.s.enabled {
+				limit = controller.scheduled
+			}
+		}
+		if !ok || limit == 0 {
+			plain = append(plain, slot)
+			continue
+		}
+		// Keep the isolated depth controller's timings free of peer work.
+		// Batch depth selection never changes the isolated controller's limit.
+		d.s.lastRoundStart = time.Time{}
+		d.s.prevDrafts, d.s.roundDrafts = -1, -1
+		if d.inner != nil {
+			s.drafting.reset()
+			results, err := d.resume()
+			if err == nil {
+				d.advance(results[len(results)-1])
+			}
+			s.emit(slot, results, err)
+			continue
+		}
+		remaining := req.output.limit - req.output.generated
+		candidates := d.s.drafter.propose(d.current.Token, min(limit, remaining-1))
+		if candidates == nil {
+			s.drafting.reset()
+			plain = append(plain, slot)
+			continue
+		}
+		mlx.AsyncEval(candidates.Arrays()...)
+		n := candidates.tokens.Dim(1)
+		if n != limit {
+			s.drafting.reset()
+		}
+		i := slices.IndexFunc(groups, func(g group) bool { return g.rounds[0].candidates.tokens.Dim(1) == n })
+		if i < 0 {
+			i = len(groups)
+			groups = append(groups, group{})
+		}
+		groups[i].slots = append(groups[i].slots, slot)
+		groups[i].rounds = append(groups[i].rounds, draftRound{d.s, &d.position, d.current, candidates, d.grammar})
+	}
+	for _, g := range groups {
+		outcomes := s.r.acceptDrafts(g.rounds)
+		for i, out := range outcomes {
+			d := g.slots[i].request.decoder.(*speculativeDecoder)
+			if out.err == nil {
+				d.s.recordRound(g.rounds[i].candidates.tokens.Dim(1), out.accepted)
+				if controller != nil {
+					controller.acc.observe(out.observed, out.accepted)
+				}
+				d.advance(out.results[len(out.results)-1])
+			}
+			s.emit(g.slots[i], out.results, out.err)
+		}
+	}
+	err := s.decodePlain(plain)
+	if err != nil {
+		s.drafting.reset()
+	}
+	if controller != nil && !s.drafting.started.IsZero() {
+		// Draining a parked pipeline does not execute the scheduled probe.
+		// Hold its depth until a complete round consumes it.
+		controller.next()
+	}
+	return err
+}
+
+// decodePlain advances pipelined rows together, including requests whose draft
+// head is parked or disabled by their sampling options.
+func (s *batchScheduler) decodePlain(ready []*batchSlot) error {
 	var slots []*batchSlot
 	var decoders []*pipelinedDecoder
 	for _, slot := range ready {
