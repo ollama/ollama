@@ -987,6 +987,11 @@ func TestClaudeDesktopUsesOllamaGatewayRequiresCoreRoutingSettings(t *testing.T)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			paths, err = claudeDesktopConfigPaths()
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := c.ConfigureAutodiscovery(); err != nil {
 				t.Fatal(err)
 			}
@@ -1019,7 +1024,7 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 	if err := os.WriteFile(paths.meta, []byte(`{"appliedId":"`+claudeDesktopProfileID+`","entries":[{"id":"`+claudeDesktopProfileID+`","name":"Ollama"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":true,"coworkEgressAllowedHosts":["github.com"],"deploymentDisplayName":"Ollama","disableDeploymentModeChooser":true,"disableEssentialTelemetry":true,"disableNonessentialTelemetry":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"https://ollama.com","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"],"userOwned":"keep"}`), 0o644); err != nil {
+	if err := os.WriteFile(paths.profile, []byte(`{"autoModeEnabled":true,"coworkEgressAllowedHosts":["github.com"],"deploymentDisplayName":"Ollama","disableDeploymentModeChooser":true,"disableEssentialTelemetry":true,"disableNonessentialTelemetry":true,"inferenceGatewayApiKey":"keep","inferenceProvider":"gateway","inferenceGatewayBaseUrl":"http://127.0.0.1:11435","inferenceGatewayAuthScheme":"bearer","inferenceModels":["legacy"],"userOwned":"keep"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1060,6 +1065,7 @@ func TestClaudeDesktopRestoreSwitchesBackToFirstPartyMode(t *testing.T) {
 }
 
 func TestClaudeDesktopRestoreRemainsAvailableOnWindows(t *testing.T) {
+	setTestHome(t, t.TempDir())
 	localAppData := t.TempDir()
 	t.Setenv("LOCALAPPDATA", localAppData)
 	withClaudeDesktopPlatform(t, "windows")
@@ -1111,43 +1117,52 @@ func TestClaudeDesktopRestoreRemainsAvailableOnWindows(t *testing.T) {
 }
 
 func TestClaudeDesktopRunRestartsRunningAppWhenConfirmed(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withClaudeDesktopPlatform(t, "darwin")
-	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
-	defer restoreConfirm()
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	for _, connected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("previously_connected_%t", connected), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			withClaudeDesktopPlatform(t, "darwin")
+			restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+			defer restoreConfirm()
+			paths, err := claudeDesktopConfigPaths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+				t.Fatal(err)
+			}
 
-	running := true
-	var quitCalls, openCalls int
-	withClaudeDesktopProcessHooks(t,
-		func() bool { return running },
-		func() error {
-			quitCalls++
-			running = false
-			return os.WriteFile(paths.profile, []byte(`{"chatTabEnabled":false}`), 0o644)
-		},
-		func() error {
-			openCalls++
-			return nil
-		},
-	)
+			if connected {
+				if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			running := true
+			var quitCalls, openCalls int
+			withClaudeDesktopProcessHooks(t,
+				func() bool { return running },
+				func() error {
+					quitCalls++
+					running = false
+					return os.WriteFile(paths.profile, []byte(`{"chatTabEnabled":false}`), 0o644)
+				},
+				func() error {
+					openCalls++
+					return nil
+				},
+			)
 
-	if err := (&ClaudeDesktop{}).Run("qwen3.5", nil, nil); err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-	if quitCalls != 1 || openCalls != 1 {
-		t.Fatalf("quit/open calls = %d/%d, want 1/1", quitCalls, openCalls)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	if profile["chatTabEnabled"] != true {
-		t.Fatalf("chatTabEnabled = %v, want true after Claude shutdown write", profile["chatTabEnabled"])
+			if err := (&ClaudeDesktop{}).Run("qwen3.5", nil, nil); err != nil {
+				t.Fatalf("Run returned error: %v", err)
+			}
+			if quitCalls != 1 || openCalls != 1 {
+				t.Fatalf("quit/open calls = %d/%d, want 1/1", quitCalls, openCalls)
+			}
+			profile := claudeDesktopReadJSON(t, paths.profile)
+			if profile["chatTabEnabled"] != true {
+				t.Fatalf("chatTabEnabled = %v, want true after Claude shutdown write", profile["chatTabEnabled"])
+			}
+		})
 	}
 }
 
@@ -1483,7 +1498,7 @@ func TestClaudeDesktopRestoreForShutdownDoesNotReopenApp(t *testing.T) {
 		func() error {
 			quitCalls++
 			running = false
-			return os.WriteFile(paths.profile, []byte(`{"provider":"ollama"}`), 0o644)
+			return os.WriteFile(paths.profile, []byte(`{"chatTabEnabled":false,"provider":"ollama"}`), 0o644)
 		},
 		func() error {
 			t.Fatal("Claude reopened during shutdown")
@@ -1665,8 +1680,7 @@ func TestClaudeDesktopConfigureAutodiscoveryPinsGatewayLabels(t *testing.T) {
 	if err := restoreClaudeDesktopProfile(); err != nil {
 		t.Fatalf("restore returned error: %v", err)
 	}
-	restored := claudeDesktopReadJSON(t, paths.profile)
-	if _, ok := restored["inferenceModels"]; ok {
-		t.Fatalf("restore should drop the pinned list, got %v", restored["inferenceModels"])
+	if _, err := os.Stat(paths.profile); !os.IsNotExist(err) {
+		t.Fatalf("restore should remove previously absent profile: %v", err)
 	}
 }
