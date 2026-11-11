@@ -23,16 +23,23 @@ curl -LsSf https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/refs/heads/main/
 ```
 
 This produces JSONL splits (e.g. `qualitative.jsonl`, `throughput_2k.jsonl`).
-Each prepared record must end up with:
+Each prepared record carries the turn text as role/content messages — the
+tooling replaces the dataset's `turns` column with `messages` — so a record
+looks like:
 
 ```json
-{"question_id": "...", "category": "coding", "turns": ["first user message", "optional follow-up"]}
+{"question_id": "...", "category": "coding",
+ "messages": [{"role": "user", "content": "first user message"},
+              {"role": "user", "content": "optional follow-up"}]}
 ```
 
-`turns` may hold 1–5 user messages; multi-turn records are replayed in order
-with the live assistant replies as history. Records still containing the
-placeholder notice are skipped. A plain `{"prompt": "...", "category": "..."}`
-line is also accepted for smoke testing.
+A record may hold 1–5 user messages; they are replayed in order with the live
+assistant replies as history. Only user messages are accepted: a record
+carrying its own assistant or system turns is rejected rather than silently
+reduced, since the replies under measurement come from the server. Records
+still containing the placeholder notice are skipped. A plain
+`{"prompt": "...", "category": "..."}` line, or a list of user strings under
+`"turns"`, is also accepted for smoke testing.
 
 ## Running
 
@@ -59,7 +66,20 @@ concurrency is deliberately not offered yet.
   forward pass, including steps that did not draft.
 - **time per step**: wall time per target forward pass.
 - tokens per step ÷ time per step equals the eval rate exactly when the
-  server reports steps; that identity is one way to sanity-check a run.
+  server reports steps; that identity is one way to sanity-check a run. Steps
+  are target forward passes over the decode window, so a response short enough
+  to stop mid-round reports the forward that produced no emitted token too.
+
+## Reasoning models
+
+Answers and reasoning are recorded apart: only the answer stream is replayed as
+prior-turn assistant history, because prior-turn reasoning is not part of the
+prompt a chat template expects and the benchmark's fixed-prompt methodology
+assumes its absence. Reasoning tokens are still counted in `predicted_n` and
+the eval rate, and their size is reported per category as `reasoning chars` in
+`--json-out`, so a run that reasoned anyway is visible rather than mixed in
+silently. The default `--temperature 0` follows SPEED-Bench's non-reasoning
+methodology.
 
 ## Provenance
 

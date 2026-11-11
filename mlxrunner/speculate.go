@@ -318,6 +318,9 @@ func (st *speculativeDecoder) batched(result sampler.Result) {
 	st.s.prevDrafts, st.s.roundDrafts = -1, -1
 	st.s.stats.recordRound(0)
 	st.s.stats.iterations++
+	// The scheduler shared one forward across the rows it advanced, this
+	// request's among them.
+	st.s.countForward()
 }
 
 // drain surrenders the inner decoder's undelivered sample while parked; a
@@ -439,6 +442,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	var maskErr error
 	mlx.ScopedEval(func() []*mlx.Array {
 		var hiddenSeq *mlx.Array
+		s.countForward()
 		hiddenSeq, auxHiddenSeq = r.Model.Forward(&batch.Batch{
 			InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
 			SeqOffsets:   []int32{int32(before)},
