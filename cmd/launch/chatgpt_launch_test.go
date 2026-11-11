@@ -3,13 +3,16 @@ package launch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
@@ -93,6 +96,8 @@ func TestChatGPTButtonCLIParity(t *testing.T) {
 		{"pro", proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"}, nil, "glm-5.3-flash:cloud"},
 		{"cloud off", proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}, nil, "local-a"},
 		{"existing choices", proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut}, []string{"local-b", "local-a"}, "local-a"},
+		{"stale choice", proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut}, []string{"removed", "local-b"}, "local-b"},
+		{"all choices stale", proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut}, []string{"removed"}, "local-a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, source, opens := parityFixture(t, tc.access)
@@ -171,4 +176,105 @@ func TestChatGPTButtonCLIConsentAndDiscoveryFailure(t *testing.T) {
 	if err := StartChatGPT(t.Context(), button, failedLoad, true); !errors.Is(err, failure) || button.configured {
 		t.Fatalf("discovery failure changed button state: %v", err)
 	}
+}
+
+func TestChatGPTCLICancelledRestartPreservesProfile(t *testing.T) {
+	for _, connected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("connected=%t", connected), func(t *testing.T) {
+			app, _, opens := parityFixture(t, proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff})
+			configPath := seedParityProfile(t)
+			if connected {
+				if err := app.ConfigureWithModels("local-b", testLaunchModels("local-b")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldSpinner, oldSleep := DefaultSpinner, codexAppSleep
+			t.Cleanup(func() { DefaultSpinner, codexAppSleep = oldSpinner, oldSleep })
+			cancel := make(chan struct{})
+			stopped := false
+			DefaultSpinner = func(string) *Spinner { return NewSpinner(func() { stopped = true }, cancel) }
+			codexAppSleep = func(time.Duration) {
+				select {
+				case <-cancel:
+				default:
+					close(cancel)
+				}
+			}
+			quits := 0
+			codexAppIsRunning = func(context.Context) bool { return true }
+			codexAppQuitApp = func(context.Context) error { quits++; return nil }
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+			client, err := newLauncherClient(defaultLaunchPolicy(true, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.launchChatGPT(t.Context(), app); !errors.Is(err, ErrCancelled) {
+				t.Fatalf("restart cancellation = %v", err)
+			}
+			after, err := os.ReadFile(configPath)
+			if err != nil || string(after) != string(before) || app.OllamaConfigured() != connected || quits != 1 || *opens != 0 || !stopped {
+				t.Fatalf("cancel changed profile or restarted: connected=%t quit/open=%d/%d stopped=%t err=%v", app.OllamaConfigured(), quits, *opens, stopped, err)
+			}
+			if len(config.IntegrationModels(chatGPTIntegrationName)) != 0 {
+				t.Fatal("cancelled restart saved default models")
+			}
+		})
+	}
+}
+
+func TestChatGPTCLIFailedOpenCanReconnect(t *testing.T) {
+	for _, connected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("connected=%t", connected), func(t *testing.T) {
+			app, _, opens := parityFixture(t, proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff})
+			configPath := seedParityProfile(t)
+			if err := config.SaveIntegration(chatGPTIntegrationName, []string{"local-b"}); err != nil {
+				t.Fatal(err)
+			}
+			if connected {
+				if err := app.ConfigureWithModels("local-b", testLaunchModels("local-b")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			open := codexAppOpenApp
+			failure := errors.New("fixture could not open ChatGPT")
+			codexAppOpenApp = func(args []string) error { _ = open(args); return failure }
+			client, err := newLauncherClient(defaultLaunchPolicy(true, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.launchChatGPT(t.Context(), app); !errors.Is(err, failure) || *opens != 1 || app.OllamaConfigured() != connected {
+				t.Fatalf("failed open = %v opens=%d configured=%t", err, *opens, app.OllamaConfigured())
+			}
+			text, err := os.ReadFile(configPath)
+			if err != nil || !strings.Contains(string(text), `user_setting = "keep"`) || (!connected && app.CurrentModel() != "") {
+				t.Fatalf("failed open did not preserve the prior profile: %v", err)
+			}
+			codexAppOpenApp = open
+			if err := client.launchChatGPT(t.Context(), app); err != nil {
+				t.Fatal(err)
+			}
+			if !app.OllamaConfigured() || app.CurrentModel() != "local-b" || *opens != 2 || !slices.Equal(config.IntegrationModels(chatGPTIntegrationName), []string{"local-b"}) {
+				t.Fatal("retry failed or changed saved choices")
+			}
+		})
+	}
+}
+
+func seedParityProfile(t *testing.T) string {
+	t.Helper()
+	path, err := codexConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("model = \"gpt-5.5\"\nuser_setting = \"keep\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
