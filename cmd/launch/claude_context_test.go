@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,7 +11,13 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestClaudePrepareServingContext(t *testing.T) {
+type contextTestTransport func(*http.Request) (*http.Response, error)
+
+func (f contextTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestClaudeResolveServingContext(t *testing.T) {
 	for _, tt := range []struct {
 		name, body string
 		status     int
@@ -45,7 +50,7 @@ func TestClaudePrepareServingContext(t *testing.T) {
 				if err := json.NewDecoder(req.Body).Decode(&show); err != nil {
 					t.Fatal(err)
 				}
-				if show.Model != "gemma4" || len(show.Options) != 0 {
+				if show.Model != "gemma4:latest" || len(show.Options) != 0 {
 					t.Fatalf("show request = %+v", show)
 				}
 				status := tt.status
@@ -55,30 +60,32 @@ func TestClaudePrepareServingContext(t *testing.T) {
 				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(tt.body)), Header: make(http.Header)}, nil
 			})
 			u, _ := url.Parse("http://selected.test:12345")
-			client := &launcherClient{apiClient: api.NewClient(u, &http.Client{Transport: transport})}
+			apiClient := api.NewClient(u, &http.Client{Transport: transport})
 			input := []LaunchModel{{Name: "other", ServingContextLength: 8192}, {Name: "gemma4:latest", ContextLength: 262144, ServingContextLength: 12345}}
-			got, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, "gemma4", input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if calls != 1 || got[1].ServingContextLength != tt.want || got[1].ContextLength != 262144 || got[0].ServingContextLength != 8192 {
+			client := &launcherClient{apiClient: apiClient, recommendationsLoaded: true,
+				inventory: &modelInventory{client: apiClient, loaded: true, models: input}}
+			got := client.resolveRunModels(t.Context(), "claude", []string{"gemma4"})
+			if len(got) != 1 || calls != 1 || got[0].ServingContextLength != tt.want || got[0].ContextLength != 262144 {
 				t.Fatalf("models = %+v, calls = %d, want selected serving context %d", got, calls, tt.want)
 			}
-			if input[1].ServingContextLength != 12345 {
+			if input[1].ServingContextLength != 12345 || input[0].ServingContextLength != 8192 {
 				t.Fatal("mutated model inventory")
 			}
 		})
 	}
 }
 
-func TestClaudePrepareServingContextSkipsRemote(t *testing.T) {
-	client := &launcherClient{apiClient: api.NewClient(&url.URL{Scheme: "http", Host: "selected.test"}, &http.Client{Transport: contextTestTransport(func(*http.Request) (*http.Response, error) {
+func TestClaudeResolveServingContextSkipsRemote(t *testing.T) {
+	apiClient := api.NewClient(&url.URL{Scheme: "http", Host: "selected.test"}, &http.Client{Transport: contextTestTransport(func(*http.Request) (*http.Response, error) {
 		t.Fatal("remote model should keep existing cloud metadata path")
 		return nil, nil
-	})})}
+	})})
 	for _, model := range []LaunchModel{{Name: "example:cloud"}, {Name: "remote-alias", Remote: true}} {
-		if _, err := client.prepareLaunchModelsForRun(context.Background(), &Claude{}, model.Name, []LaunchModel{model}); err != nil {
-			t.Fatal(err)
+		client := &launcherClient{apiClient: apiClient, recommendationsLoaded: true,
+			inventory: &modelInventory{client: apiClient, loaded: true, models: []LaunchModel{model}}}
+		got := client.resolveRunModels(t.Context(), "claude", []string{model.Name})
+		if len(got) != 1 || got[0].ServingContextLength != 0 {
+			t.Fatalf("remote models = %+v", got)
 		}
 	}
 }

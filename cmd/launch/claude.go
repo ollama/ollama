@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,37 +16,6 @@ import (
 type Claude struct{}
 
 func (c *Claude) String() string { return "Claude Code" }
-
-func (c *Claude) prepareRunLaunchModels(ctx context.Context, client *launcherClient, model string, models []LaunchModel) ([]LaunchModel, error) {
-	if model == "" || isCloudModelName(model) {
-		return models, nil
-	}
-	resolved, found := findLaunchModel(models, model)
-	if found && resolved.Remote {
-		return models, nil
-	}
-	models = cloneLaunchModels(models)
-	for i := range models {
-		if launchModelMatches(models[i].Name, model) {
-			models[i].ServingContextLength = 0
-		}
-	}
-	length := client.localModelServingContextLength(ctx, model)
-	if length <= 0 {
-		return models, nil
-	}
-	if !found {
-		resolved = LaunchModel{Name: model}
-	}
-	resolved.ServingContextLength = length
-	for i := range models {
-		if launchModelMatches(models[i].Name, model) {
-			models[i] = resolved
-			return models, nil
-		}
-	}
-	return append(models, resolved), nil
-}
 
 func (c *Claude) args(model string, extra []string) []string {
 	var args []string
@@ -99,6 +67,11 @@ func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 		} else if value, ok := strings.CutPrefix(arg, "--model="); ok {
 			contextModel = value
 		}
+	}
+	// These aliases all use the selected Ollama model through modelEnvVars.
+	switch contextModel {
+	case "opus", "sonnet", "haiku", "opusplan":
+		contextModel = model
 	}
 	if !SameModelRef(contextModel, model) {
 		models = cloneLaunchModels(models)

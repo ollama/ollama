@@ -970,8 +970,7 @@ type CloudStatus struct {
 
 // StatusResponse is the response from [Client.CloudStatusExperimental].
 type StatusResponse struct {
-	Cloud         CloudStatus `json:"cloud"`
-	ContextLength int         `json:"context_length,omitempty"`
+	Cloud CloudStatus `json:"cloud"`
 }
 
 // WebSearchRequest is the request for [Client.WebSearchExperimental].
