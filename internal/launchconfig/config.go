@@ -11,10 +11,8 @@ import (
 )
 
 type Integration struct {
-	Models    []string          `json:"models"`
-	Aliases   map[string]string `json:"aliases,omitempty"`
-	Onboarded bool              `json:"onboarded,omitempty"`
-	AutoMode  *bool             `json:"automode,omitempty"`
+	Models  []string          `json:"models"`
+	Aliases map[string]string `json:"aliases,omitempty"`
 }
 
 func Path() (string, error) {

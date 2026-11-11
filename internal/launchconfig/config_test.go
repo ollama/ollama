@@ -20,7 +20,7 @@ func TestLoadIntegrationReadsLegacyConfigWithoutMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg, err := LoadIntegration("claude-desktop")
-	if err != nil || len(cfg.Models) != 1 || cfg.Aliases["claude-sonnet-5"] != "local" || cfg.AutoMode == nil || *cfg.AutoMode {
+	if err != nil || len(cfg.Models) != 1 || cfg.Aliases["claude-sonnet-5"] != "local" {
 		t.Fatalf("config = %+v, %v", cfg, err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {

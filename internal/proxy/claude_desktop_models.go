@@ -484,16 +484,6 @@ type ClaudeDesktopCatalogModel struct {
 	IsFamilyDefault     bool
 }
 
-// CatalogModel returns the metadata advertised for this assigned model.
-func (m ClaudeDesktopModel) CatalogModel() ClaudeDesktopCatalogModel {
-	return ClaudeDesktopCatalogModel{
-		ID:                  m.gateway.ID,
-		DisplayName:         m.gateway.DisplayName,
-		AnthropicFamilyTier: m.gateway.AnthropicFamilyTier,
-		IsFamilyDefault:     m.gateway.IsFamilyDefault,
-	}
-}
-
 // FetchClaudeDesktopCatalog reads the model rows the gateway at baseURL
 // advertises.
 func FetchClaudeDesktopCatalog(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]ClaudeDesktopCatalogModel, error) {

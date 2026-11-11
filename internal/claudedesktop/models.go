@@ -1,5 +1,5 @@
-// Package claudedesktop resolves saved Claude Desktop routes for both server
-// and launcher. It never edits Claude's profile or creates inference requests.
+// Package claudedesktop resolves saved Claude Desktop routes for the server.
+// It never edits Claude's profile or creates inference requests.
 package claudedesktop
 
 import (
@@ -64,27 +64,6 @@ func (r *Resolver) Models(ctx context.Context, _ []proxy.ClaudeDesktopModel) ([]
 		return nil, err
 	}
 	return r.Resolve(ctx, cfg)
-}
-
-// DefaultMappings uses app-specific recommendations where supplied. Other
-// slots inherit the Sonnet default, or the standard compatibility default if
-// the recommendations omit it. It does not change the saved model selection.
-func (r *Resolver) DefaultMappings(ctx context.Context) (map[string]string, error) {
-	models := r.cloudCatalog(ctx)
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	defaults := proxy.DefaultClaudeDesktopMappingsForModels(models)
-	standard := defaults["claude-sonnet-5"]
-	if standard == "" {
-		standard = proxy.DefaultClaudeDesktopMappings()["claude-sonnet-5"]
-	}
-	for _, route := range proxy.ClaudeDesktopRoutes() {
-		if defaults[route.ID] == "" {
-			defaults[route.ID] = standard
-		}
-	}
-	return defaults, nil
 }
 
 func (r *Resolver) Resolve(ctx context.Context, cfg *launchconfig.Integration) ([]proxy.ClaudeDesktopModel, error) {
@@ -221,37 +200,6 @@ func ResolveAccessState(ctx context.Context, status func(context.Context) (*api.
 
 func (r *Resolver) AccessState(ctx context.Context) (proxy.ClaudeDesktopAccessState, error) {
 	return ResolveAccessState(ctx, r.Client.CloudStatusExperimental, r.Client.Whoami)
-}
-
-func (r *Resolver) Validate(ctx context.Context, models []proxy.ClaudeDesktopModel) error {
-	if len(models) == 0 {
-		return errors.New("select at least one Claude Desktop model")
-	}
-	local, err := r.LocalModels(ctx)
-	if err != nil {
-		return err
-	}
-	installed := make(map[string]bool)
-	for _, name := range local {
-		installed[name] = true
-	}
-	state := proxy.ClaudeDesktopAccessState{}
-	for _, model := range models {
-		if model.Cloud {
-			state, err = r.AccessState(ctx)
-			if err != nil {
-				return err
-			}
-			break
-		}
-	}
-	for _, model := range models {
-		access := proxy.EvaluateClaudeDesktopModelAccess(model, state, installed[model.OllamaModel], true)
-		if access.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
-			return fmt.Errorf("Claude model %s is unavailable: %s", model.OllamaModel, access.Reason)
-		}
-	}
-	return nil
 }
 
 func (r *Resolver) signedRequest(ctx context.Context, endpoint string) (*http.Request, error) {

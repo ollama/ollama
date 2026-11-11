@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,30 +13,94 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/internal/launchconfig"
-	"github.com/ollama/ollama/internal/proxy"
 )
 
-func TestResolverSharesDiscoveryAfterFirstCallerCancels(t *testing.T) {
-	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/tags":
-			fmt.Fprint(w, `{"models":[]}`)
-		case "/api/status":
-			fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
-		case "/api/me":
-			fmt.Fprint(w, `{"name":"fixture-user","plan":"pro"}`)
-		default:
-			http.NotFound(w, r)
+func newResolverFixture(t *testing.T, local, cloud http.HandlerFunc) *Resolver {
+	t.Helper()
+	if local == nil {
+		local = func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/tags":
+				fmt.Fprint(w, `{"models":[]}`)
+			case "/api/status":
+				fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+			case "/api/me":
+				fmt.Fprint(w, `{"name":"fixture-user","plan":"pro"}`)
+			default:
+				http.NotFound(w, r)
+			}
 		}
-	}))
-	defer local.Close()
-	started, release := make(chan struct{}), make(chan struct{})
-	releaseCatalog := sync.OnceFunc(func() { close(release) })
-	var cloudRequests atomic.Int32
-	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cloudRequests.Add(1) == 1 {
+	}
+	server := httptest.NewServer(local)
+	t.Cleanup(server.Close)
+	endpoint, _ := url.Parse(server.URL)
+	resolver := NewResolver(endpoint)
+	if cloud != nil {
+		server := httptest.NewServer(cloud)
+		t.Cleanup(server.Close)
+		resolver.CloudURL = server.URL
+	}
+	resolver.Sign = func(context.Context, []byte) (string, error) { return "synthetic", nil }
+	return resolver
+}
+
+func TestResolverSharesCloudFallbackAndHonorsCancellation(t *testing.T) {
+	started, stopped := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
+	resolver := newResolverFixture(t, nil, func(_ http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
 			close(started)
 		}
+		select {
+		case <-r.Context().Done():
+		case <-stopped:
+		}
+	})
+	t.Cleanup(func() { close(stopped) })
+	resolver.HTTP.Timeout = 200 * time.Millisecond
+	cfg := &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "test:cloud"}}
+	resolve := func(ctx context.Context) error {
+		models, err := resolver.Resolve(ctx, cfg)
+		if err == nil && (len(models) != 1 || models[0].OllamaModel != "test:cloud" || models[0].AccountCloud) {
+			return fmt.Errorf("unexpected fallback: %+v", models)
+		}
+		return err
+	}
+	results := make(chan error, 2)
+	go func() { results <- resolve(t.Context()) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("discovery did not begin")
+	}
+	go func() { results <- resolve(t.Context()) }()
+	checkCancellation := func() {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		before := time.Now()
+		if err := resolve(ctx); !errors.Is(err, context.DeadlineExceeded) || time.Since(before) > 200*time.Millisecond {
+			t.Fatalf("resolver ignored cancellation: %v, elapsed %v", err, time.Since(before))
+		}
+	}
+	checkCancellation()
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("concurrent discovery made %d requests, want one pair", got)
+	}
+	checkCancellation()
+}
+
+func TestResolverSharesDiscoveryAfterFirstCallerCancels(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	signalStarted := sync.OnceFunc(func() { close(started) })
+	releaseCatalog := sync.OnceFunc(func() { close(release) })
+	cloud := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		signalStarted()
 		select {
 		case <-release:
 		case <-r.Context().Done():
@@ -51,13 +114,9 @@ func TestResolverSharesDiscoveryAfterFirstCallerCancels(t *testing.T) {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	defer cloud.Close()
+	})
 	defer releaseCatalog()
-	endpoint, _ := url.Parse(local.URL)
-	resolver := NewResolver(endpoint)
-	resolver.CloudURL = cloud.URL
-	resolver.Sign = func(context.Context, []byte) (string, error) { return "synthetic", nil }
+	resolver := newResolverFixture(t, nil, cloud)
 	cfg := &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "test:cloud"}}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -74,12 +133,12 @@ func TestResolverSharesDiscoveryAfterFirstCallerCancels(t *testing.T) {
 	secondResult := make(chan error, 1)
 	go func() {
 		models, err := resolver.Resolve(t.Context(), cfg)
-		if err == nil {
-			err = resolver.Validate(t.Context(), models)
+		if err == nil && (len(models) != 1 || !models[0].AccountCloud) {
+			err = errors.New("shared discovery returned an unverified model")
 		}
 		secondResult <- err
 	}()
-	// Let the second caller join the active discovery before canceling its owner.
+	// Let the healthy caller join the lookup before its first caller cancels.
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	if err := <-firstResult; !errors.Is(err, context.Canceled) {
@@ -89,24 +148,19 @@ func TestResolverSharesDiscoveryAfterFirstCallerCancels(t *testing.T) {
 	if err := <-secondResult; err != nil {
 		t.Fatalf("second caller could not use shared discovery: %v", err)
 	}
-	if got := cloudRequests.Load(); got != 2 {
-		t.Fatalf("shared discovery made %d cloud requests, want one pair", got)
-	}
 }
 
 func TestResolverReusesSavedLocalMappingsWithoutCloud(t *testing.T) {
 	cloudCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			fmt.Fprint(w, `{"models":[{"name":"local-one:latest"},{"name":"local-two:latest"}]}`)
 			return
 		}
 		cloudCalls++
 		http.Error(w, "unexpected cloud lookup", 500)
-	}))
-	defer server.Close()
-	endpoint, _ := url.Parse(server.URL)
-	resolver := NewResolver(endpoint)
+	})
+	resolver := newResolverFixture(t, server, nil)
 	resolver.Sign = func(context.Context, []byte) (string, error) {
 		t.Fatal("local configuration touched signing keys")
 		return "", nil
@@ -131,17 +185,7 @@ func TestResolverReusesSavedLocalMappingsWithoutCloud(t *testing.T) {
 					t.Fatalf("model %d = %+v", i, model)
 				}
 			}
-			if err := resolver.Validate(context.Background(), models); err != nil {
-				t.Fatal(err)
-			}
 		})
-	}
-	models, err := resolver.Resolve(context.Background(), &launchconfig.Integration{Models: []string{"uninstalled-local"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := resolver.Validate(context.Background(), models); err == nil {
-		t.Fatal("missing local model was accepted")
 	}
 	if cloudCalls != 0 {
 		t.Fatalf("cloud calls = %d", cloudCalls)
@@ -153,7 +197,7 @@ func TestResolverReusesSavedLocalMappingsWithoutCloud(t *testing.T) {
 
 func TestResolverVerifiesCloudInventoryAndFailsClosed(t *testing.T) {
 	cloudEnabled := true
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/tags":
@@ -166,9 +210,8 @@ func TestResolverVerifiesCloudInventoryAndFailsClosed(t *testing.T) {
 			t.Errorf("unexpected local path %s", r.URL.Path)
 			http.NotFound(w, r)
 		}
-	}))
-	defer server.Close()
-	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})
+	cloud := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "synthetic-signature" || r.URL.Query().Get("ts") == "" {
 			t.Error("missing signed request")
 		}
@@ -177,66 +220,23 @@ func TestResolverVerifiesCloudInventoryAndFailsClosed(t *testing.T) {
 			if r.URL.Query().Get("app") != IntegrationName {
 				t.Error("missing app recommendation policy")
 			}
-			fmt.Fprint(w, `{"recommendations":[{"model":"test-cloud:cloud","required_plan":"pro","max_output_tokens":8192},{"model":"other-cloud:cloud","required_plan":"pro"}],"mappings":{"claude-sonnet-5":{"model":"test-cloud:cloud"},"claude-opus-5":{"model":"other-cloud:cloud"}}}`)
+			fmt.Fprint(w, `{"recommendations":[{"model":"test-cloud:cloud","required_plan":"pro"}]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"test-cloud"},{"name":"other-cloud"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"test-cloud"}]}`)
 		default:
 			http.NotFound(w, r)
 		}
-	}))
-	defer cloud.Close()
-	endpoint, _ := url.Parse(server.URL)
-	resolver := NewResolver(endpoint)
-	resolver.CloudURL = cloud.URL
+	})
+	resolver := newResolverFixture(t, server, cloud)
 	resolver.Sign = func(context.Context, []byte) (string, error) { return "synthetic-signature", nil }
 	models, err := resolver.Resolve(context.Background(), &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "test-cloud:cloud"}})
 	if err != nil || len(models) != 1 || !models[0].AccountCloud {
 		t.Fatalf("cloud selection = %+v, %v", models, err)
 	}
-	if err := resolver.Validate(context.Background(), models); err != nil {
-		t.Fatal(err)
-	}
-	defaults, err := resolver.DefaultMappings(context.Background())
-	wantedDefaults := map[string]string{
-		"claude-fable-5":            "test-cloud:cloud",
-		"claude-opus-5":             "other-cloud:cloud",
-		"claude-sonnet-5":           "test-cloud:cloud",
-		"claude-haiku-4-5-20251001": "test-cloud:cloud",
-		"claude-sonnet-4-6":         "test-cloud:cloud",
-	}
-	if err != nil || !maps.Equal(defaults, wantedDefaults) {
-		t.Fatalf("recommended defaults = %v, %v", defaults, err)
-	}
 	cloudEnabled = false
-	if err := resolver.Validate(context.Background(), models); err == nil {
-		t.Fatal("cloud disabled state did not revoke routing")
-	}
-}
-
-func TestResolverDefaultMappingsUsesExistingFallbackWithoutCloudSignIn(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/status" {
-			t.Errorf("unexpected default lookup: %s", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
-	}))
-	defer server.Close()
-	endpoint, _ := url.Parse(server.URL)
-	resolver := NewResolver(endpoint)
-	resolver.Sign = func(context.Context, []byte) (string, error) {
-		t.Fatal("fallback default lookup touched signing keys")
-		return "", nil
-	}
-	defaults, err := resolver.DefaultMappings(context.Background())
-	if err != nil || len(defaults) != proxy.MaxClaudeDesktopModels {
-		t.Fatalf("fallback defaults = %v, %v", defaults, err)
-	}
-	for _, route := range proxy.ClaudeDesktopRoutes() {
-		if defaults[route.ID] != "gemma4:31b-cloud" {
-			t.Fatalf("fallback for %s = %q", route.ID, defaults[route.ID])
-		}
+	models, err = resolver.Resolve(t.Context(), &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "test-cloud:cloud"}})
+	if err != nil || len(models) != 1 || models[0].AccountCloud {
+		t.Fatalf("cloud disabled state retained verified inventory: %+v, %v", models, err)
 	}
 }
 
@@ -245,7 +245,7 @@ func TestResolverRetriesCloudDiscovery(t *testing.T) {
 		t.Run(first, func(t *testing.T) {
 			var ready atomic.Bool
 			var cloudRequests atomic.Int32
-			local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			local := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/tags":
 					fmt.Fprint(w, `{"models":[]}`)
@@ -261,9 +261,8 @@ func TestResolverRetriesCloudDiscovery(t *testing.T) {
 					t.Errorf("unexpected local request %s", r.URL.Path)
 					http.NotFound(w, r)
 				}
-			}))
-			defer local.Close()
-			cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			})
+			cloud := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				cloudRequests.Add(1)
 				switch r.URL.Path {
 				case "/api/experimental/model-recommendations":
@@ -282,26 +281,20 @@ func TestResolverRetriesCloudDiscovery(t *testing.T) {
 					t.Errorf("unexpected cloud request %s", r.URL.Path)
 					http.NotFound(w, r)
 				}
-			}))
-			defer cloud.Close()
-			endpoint, _ := url.Parse(local.URL)
-			resolver := NewResolver(endpoint)
-			resolver.CloudURL = cloud.URL
-			resolver.Sign = func(context.Context, []byte) (string, error) { return "synthetic", nil }
-			if _, err := resolver.DefaultMappings(context.Background()); err != nil {
+			})
+			resolver := newResolverFixture(t, local, cloud)
+			cfg := &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "test-cloud:cloud"}}
+			if _, err := resolver.Resolve(t.Context(), cfg); err != nil {
 				t.Fatal(err)
 			}
+			before := cloudRequests.Load()
 			ready.Store(true)
-			cfg := &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "test-cloud:cloud"}}
 			models, err := resolver.Resolve(context.Background(), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(models) != 1 || !models[0].AccountCloud {
+			if len(models) != 1 || !models[0].AccountCloud || cloudRequests.Load() == before {
 				t.Fatalf("retry did not refresh account inventory: %+v", models)
-			}
-			if err := resolver.Validate(context.Background(), models); err != nil {
-				t.Fatalf("same resolver still denies retry: %v", err)
 			}
 			requests := cloudRequests.Load()
 			if _, err := resolver.Resolve(context.Background(), cfg); err != nil {
@@ -327,7 +320,7 @@ func TestResolverRefreshesInventoryAfterSamePlanAccountSwitch(t *testing.T) {
 	for _, withID := range []bool{true, false} {
 		t.Run(fmt.Sprintf("account_id_%t", withID), func(t *testing.T) {
 			var account, cloudRequests atomic.Int32
-			local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			local := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/tags":
 					fmt.Fprint(w, `{"models":[]}`)
@@ -342,9 +335,8 @@ func TestResolverRefreshesInventoryAfterSamePlanAccountSwitch(t *testing.T) {
 				default:
 					http.NotFound(w, r)
 				}
-			}))
-			defer local.Close()
-			cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			})
+			cloud := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				cloudRequests.Add(1)
 				switch r.URL.Path {
 				case "/api/experimental/model-recommendations":
@@ -354,19 +346,12 @@ func TestResolverRefreshesInventoryAfterSamePlanAccountSwitch(t *testing.T) {
 				default:
 					http.NotFound(w, r)
 				}
-			}))
-			defer cloud.Close()
-			endpoint, _ := url.Parse(local.URL)
-			resolver := NewResolver(endpoint)
-			resolver.CloudURL = cloud.URL
-			resolver.Sign = func(context.Context, []byte) (string, error) { return "synthetic", nil }
+			})
+			resolver := newResolverFixture(t, local, cloud)
 			cfg := &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "private-0:cloud"}}
 			models, err := resolver.Resolve(context.Background(), cfg)
 			if err != nil || len(models) != 1 || !models[0].AccountCloud {
 				t.Fatalf("first account models = %+v, %v", models, err)
-			}
-			if err := resolver.Validate(context.Background(), models); err != nil {
-				t.Fatal(err)
 			}
 			requests := cloudRequests.Load()
 			account.Store(1)
@@ -374,17 +359,14 @@ func TestResolverRefreshesInventoryAfterSamePlanAccountSwitch(t *testing.T) {
 			if err != nil || cloudRequests.Load() == requests {
 				t.Fatalf("account switch did not refresh inventory: %v, requests=%d", err, cloudRequests.Load())
 			}
-			if err := resolver.Validate(context.Background(), models); err == nil {
-				t.Fatal("previous account model was accepted")
+			if len(models) != 1 || models[0].AccountCloud {
+				t.Fatal("previous account model remained verified")
 			}
 			requests = cloudRequests.Load()
 			cfg.Aliases["claude-sonnet-5"] = "private-1:cloud"
 			models, err = resolver.Resolve(context.Background(), cfg)
 			if err != nil || len(models) != 1 || !models[0].AccountCloud || cloudRequests.Load() != requests {
 				t.Fatalf("current account catalog was not reused: %+v, %v", models, err)
-			}
-			if err := resolver.Validate(context.Background(), models); err != nil {
-				t.Fatal(err)
 			}
 			// Changing accounts during discovery must not put the new account's
 			// inventory in the cache under the identity captured before signing.
@@ -419,8 +401,8 @@ func TestResolverRefreshesInventoryAfterSamePlanAccountSwitch(t *testing.T) {
 			if err != nil || cloudRequests.Load() == requests {
 				t.Fatalf("switched inventory was reused under the old account: %v", err)
 			}
-			if err := resolver.Validate(t.Context(), models); err == nil {
-				t.Fatal("other account's model was accepted after switching back")
+			if len(models) != 1 || models[0].AccountCloud {
+				t.Fatal("other account's model remained verified after switching back")
 			}
 		})
 	}

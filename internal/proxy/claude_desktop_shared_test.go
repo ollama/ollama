@@ -86,7 +86,7 @@ func TestClaudeSharedListenerKeepsConcurrentRequestMappings(t *testing.T) {
 					}
 					got := response.Body.String()
 					if path == "/_ollama/status" {
-						var status ClaudeDesktopRuntimeStatus
+						var status claudeDesktopRuntimeStatus
 						if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil || len(status.Models) != 1 {
 							t.Fatalf("status = %s, %v", response.Body.String(), err)
 						}
@@ -148,22 +148,35 @@ func TestClaudeSharedListenerReloadsMappingsAndPreservesNativeAPI(t *testing.T) 
 	if err := gateway.Start(); err == nil {
 		t.Fatal("shared handler started a second listener")
 	}
-	client := NewClaudeDesktopClient(ClaudeDesktopBaseURL(server.URL))
-	if status, err := client.Status(context.Background()); err != nil || len(status.Models) != 0 {
-		t.Fatalf("empty config status = %+v, %v", status, err)
+	baseURL := server.URL + ClaudeDesktopPathPrefix
+	readStatus := func() claudeDesktopRuntimeStatus {
+		t.Helper()
+		response, err := server.Client().Get(baseURL + "/_ollama/status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var status claudeDesktopRuntimeStatus
+		if err := json.NewDecoder(response.Body).Decode(&status); err != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, %v", response.StatusCode, err)
+		}
+		return status
+	}
+	if status := readStatus(); len(status.Models) != 0 {
+		t.Fatalf("empty config status = %+v", status)
 	}
 	for _, target := range []string{"local-one", "local-two"} {
 		mu.Lock()
 		models = MapClaudeDesktopModels(nil, map[string]string{"claude-sonnet-5": target})
 		mu.Unlock()
-		if err := client.SetModels(models); err != nil {
-			t.Fatal(err)
+		if status := readStatus(); len(status.Models) != 1 || status.Models[0].Model.OllamaModel != target {
+			t.Fatalf("saved mapping status = %+v", status)
 		}
-		catalog, err := FetchClaudeDesktopCatalog(context.Background(), nil, client.BaseURL, "test")
+		catalog, err := FetchClaudeDesktopCatalog(context.Background(), nil, baseURL, "test")
 		if err != nil || len(catalog) != 1 || catalog[0].ID != "claude-sonnet-5" || catalog[0].DisplayName != target {
 			t.Fatalf("catalog = %+v, %v", catalog, err)
 		}
-		req, _ := http.NewRequest(http.MethodPost, client.BaseURL+"/v1/messages?beta=true", strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`))
+		req, _ := http.NewRequest(http.MethodPost, baseURL+"/v1/messages?beta=true", strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`))
 		req.Header.Set("Authorization", "Bearer private-placeholder")
 		req.Header.Set("Cookie", "private=test")
 		response, err := server.Client().Do(req)
@@ -181,17 +194,8 @@ func TestClaudeSharedListenerReloadsMappingsAndPreservesNativeAPI(t *testing.T) 
 	if got != "local-one /v1/messages?beta=true,local-two /v1/messages?beta=true" {
 		t.Fatalf("upstream requests = %s", got)
 	}
-	if client.Counts().Routed != 2 {
+	if readStatus().Counts.Routed != 2 {
 		t.Fatal("server request count was not shared")
-	}
-	if err := client.SetModels(MapClaudeDesktopModels(nil, map[string]string{"claude-sonnet-5": "different"})); err == nil {
-		t.Fatal("client replaced saved selection")
-	}
-	if err := client.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := ProbeClaudeDesktop(context.Background(), client.BaseURL); err != nil {
-		t.Fatalf("closing client stopped server: %v", err)
 	}
 	response, err := server.Client().Get(server.URL + "/v1/models")
 	if err != nil {
@@ -205,7 +209,7 @@ func TestClaudeSharedListenerReloadsMappingsAndPreservesNativeAPI(t *testing.T) 
 	mu.Lock()
 	configErr = errors.New("malformed saved selection")
 	mu.Unlock()
-	response, err = server.Client().Get(client.BaseURL + "/v1/models")
+	response, err = server.Client().Get(baseURL + "/v1/models")
 	if err != nil {
 		t.Fatal(err)
 	}
