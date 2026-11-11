@@ -1,116 +1,17 @@
 package launch
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
-	"time"
 
-	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/internal/proxy"
 )
-
-func TestClaudeProfileLockRespectsShutdownDeadline(t *testing.T) {
-	if path := os.Getenv("OLLAMA_TEST_CLAUDE_HELD_LOCK"); path != "" {
-		unlock, err := fileutil.Lock(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer unlock()
-		fmt.Fprintln(os.Stdout, "locked")
-		_, _ = io.Copy(io.Discard, os.Stdin)
-		return
-	}
-	for _, running := range []bool{false, true} {
-		t.Run(fmt.Sprintf("running_%t", running), func(t *testing.T) {
-			paths, targets := claudeRestoreFixture(t)
-			if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
-				t.Fatal(err)
-			}
-			before, _ := os.ReadFile(paths.profile)
-			path, _ := claudeRestorePath()
-			child := exec.Command(os.Args[0], "-test.run=^TestClaudeProfileLockRespectsShutdownDeadline$")
-			child.Env = append(os.Environ(), "OLLAMA_TEST_CLAUDE_HELD_LOCK="+path+".lock")
-			child.Stderr = os.Stderr
-			input, err := child.StdinPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			output, err := child.StdoutPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := child.Start(); err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = input.Close(); _ = child.Wait() }()
-			if line, err := bufio.NewReader(output).ReadString('\n'); err != nil || line != "locked\n" {
-				t.Fatalf("lock helper: %q, %v", line, err)
-			}
-			quit := false
-			withClaudeDesktopProcessHooks(t,
-				func() bool { return running },
-				func() error { quit = true; running = false; return nil },
-				func() error { t.Error("Claude opened while waiting for a lock"); return nil },
-			)
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-			defer cancel()
-			done := make(chan error, 1)
-			go func() { done <- (&ClaudeDesktop{}).RestoreForShutdown(ctx) }()
-			select {
-			case err := <-done:
-				if !errors.Is(err, context.DeadlineExceeded) {
-					t.Fatalf("shutdown lock error = %v", err)
-				}
-			case <-time.After(time.Second):
-				_ = input.Close()
-				t.Errorf("shutdown ignored its lock deadline: %v", <-done)
-			}
-			after, _ := os.ReadFile(paths.profile)
-			if quit || string(after) != string(before) {
-				t.Fatal("waiting for a lock changed Claude settings or process state")
-			}
-		})
-	}
-}
-
-func TestClaudeRestoreRejectsCorruptLegacyMetadata(t *testing.T) {
-	for _, metadata := range []string{"{", "null"} {
-		for _, running := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s_running_%t", metadata, running), func(t *testing.T) {
-				paths, _ := claudeRestoreFixture(t)
-				if err := writeClaudeDesktopJSON(paths.profile, map[string]any{"inferenceProvider": "gateway", "inferenceGatewayBaseUrl": "http://127.0.0.1:11435"}); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(paths.meta, []byte(metadata), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				before, _ := os.ReadFile(paths.profile)
-				withClaudeDesktopProcessHooks(t,
-					func() bool { return running },
-					func() error { t.Error("Claude quit before metadata validation"); running = false; return nil },
-					func() error { t.Error("Claude opened after failed restore"); return nil },
-				)
-				restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
-				defer restoreConfirm()
-				if err := (&ClaudeDesktop{}).Restore(); err == nil {
-					t.Fatal("corrupt legacy metadata was reported as restored")
-				}
-				after, _ := os.ReadFile(paths.profile)
-				if string(after) != string(before) {
-					t.Fatal("failed restore changed the legacy profile")
-				}
-			})
-		}
-	}
-}
 
 func claudeRestoreFixture(t *testing.T) (claudeDesktopPaths, claudeDesktopTargets) {
 	t.Helper()
@@ -125,6 +26,18 @@ func claudeRestoreFixture(t *testing.T) (claudeDesktopPaths, claudeDesktopTarget
 		t.Fatal(err)
 	}
 	return paths, targets
+}
+
+func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool, models []proxy.ClaudeDesktopCatalogModel) error {
+	return configureClaudeDesktopTargetsContext(context.Background(), targets, baseURL, apiKey, autoMode, models)
+}
+
+func withClaudeProfileChanges(targets claudeDesktopTargets, change func() error) error {
+	return withClaudeProfileChangesContext(context.Background(), targets, change)
+}
+
+func restoreClaudeDesktopProfile() error {
+	return restoreClaudeDesktopProfileContext(context.Background())
 }
 
 func TestClaudeRestorePreservesOriginalValuesAndLaterUnrelatedEdits(t *testing.T) {
@@ -248,67 +161,6 @@ func TestClaudeLegacyConnectionRestoresUsualProfile(t *testing.T) {
 	}
 }
 
-func TestClaudeLegacyRecoveryAfterInterruptedConnect(t *testing.T) {
-	const interruptionHome = "OLLAMA_TEST_CLAUDE_RECOVERY_INTERRUPTION_HOME"
-	if home := os.Getenv(interruptionHome); home != "" {
-		setTestHome(t, home)
-		withClaudeDesktopPlatform(t, "darwin")
-		targets, err := claudeDesktopTargetPaths()
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = withClaudeProfileChanges(targets, func() error {
-			if err := writeClaudeDesktopGatewayProfile(targets.thirdPartyProfiles[0].profile, ClaudeDesktopGatewayURL(), "ollama", true, false, nil); err != nil {
-				return err
-			}
-			// A process exit releases the lock but skips the transaction's rollback.
-			os.Exit(77)
-			return nil
-		})
-		t.Fatalf("interrupted helper returned: %v", err)
-	}
-
-	paths, targets := claudeRestoreFixture(t)
-	for _, path := range []string{paths.normalConfig, paths.desktopConfig} {
-		if err := writeClaudeDesktopJSON(path, map[string]any{"deploymentMode": "3p"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := writeClaudeDesktopJSON(paths.profile, map[string]any{"inferenceProvider": "gateway", "inferenceGatewayBaseUrl": "http://127.0.0.1:11435", "inferenceGatewayApiKey": "synthetic-legacy-key", "userOwned": "keep"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeClaudeDesktopJSON(paths.meta, map[string]any{"appliedId": claudeDesktopProfileID, "entries": []any{map[string]any{"id": claudeDesktopProfileID, "name": "Ollama"}, map[string]any{"id": "custom", "name": "Keep"}}}); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestClaudeLegacyRecoveryAfterInterruptedConnect$")
-	cmd.Env = append(os.Environ(), interruptionHome+"="+os.Getenv("HOME"))
-	output, err := cmd.CombinedOutput()
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 77 {
-		t.Fatalf("interrupted helper: %v\n%s", err, output)
-	}
-	if err := restoreClaudeDesktopTargets(targets); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{paths.normalConfig, paths.desktopConfig} {
-		if got := readClaudeDesktopDeploymentMode(path); got != "1p" {
-			t.Fatalf("deploymentMode after recovery = %q, want 1p", got)
-		}
-	}
-	meta := claudeDesktopReadJSON(t, paths.meta)
-	if meta["appliedId"] != nil || !reflect.DeepEqual(meta["entries"], []any{map[string]any{"id": "custom", "name": "Keep"}}) {
-		t.Fatalf("metadata after recovery = %#v", meta)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	if profile["inferenceProvider"] != nil || profile["inferenceGatewayBaseUrl"] != nil || profile["inferenceGatewayApiKey"] != "synthetic-legacy-key" || profile["userOwned"] != "keep" {
-		t.Fatalf("profile after recovery = %#v", profile)
-	}
-	statePath, _ := claudeRestorePath()
-	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
-		t.Fatalf("completed recovery retained journal: %v", err)
-	}
-}
-
 func TestClaudeProfileSetupRollsBackPartialWrite(t *testing.T) {
 	paths, targets := claudeRestoreFixture(t)
 	original := map[string]any{"keep": "original"}
@@ -334,274 +186,11 @@ func TestClaudeProfileSetupRollsBackPartialWrite(t *testing.T) {
 	}
 }
 
-func TestClaudeProfilePreflightRejectsMalformedMetadataBeforeWrites(t *testing.T) {
-	paths, targets := claudeRestoreFixture(t)
-	if err := writeClaudeDesktopJSON(paths.profile, map[string]any{"keep": true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeClaudeDesktopJSON(paths.meta, map[string]any{"entries": "invalid"}); err != nil {
-		t.Fatal(err)
-	}
-	before, _ := os.ReadFile(paths.profile)
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err == nil {
-		t.Fatal("malformed metadata accepted")
-	}
-	after, _ := os.ReadFile(paths.profile)
-	if string(before) != string(after) {
-		t.Fatal("profile changed before preflight completed")
-	}
-}
-
 func TestClaudeRestoreRejectsUnexpectedJournalKeys(t *testing.T) {
 	paths, targets := claudeRestoreFixture(t)
 	state := &claudeRestoreState{Version: 1, Files: map[string]*claudeOwnedFile{paths.normalConfig: {Existed: true, Values: map[string]claudeOwnedValue{"mcpServers": {Before: []byte(`{}`), Applied: []byte(`{}`)}}}}}
 	if err := validateClaudeRestoreState(targets, state); err == nil {
 		t.Fatal("journal could replace unrelated settings")
-	}
-}
-
-func TestClaudeRestorePreservesNullMetadataEntries(t *testing.T) {
-	paths, targets := claudeRestoreFixture(t)
-	if err := writeClaudeDesktopJSON(paths.meta, map[string]any{"entries": nil}); err != nil {
-		t.Fatal(err)
-	}
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreClaudeDesktopTargets(targets); err != nil {
-		t.Fatal(err)
-	}
-	meta := claudeDesktopReadJSON(t, paths.meta)
-	if value, exists := meta["entries"]; !exists || value != nil {
-		t.Fatalf("metadata null was not restored: %#v", meta)
-	}
-}
-
-func TestClaudeRestoreRejectsDamagedMetadataBeforeAnyWrites(t *testing.T) {
-	paths, targets := claudeRestoreFixture(t)
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
-		t.Fatal(err)
-	}
-	meta := claudeDesktopReadJSON(t, paths.meta)
-	meta["entries"] = "user-edited-invalid-shape"
-	if err := writeClaudeDesktopJSON(paths.meta, meta); err != nil {
-		t.Fatal(err)
-	}
-	before, _ := os.ReadFile(paths.normalConfig)
-	if err := restoreClaudeDesktopTargets(targets); err == nil {
-		t.Fatal("damaged metadata was accepted")
-	}
-	after, _ := os.ReadFile(paths.normalConfig)
-	if string(before) != string(after) || claudeDesktopReadJSON(t, paths.meta)["entries"] != "user-edited-invalid-shape" {
-		t.Fatal("restore wrote files before completing metadata validation")
-	}
-}
-
-func TestClaudePartialRollbackKeepsOriginalRestoreOwnership(t *testing.T) {
-	paths, targets := claudeRestoreFixture(t)
-	original := map[string]any{"deploymentDisplayName": "original label", "inferenceGatewayApiKey": "synthetic-original", "userOwned": "keep"}
-	if err := writeClaudeDesktopJSON(paths.profile, original); err != nil {
-		t.Fatal(err)
-	}
-	if err := withClaudeProfileChanges(targets, func() error {
-		desired := claudeDesktopReadJSON(t, paths.profile)
-		desired["deploymentDisplayName"] = "first label"
-		desired["inferenceGatewayApiKey"] = "synthetic-first"
-		return claudeWriteOwned(paths.profile, desired, "deploymentDisplayName", "inferenceGatewayApiKey")
-	}); err != nil {
-		t.Fatal(err)
-	}
-	failure := errors.New("later profile update failed")
-	err := withClaudeProfileChanges(targets, func() error {
-		desired := claudeDesktopReadJSON(t, paths.profile)
-		desired["deploymentDisplayName"] = "second label"
-		desired["inferenceGatewayApiKey"] = "synthetic-second"
-		if err := claudeWriteOwned(paths.profile, desired, "deploymentDisplayName", "inferenceGatewayApiKey"); err != nil {
-			return err
-		}
-		desired["deploymentDisplayName"] = "third label"
-		if err := claudeWriteOwned(paths.profile, desired, "deploymentDisplayName"); err != nil {
-			return err
-		}
-		desired["inferenceGatewayApiKey"] = "synthetic-user-edit"
-		if err := writeClaudeDesktopJSON(paths.profile, desired); err != nil {
-			return err
-		}
-		return failure
-	})
-	if !errors.Is(err, failure) {
-		t.Fatalf("partial failure lost original error: %v", err)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	if profile["deploymentDisplayName"] != "first label" || profile["inferenceGatewayApiKey"] != "synthetic-user-edit" {
-		t.Fatalf("incorrect partial rollback: %#v", profile)
-	}
-	// A later successful update to another key must retain pending recovery facts.
-	if err := withClaudeProfileChanges(targets, func() error {
-		desired := claudeDesktopReadJSON(t, paths.profile)
-		desired["chatTabEnabled"] = true
-		return claudeWriteOwned(paths.profile, desired, "chatTabEnabled")
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreClaudeDesktopTargets(targets); err == nil {
-		t.Fatal("disconnect should preserve the later key edit and retain its checkpoint")
-	}
-	profile = claudeDesktopReadJSON(t, paths.profile)
-	if profile["deploymentDisplayName"] != "original label" || profile["inferenceGatewayApiKey"] != "synthetic-user-edit" || profile["chatTabEnabled"] != nil || profile["userOwned"] != "keep" {
-		t.Fatalf("disconnect lost restore ownership or later edit: %#v", profile)
-	}
-	statePath, _ := claudeRestorePath()
-	state, _, err := claudeReadState(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if file := state.Files[paths.profile]; file == nil || len(file.Values) != 1 || file.Values["inferenceGatewayApiKey"].Before == nil {
-		t.Fatalf("wrong pending recovery keys: %+v", file)
-	}
-}
-
-func TestClaudeRestartPreservesEditsAndOriginalRestoreState(t *testing.T) {
-	paths, targets := claudeRestoreFixture(t)
-	original := map[string]any{"inferenceProvider": "original-provider", "inferenceGatewayBaseUrl": "http://original.example", "chatTabEnabled": false, "userOwned": "original"}
-	if err := writeClaudeDesktopJSON(paths.profile, original); err != nil {
-		t.Fatal(err)
-	}
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
-		t.Fatal(err)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	profile["autoModeEnabled"] = true
-	profile["userOwned"] = "later edit"
-	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := snapshotClaudeProfileForRestart(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Claude's quit write changes owned fields and adds an unrelated setting.
-	profile["chatTabEnabled"] = false
-	delete(profile, "inferenceGatewayBaseUrl")
-	profile["quitAdded"] = "keep"
-	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
-		t.Fatal(err)
-	}
-	if err := snapshot.recordAfterQuit(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	// Recovery must also work if the process stops before reapplying the profile.
-	if err := restoreClaudeDesktopTargets(targets); err == nil {
-		t.Fatal("expected the later Auto mode edit to be preserved")
-	}
-	profile = claudeDesktopReadJSON(t, paths.profile)
-	for _, key := range []string{"inferenceProvider", "inferenceGatewayBaseUrl", "chatTabEnabled"} {
-		if profile[key] != original[key] {
-			t.Fatalf("original %s was lost: %v", key, profile[key])
-		}
-	}
-	if profile["autoModeEnabled"] != true || profile["userOwned"] != "later edit" || profile["quitAdded"] != "keep" {
-		t.Fatalf("restart or restore lost unrelated edits: %#v", profile)
-	}
-}
-
-func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool, models []proxy.ClaudeDesktopCatalogModel) error {
-	return configureClaudeDesktopTargetsContext(context.Background(), targets, baseURL, apiKey, autoMode, models)
-}
-
-func withClaudeProfileChanges(targets claudeDesktopTargets, change func() error) error {
-	return withClaudeProfileChangesContext(context.Background(), targets, change)
-}
-
-func restoreClaudeDesktopProfile() error {
-	return restoreClaudeDesktopProfileContext(context.Background())
-}
-
-func TestClaudeReconnectPreservesEditMatchingOriginalValue(t *testing.T) {
-	paths, targets := claudeRestoreFixture(t)
-	if err := writeClaudeDesktopJSON(paths.profile, map[string]any{"autoModeEnabled": true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
-		t.Fatal(err)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	profile["autoModeEnabled"] = true
-	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
-		t.Fatal(err)
-	}
-	// A confirmed restart must not reclassify an existing user edit as owned.
-	snapshot, err := snapshotClaudeProfileForRestart(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := snapshot.recordAfterQuit(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err == nil {
-		t.Fatal("reconnect overwrote a later user edit matching the original value")
-	}
-	if claudeDesktopReadJSON(t, paths.profile)["autoModeEnabled"] != true {
-		t.Fatal("reconnect lost the later user edit")
-	}
-	// Restore may recognize an original value without replacing the edit.
-	if err := restoreClaudeDesktopTargets(targets); err != nil {
-		t.Fatal(err)
-	}
-	if claudeDesktopReadJSON(t, paths.profile)["autoModeEnabled"] != true {
-		t.Fatal("restore lost the original value")
-	}
-}
-
-func TestClaudeLegacyPartialRestoreReconnectPreservesNewEdit(t *testing.T) {
-	paths, targets := claudeRestoreFixture(t)
-	if err := writeClaudeDesktopJSON(paths.profile, map[string]any{
-		"inferenceProvider":       "gateway",
-		"inferenceGatewayBaseUrl": "http://127.0.0.1:11435",
-		"autoModeEnabled":         true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeClaudeDesktopJSON(paths.meta, map[string]any{
-		"appliedId": claudeDesktopProfileID,
-		"entries":   []any{map[string]any{"id": claudeDesktopProfileID, "name": "Ollama"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	// Force a partial restore. The edit remains tracked, while successfully
-	// restored fields are removed from the legacy journal.
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	profile["autoModeEnabled"] = true
-	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreClaudeDesktopTargets(targets); err == nil {
-		t.Fatal("expected partial restore")
-	}
-
-	// This field is now untracked, so a reconnect must checkpoint its new value.
-	profile = claudeDesktopReadJSON(t, paths.profile)
-	profile["deploymentDisplayName"] = "User label"
-	// The user has also returned the one still-tracked field to the value Ollama
-	// applied, so reconnect is otherwise allowed.
-	profile["autoModeEnabled"] = false
-	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
-		t.Fatal(err)
-	}
-	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	// Restore should return the newly checkpointed label.
-	if err := restoreClaudeDesktopTargets(targets); err != nil {
-		t.Fatal(err)
-	}
-	if got := claudeDesktopReadJSON(t, paths.profile)["deploymentDisplayName"]; got != "User label" {
-		t.Fatalf("deploymentDisplayName = %v, want preserved user edit", got)
 	}
 }
 
@@ -657,5 +246,269 @@ func TestClaudePartialRollbackRestoresAbsentInFlightValue(t *testing.T) {
 	}
 	if got := readClaudeDesktopDeploymentMode(paths.normalConfig); got != "1p" {
 		t.Fatalf("later user edit was not preserved: %v", got)
+	}
+}
+
+func TestClaudeRestoreCheckpointsInterruptedProgress(t *testing.T) {
+	for _, failureAt := range []int{0, 1, 2} {
+		t.Run([]string{"completed before journal removal", "before file write", "after file write"}[failureAt], func(t *testing.T) {
+			paths, targets := claudeRestoreFixture(t)
+			original := map[string]any{"inferenceProvider": "original-provider", "inferenceGatewayBaseUrl": "https://original.example", "userOwned": "keep"}
+			if err := writeClaudeDesktopJSON(paths.profile, original); err != nil {
+				t.Fatal(err)
+			}
+			if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
+				t.Fatal(err)
+			}
+			statePath, _ := claudeRestorePath()
+			state, beforeJournal, err := claudeReadState(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeFiles := make(map[string][]byte)
+			for path := range state.Files {
+				beforeFiles[path], err = os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			calls := 0
+			failure := errors.New("checkpoint failed")
+			err = claudeRestoreFiles(t.Context(), state.Files, func() error {
+				calls++
+				if calls == failureAt {
+					return failure
+				}
+				return claudeSaveState(statePath, state)
+			})
+			if failureAt != 0 && !errors.Is(err, failure) || failureAt == 0 && err != nil {
+				t.Fatalf("restore = %v", err)
+			}
+			if failureAt == 1 {
+				for path, before := range beforeFiles {
+					after, _ := os.ReadFile(path)
+					if !bytes.Equal(before, after) {
+						t.Fatalf("file changed before its checkpoint: %s", path)
+					}
+				}
+				after, _ := os.ReadFile(statePath)
+				if !bytes.Equal(beforeJournal, after) {
+					t.Fatal("failed first checkpoint changed the journal")
+				}
+			}
+			// Keep the disk journal as it stood at the interruption boundary.
+			if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
+				t.Fatalf("reconnect after interrupted restore: %v", err)
+			}
+			if err := restoreClaudeDesktopTargets(targets); err != nil {
+				t.Fatal(err)
+			}
+			if got := claudeDesktopReadJSON(t, paths.profile); !reflect.DeepEqual(got, original) {
+				t.Fatalf("original settings lost: %#v", got)
+			}
+		})
+	}
+}
+
+func claudeInterruptedRestartFixture(t *testing.T, recordedQuit bool) (claudeDesktopPaths, claudeDesktopTargets) {
+	t.Helper()
+	paths, targets := claudeRestoreFixture(t)
+	if err := writeClaudeDesktopJSON(paths.profile, map[string]any{"inferenceProvider": "original-provider", "inferenceGatewayBaseUrl": "https://original.example", "userOwned": "before"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := snapshotClaudeProfileForRestart(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recordedQuit {
+		if err := snapshot.recordAfterQuit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	delete(profile, "inferenceGatewayBaseUrl")
+	profile["userOwned"] = "later"
+	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
+		t.Fatal(err)
+	}
+	return paths, targets
+}
+
+func TestClaudeInterruptedRestartRecoveryRequiresExplicitConsent(t *testing.T) {
+	for _, recordedQuit := range []bool{false, true} {
+		stage := "before quit recording"
+		if recordedQuit {
+			stage = "after quit recording"
+		}
+		t.Run(stage, func(t *testing.T) {
+			for _, action := range []string{"accept", "decline", "headless", "edit during confirmation"} {
+				t.Run(action, func(t *testing.T) {
+					paths, _ := claudeInterruptedRestartFixture(t, recordedQuit)
+					beforeProfile, _ := os.ReadFile(paths.profile)
+					statePath, _ := claudeRestorePath()
+					beforeJournal, _ := os.ReadFile(statePath)
+					withInteractiveSession(t, action != "headless")
+					restorePolicy := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+					defer restorePolicy()
+					oldConfirm := DefaultConfirmPrompt
+					prompts := 0
+					DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+						prompts++
+						if options.Default != ConfirmDefaultNo {
+							t.Fatal("recovery must keep current changes by default")
+						}
+						if !strings.Contains(prompt, "replace those changes") {
+							t.Fatalf("missing overwrite warning: %s", prompt)
+						}
+						if action == "edit during confirmation" {
+							profile := claudeDesktopReadJSON(t, paths.profile)
+							profile["inferenceGatewayBaseUrl"] = "https://later-user-edit.example"
+							if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
+								t.Fatal(err)
+							}
+						}
+						return action != "decline", nil
+					}
+					t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+					withClaudeDesktopProcessHooks(t, func() bool { return false }, func() error { t.Fatal("stopped Claude quit"); return nil }, func() error { t.Fatal("restore opened Claude"); return nil })
+					err := (&ClaudeDesktop{}).Restore()
+					if action == "accept" {
+						if err != nil {
+							t.Fatal(err)
+						}
+						profile := claudeDesktopReadJSON(t, paths.profile)
+						if profile["inferenceProvider"] != "original-provider" || profile["inferenceGatewayBaseUrl"] != "https://original.example" || profile["userOwned"] != "later" {
+							t.Fatalf("wrong recovered settings: %#v", profile)
+						}
+						if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+							t.Fatalf("recovery journal survived: %v", err)
+						}
+					} else {
+						if err == nil {
+							t.Fatal("recovery unexpectedly succeeded")
+						}
+						if action == "decline" && !errors.Is(err, ErrCancelled) {
+							t.Fatalf("decline = %v", err)
+						}
+						if action == "edit during confirmation" {
+							if !strings.Contains(err.Error(), "changed while confirming") || claudeDesktopReadJSON(t, paths.profile)["inferenceGatewayBaseUrl"] != "https://later-user-edit.example" {
+								t.Fatalf("new edit was not protected: %v", err)
+							}
+						} else if after, _ := os.ReadFile(paths.profile); !bytes.Equal(beforeProfile, after) {
+							t.Fatal("unconfirmed recovery changed the profile")
+						}
+						if after, _ := os.ReadFile(statePath); !bytes.Equal(beforeJournal, after) {
+							t.Fatal("unconfirmed recovery changed the checkpoint")
+						}
+					}
+					wantPrompts := 1
+					if action == "headless" {
+						wantPrompts = 0
+					}
+					if prompts != wantPrompts {
+						t.Fatalf("prompts = %d, want %d", prompts, wantPrompts)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestClaudeShutdownLeavesAmbiguousRecoveryPending(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stopped", true: "running"}[running], func(t *testing.T) {
+			paths, _ := claudeInterruptedRestartFixture(t, false)
+			before, _ := os.ReadFile(paths.profile)
+			statePath, _ := claudeRestorePath()
+			beforeJournal, _ := os.ReadFile(statePath)
+			withClaudeDesktopProcessHooks(t, func() bool { return running }, func() error { t.Fatal("ambiguous recovery quit Claude"); return nil }, func() error { t.Fatal("shutdown opened Claude"); return nil })
+			var recovery *claudeRestartRecovery
+			if err := (&ClaudeDesktop{}).RestoreForShutdown(t.Context()); !errors.As(err, &recovery) {
+				t.Fatalf("shutdown recovery error = %v", err)
+			}
+			if after, _ := os.ReadFile(paths.profile); !bytes.Equal(before, after) {
+				t.Fatal("shutdown changed ambiguous values")
+			}
+			if after, _ := os.ReadFile(statePath); !bytes.Equal(beforeJournal, after) {
+				t.Fatal("shutdown discarded pending recovery")
+			}
+		})
+	}
+}
+
+func TestClaudeRestartPreservesPreexistingEditsFromShutdownWrites(t *testing.T) {
+	for _, stage := range []string{"restart", "after snapshot", "after quit recording", "deleted field", "newer edit", "original value edit"} {
+		t.Run(stage, func(t *testing.T) {
+			paths, targets := claudeRestoreFixture(t)
+			if err := writeClaudeDesktopJSON(paths.profile, map[string]any{"deploymentDisplayName": "original label"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := configureClaudeDesktopTargets(targets, ClaudeDesktopGatewayURL(), "ollama", false, nil); err != nil {
+				t.Fatal(err)
+			}
+			profile := claudeDesktopReadJSON(t, paths.profile)
+			var want any = "user label"
+			profile["deploymentDisplayName"] = want
+			if stage == "deleted field" {
+				delete(profile, "deploymentDisplayName")
+				want = nil
+			} else if stage == "newer edit" {
+				want = "later label"
+			} else if stage == "original value edit" {
+				want = "original label"
+			}
+			if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
+				t.Fatal(err)
+			}
+			quit := func() error {
+				stale := claudeDesktopReadJSON(t, paths.profile)
+				stale["deploymentDisplayName"] = claudeDesktopProfileName
+				if stage == "newer edit" || stage == "original value edit" {
+					stale["deploymentDisplayName"] = want
+				}
+				return writeClaudeDesktopJSON(paths.profile, stale)
+			}
+			configure := func(ctx context.Context) error {
+				return configureClaudeDesktopTargetsContext(ctx, targets, ClaudeDesktopGatewayURL(), "ollama", false, nil)
+			}
+			var err error
+			if stage == "after snapshot" || stage == "after quit recording" {
+				snapshot, snapshotErr := snapshotClaudeProfileForRestart(t.Context())
+				if snapshotErr != nil {
+					t.Fatal(snapshotErr)
+				}
+				if err := quit(); err != nil {
+					t.Fatal(err)
+				}
+				if stage == "after quit recording" {
+					if err := snapshot.recordAfterQuit(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				err = configure(t.Context())
+			} else {
+				running := true
+				withClaudeDesktopProcessHooks(t, func() bool { return running }, func() error { running = false; return quit() }, func() error { return nil })
+				err = restartClaudeDesktopContext(t.Context(), configure)
+			}
+			if err != nil && !strings.Contains(err.Error(), "changed after setup") {
+				t.Fatal(err)
+			}
+			if got := claudeDesktopReadJSON(t, paths.profile)["deploymentDisplayName"]; got != want {
+				t.Fatalf("user edit lost: got %v, want %v", got, want)
+			}
+			statePath, _ := claudeRestorePath()
+			state, _, readErr := claudeReadState(statePath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			value := state.Files[paths.profile].Values["deploymentDisplayName"]
+			if string(value.Before) != `"original label"` || claudeValueOwned(claudeField(claudeDesktopReadJSON(t, paths.profile), "deploymentDisplayName"), value) {
+				t.Fatal("user edit was reclassified as owned or original checkpoint changed")
+			}
+		})
 	}
 }

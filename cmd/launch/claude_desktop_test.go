@@ -46,7 +46,7 @@ func withClaudeDesktopProcessHooks(t *testing.T, running func() bool, quit func(
 	oldRunningPath := claudeDesktopRunningAppPath
 	claudeDesktopIsRunning = func(context.Context) (bool, error) { return running(), nil }
 	claudeDesktopQuitApp = func(context.Context) error { return quit() }
-	claudeDesktopOpenApp = func(context.Context) error { return open() }
+	claudeDesktopOpenApp = open
 	claudeDesktopOpenAppPath = oldOpenPath
 	claudeDesktopRunningAppPath = oldRunningPath
 	t.Cleanup(func() {
@@ -642,10 +642,10 @@ func TestClaudeDesktopWindowsOpenDoesNotFallBackToClaudeCommand(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", filepath.Join(tmpDir, "LocalAppData"))
 
 	oldRunningPath := claudeDesktopRunningAppPath
-	claudeDesktopRunningAppPath = func(context.Context) string { return "" }
+	claudeDesktopRunningAppPath = func() string { return "" }
 	t.Cleanup(func() { claudeDesktopRunningAppPath = oldRunningPath })
 
-	err := defaultClaudeDesktopOpenApp(context.Background())
+	err := defaultClaudeDesktopOpenApp()
 	if err == nil || !strings.Contains(err.Error(), "Claude Desktop executable was not found") {
 		t.Fatalf("defaultClaudeDesktopOpenApp error = %v, want executable-not-found error", err)
 	}
@@ -1524,7 +1524,7 @@ func TestClaudeDesktopRestoreForShutdownBoundsHungQuit(t *testing.T) {
 	claudeDesktopIsRunning = func(context.Context) (bool, error) { return true, nil }
 	claudeDesktopQuitApp = func(ctx context.Context) error {
 		<-ctx.Done()
-		return errors.New("quit command interrupted")
+		return ctx.Err()
 	}
 	t.Cleanup(func() {
 		claudeDesktopIsRunning = oldRunning

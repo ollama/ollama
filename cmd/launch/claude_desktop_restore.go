@@ -118,15 +118,12 @@ func prepareClaudeRestartRecovery(ctx context.Context, targets claudeDesktopTarg
 	}
 	// Generic --yes must not silently approve replacing possible user edits.
 	restorePolicy := withLaunchConfirmPolicy(launchConfirmPolicy{})
-	confirmed, promptErr := ConfirmPromptWithOptionsContext(ctx, "An interrupted restart left Claude settings changed. Restore the saved settings and replace those changes?", ConfirmOptions{
+	confirmed, promptErr := ConfirmPromptWithOptions("An interrupted restart left Claude settings changed. Restore the saved settings and replace those changes?", ConfirmOptions{
 		YesLabel: "Restore saved settings",
 		NoLabel:  "Keep current changes",
 		Default:  ConfirmDefaultNo,
 	})
 	restorePolicy()
-	if contextErr := claudeDesktopContextError(ctx); contextErr != nil {
-		return nil, contextErr
-	}
 	if promptErr != nil {
 		return nil, promptErr
 	}

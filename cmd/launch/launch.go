@@ -404,7 +404,7 @@ Examples:
 				ExtraArgs:      passArgs,
 				Policy:         &policy,
 			})
-			if errors.Is(err, ErrCancelled) && (canonical != claudeDesktopIntegrationName || claudeDesktopCancellationOnly(err)) {
+			if errors.Is(err, ErrCancelled) {
 				return nil
 			}
 			return err
@@ -484,26 +484,15 @@ func ResolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
 }
 
 // LaunchIntegration runs the canonical launcher flow for one integration.
-func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) (resultErr error) {
+func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error {
 	name, runner, err := LookupIntegration(req.Name)
 	if err != nil {
-		return err
-	}
-	if _, ok := runner.(*ClaudeDesktop); ok {
-		defer func() {
-			// Keep cancellation quiet without hiding a joined recovery failure.
-			if !errors.Is(resultErr, ErrCancelled) && claudeDesktopCancellationOnly(resultErr) {
-				resultErr = errors.Join(ErrCancelled, resultErr)
-			}
-		}()
-	}
-	if err := ctx.Err(); err != nil {
 		return err
 	}
 
 	policy := launchIntegrationPolicy(req)
 	if req.Restore {
-		return restoreIntegration(ctx, name, runner, req)
+		return restoreIntegration(name, runner, req)
 	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
 		if _, ok := runner.(ManagedAutodiscoveryIntegration); !ok {
@@ -556,7 +545,7 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) (resul
 	return launchClient.launchSingleIntegration(ctx, name, runner, saved, req)
 }
 
-func restoreIntegration(ctx context.Context, name string, runner Runner, req IntegrationLaunchRequest) error {
+func restoreIntegration(name string, runner Runner, req IntegrationLaunchRequest) error {
 	if req.ModelOverride != "" || req.ConfigureOnly || len(req.ExtraArgs) > 0 {
 		return fmt.Errorf("--restore cannot be combined with --model, --config, or extra args")
 	}
@@ -569,13 +558,7 @@ func restoreIntegration(ctx context.Context, name string, runner Runner, req Int
 			return err
 		}
 	}
-	var err error
-	if claude, ok := restorable.(*ClaudeDesktop); ok {
-		err = claude.restore(ctx)
-	} else {
-		err = restorable.Restore()
-	}
-	if err != nil {
+	if err := restorable.Restore(); err != nil {
 		return err
 	}
 	printRestoreSuccess(restorable)
@@ -925,7 +908,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 	needsConfigure := req.ForceConfigure || req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
 
 	if needsConfigure {
-		if err := prepareManagedAutodiscoveryIntegration(ctx, name, autodiscovery, target); err != nil {
+		if err := prepareManagedAutodiscoveryIntegration(name, autodiscovery, target); err != nil {
 			return err
 		}
 		if refresher, ok := autodiscovery.(ManagedRuntimeRefresher); ok {
@@ -952,11 +935,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 		return nil
 	}
 
-	models := c.resolveRunModels(ctx, name, []string{target})
-	if claude, ok := runner.(*ClaudeDesktop); ok {
-		return claude.run(ctx, req.ExtraArgs)
-	}
-	return runIntegration(runner, target, models, req.ExtraArgs)
+	return runIntegration(runner, target, c.resolveRunModels(ctx, name, []string{target}), req.ExtraArgs)
 }
 
 func (c *launcherClient) managedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration) bool {

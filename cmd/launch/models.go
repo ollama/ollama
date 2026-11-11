@@ -341,18 +341,9 @@ func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, mo
 	return nil
 }
 
-func prepareManagedAutodiscoveryIntegration(ctx context.Context, name string, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
-	var err error
-	if claude, ok := autodiscovery.(*ClaudeDesktop); ok {
-		err = claude.configureAutodiscovery(ctx)
-	} else {
-		err = autodiscovery.ConfigureAutodiscovery()
-	}
-	if err != nil {
+func prepareManagedAutodiscoveryIntegration(name string, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
+	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
