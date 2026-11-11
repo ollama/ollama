@@ -162,7 +162,7 @@ func (m *Model) NewCaches() []cache.Cache {
 	return caches
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (*mlx.Array, *mlx.Array) {
 	// The runner may append draft caches; only the target's slots belong here.
 	if len(caches) != 0 && len(caches) < m.numCaches {
 		panic(fmt.Sprintf("Qwen cache count = %d, need at least %d", len(caches), m.numCaches))
@@ -181,16 +181,17 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.
 
 	for i, layer := range m.Layers {
 		if layer.PLE != nil {
-			var tokens *engramCache
+			var tokens engramState
 			if len(caches) > 0 {
-				tokens = caches[layer.pleCache].(*engramCache)
+				tokens = caches[layer.pleCache].(engramState)
 			} else {
-				tokens = layer.PLE.NewCache(m.Config)
-				defer tokens.Free()
+				temporary := layer.PLE.NewCache(m.Config)
+				defer temporary.Free()
+				tokens = temporary
 			}
 			hidden = mlx.Add(hidden, layer.PLE.Forward(hidden, b, tokens, m.Config))
 		}
-		var c, side cache.Cache
+		var c, side cache.Layer
 		if len(caches) > 0 {
 			c = caches[i]
 			if layer.Attention != nil {
@@ -272,7 +273,7 @@ func (m *Model) loadLayer(linears model.LinearFactory, tensors map[string]*mlx.A
 	return l, nil
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Layer, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
 	branch, state := l.AttentionConnection.Prepare(x, cfg)
 	if l.Linear != nil {
 		branch = l.Linear.Forward(branch, b, c, cfg)

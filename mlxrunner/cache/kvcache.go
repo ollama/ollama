@@ -11,7 +11,7 @@ import (
 // Attention is the contract for caches that back attention layers
 // (KVCache, RotatingKVCache).
 type Attention interface {
-	Cache
+	Layer
 
 	// Update appends (k, v) and returns an opaque nn.KVHistory for
 	// this layer's SDPA.

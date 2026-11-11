@@ -69,7 +69,7 @@ var linearAttentionOutputGate = mlx.Compile2(
 	mlx.Shapeless(),
 )
 
-func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, cfg *Config) *mlx.Array {
+func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
@@ -80,8 +80,8 @@ func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, c
 
 	convTail := cfg.LinearConvKernelDim - 1
 	options := []nn.RecurrentOption{nn.WithConvSiLU()}
-	var recurrent *cache.RecurrentCache
-	if value, ok := c.(*cache.RecurrentCache); ok {
+	var recurrent cache.Recurrent
+	if value, ok := c.(cache.Recurrent); ok {
 		recurrent = value
 		options = append(options, nn.WithRecurrentHistory(recurrent.Get(b, x.DType())))
 		if splits := recurrent.SnapshotSplits(int(L)); len(splits) > 0 {

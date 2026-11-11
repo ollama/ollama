@@ -661,12 +661,20 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 	}
 }
 
-// appendLoadModeArgs selects llama-server's single model loading mode. Direct I/O
-// skips the page cache on load for integrated CUDA/ROCm GPUs, which share system
-// memory with the CPU and would otherwise double-buffer weights.
+// appendLoadModeArgs selects llama-server's single model loading mode. Integrated
+// GPUs share memory with the CPU: Linux CUDA/ROCm use direct I/O to skip the page
+// cache, Windows CUDA/ROCm skip the pinned host buffer, and Vulkan uses mmap
+// because non-mmap loads place CPU-resident tensors in a host buffer drawn from
+// the same device budget as the weights.
 func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
 	for _, g := range gpus {
-		if g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+		if !g.Integrated {
+			continue
+		}
+		if strings.EqualFold(g.Library, "Vulkan") {
+			return append(params, "--load-mode", "mmap")
+		}
+		if strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm") {
 			if runtime.GOOS == "linux" {
 				return append(params, "--load-mode", "dio")
 			}
@@ -2897,6 +2905,7 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	ROCm0 model buffer size =  1918.35 MiB
 //	llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)
 //	init_rotation:         CUDA0 rotation buffer size =    23.04 MiB
+//	main: CUDA0 h_nextn buffer size =    32.00 MiB  (b12257: emitted as h_nextn_dev_alloc: MTL0 ... = 16.01 MiB)
 type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
@@ -2922,7 +2931,7 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
-var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(layer input|rotation|model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(layer input|rotation|h_nextn|model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)

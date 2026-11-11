@@ -59,7 +59,7 @@ type PreparedRequest struct {
 
 	// Layout is an opaque request-scoped value computed in the one pass
 	// that sees every splice position; immutable, carried unread by the
-	// runner to every forward. Delivered only when Items is non-empty.
+	// runner to every forward, including text-only requests.
 	// Nil when the model derives nothing from it.
 	Layout any
 }

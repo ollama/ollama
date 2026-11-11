@@ -6,6 +6,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 )
 
@@ -239,7 +240,7 @@ func (d *mtpDraftSession) flush() {
 			Hidden:       hiddens,
 			Media:        d.flushMedia(d.committedDraftOffset + n + 1),
 			Layout:       d.layout,
-		}, spec.targets, spec.draftKV)
+		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 		out := []*mlx.Array{lastHiddenRow(hidden), lastHiddenRow(auxHidden)}
 		for _, c := range spec.draftKV {
 			out = append(out, c.State()...)
@@ -319,15 +320,15 @@ func (d *mtpDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandi
 					SeqQueryLens: []int32{1},
 					Hidden:       lastHidden,
 					Layout:       d.layout,
-				}, spec.targets, spec.draftKV)
+				}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 			}
 			// Unembed only the row being sampled, never the batch.
 			stepLogits := spec.draft.Unembed(hidden).Squeeze(1)
 			lastHidden = auxHidden
 			// The chain's earlier drafts ride along as the row's history, so
 			// penalties shape proposals the same way they shape validation.
-			dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)
-			nextToken := r.Sampler.SampleDistribution(pipelineSlot, dist)
+			dist := r.Sampler.Distribution(spec.slotID, stepLogits, prefix)
+			nextToken := r.Sampler.SampleDistribution(spec.slotID, dist)
 
 			lastToken = nextToken.ExpandDims(-1)
 			draftDists = append(draftDists, dist)

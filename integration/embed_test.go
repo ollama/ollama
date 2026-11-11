@@ -68,7 +68,7 @@ func requireSimilarEmbedding(t *testing.T, want, got []float32) {
 	}
 
 	sim := cosineSimilarity(got, want)
-	if sim < 0.999 {
+	if math.IsNaN(float64(sim)) || math.IsInf(float64(sim), 0) || sim < 0.999 {
 		t.Fatalf("expected embedding similar to %v, got %v (similarity: %f)", want[0:5], got[0:5], sim)
 	}
 }

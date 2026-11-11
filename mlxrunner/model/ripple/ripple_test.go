@@ -1020,7 +1020,7 @@ func TestDFlashTargetCombinedCaches(t *testing.T) {
 				}
 			}()
 			b := inputBatch([]float32{1, 4, 7}, 0)
-			want, _ := m.Forward(b, plain)
+			want, _ := m.Forward(b, cache.Layers(plain))
 			mlx.Eval(want)
 			func() {
 				defer func() {
@@ -1028,7 +1028,7 @@ func TestDFlashTargetCombinedCaches(t *testing.T) {
 						t.Fatalf("target rejected trailing draft caches: %v", p)
 					}
 				}()
-				got, _ := m.Forward(b, combined)
+				got, _ := m.Forward(b, cache.Layers(combined))
 				checkExactArray(t, "combined-cache target hidden", got, want)
 			}()
 			for _, c := range combined[:len(m.Layers)] {
@@ -1047,7 +1047,7 @@ func TestDFlashTargetCombinedCaches(t *testing.T) {
 						t.Fatalf("short cache slice panic=%v, want cache count rejection", p)
 					}
 				}()
-				m.Forward(b, plain[:len(plain)-1])
+				m.Forward(b, cache.Layers(plain[:len(plain)-1]))
 			}()
 		})
 	})
@@ -1316,7 +1316,7 @@ func TestCacheContinuation(t *testing.T) {
 			}
 		}()
 		run := func(start, end int) {
-			h, _ := m.Forward(inputBatch(tokens[start:end], int32(start)), caches)
+			h, _ := m.Forward(inputBatch(tokens[start:end], int32(start)), cache.Layers(caches))
 			checkTensor(t, fmt.Sprintf("continuation %d:%d", start, end), h, referenceTensor{Data: want[start*8 : end*8], Shape: []int{1, end - start, 8}}, 3e-5, 3e-5)
 		}
 		run(0, 1023)

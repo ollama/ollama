@@ -175,7 +175,7 @@ func TestDraftPerLayerNoRoPE(t *testing.T) {
 							b.SeqQueryLens = []int32{3}
 						}
 						want := oracle.forward(context, block, start, policy.noRoPE)
-						hidden, aux := m.Forward(b, nil, caches)
+						hidden, aux := m.Forward(b, nil, cache.Layers(caches))
 						label := fmt.Sprintf("round %d offset %d", round, start)
 						if !path.block {
 							if hidden != nil || aux != nil {

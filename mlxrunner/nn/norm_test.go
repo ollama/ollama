@@ -12,6 +12,26 @@ func approxEqual(a, b, tol float32) bool {
 	return float32(math.Abs(float64(a-b))) < tol
 }
 
+func TestApproxEqualRejectsNonFiniteValues(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		a, b float32
+		want bool
+	}{
+		{name: "finite equal", a: 1, b: 1, want: true},
+		{name: "finite different", a: 1, b: 2},
+		{name: "actual nan", a: float32(math.NaN()), b: 1},
+		{name: "expected nan", a: 1, b: float32(math.NaN())},
+		{name: "matching infinity", a: float32(math.Inf(1)), b: float32(math.Inf(1))},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := approxEqual(tt.a, tt.b, 1e-4); got != tt.want {
+				t.Fatalf("approxEqual(%g, %g) = %t, want %t", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestLayerNormNoBias verifies LayerNorm without bias against manual computation.
 func TestLayerNormNoBias(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {

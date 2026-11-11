@@ -658,7 +658,7 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 	}
 	if name == "pi" {
 		budget := modelShowTimeout
-		model, err := c.piTargetModel(ctx, cfg.Models[0], &budget)
+		model, _, err := c.piTargetModel(ctx, cfg.Models[0], &budget, nil)
 		return cfg.Models[0], err == nil && piSupportsChat(model), nil
 	}
 

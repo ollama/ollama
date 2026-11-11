@@ -7,13 +7,13 @@ import (
 	"github.com/ollama/ollama/mlx"
 )
 
-// ScoreForward evaluates a causal backbone through the runner's prefix cache,
-// returning the complete hidden row and the number of restored tokens. Segments supply
-// the original media bytes for cache identity. Call within an MLX scope.
-type ScoreForward func(context.Context, *PreparedRequest, []Segment) (*mlx.Array, int, error)
+// ScoreForward schedules a backbone input and its readout on the MLX worker.
+// The readout receives one unpadded hidden row and must return CPU results only.
+// Segments identify media for causal prefix reuse; the return value counts hits.
+type ScoreForward func(context.Context, *PreparedRequest, []Segment, func(*mlx.Array) error) (int, error)
 
-// CachedScorer owns decision preparation and readout; the runner owns forward
-// execution and retained state. Bidirectional encoders cannot use this path.
-type CachedScorer interface {
+// Scorer owns decision preparation and readout; the runner owns forward
+// execution, admission and retained state. Score runs outside the MLX worker.
+type Scorer interface {
 	Score(context.Context, llm.ScoreRequest, ScoreForward) (llm.ScoreResponse, error)
 }
