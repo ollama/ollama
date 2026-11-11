@@ -8,6 +8,10 @@
 
 Start building with open models.
 
+<!-- impact-note:start -->
+<sub><strong>Efficiency and practical value.</strong> This fork retains the <a href="https://github.com/ollama/ollama">upstream Ollama</a> runtime and documented interfaces for using models across local applications and agent tools. Reusable model-serving and client interfaces reduce repeated integration work and enable use of available hardware. These benefits originate upstream; operating cost, speed and energy use depend on the selected model, hardware and workload.</sub>
+<!-- impact-note:end -->
+
 ## Download
 
 ### macOS
