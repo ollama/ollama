@@ -64,6 +64,11 @@ func TestAcceptDraftBatch(t *testing.T) {
 					t.Errorf("row %d left a speculative snapshot", i)
 				}
 			}
+			// One verification forward advances every row in the group, so each
+			// owning request counts one step for it, not one per row or per group.
+			if got := rounds[i].s.stats.forwards; got != 1 {
+				t.Fatalf("row %d: steps %d, want 1 for the shared forward", i, got)
+			}
 		}
 	})
 }
@@ -86,6 +91,10 @@ func TestAcceptDraftBatchRejectsMismatchedLengths(t *testing.T) {
 		for i, out := range r.acceptDrafts(rounds) {
 			if out.err == nil || positions[i] != 0 || rounds[i].s.spec.targets[0].Offset() != 0 {
 				t.Fatalf("row %d: error %v position %d", i, out.err, positions[i])
+			}
+			// The group never reached a forward, so no row reports a step.
+			if got := rounds[i].s.stats.forwards; got != 0 {
+				t.Fatalf("row %d: steps %d, want 0 for a group that never forwarded", i, got)
 			}
 		}
 		if len(m.batches) != 0 {
@@ -125,6 +134,10 @@ func TestAcceptDraftBatchGrammarFailureIsolated(t *testing.T) {
 			t.Fatalf("healthy row: %+v position %d", out[1], positions[1])
 		}
 		for i, round := range rounds {
+			// A row whose grammar mask failed still rode the shared forward.
+			if got := round.s.stats.forwards; got != 1 {
+				t.Fatalf("row %d: steps %d, want 1 for the shared forward it rode", i, got)
+			}
 			if snapshots := round.s.spec.targets[0].TakeSnapshots(); len(snapshots) != 0 {
 				for _, snapshot := range snapshots {
 					if snapshot != nil {

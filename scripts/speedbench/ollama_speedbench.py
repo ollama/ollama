@@ -17,12 +17,14 @@ Aggregation is always computed from summed counts, never from averaged ratios:
 A metric whose inputs a server never reports is printed as n/a, matching the
 API rule that absent fields mean "not reported", not zero.
 
-Input JSONL, one record per line:
-  {"question_id": "...", "category": "coding", "turns": ["prompt", "follow-up", ...]}
+Input JSONL, one record per line, as NVIDIA's prepare.py writes it:
+  {"question_id": "...", "category": "coding",
+   "messages": [{"role": "user", "content": "prompt"}, ...]}
 
-Only "turns" (or a single "prompt"/"text" string) is required. Each turn is a
-user message; multi-turn records replay turns in order, feeding each live
-assistant reply back as conversation history. Records that still carry the
+Only user messages are replayed; the assistant replies come from the server, so a
+record carrying its own assistant or system turns is rejected rather than silently
+reduced. "turns" (a list of user message strings) and a single "prompt"/"text"
+string are also accepted for smoke-test rows. Records that still carry the
 upstream placeholder text ("FULL BENCHMARK DATA SHOULD BE FETCHED FROM THE
 SOURCE") are skipped, since their real prompt was never fetched.
 """
@@ -37,6 +39,31 @@ import urllib.error
 PLACEHOLDER = "FULL BENCHMARK DATA SHOULD BE FETCHED"
 
 
+def record_turns(rec, where):
+    """Return the record's user messages, in order.
+
+    prepare.py maps the upstream turns onto role/content messages and drops the
+    original turns column, so "messages" is the schema the prepared splits
+    actually carry.
+    """
+    if "messages" in rec:
+        turns = []
+        for i, message in enumerate(rec["messages"] or []):
+            role = message.get("role", "user")
+            if role != "user":
+                sys.exit(f"{where}: messages[{i}] has role {role!r}; only user messages are "
+                         "replayed, since assistant replies come from the server")
+            turns.append(message.get("content") or "")
+        return turns
+    turns = rec.get("turns")
+    if turns is None:
+        single = rec.get("prompt") or rec.get("text")
+        if single is None:
+            sys.exit(f"{where}: record has no 'messages', 'turns', 'prompt', or 'text'")
+        turns = [single]
+    return turns
+
+
 def load_records(path, categories, limit):
     records = []
     with open(path) as f:
@@ -48,12 +75,9 @@ def load_records(path, categories, limit):
                 rec = json.loads(line)
             except json.JSONDecodeError as e:
                 sys.exit(f"{path}:{lineno}: invalid JSON: {e}")
-            turns = rec.get("turns")
-            if turns is None:
-                single = rec.get("prompt") or rec.get("text")
-                if single is None:
-                    sys.exit(f"{path}:{lineno}: record has neither 'turns' nor 'prompt'/'text'")
-                turns = [single]
+            turns = record_turns(rec, f"{path}:{lineno}")
+            if not turns:
+                sys.exit(f"{path}:{lineno}: record has no user messages")
             if any(PLACEHOLDER in t for t in turns):
                 continue
             if categories and rec.get("category") not in categories:
@@ -73,6 +97,12 @@ def run_conversation(url, model, turns, temperature, max_tokens, timeout):
 
     Returns a list of per-turn result dicts. Timestamps are wall clock; the
     timings block comes from the final streamed chunk (include_usage).
+
+    Answer and reasoning streams are kept apart. Only the answer is replayed as
+    the turn's assistant message: prior-turn reasoning is not part of the prompt
+    a chat template expects, and the benchmark's fixed-prompt methodology assumes
+    it is absent. Reasoned tokens still count in the timings, and their size is
+    recorded per turn so a reasoning model is not silently mixed in.
     """
     messages = []
     results = []
@@ -93,6 +123,7 @@ def run_conversation(url, model, turns, temperature, max_tokens, timeout):
         start = time.monotonic()
         ttft = None
         content = []
+        reasoning = []
         final = {}
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -113,11 +144,15 @@ def run_conversation(url, model, turns, temperature, max_tokens, timeout):
                     choices = chunk.get("choices") or []
                     if choices:
                         delta = choices[0].get("delta") or {}
-                        piece = delta.get("content") or delta.get("reasoning") or ""
-                        if piece:
+                        piece = delta.get("content") or ""
+                        thought = delta.get("reasoning") or ""
+                        if piece or thought:
                             if ttft is None:
                                 ttft = time.monotonic() - start
-                            content.append(piece)
+                            if thought:
+                                reasoning.append(thought)
+                            if piece:
+                                content.append(piece)
         except (urllib.error.URLError, TimeoutError, RuntimeError) as e:
             return results, f"turn {len(results) + 1}: {e}"
         latency = time.monotonic() - start
@@ -130,6 +165,7 @@ def run_conversation(url, model, turns, temperature, max_tokens, timeout):
             "ttft_s": ttft,
             "usage": usage,
             "timings": timings,
+            "reasoning_chars": len("".join(reasoning)),
         })
     return results, None
 
@@ -151,10 +187,15 @@ class Sums:
         self.draft_n_accepted = None
         self.draft_steps = None
         self.steps = None
+        # reasoning_chars counts answer-adjacent reasoning the server streamed.
+        # It is never replayed as history; the count shows when a model reasoned
+        # anyway, so a run can be read as the mix it actually was.
+        self.reasoning_chars = 0
 
     def record(self, turn):
         self.requests += 1
         self.latency += turn["latency_s"]
+        self.reasoning_chars += turn["reasoning_chars"]
         if turn["ttft_s"] is not None:
             self.ttfts.append(turn["ttft_s"])
         t = turn["timings"]
@@ -198,6 +239,8 @@ class Sums:
         if self.steps:
             m["tokens per step"] = div(self.predicted_n, self.steps)
             m["time per step"] = "{:.2f}ms".format(self.predicted_ms / self.steps)
+        if self.reasoning_chars:
+            m["reasoning chars"] = str(self.reasoning_chars)
         return m
 
 

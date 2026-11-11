@@ -464,6 +464,18 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 						next = predict[next]
 						want.WriteString(tok.Decode([]int32{next}))
 					}
+					// Each request counts the forwards it rode, including a verification
+					// forward it shared with a peer, so steps cannot exceed the tokens
+					// that forward produced and never inflate with group width.
+					if final.StepCount == nil || final.DraftStepCount == nil || final.DraftCount == nil || final.DraftAcceptedCount == nil {
+						t.Fatalf("seed %d reported no speculative counts: %+v", req.Tokens[2], final)
+					}
+					if *final.StepCount > final.EvalCount || *final.StepCount < 1 {
+						t.Fatalf("seed %d steps %d outside 1..%d", req.Tokens[2], *final.StepCount, final.EvalCount)
+					}
+					if *final.DraftStepCount > *final.StepCount || *final.DraftAcceptedCount > *final.DraftCount {
+						t.Fatalf("seed %d counts %+v: draft steps exceed steps or accepted exceeds drafted", req.Tokens[2], final)
+					}
 					if !final.Done || final.EvalCount != req.Options.NumPredict || got != want.String() {
 						t.Fatalf("seed %d result %q (%+v), want %q", req.Tokens[2], got, final, want.String())
 					}

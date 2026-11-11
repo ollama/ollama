@@ -1,7 +1,13 @@
 package mlxrunner
 
 import (
+	"context"
 	"testing"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlx/mlxtest"
+	sampler "github.com/ollama/ollama/mlxrunner/sample"
 )
 
 // endRound with fixedDepth skips the depth controller, so these sessions
@@ -53,6 +59,8 @@ func TestReportCounts(t *testing.T) {
 
 	t.Run("enabled session that never drafted reports zeros", func(t *testing.T) {
 		s := &speculationSession{enabled: true, fixedDepth: true}
+		s.countForward()
+		s.countForward()
 		s.endRound(0, 0, 0)
 		s.endRound(0, 0, 0)
 		var resp CompletionResponse
@@ -77,12 +85,15 @@ func TestReportCounts(t *testing.T) {
 
 	t.Run("enabled session reports counts as copies", func(t *testing.T) {
 		s := &speculationSession{enabled: true, fixedDepth: true}
+		s.countForward()
+		s.countForward()
 		s.endRound(5, 3, 5)
 		s.endRound(0, 0, 0)
 
 		var resp CompletionResponse
 		s.reportCounts(&resp)
 
+		s.countForward()
 		s.endRound(2, 1, 2) // later rounds must not mutate the response already sent
 		if got := *resp.DraftCount; got != 5 {
 			t.Errorf("DraftCount = %d, want 5", got)
@@ -97,4 +108,59 @@ func TestReportCounts(t *testing.T) {
 			t.Errorf("StepCount = %d, want 2", got)
 		}
 	})
+}
+
+// Steps are target forward passes over the same window eval_duration covers,
+// recorded where each forward is dispatched rather than derived from decode
+// rounds. A round count misses the pipelined decoder's seed forward, which no
+// round spans, so a response that ends parked -- a short run, or one whose
+// num_predict leaves no room to draft -- completes more forwards than rounds.
+// The reported steps must therefore be checked against the model's own count.
+func TestStepCountMatchesForwardPasses(t *testing.T) {
+	const eos int32 = 7
+	predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: eos, eos: 0}
+
+	for _, tt := range []struct {
+		name       string
+		numPredict int
+	}{
+		{"drafting run", 40},
+		{"short run ends parked", 3},
+		{"no budget to draft", 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mlxtest.Run(t, func(t *mlxtest.T) {
+				r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+				caches, _ := newMTPTestCaches(1)
+				r.cache.caches = caches
+				r.spec = newSpeculation(r, pipelineSlot, &fakeMTPDraft{predict: predict}, caches, nil)
+				session, ch := newMTPTestSession(caches)
+
+				req := request{
+					Responses:         ch,
+					Tokens:            []int32{0},
+					CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: tt.numPredict}},
+					SamplerOpts:       sampler.Options{},
+				}
+				spec := r.spec.open(req, nil)
+				if spec == nil || !spec.enabled {
+					t.Fatal("speculation session is not drafting")
+				}
+				pinDraftLimit(spec, 4)
+				d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, nil)
+				if err := driveTestDecoder(context.Background(), r, req, session, d, 0); err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+
+				_, final := collectResponses(ch)
+				if final.StepCount == nil {
+					t.Fatalf("final response = %+v, want a step count", final)
+				}
+				forwards := len(r.Model.(*fakeMTPModel).forwards)
+				if got := *final.StepCount; got != forwards {
+					t.Errorf("StepCount = %d, target forward passes = %d", got, forwards)
+				}
+			})
+		})
+	}
 }
