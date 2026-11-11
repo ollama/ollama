@@ -398,6 +398,41 @@ func TestQwenToolParser(t *testing.T) {
 			}},
 		},
 		{
+			name: "json arguments in function body",
+			tools: []api.Tool{tool("read_file", map[string]api.ToolProperty{
+				"path": {Type: api.PropertyType{"string"}},
+			})},
+			rawToolCall: `<function=read_file>{"path": "src/main.py"}</function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name:      "read_file",
+				Arguments: testArgs(map[string]any{"path": "src/main.py"}),
+			}},
+		},
+		{
+			name:  "json arguments in function body with markup characters and newlines",
+			tools: []api.Tool{},
+			rawToolCall: `<function=write>
+{"content": "a < b && c > d", "count": 2, "opts": {"force": true}}
+</function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name: "write",
+				Arguments: testArgs(map[string]any{
+					"content": "a < b && c > d",
+					"count":   float64(2),
+					"opts":    map[string]any{"force": true},
+				}),
+			}},
+		},
+		{
+			name:        "non-json text in function body is ignored",
+			tools:       []api.Tool{},
+			rawToolCall: `<function=noop>not json</function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name:      "noop",
+				Arguments: testArgs(map[string]any{}),
+			}},
+		},
+		{
 			name:  "simple tool call",
 			tools: []api.Tool{},
 			rawToolCall: `<function=get_current_temperature>

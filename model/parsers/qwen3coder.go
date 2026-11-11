@@ -224,6 +224,9 @@ type XMLFunctionCall struct {
 	XMLName    xml.Name       `xml:"function"`
 	Name       string         `xml:"name,attr"`
 	Parameters []XMLParameter `xml:"parameter"`
+	// Body holds character data directly inside <function>. Some models write
+	// the arguments there as a JSON object instead of <parameter> children.
+	Body string `xml:",chardata"`
 }
 
 type XMLParameter struct {
@@ -267,6 +270,17 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 	}
 
 	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
+	if len(functionCall.Parameters) == 0 {
+		// Some models (e.g. MiMo) occasionally write the arguments as a JSON
+		// object inside <function=...> instead of <parameter=...> blocks. Use
+		// it rather than silently returning a call with no arguments.
+		if body := strings.TrimSpace(functionCall.Body); strings.HasPrefix(body, "{") {
+			var args api.ToolCallFunctionArguments
+			if err := json.Unmarshal([]byte(body), &args); err == nil {
+				toolCall.Function.Arguments = args
+			}
+		}
+	}
 	for _, parameter := range functionCall.Parameters {
 		// Look up the parameter type if we found the tool
 		var paramType api.PropertyType
