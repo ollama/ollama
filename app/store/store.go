@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -177,12 +178,40 @@ type Settings struct {
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
 
+	// UpdateChannel selects the app update stream.
+	UpdateChannel string
+
 	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
 	ClaudeDesktopUsed bool
 
 	// CodexDesktopUsed records whether ChatGPT has successfully connected through Ollama.
 	// Only MarkCodexDesktopUsed updates it; SetSettings preserves the stored value.
 	CodexDesktopUsed bool
+}
+
+const (
+	UpdateChannelStable  = "stable"
+	UpdateChannelPreview = "preview"
+)
+
+// ParseUpdateChannel returns the canonical name of a supported update channel.
+func ParseUpdateChannel(channel string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case UpdateChannelStable:
+		return UpdateChannelStable, true
+	case UpdateChannelPreview:
+		return UpdateChannelPreview, true
+	default:
+		return "", false
+	}
+}
+
+// NormalizeUpdateChannel returns a supported update channel, defaulting to stable.
+func NormalizeUpdateChannel(channel string) string {
+	if channel, ok := ParseUpdateChannel(channel); ok {
+		return channel
+	}
+	return UpdateChannelStable
 }
 
 // Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
@@ -414,6 +443,14 @@ func (s *Store) Settings() (Settings, error) {
 	if settings.LastHomeView == "" {
 		settings.LastHomeView = "chat"
 	}
+	if channel, ok := ParseUpdateChannel(settings.UpdateChannel); ok {
+		settings.UpdateChannel = channel
+	} else {
+		if settings.UpdateChannel != "" {
+			slog.Warn("unsupported update channel in settings, using stable", "channel", settings.UpdateChannel)
+		}
+		settings.UpdateChannel = UpdateChannelStable
+	}
 
 	return settings, nil
 }
@@ -423,6 +460,13 @@ func (s *Store) SetSettings(settings Settings) error {
 		return err
 	}
 
+	if strings.TrimSpace(settings.UpdateChannel) == "" {
+		settings.UpdateChannel = UpdateChannelStable
+	} else if channel, ok := ParseUpdateChannel(settings.UpdateChannel); ok {
+		settings.UpdateChannel = channel
+	} else {
+		return fmt.Errorf("unsupported update channel %q", settings.UpdateChannel)
+	}
 	if err := s.db.setSettings(settings); err != nil {
 		return err
 	}
