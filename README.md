@@ -206,6 +206,7 @@ console.log(response.message.content);
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
 - [Quock](https://github.com/matteocelani/quock) - Native iOS client for Ollama Cloud
+- [Buddy](https://github.com/ghorbelhamdi/buddy-android) - Android app where an AI agent uses your phone's apps for you, with Ollama on your own network
 
 > SwiftChat, Enchanted, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
 
