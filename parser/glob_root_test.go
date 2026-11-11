@@ -88,3 +88,38 @@ func TestCreateRequestGlobParentOfLiteralModelfileDirectory(t *testing.T) {
 		t.Fatalf("expected %q; got %v", want, req.Files)
 	}
 }
+
+// Unix filenames can contain arbitrary bytes, including directory names that
+// are not UTF-8. They must remain discoverable through a Modelfile glob.
+func TestCreateRequestGlobMatchesNonUTF8Directory(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("this test requires a filesystem supporting non-UTF-8 names")
+	}
+	for _, modelName := range []string{"models", "models[Q4]", "models?"} {
+		t.Run(modelName, func(t *testing.T) {
+			modelDir := filepath.Join(t.TempDir(), modelName)
+			shardDir := filepath.Join(modelDir, "quant"+string([]byte{0xff}))
+			if err := os.MkdirAll(shardDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(shardDir, "model-1.gguf")
+			if err := os.WriteFile(want, []byte("weights"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			mf, err := ParseFile(strings.NewReader("FROM ./quant*/model-*.gguf\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := mf.CreateRequest(modelDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(req.Files) != 1 {
+				t.Fatalf("expected %q; got %v", want, req.Files)
+			}
+			if _, ok := req.Files[want]; !ok {
+				t.Fatalf("expected %q; got %v", want, req.Files)
+			}
+		})
+	}
+}

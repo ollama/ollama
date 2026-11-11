@@ -189,6 +189,18 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	return req, nil
 }
 
+// globRootFS permits Unix filenames that contain arbitrary bytes. io/fs's
+// standard DirFS rejects non-UTF-8 names even though they are legal on Unix.
+// Keep its path-element validation while leaving the original bytes intact.
+type globRootFS string
+
+func (root globRootFS) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(strings.ToValidUTF8(name, "_")) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	return os.Open(filepath.Join(string(root), filepath.FromSlash(name)))
+}
+
 func expandPaths(path, relativeDir string) ([]string, error) {
 	pattern := path
 	path, err := expandPath(path, relativeDir)
@@ -211,7 +223,11 @@ func expandPaths(path, relativeDir string) ([]string, error) {
 				pattern = "."
 			}
 		}
-		matches, err = fs.Glob(os.DirFS(root), filepath.ToSlash(pattern))
+		var rootFS fs.FS = os.DirFS(root)
+		if runtime.GOOS != "windows" {
+			rootFS = globRootFS(root)
+		}
+		matches, err = fs.Glob(rootFS, filepath.ToSlash(pattern))
 		if errors.Is(err, pathpkg.ErrBadPattern) {
 			return nil, filepath.ErrBadPattern
 		}
