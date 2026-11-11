@@ -11,6 +11,29 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 )
 
+var errChatGPTModelLimit = errors.New("ChatGPT already has five Ollama models; change the model list in Ollama Settings first")
+
+// Reject a new sixth model before sign-in, payment prompts, or model pulls.
+func validateChatGPTStartingModel(primary string) error {
+	saved, err := chatGPTSavedSelection()
+	if err != nil {
+		return err
+	}
+	var models []string
+	if saved != nil {
+		models = saved.Models
+	}
+	if len(models) == 0 {
+		models, _ = codexAppRoutingModels()
+	}
+	if len(models) >= 5 && !slices.ContainsFunc(models, func(name string) bool {
+		return launchModelRecommendationKey(name) == launchModelRecommendationKey(primary)
+	}) {
+		return errChatGPTModelLimit
+	}
+	return nil
+}
+
 func chatGPTSavedSelection() (*config.IntegrationConfig, error) {
 	saved, err := config.LoadIntegration(chatGPTIntegrationName)
 	if errors.Is(err, os.ErrNotExist) {
@@ -29,14 +52,14 @@ func chatGPTSelectionEqual(a, b *config.IntegrationConfig) bool {
 	return slices.Equal(a.Models, b.Models) && a.Primary == b.Primary
 }
 
-func chatGPTCLIProfileOperation(confirmed bool, operation func(context.Context) error) error {
+func chatGPTCLIProfileOperation(parent context.Context, confirmed bool, operation func(context.Context) error) error {
 	var cancelled <-chan struct{}
 	if confirmed {
 		sp := StartSpinner(codexAppRestartMessage)
 		defer sp.Stop()
 		cancelled = sp.Cancelled()
 	}
-	ctx, stop := codexAppExitContext(codexAppCLIExitTimeout(), cancelled)
+	ctx, stop := codexAppExitContextFrom(parent, codexAppCLIExitTimeout(), cancelled)
 	defer stop()
 	return operation(ctx)
 }
@@ -86,7 +109,7 @@ func (c *launcherClient) launchChatGPT(ctx context.Context, app *CodexApp, saved
 			return errors.New("ChatGPT's saved starting model is not in its model list; update the selection in Ollama Settings")
 		}
 		if len(models) >= 5 {
-			return errors.New("ChatGPT already has five Ollama models; change the model list in Ollama Settings first")
+			return errChatGPTModelLimit
 		}
 		models = append(models, primary)
 		if len(selected) > 0 {
@@ -127,7 +150,19 @@ func (c *launcherClient) launchChatGPT(ctx context.Context, app *CodexApp, saved
 		}
 	}
 	confirmed := false
-	if app.Running() {
+	probeCtx, stopProbe := codexAppExitContextFrom(ctx, codexAppCLIExitTimeout(), nil)
+	wasRunning := codexAppIsRunning(probeCtx)
+	legacyRunning := false
+	var probeErr error
+	if codexAppGOOS == "darwin" {
+		legacyRunning, probeErr = codexAppProfileIsRunning(probeCtx)
+	}
+	probeErr = codexAppStatusError(probeCtx, probeErr)
+	stopProbe()
+	if probeErr != nil {
+		return probeErr
+	}
+	if wasRunning || legacyRunning {
 		restorePolicy := withLaunchConfirmPolicy(c.policy.confirmPolicy())
 		var err error
 		confirmed, err = ConfirmPromptWithOptions("Restart ChatGPT to add Ollama models?", ConfirmOptions{YesLabel: "Restart", NoLabel: "Cancel", Default: ConfirmDefaultNo})
@@ -166,7 +201,7 @@ func (c *launcherClient) launchChatGPT(ctx context.Context, app *CodexApp, saved
 	if err := config.SwapPrimaryModelSelection(chatGPTIntegrationName, saved, applied); err != nil {
 		return err
 	}
-	err = chatGPTCLIProfileOperation(confirmed, func(processCtx context.Context) error {
+	err = chatGPTCLIProfileOperation(ctx, confirmed, func(processCtx context.Context) error {
 		if unchanged && !req.ConfigureOnly {
 			return app.restart(processCtx, confirmed)
 		}
@@ -183,17 +218,25 @@ func (c *launcherClient) launchChatGPT(ctx context.Context, app *CodexApp, saved
 		return err
 	}
 	if !wasConfigured {
+		var restoreErr error
 		if app.OllamaConfigured() {
-			return errors.Join(err, app.RestoreFromDesktop(true))
+			restoreErr = app.RestoreFromDesktop(true)
 		}
-		return err
+		if restoreErr == nil && wasRunning && !app.Running() {
+			restoreErr = codexAppOpenApp(nil)
+		}
+		return errors.Join(err, restoreErr)
 	}
 	// A failed native write uses the existing profile recovery path. Never
 	// overwrite a newer saved selection while recovering this attempt.
 	rollbackCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer stop()
 	rollbackModels := c.resolveRunModels(rollbackCtx, chatGPTIntegrationName, previousModels)
-	if rollbackErr := app.UpdateOllamaModelsFromDesktop(current, rollbackModels, true); rollbackErr != nil {
+	rollback := app.UpdateOllamaModelsFromDesktop
+	if wasRunning {
+		rollback = app.UseOllamaFromDesktop
+	}
+	if rollbackErr := rollback(current, rollbackModels, true); rollbackErr != nil {
 		return errors.Join(err, fmt.Errorf("restore previous ChatGPT models: %w", rollbackErr), app.RestoreFromDesktop(true))
 	}
 	return err

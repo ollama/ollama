@@ -20,11 +20,15 @@ import (
 )
 
 type chatGPTFixtureTransport struct {
-	t      *testing.T
-	reject bool
+	t             *testing.T
+	reject        bool
+	beforeRequest func(*http.Request)
 }
 
 func (f chatGPTFixtureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if f.beforeRequest != nil {
+		f.beforeRequest(r)
+	}
 	if f.reject {
 		f.t.Fatalf("ordinary relaunch rediscovered models: %s", r.URL.Path)
 	}
@@ -273,6 +277,169 @@ func TestChatGPTSharedConfigurationModelOverride(t *testing.T) {
 			}
 			if matches != 1 {
 				t.Fatalf("primary alias has %d catalog entries", matches)
+			}
+		})
+	}
+}
+
+func chatGPTReviewConnectedFixture(t *testing.T) (string, *CodexApp, *launcherClient, *int, *config.IntegrationConfig) {
+	t.Helper()
+	home, app, client, opens := chatGPTFixture(t)
+	saved := &config.IntegrationConfig{Models: []string{"first", "second"}, Primary: "first"}
+	if err := config.SwapPrimaryModelSelection(chatGPTIntegrationName, nil, saved); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.ConfigureWithModels(saved.Primary, testLaunchModels(saved.Models...)); err != nil {
+		t.Fatal(err)
+	}
+	return home, app, client, opens, saved
+}
+
+func TestChatGPTReviewRequestCancellationAbortsRestart(t *testing.T) {
+	for _, change := range []bool{false, true} {
+		t.Run(fmt.Sprintf("model_change=%t", change), func(t *testing.T) {
+			home, app, client, opens, saved := chatGPTReviewConnectedFixture(t)
+			path := filepath.Join(home, ".codex", "config.toml")
+			before, _ := os.ReadFile(path)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			running := true
+			withCodexAppProcessHooks(t, func() bool { return running }, func() error {
+				cancel()
+				running = false
+				return nil
+			}, func() error { *opens++; return nil })
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+			request := IntegrationLaunchRequest{}
+			if change {
+				request.ModelOverride = "second"
+			}
+			err := client.launchChatGPT(ctx, app, saved, request)
+			after, _ := os.ReadFile(path)
+			latest, _ := chatGPTSavedSelection()
+			if !errors.Is(err, ErrCancelled) || *opens != 0 || !slices.Equal(before, after) || !chatGPTSelectionEqual(saved, latest) {
+				t.Fatalf("request cancellation changed or reopened the profile: err=%v opens=%d saved=%+v", err, *opens, latest)
+			}
+		})
+	}
+}
+
+func TestChatGPTReviewLegacyRestartConsent(t *testing.T) {
+	for _, change := range []bool{false, true} {
+		for _, mode := range []string{"accept", "cancel", "headless-yes"} {
+			t.Run(fmt.Sprintf("model_change=%t/%s", change, mode), func(t *testing.T) {
+				_, app, client, opens, saved := chatGPTReviewConnectedFixture(t)
+				legacyRunning, stops, prompts := true, 0, 0
+				previousStop := codexAppStopProfile
+				t.Cleanup(func() { codexAppStopProfile = previousStop })
+				codexAppProfileIsRunning = func(context.Context) (bool, error) { return legacyRunning, nil }
+				codexAppStopProfile = func(context.Context) error { stops++; legacyRunning = false; return nil }
+				DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { prompts++; return mode != "cancel", nil }
+				if mode == "headless-yes" {
+					withInteractiveSession(t, false)
+					client.policy = defaultLaunchPolicy(false, true)
+				}
+				wantPrimary := saved.Primary
+				request := IntegrationLaunchRequest{}
+				if change {
+					wantPrimary = "second"
+				}
+				if change || mode == "headless-yes" {
+					request.ModelOverride = wantPrimary
+				}
+				err := client.launchChatGPT(t.Context(), app, saved, request)
+				latest, _ := chatGPTSavedSelection()
+				if mode == "cancel" {
+					if !errors.Is(err, ErrCancelled) || stops != 0 || *opens != 0 || !chatGPTSelectionEqual(saved, latest) {
+						t.Fatalf("cancel err=%v stops=%d opens=%d saved=%+v", err, stops, *opens, latest)
+					}
+				} else if err != nil || stops != 1 || *opens != 1 || app.CurrentModel() != wantPrimary || latest.Primary != wantPrimary || !slices.Equal(latest.Models, saved.Models) {
+					t.Fatalf("legacy reconnect err=%v stops=%d opens=%d saved=%+v", err, stops, *opens, latest)
+				}
+				wantPrompts := 1
+				if mode == "headless-yes" {
+					wantPrompts = 0
+				}
+				if prompts != wantPrompts {
+					t.Fatalf("prompts=%d, want %d", prompts, wantPrompts)
+				}
+			})
+		}
+	}
+}
+
+func TestChatGPTReviewFailedOpenRestoresRunningProfile(t *testing.T) {
+	for _, connected := range []bool{false, true} {
+		for _, configureOnly := range []bool{false, true} {
+			t.Run(fmt.Sprintf("connected=%t/configure_only=%t", connected, configureOnly), func(t *testing.T) {
+				home, app, client, opens, saved := chatGPTReviewConnectedFixture(t)
+				wantCurrent := saved.Primary
+				if !connected {
+					if err := app.RestoreFromDesktop(false); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte("model = \"native-model\"\n"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					wantCurrent = ""
+				}
+				running := true
+				openFailure := errors.New("fixture open failed")
+				withCodexAppProcessHooks(t, func() bool { return running }, func() error { running = false; return nil }, func() error {
+					*opens++
+					if *opens == 1 {
+						return openFailure
+					}
+					if app.CurrentModel() != wantCurrent {
+						t.Fatalf("reopened the failed selection instead of the previous starting model: %s", app.CurrentModel())
+					}
+					running = true
+					return nil
+				})
+				DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+				err := client.launchChatGPT(t.Context(), app, saved, IntegrationLaunchRequest{ModelOverride: "second", ConfigureOnly: configureOnly})
+				latest, _ := chatGPTSavedSelection()
+				if !errors.Is(err, openFailure) || !running || *opens != 2 || app.CurrentModel() != wantCurrent || app.OllamaConfigured() != connected || !chatGPTSelectionEqual(latest, saved) {
+					t.Fatalf("failed switch did not restore the running profile: err=%v running=%t opens=%d saved=%+v", err, running, *opens, latest)
+				}
+				if !connected {
+					data, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+					if err != nil || !strings.Contains(string(data), `model = "native-model"`) {
+						t.Fatalf("recovery lost the original native model: %s/%v", data, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestChatGPTReviewFullListRejectsBeforeModelPreparation(t *testing.T) {
+	for _, picker := range []bool{false, true} {
+		t.Run(fmt.Sprintf("picker=%t", picker), func(t *testing.T) {
+			_, app, client, opens, before := chatGPTReviewConnectedFixture(t)
+			full := &config.IntegrationConfig{Models: []string{"first", "second", "third", "fourth", "fifth"}, Primary: "first"}
+			if err := config.SwapPrimaryModelSelection(chatGPTIntegrationName, before, full); err != nil {
+				t.Fatal(err)
+			}
+			if err := app.ConfigureWithModels(full.Primary, testLaunchModels(full.Models...)); err != nil {
+				t.Fatal(err)
+			}
+			chosen := !picker
+			client.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "fixture.invalid"}, &http.Client{Transport: chatGPTFixtureTransport{t: t, beforeRequest: func(r *http.Request) {
+				if chosen {
+					t.Fatalf("prepared an unselected sixth model before rejecting it: %s", r.URL.Path)
+				}
+			}}})
+			DefaultSingleSelectorWithUpdates = nil
+			DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { chosen = true; return "other", nil }
+			request := IntegrationLaunchRequest{ModelOverride: "other"}
+			if picker {
+				request = IntegrationLaunchRequest{ForceConfigure: true, ConfigureOnly: true}
+			}
+			err := client.launchChatGPT(t.Context(), app, full, request)
+			latest, _ := chatGPTSavedSelection()
+			if err == nil || !strings.Contains(err.Error(), "five") || *opens != 0 || !chatGPTSelectionEqual(full, latest) {
+				t.Fatalf("invalid sixth model changed the connection: err=%v opens=%d saved=%+v", err, *opens, latest)
 			}
 		})
 	}

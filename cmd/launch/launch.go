@@ -1018,6 +1018,11 @@ func (c *launcherClient) managedSingleConfigureModels(ctx context.Context, manag
 
 func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, name string, runner Runner, current string, req IntegrationLaunchRequest) (string, bool, error) {
 	target := req.ModelOverride
+	if name == chatGPTIntegrationName && target != "" {
+		if err := validateChatGPTStartingModel(target); err != nil {
+			return "", false, err
+		}
+	}
 	needsConfigure := req.ForceConfigure
 	skipReadiness := false
 	if skipper, ok := runner.(ManagedModelReadinessSkipper); ok {
@@ -1145,6 +1150,11 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 		}
 		if selected == "" {
 			return "", ErrCancelled
+		}
+		if commandName == chatGPTIntegrationName {
+			if err := validateChatGPTStartingModel(selected); err != nil {
+				return "", err
+			}
 		}
 		if ensureReady {
 			if selected != previous {

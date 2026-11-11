@@ -880,6 +880,9 @@ func (c *CodexApp) restart(ctx context.Context, restartConfirmed bool) error {
 	if err := codexAppRouterHealth(); err != nil {
 		return err
 	}
+	if _, err := stopLegacyCodexAppOllamaProfile(ctx, restartConfirmed); err != nil {
+		return err
+	}
 	return codexAppApplyProfileChange(ctx, repairCodexAppCatalogAuthVisibility, true, restartConfirmed)
 }
 
@@ -2004,12 +2007,16 @@ func codexAppStopForRestart(ctx context.Context) error {
 
 // One context covers both the quit request and waiting for the app to exit.
 func codexAppExitContext(timeout time.Duration, cancelled <-chan struct{}) (context.Context, context.CancelFunc) {
+	return codexAppExitContextFrom(context.Background(), timeout, cancelled)
+}
+
+func codexAppExitContextFrom(parent context.Context, timeout time.Duration, cancelled <-chan struct{}) (context.Context, context.CancelFunc) {
 	var ctx context.Context
 	var stop context.CancelFunc
 	if timeout < 0 {
-		ctx, stop = context.WithCancel(context.Background())
+		ctx, stop = context.WithCancel(parent)
 	} else {
-		ctx, stop = context.WithTimeout(context.Background(), timeout)
+		ctx, stop = context.WithTimeout(parent, timeout)
 	}
 	if cancelled != nil {
 		ctx = codexAppInterruptContext{Context: ctx, interrupted: cancelled, stop: stop}
