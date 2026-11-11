@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +28,10 @@ var errCancelled = ErrCancelled
 // DefaultConfirmPrompt provides a TUI-based confirmation prompt.
 // When set, ConfirmPrompt delegates to it instead of using raw terminal I/O.
 var DefaultConfirmPrompt func(prompt string, options ConfirmOptions) (bool, error)
+
+// DefaultConfirmPromptContext lets a confirmation UI release its terminal when
+// the caller cancels. Legacy confirmation hooks retain their existing behavior.
+var DefaultConfirmPromptContext func(context.Context, string, ConfirmOptions) (bool, error)
 
 type ConfirmDefault int
 
@@ -93,6 +98,29 @@ func withLaunchConfirmPolicy(policy launchConfirmPolicy) func() {
 // withLaunchConfirmPolicy in LaunchCmd (e.g. auto-approve with --yes).
 func ConfirmPrompt(prompt string) (bool, error) {
 	return ConfirmPromptWithOptions(prompt, ConfirmOptions{})
+}
+
+func ConfirmPromptContext(ctx context.Context, prompt string) (bool, error) {
+	return ConfirmPromptWithOptionsContext(ctx, prompt, ConfirmOptions{})
+}
+
+// ConfirmPromptWithOptionsContext uses a cancellable UI when one is registered.
+// The legacy hook/raw terminal fallback retains synchronous confirmation.
+func ConfirmPromptWithOptionsContext(ctx context.Context, prompt string, options ConfirmOptions) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	var confirmed bool
+	var err error
+	if DefaultConfirmPromptContext != nil && !currentLaunchConfirmPolicy.yes && !currentLaunchConfirmPolicy.requireYesMessage {
+		confirmed, err = DefaultConfirmPromptContext(ctx, prompt, options)
+	} else {
+		confirmed, err = ConfirmPromptWithOptions(prompt, options)
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return false, contextErr
+	}
+	return confirmed, err
 }
 
 // ConfirmPromptWithOptions is the shared confirmation gate for launch flows

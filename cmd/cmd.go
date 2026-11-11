@@ -86,6 +86,7 @@ func init() {
 	}
 
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
+	launch.DefaultConfirmPromptContext = tui.RunConfirmWithOptionsContext
 
 	launch.DefaultSpinner = tui.RunSpinner
 }

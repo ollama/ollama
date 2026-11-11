@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -102,6 +103,14 @@ func RunConfirm(prompt string) (bool, error) {
 // RunConfirmWithOptions shows a bubbletea yes/no confirmation prompt with
 // optional custom button labels.
 func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) {
+	return RunConfirmWithOptionsContext(context.Background(), prompt, options)
+}
+
+// RunConfirmWithOptionsContext restores the terminal when the caller cancels.
+func RunConfirmWithOptionsContext(ctx context.Context, prompt string, options ConfirmOptions) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	yesLabel := options.YesLabel
 	if yesLabel == "" {
 		yesLabel = "Yes"
@@ -118,8 +127,11 @@ func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) 
 		yes:      options.Default != launch.ConfirmDefaultNo,
 	}
 
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithContext(ctx))
 	finalModel, err := p.Run()
+	if contextErr := ctx.Err(); contextErr != nil {
+		return false, contextErr
+	}
 	if err != nil {
 		return false, fmt.Errorf("error running confirm: %w", err)
 	}
