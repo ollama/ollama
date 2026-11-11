@@ -269,6 +269,31 @@ func TestTensorReaderReturnsLazyParseError(t *testing.T) {
 	}
 }
 
+func TestTensorReaderRejectsZeroDimensions(t *testing.T) {
+	var b bytes.Buffer
+	writeInternalRaw(t, &b, []byte("GGUF"))
+	writeInternalRaw(t, &b, uint32(3))
+	writeInternalRaw(t, &b, uint64(1)) // tensors
+	writeInternalRaw(t, &b, uint64(0)) // key-values
+	writeInternalString(t, &b, "bad.weight")
+	writeInternalRaw(t, &b, uint32(0)) // zero dimensions
+
+	p := writeTempFile(t, b.Bytes())
+	f, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	_, _, err = f.TensorReader("bad.weight")
+	if err == nil {
+		t.Fatal("TensorReader unexpectedly succeeded for tensor with 0 dimensions")
+	}
+	if !strings.Contains(err.Error(), "dimensions") {
+		t.Fatalf("TensorReader error = %q, want dimensions error", err)
+	}
+}
+
 func TestTensorReaderRejectsInvalidOffset(t *testing.T) {
 	var b bytes.Buffer
 	writeInternalRaw(t, &b, []byte("GGUF"))
