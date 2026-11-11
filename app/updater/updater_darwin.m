@@ -30,7 +30,6 @@ NSString *SystemWidePath = @"/Applications/Ollama.app";
 // other error/failure scenarios
 AuthorizationRef getAuthorization(NSString *authorizationPrompt,
                                   NSString *right) {
-    appLogInfo([NSString stringWithFormat:@"XXX in getAuthorization"]);
     AuthorizationRef authRef = NULL;
     OSStatus err = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,
                                           kAuthorizationFlagDefaults, &authRef);
@@ -45,7 +44,7 @@ AuthorizationRef getAuthorization(NSString *authorizationPrompt,
     NSString *rightNameString =
         [NSString stringWithFormat:@"%@.%@", bundleIdentifier, right];
     const char *rightName = [rightNameString UTF8String];
-    appLogInfo([NSString stringWithFormat:@"XXX requesting right %@", rightNameString]);
+    appLogInfo([NSString stringWithFormat:@"requesting right %@", rightNameString]);
 
     OSStatus getRightResult = AuthorizationRightGet(rightName, NULL);
     if (getRightResult == errAuthorizationDenied) {
@@ -96,26 +95,31 @@ AuthorizationRef getAppInstallAuthorization() {
         @"systemApplication");
 }
 
-bool chownWithAuthorization(const char *user) {
+// Runs `/bin/sh -c script sh arg1 arg2 arg3` as root after prompting the user
+// for authorization. Returns NO if authorization was not granted or the
+// command could not be launched. The script's exit status is not available
+// through this API, so callers must verify the result on disk.
+bool runScriptWithAuthorization(const char *script, const char *arg1,
+                                const char *arg2, const char *arg3) {
     AuthorizationRef authRef = getAppInstallAuthorization();
     if (authRef == NULL) {
         return NO;
     }
-    const char *chownTool = "/usr/sbin/chown";
-    const char *chownArgs[] = {"-R", user, [SystemWidePath UTF8String], NULL};
+    const char *shTool = "/bin/sh";
+    const char *shArgs[] = {"-c", script, "sh", arg1, arg2, arg3, NULL};
 
     FILE *pipe = NULL;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     OSStatus err = AuthorizationExecuteWithPrivileges(
-        authRef, chownTool, kAuthorizationFlagDefaults,
-        (char *const *)chownArgs, &pipe);
+        authRef, shTool, kAuthorizationFlagDefaults, (char *const *)shArgs,
+        &pipe);
 #pragma clang diagnostic pop
 
     if (err != errAuthorizationSuccess) {
         appLogInfo([NSString
-            stringWithFormat:@"Failed to update ownership of %@  Status = %d",
-                             SystemWidePath, err]);
+            stringWithFormat:@"Failed to run privileged update. Status = %d",
+                             err]);
         AuthorizationFree(authRef, kAuthorizationFlagDestroyRights);
         return NO;
     }
@@ -127,9 +131,8 @@ bool chownWithAuthorization(const char *user) {
     if (pipe) {
         fclose(pipe);
     }
-    appLogDebug([NSString stringWithFormat:@"XXX finished chown"]);
     AuthorizationFree(authRef, kAuthorizationFlagDestroyRights);
-    return true;
+    return YES;
 }
 
 // nil if bundle is good, error string otherwise

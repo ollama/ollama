@@ -13,4 +13,5 @@ AuthorizationRef getAuthorization(NSString *authorizationPrompt,
 AuthorizationRef getAppInstallAuthorization();
 
 const char* verifyExtractedBundle(char *path);
-bool chownWithAuthorization(const char *user);
+bool runScriptWithAuthorization(const char *script, const char *arg1,
+                                const char *arg2, const char *arg3);
