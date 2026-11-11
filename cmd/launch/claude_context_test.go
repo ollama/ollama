@@ -62,8 +62,10 @@ func TestClaudeResolveServingContext(t *testing.T) {
 			u, _ := url.Parse("http://selected.test:12345")
 			apiClient := api.NewClient(u, &http.Client{Transport: transport})
 			input := []LaunchModel{{Name: "other", ServingContextLength: 8192}, {Name: "gemma4:latest", ContextLength: 262144, ServingContextLength: 12345}}
-			client := &launcherClient{apiClient: apiClient, recommendationsLoaded: true,
-				inventory: &modelInventory{client: apiClient, loaded: true, models: input}}
+			client := &launcherClient{
+				apiClient: apiClient, recommendationsLoaded: true,
+				inventory: &modelInventory{client: apiClient, loaded: true, models: input},
+			}
 			got := client.resolveRunModels(t.Context(), "claude", []string{"gemma4"})
 			if len(got) != 1 || calls != 1 || got[0].ServingContextLength != tt.want || got[0].ContextLength != 262144 {
 				t.Fatalf("models = %+v, calls = %d, want selected serving context %d", got, calls, tt.want)
@@ -81,8 +83,10 @@ func TestClaudeResolveServingContextSkipsRemote(t *testing.T) {
 		return nil, nil
 	})})
 	for _, model := range []LaunchModel{{Name: "example:cloud"}, {Name: "remote-alias", Remote: true}} {
-		client := &launcherClient{apiClient: apiClient, recommendationsLoaded: true,
-			inventory: &modelInventory{client: apiClient, loaded: true, models: []LaunchModel{model}}}
+		client := &launcherClient{
+			apiClient: apiClient, recommendationsLoaded: true,
+			inventory: &modelInventory{client: apiClient, loaded: true, models: []LaunchModel{model}},
+		}
 		got := client.resolveRunModels(t.Context(), "claude", []string{model.Name})
 		if len(got) != 1 || got[0].ServingContextLength != 0 {
 			t.Fatalf("remote models = %+v", got)
