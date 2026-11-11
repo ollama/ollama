@@ -219,7 +219,7 @@ cloudflared tunnel --url http://localhost:11434 --http-host-header="localhost:11
 
 ## How can I allow additional web origins to access Ollama?
 
-Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Additional origins can be configured with `OLLAMA_ORIGINS`.
+Ollama allows cross-origin requests from `localhost`, `127.0.0.1` and `0.0.0.0` by default, over both `http://` and `https://` and on any port, together with the `app://`, `file://`, `tauri://`, `vscode-webview://` and `vscode-file://` schemes. Additional origins can be configured with `OLLAMA_ORIGINS`.
 
 For browser extensions, you'll need to explicitly allow the extension's origin pattern. Set `OLLAMA_ORIGINS` to include `chrome-extension://*`, `moz-extension://*`, and `safari-web-extension://*` if you wish to allow all browser extensions access, or specific extensions as needed:
 
