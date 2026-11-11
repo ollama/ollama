@@ -26,9 +26,9 @@ type ClaudeDesktopRuntimeStatus struct {
 	Counts ClaudeDesktopCounts  `json:"counts"`
 }
 
-func (p *ClaudeDesktop) serveRuntimeStatus(w http.ResponseWriter) {
+func (p *ClaudeDesktop) serveRuntimeStatus(w http.ResponseWriter, models []ClaudeDesktopModel) {
 	status := ClaudeDesktopRuntimeStatus{Counts: p.Counts()}
-	for _, model := range p.Models() {
+	for _, model := range models {
 		status.Models = append(status.Models, claudeRuntimeModel{model, model.GatewayID(), model.entitlementKnown})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -45,7 +45,9 @@ type ClaudeDesktopClient struct {
 func NewClaudeDesktopClient(baseURL string) *ClaudeDesktopClient {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	return &ClaudeDesktopClient{strings.TrimRight(baseURL, "/"), &http.Client{Transport: transport, Timeout: 3 * time.Second}}
+	// Cold discovery can take two 3s cloud fallbacks plus local/account checks.
+	// A caller's context can still impose a shorter deadline.
+	return &ClaudeDesktopClient{strings.TrimRight(baseURL, "/"), &http.Client{Transport: transport, Timeout: 10 * time.Second}}
 }
 
 func (c *ClaudeDesktopClient) Status(ctx context.Context) (*ClaudeDesktopRuntimeStatus, error) {

@@ -2,17 +2,97 @@ package claudedesktop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/internal/launchconfig"
 	"github.com/ollama/ollama/internal/proxy"
 )
+
+func TestResolverSharesDiscoveryAfterFirstCallerCancels(t *testing.T) {
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[]}`)
+		case "/api/status":
+			fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+		case "/api/me":
+			fmt.Fprint(w, `{"name":"fixture-user","plan":"pro"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer local.Close()
+	started, release := make(chan struct{}), make(chan struct{})
+	releaseCatalog := sync.OnceFunc(func() { close(release) })
+	var cloudRequests atomic.Int32
+	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cloudRequests.Add(1) == 1 {
+			close(started)
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[{"model":"test:cloud","required_plan":"pro"}]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"test"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer cloud.Close()
+	defer releaseCatalog()
+	endpoint, _ := url.Parse(local.URL)
+	resolver := NewResolver(endpoint)
+	resolver.CloudURL = cloud.URL
+	resolver.Sign = func(context.Context, []byte) (string, error) { return "synthetic", nil }
+	cfg := &launchconfig.Integration{Aliases: map[string]string{"claude-sonnet-5": "test:cloud"}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := resolver.Resolve(ctx, cfg)
+		firstResult <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first caller did not begin discovery")
+	}
+	secondResult := make(chan error, 1)
+	go func() {
+		models, err := resolver.Resolve(t.Context(), cfg)
+		if err == nil {
+			err = resolver.Validate(t.Context(), models)
+		}
+		secondResult <- err
+	}()
+	// Let the second caller join the active discovery before canceling its owner.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err := <-firstResult; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first caller ignored cancellation: %v", err)
+	}
+	releaseCatalog()
+	if err := <-secondResult; err != nil {
+		t.Fatalf("second caller could not use shared discovery: %v", err)
+	}
+	if got := cloudRequests.Load(); got != 2 {
+		t.Fatalf("shared discovery made %d cloud requests, want one pair", got)
+	}
+}
 
 func TestResolverReusesSavedLocalMappingsWithoutCloud(t *testing.T) {
 	cloudCalls := 0
@@ -305,6 +385,42 @@ func TestResolverRefreshesInventoryAfterSamePlanAccountSwitch(t *testing.T) {
 			}
 			if err := resolver.Validate(context.Background(), models); err != nil {
 				t.Fatal(err)
+			}
+			// Changing accounts during discovery must not put the new account's
+			// inventory in the cache under the identity captured before signing.
+			account.Store(0)
+			signStarted, allowSign := make(chan struct{}), make(chan struct{})
+			signalSign := sync.OnceFunc(func() { close(signStarted) })
+			releaseSign := sync.OnceFunc(func() { close(allowSign) })
+			defer releaseSign()
+			resolver.Sign = func(context.Context, []byte) (string, error) {
+				signalSign()
+				<-allowSign
+				return "synthetic", nil
+			}
+			firstDone := make(chan error, 1)
+			go func() {
+				_, err := resolver.Resolve(t.Context(), cfg)
+				firstDone <- err
+			}()
+			select {
+			case <-signStarted:
+			case <-time.After(time.Second):
+				t.Fatal("discovery did not begin signing")
+			}
+			account.Store(1)
+			releaseSign()
+			if err := <-firstDone; err != nil {
+				t.Fatal(err)
+			}
+			account.Store(0)
+			requests = cloudRequests.Load()
+			models, err = resolver.Resolve(t.Context(), cfg)
+			if err != nil || cloudRequests.Load() == requests {
+				t.Fatalf("switched inventory was reused under the old account: %v", err)
+			}
+			if err := resolver.Validate(t.Context(), models); err == nil {
+				t.Fatal("other account's model was accepted after switching back")
 			}
 		})
 	}

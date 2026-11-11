@@ -341,17 +341,19 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	_, models := p.modelSnapshot()
 	if p.pathPrefix != "" {
-		if err := p.refreshModelCatalog(r.Context()); err != nil {
+		var err error
+		models, err = p.refreshModelCatalog(r.Context())
+		if err != nil {
 			writeAnthropicError(w, http.StatusServiceUnavailable, err)
 			return
 		}
 		if r.URL.Path == "/_ollama/status" && r.Method == http.MethodGet {
-			p.serveRuntimeStatus(w)
+			p.serveRuntimeStatus(w, models)
 			return
 		}
 	}
-	_, models := p.modelSnapshot()
 	switch r.URL.Path {
 	case "/v1/models":
 		if r.Method != http.MethodGet {
@@ -359,7 +361,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if p.pathPrefix == "" && hasCloudClaudeDesktopModel(models) {
-			if err := p.refreshModelCatalog(r.Context()); err != nil {
+			if _, err := p.refreshModelCatalog(r.Context()); err != nil {
 				p.logger.Debug("could not refresh Claude model catalog", "error", err)
 			}
 			_, models = p.modelSnapshot()
@@ -412,26 +414,26 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.ollamaProxy.ServeHTTP(w, r)
 }
 
-func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) error {
-	if p.refreshModels == nil {
-		return nil
-	}
+func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) ([]ClaudeDesktopModel, error) {
 	generation, current := p.modelSnapshotWithGeneration()
+	if p.refreshModels == nil {
+		return current, nil
+	}
 	models, err := p.refreshModels(ctx, current)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(models) == 0 && p.pathPrefix == "" {
-		return errors.New("Claude Desktop model refresh returned no models")
+		return nil, errors.New("Claude Desktop model refresh returned no models")
 	}
 	models = SelectClaudeDesktopModels(models, nil)
 	p.modelsMu.Lock()
 	defer p.modelsMu.Unlock()
 	if p.modelsGeneration != generation {
-		return nil
+		return models, nil
 	}
 	if claudeDesktopModelsEqual(p.models, models) {
-		return nil
+		return models, nil
 	}
 	p.models = cloneClaudeDesktopModels(models)
 	p.model = ""
@@ -439,7 +441,7 @@ func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) error {
 		p.model = models[0].OllamaModel
 	}
 	p.modelsGeneration++
-	return nil
+	return models, nil
 }
 
 func hasCloudClaudeDesktopModel(models []ClaudeDesktopModel) bool {
@@ -614,7 +616,7 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if selected.Cloud && p.pathPrefix == "" {
-		if err := p.refreshModelCatalog(r.Context()); err != nil {
+		if _, err := p.refreshModelCatalog(r.Context()); err != nil {
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}
 	}
@@ -652,7 +654,7 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, models []ClaudeDesktopModel)
 		return err
 	}
 	if selected.Cloud && p.pathPrefix == "" {
-		if err := p.refreshModelCatalog(r.Context()); err != nil {
+		if _, err := p.refreshModelCatalog(r.Context()); err != nil {
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}
 	}

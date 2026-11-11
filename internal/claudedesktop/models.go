@@ -25,6 +25,11 @@ import (
 
 const IntegrationName = "claude-desktop"
 
+type catalogLoad struct {
+	done   chan struct{}
+	models []proxy.ClaudeDesktopModel
+}
+
 type Resolver struct {
 	Client       *api.Client
 	HTTP         *http.Client
@@ -35,6 +40,7 @@ type Resolver struct {
 	catalog      []proxy.ClaudeDesktopModel
 	updated      time.Time
 	catalogState proxy.ClaudeDesktopAccessState
+	loading      map[proxy.ClaudeDesktopAccessState]*catalogLoad
 }
 
 func NewResolver(endpoint *url.URL) *Resolver {
@@ -106,7 +112,7 @@ func (r *Resolver) Resolve(ctx context.Context, cfg *launchconfig.Integration) (
 	}
 	for _, name := range names {
 		if strings.TrimSpace(name) == "" || name == "Default Ollama model" {
-			return nil, errors.New("Claude Desktop has no valid saved model; configure it with ollama launch claude-desktop --config")
+			return nil, errors.New("Claude Desktop has no valid saved model")
 		}
 	}
 	localNames, err := r.LocalModels(ctx)
@@ -136,6 +142,9 @@ func (r *Resolver) Resolve(ctx context.Context, cfg *launchconfig.Integration) (
 		if installed[name] && !modelref.HasExplicitCloudSource(name) {
 			available = append(available, proxy.SelectClaudeDesktopModels(nil, []string{name})...)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if len(cfg.Aliases) > 0 {
 		return proxy.MapClaudeDesktopModels(available, cfg.Aliases), nil
@@ -262,17 +271,43 @@ func (r *Resolver) signedRequest(ctx context.Context, endpoint string) (*http.Re
 }
 
 func (r *Resolver) cloudCatalog(ctx context.Context) []proxy.ClaudeDesktopModel {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	models := proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels())
 	state, stateErr := r.AccessState(ctx)
+	r.mu.Lock()
 	if stateErr != nil || state.Cloud != proxy.ClaudeDesktopCloudOn || state.Account != proxy.ClaudeDesktopAccountSignedIn {
 		r.catalog, r.updated = nil, time.Time{}
+		r.mu.Unlock()
 		return models
 	}
 	if state == r.catalogState && time.Since(r.updated) < time.Minute {
-		return append([]proxy.ClaudeDesktopModel(nil), r.catalog...)
+		cached := append([]proxy.ClaudeDesktopModel(nil), r.catalog...)
+		r.mu.Unlock()
+		return cached
 	}
+	pending := r.loading[state]
+	if pending == nil {
+		if r.loading == nil {
+			r.loading = make(map[proxy.ClaudeDesktopAccessState]*catalogLoad)
+		}
+		pending = &catalogLoad{done: make(chan struct{})}
+		r.loading[state] = pending
+		go r.loadCloudCatalog(context.WithoutCancel(ctx), state, pending)
+	}
+	r.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return models
+	case <-pending.done:
+		return append([]proxy.ClaudeDesktopModel(nil), pending.models...)
+	}
+}
+
+func (r *Resolver) loadCloudCatalog(ctx context.Context, state proxy.ClaudeDesktopAccessState, pending *catalogLoad) {
+	// The two cloud lookups share a bounded lifetime, independent of any
+	// caller's cancellation. Every caller can stop waiting independently.
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	models := proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels())
 	loadedRecommendations, loadedInventory := false, false
 	if req, err := r.signedRequest(ctx, strings.TrimRight(r.CloudURL, "/")+"/api/experimental/model-recommendations?app=claude-desktop"); err == nil {
 		if recommended, err := proxy.FetchClaudeDesktopModels(r.HTTP, req); err == nil {
@@ -296,8 +331,20 @@ func (r *Resolver) cloudCatalog(ctx context.Context) []proxy.ClaudeDesktopModel 
 			_ = response.Body.Close()
 		}
 	}
+	if loadedRecommendations || loadedInventory {
+		// Account identity can change while the signed requests are in flight.
+		// Discard results that no longer belong to the state starting this load.
+		if current, err := r.AccessState(ctx); err != nil || current != state {
+			models = proxy.UnverifyClaudeDesktopCloudEntitlements(proxy.DefaultClaudeDesktopModels())
+			loadedRecommendations, loadedInventory = false, false
+		}
+	}
+	r.mu.Lock()
 	if loadedRecommendations && loadedInventory {
 		r.catalog, r.updated, r.catalogState = models, time.Now(), state
 	}
-	return append([]proxy.ClaudeDesktopModel(nil), models...)
+	pending.models = append([]proxy.ClaudeDesktopModel(nil), models...)
+	delete(r.loading, state)
+	close(pending.done)
+	r.mu.Unlock()
 }

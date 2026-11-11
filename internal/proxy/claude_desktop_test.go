@@ -845,7 +845,10 @@ func TestGatewayDiscardsRefreshThatRacesWithModelUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- p.refreshModelCatalog(context.Background()) }()
+	go func() {
+		_, err := p.refreshModelCatalog(context.Background())
+		done <- err
+	}()
 	<-started
 	if err := p.SetModels(updated); err != nil {
 		t.Fatal(err)

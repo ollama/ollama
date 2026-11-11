@@ -2,14 +2,104 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
+
+func TestClaudeSharedListenerKeepsConcurrentRequestMappings(t *testing.T) {
+	for _, path := range []string{"/_ollama/status", "/v1/messages"} {
+		for _, oldFirst := range []bool{true, false} {
+			order := "new completes first"
+			if oldFirst {
+				order = "old completes first"
+			}
+			t.Run(path+"/"+order, func(t *testing.T) {
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/v1/messages" {
+						_, _ = io.WriteString(w, requestModel(t, r))
+					}
+				}))
+				defer upstream.Close()
+				oldStarted, newStarted := make(chan struct{}), make(chan struct{})
+				allowOld, allowNew := make(chan struct{}), make(chan struct{})
+				releaseOld := sync.OnceFunc(func() { close(allowOld) })
+				releaseNew := sync.OnceFunc(func() { close(allowNew) })
+				defer releaseOld()
+				defer releaseNew()
+				var calls atomic.Int32
+				gateway, err := NewClaudeDesktop(ClaudeDesktopConfig{
+					PathPrefix: ClaudeDesktopPathPrefix, OllamaURL: upstream.URL,
+					RefreshModels: func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+						if calls.Add(1) == 1 {
+							close(oldStarted)
+							<-allowOld
+							return MapClaudeDesktopModels(nil, map[string]string{"claude-sonnet-5": "old-local"}), nil
+						}
+						close(newStarted)
+						<-allowNew
+						return MapClaudeDesktopModels(nil, map[string]string{"claude-sonnet-5": "new-local"}), nil
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer gateway.Close(t.Context())
+				request := func(result chan<- *httptest.ResponseRecorder) {
+					method := http.MethodGet
+					if path == "/v1/messages" {
+						method = http.MethodPost
+					}
+					req := httptest.NewRequest(method, "http://localhost:11434"+ClaudeDesktopPathPrefix+path, strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`))
+					req.RemoteAddr = "127.0.0.1:1234"
+					recorder := httptest.NewRecorder()
+					gateway.ServeHTTP(recorder, req)
+					result <- recorder
+				}
+				oldDone, newDone := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
+				go request(oldDone)
+				<-oldStarted
+				// The next request reads the changed mapping while the old one waits.
+				go request(newDone)
+				<-newStarted
+				var oldResponse, newResponse *httptest.ResponseRecorder
+				if oldFirst {
+					releaseOld()
+					oldResponse = <-oldDone
+					releaseNew()
+					newResponse = <-newDone
+				} else {
+					releaseNew()
+					newResponse = <-newDone
+					releaseOld()
+					oldResponse = <-oldDone
+				}
+				for want, response := range map[string]*httptest.ResponseRecorder{"old-local": oldResponse, "new-local": newResponse} {
+					if response.Code != http.StatusOK {
+						t.Fatalf("%s response: %d %s", want, response.Code, response.Body.String())
+					}
+					got := response.Body.String()
+					if path == "/_ollama/status" {
+						var status ClaudeDesktopRuntimeStatus
+						if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil || len(status.Models) != 1 {
+							t.Fatalf("status = %s, %v", response.Body.String(), err)
+						}
+						got = status.Models[0].Model.OllamaModel
+					}
+					if got != want {
+						t.Fatalf("request used mapping %q, want %q", got, want)
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestClaudeSharedListenerReloadsMappingsAndPreservesNativeAPI(t *testing.T) {
 	var mu sync.Mutex
