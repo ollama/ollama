@@ -721,11 +721,15 @@ func (c *CodexApp) UpdateOllamaModelsFromDesktop(primary string, models []Launch
 }
 
 func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []LaunchModel, openWhenStopped, restartConfirmed bool) error {
+	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
+	defer stop()
+	return c.updateOllamaModels(ctx, primary, models, openWhenStopped, restartConfirmed)
+}
+
+func (c *CodexApp) updateOllamaModels(ctx context.Context, primary string, models []LaunchModel, openWhenStopped, restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
-	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
-	defer stop()
 	installed := codexAppInstalledContext(ctx)
 	if err := codexAppExitContextError(ctx); err != nil {
 		return err
@@ -1957,12 +1961,16 @@ func codexAppStopForRestart(ctx context.Context) error {
 
 // One context covers both the quit request and waiting for the app to exit.
 func codexAppExitContext(timeout time.Duration, cancelled <-chan struct{}) (context.Context, context.CancelFunc) {
+	return codexAppExitContextFrom(context.Background(), timeout, cancelled)
+}
+
+func codexAppExitContextFrom(parent context.Context, timeout time.Duration, cancelled <-chan struct{}) (context.Context, context.CancelFunc) {
 	var ctx context.Context
 	var stop context.CancelFunc
 	if timeout < 0 {
-		ctx, stop = context.WithCancel(context.Background())
+		ctx, stop = context.WithCancel(parent)
 	} else {
-		ctx, stop = context.WithTimeout(context.Background(), timeout)
+		ctx, stop = context.WithTimeout(parent, timeout)
 	}
 	if cancelled != nil {
 		ctx = codexAppInterruptContext{Context: ctx, interrupted: cancelled, stop: stop}

@@ -390,7 +390,7 @@ Examples:
 			if forceConfigure && !configFlag && modelFlag == "" {
 				if _, runner, err := LookupIntegration(name); err == nil {
 					switch runner.(type) {
-					case ManagedAutodiscoveryIntegration, *Pi:
+					case ManagedAutodiscoveryIntegration, *Pi, *CodexApp:
 						forceConfigure = false
 					}
 				}
@@ -830,6 +830,9 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 }
 
 func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	if app, ok := managed.(*CodexApp); ok && name == chatGPTIntegrationName && req.ModelOverride == "" && !req.ForceConfigure && !req.ConfigureOnly && len(req.ExtraArgs) == 0 {
+		return c.launchChatGPT(ctx, app)
+	}
 	current := managed.CurrentModel()
 	selectionCurrent := current
 	if selectionCurrent == "" {

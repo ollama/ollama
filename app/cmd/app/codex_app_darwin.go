@@ -19,14 +19,12 @@ import (
 	appui "github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
-	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/internal/proxy"
-	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 const (
 	codexDesktopIntegrationName        = "chatgpt"
-	codexDesktopMaxModels              = 5
+	codexDesktopMaxModels              = launch.ChatGPTMaxModels
 	codexDesktopRecommendationsMaxBody = 1 << 20
 )
 
@@ -120,22 +118,8 @@ type codexDesktopModelsSettingsResult struct {
 	RestartConfirmationRequired bool                       `json:"restartConfirmationRequired,omitempty"`
 }
 
-type codexDesktopModelInventory struct {
-	Available      []launch.LaunchModel
-	Catalog        []codexDesktopCatalogModel
-	Defaults       []launch.LaunchModel
-	DefaultPrimary string
-}
-
-type codexDesktopCatalogModel struct {
-	Model        launch.LaunchModel
-	DisplayName  string
-	Description  string
-	Recommended  bool
-	Availability proxy.ClaudeDesktopAvailability
-	Reason       proxy.ClaudeDesktopAccessReason
-	RequiredPlan string
-}
+type codexDesktopModelInventory = launch.ChatGPTModelInventory
+type codexDesktopCatalogModel = launch.ChatGPTCatalogModel
 
 func getCodexDesktopStatus() codexDesktopStatus {
 	connected := codexDesktop.OllamaConfigured()
@@ -184,36 +168,7 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	savedSelection := config.IntegrationModels(codexDesktopIntegrationName)
-	primary, models, err := codexDesktopLoadConnectionModels(ctx, savedSelection)
-	if err != nil {
-		return err
-	}
-	// Validate before requesting a restart; do not change the profile without consent.
-	if codexDesktop.Running() && !restartConfirmed {
-		return errCodexDesktopRestartConfirmationRequired
-	}
-	previous := config.IntegrationModels(codexDesktopIntegrationName)
-	if err := config.SaveIntegration(codexDesktopIntegrationName, savedSelection); err != nil {
-		return fmt.Errorf("save ChatGPT integration: %w", err)
-	}
-	if err := codexDesktop.Onboard(); err != nil {
-		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-		return fmt.Errorf("save ChatGPT integration state: %w", err)
-	}
-	if err := codexDesktop.UseOllamaFromDesktop(primary, models, restartConfirmed); err != nil {
-		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
-			return err
-		}
-		if codexDesktop.OllamaConfigured() {
-			if restoreErr := codexDesktop.RestoreFromDesktop(true); restoreErr != nil {
-				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed update: %w", restoreErr))
-			}
-		}
-		return err
-	}
-	return nil
+	return launch.StartChatGPT(ctx, codexDesktop, codexDesktopLoadConnectionModels, restartConfirmed)
 }
 
 // Native and webview controls share the connection handler.
@@ -362,62 +317,19 @@ func applyCodexDesktopModelsLocked(selected []string, restartConfirmed, openWhen
 }
 
 func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
+	source, err := codexDesktopModelSource()
 	if err != nil {
 		return "", nil, err
 	}
-	if len(selected) == 0 {
-		selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
-	}
-	_, models, err := selectCodexDesktopModels(selected, inventory.Available)
-	if err != nil {
-		return "", nil, err
-	}
-	primary := codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
-	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
+	return source.Resolve(ctx, selected, false)
 }
 
 func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
+	source, err := codexDesktopModelSource()
 	if err != nil {
 		return "", nil, err
 	}
-	defaults := codexDesktopDefaultModels(inventory)
-	if len(selected) == 0 {
-		selected = codexDesktopModelNames(defaults)
-	}
-	_, models, err := reconcileCodexDesktopModels(selected, inventory.Available, defaults)
-	if err != nil {
-		return "", nil, err
-	}
-	primary := codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
-	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
-}
-
-// /api/show refreshes selected model metadata; recommendations remain the fallback.
-func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.LaunchModel) []launch.LaunchModel {
-	client, err := codexDesktopClientFactory()
-	if err != nil {
-		return models
-	}
-
-	hydrated := append([]launch.LaunchModel(nil), models...)
-	for i := range hydrated {
-		response, err := client.Show(ctx, &api.ShowRequest{Model: hydrated[i].Name})
-		if err != nil {
-			continue
-		}
-		if len(response.Capabilities) > 0 {
-			hydrated[i].Capabilities = append([]modelpkg.Capability(nil), response.Capabilities...)
-		}
-		if response.Details.Family != "" || len(response.Details.Families) > 0 {
-			hydrated[i].Details = response.Details
-		}
-		if response.Thinking.Valid() {
-			hydrated[i].Thinking = response.Thinking.Clone()
-		}
-	}
-	return hydrated
+	return source.Resolve(ctx, selected, true)
 }
 
 func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel, error) {
@@ -426,62 +338,19 @@ func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel,
 }
 
 func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInventory, error) {
-	client, err := codexDesktopClientFactory()
+	source, err := codexDesktopModelSource()
 	if err != nil {
 		return codexDesktopModelInventory{}, err
 	}
+	return source.Inventory(ctx)
+}
 
-	recommendations, recommendationsErr := codexDesktopRecommendations(ctx)
-	if recommendationsErr != nil {
-		slog.Debug("could not load ChatGPT model recommendations", "error", recommendationsErr)
+func codexDesktopModelSource() (*launch.ChatGPTModelSource, error) {
+	client, err := codexDesktopClientFactory()
+	if err != nil {
+		return nil, err
 	}
-	var access proxy.ClaudeDesktopAccessState
-	accessKnown := false
-	var last codexDesktopModelInventory
-	for attempt := range codexDesktopModelLoadAttempts {
-		if !accessKnown {
-			resolved, accessErr := codexDesktopAccessState(ctx)
-			if accessErr == nil {
-				access = resolved
-				accessKnown = true
-			} else {
-				slog.Debug("could not determine ChatGPT model access", "error", accessErr)
-			}
-		}
-
-		var listed []api.ListModelResponse
-		listKnown := false
-		if response, listErr := client.List(ctx); listErr == nil {
-			listed = response.Models
-			listKnown = true
-		}
-		var accountCloud []string
-		cloudKnown := false
-		if names, cloudErr := codexDesktopCloudModels(ctx); cloudErr == nil {
-			accountCloud = names
-			cloudKnown = true
-		}
-
-		last = buildCodexDesktopModelInventory(recommendations, listed, accountCloud, access, accessKnown, listKnown, cloudKnown)
-		// Retry access lookup failures even when recommendations are available.
-		if len(last.Available) > 0 && (accessKnown || attempt+1 == codexDesktopModelLoadAttempts) {
-			return last, nil
-		}
-		if attempt+1 == codexDesktopModelLoadAttempts {
-			break
-		}
-		timer := time.NewTimer(codexDesktopModelRetryWait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return codexDesktopModelInventory{}, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	if len(last.Catalog) > 0 {
-		return last, nil
-	}
-	return codexDesktopModelInventory{}, errors.New("no Ollama models are available for ChatGPT")
+	return &launch.ChatGPTModelSource{Client: client, Recommendations: codexDesktopRecommendations, CloudModels: codexDesktopCloudModels, AccessState: codexDesktopAccessState, Attempts: codexDesktopModelLoadAttempts, RetryWait: codexDesktopModelRetryWait}, nil
 }
 
 func loadCodexDesktopRecommendations(ctx context.Context) ([]api.ModelRecommendation, error) {
@@ -528,261 +397,6 @@ func loadCodexDesktopAccountCloudModels(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
-func buildCodexDesktopModelInventory(
-	recommendations []api.ModelRecommendation,
-	listed []api.ListModelResponse,
-	accountCloud []string,
-	access proxy.ClaudeDesktopAccessState,
-	accessKnown, localInventoryKnown, cloudInventoryKnown bool,
-) codexDesktopModelInventory {
-	actual := codexDesktopAvailableModels(listed, accountCloud)
-	actualByName := make(map[string]launch.LaunchModel, len(actual))
-	for _, model := range actual {
-		actualByName[codexDesktopModelKey(model.Name)] = model
-	}
-
-	seen := make(map[string]bool, len(actual)+len(recommendations))
-	recommended := make([]codexDesktopCatalogModel, 0, len(recommendations))
-	for _, recommendation := range recommendations {
-		route := codexDesktopRecommendationRoute(recommendation)
-		key := codexDesktopModelKey(route)
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-
-		model, present := actualByName[key]
-		if !present {
-			model = launch.LaunchModel{Name: route, Remote: codexDesktopCloudModel(route)}
-		}
-		if recommendation.ContextLength > 0 {
-			model.ContextLength = recommendation.ContextLength
-		}
-		if recommendation.MaxOutputTokens > 0 {
-			model.MaxOutputTokens = recommendation.MaxOutputTokens
-		}
-		if recommendation.Thinking != nil {
-			model.Thinking = recommendation.Thinking.Clone()
-		}
-
-		availability, reason := codexDesktopRecommendationAccess(
-			model,
-			present,
-			strings.TrimSpace(recommendation.RequiredPlan),
-			access,
-			accessKnown,
-			localInventoryKnown,
-		)
-		entry := codexDesktopCatalogModel{
-			Model:        model,
-			DisplayName:  strings.TrimSpace(recommendation.Model),
-			Description:  strings.TrimSpace(recommendation.Description),
-			Recommended:  true,
-			Availability: availability,
-			Reason:       reason,
-			RequiredPlan: strings.TrimSpace(recommendation.RequiredPlan),
-		}
-		recommended = append(recommended, entry)
-	}
-
-	extras := make([]codexDesktopCatalogModel, 0, len(actual))
-	for _, model := range actual {
-		key := codexDesktopModelKey(model.Name)
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		availability, reason := codexDesktopInventoryModelAccess(model, access, accessKnown, cloudInventoryKnown)
-		extras = append(extras, codexDesktopCatalogModel{
-			Model:        model,
-			DisplayName:  model.Name,
-			Availability: availability,
-			Reason:       reason,
-		})
-	}
-
-	// Sort recommendations only; preserve saved list order.
-	slices.SortStableFunc(recommended, func(a, b codexDesktopCatalogModel) int {
-		return codexDesktopRecommendationPriority(a.Model.Name) - codexDesktopRecommendationPriority(b.Model.Name)
-	})
-	catalog := make([]codexDesktopCatalogModel, 0, len(recommended)+len(extras))
-	catalog = append(catalog, recommended...)
-	catalog = append(catalog, extras...)
-	available := make([]launch.LaunchModel, 0, len(catalog))
-	for _, entry := range catalog {
-		// Recommendations remain configurable regardless of current availability.
-		if entry.Recommended || entry.Availability == proxy.ClaudeDesktopAvailabilityAvailable {
-			available = append(available, entry.Model)
-		}
-	}
-	defaults := codexDesktopRecommendationDefaults(catalog)
-
-	return codexDesktopModelInventory{
-		Available:      available,
-		Catalog:        catalog,
-		Defaults:       defaults,
-		DefaultPrimary: codexDesktopDefaultPrimary(catalog, defaults, access, accessKnown),
-	}
-}
-
-func codexDesktopRecommendationPriority(name string) int {
-	switch codexDesktopModelKey(name) {
-	case "kimi-k3:cloud":
-		return 0
-	case "glm-5.3:cloud":
-		return 1
-	case "glm-5.3-flash:cloud":
-		return 2
-	case "deepseek-v4-flash:cloud":
-		return 3
-	case "gemma4:31b:cloud":
-		return 4
-	default:
-		return 5
-	}
-}
-
-func codexDesktopRecommendationRoute(recommendation api.ModelRecommendation) string {
-	name := strings.TrimSpace(recommendation.Model)
-	if name != "" && recommendation.RequiredPlan != "" && !modelref.HasExplicitCloudSource(name) {
-		name += ":cloud"
-	}
-	return name
-}
-
-func codexDesktopRecommendationAccess(
-	model launch.LaunchModel,
-	present bool,
-	requiredPlan string,
-	access proxy.ClaudeDesktopAccessState,
-	accessKnown, localInventoryKnown bool,
-) (proxy.ClaudeDesktopAvailability, proxy.ClaudeDesktopAccessReason) {
-	if !model.Remote {
-		if !localInventoryKnown {
-			return proxy.ClaudeDesktopAvailabilityUnknown, proxy.ClaudeDesktopAccessVerificationUnavailable
-		}
-		if present {
-			return proxy.ClaudeDesktopAvailabilityAvailable, ""
-		}
-		return proxy.ClaudeDesktopAvailabilityUnavailable, proxy.ClaudeDesktopAccessModelNotInstalled
-	}
-	if !accessKnown {
-		return proxy.ClaudeDesktopAvailabilityUnknown, proxy.ClaudeDesktopAccessVerificationUnavailable
-	}
-	if access.Cloud == proxy.ClaudeDesktopCloudOff {
-		return proxy.ClaudeDesktopAvailabilityUnavailable, proxy.ClaudeDesktopAccessCloudOff
-	}
-	if access.Cloud != proxy.ClaudeDesktopCloudOn || access.Account == proxy.ClaudeDesktopAccountUnknown {
-		return proxy.ClaudeDesktopAvailabilityUnknown, proxy.ClaudeDesktopAccessVerificationUnavailable
-	}
-	if access.Account == proxy.ClaudeDesktopAccountSignedOut {
-		return proxy.ClaudeDesktopAvailabilityUnavailable, proxy.ClaudeDesktopAccessSignInRequired
-	}
-	if !codexDesktopPlanSatisfies(access.Plan, requiredPlan) {
-		return proxy.ClaudeDesktopAvailabilityUnavailable, proxy.ClaudeDesktopAccessUpgradeRequired
-	}
-	// Recommended cloud models need not appear in /api/tags.
-	return proxy.ClaudeDesktopAvailabilityAvailable, ""
-}
-
-func codexDesktopInventoryModelAccess(
-	model launch.LaunchModel,
-	access proxy.ClaudeDesktopAccessState,
-	accessKnown, cloudInventoryKnown bool,
-) (proxy.ClaudeDesktopAvailability, proxy.ClaudeDesktopAccessReason) {
-	if !model.Remote {
-		return proxy.ClaudeDesktopAvailabilityAvailable, ""
-	}
-	if !accessKnown {
-		return proxy.ClaudeDesktopAvailabilityUnknown, proxy.ClaudeDesktopAccessVerificationUnavailable
-	}
-	if access.Cloud == proxy.ClaudeDesktopCloudOff {
-		return proxy.ClaudeDesktopAvailabilityUnavailable, proxy.ClaudeDesktopAccessCloudOff
-	}
-	if !cloudInventoryKnown || access.Cloud != proxy.ClaudeDesktopCloudOn || access.Account == proxy.ClaudeDesktopAccountUnknown {
-		return proxy.ClaudeDesktopAvailabilityUnknown, proxy.ClaudeDesktopAccessVerificationUnavailable
-	}
-	if access.Account == proxy.ClaudeDesktopAccountSignedOut {
-		return proxy.ClaudeDesktopAvailabilityUnavailable, proxy.ClaudeDesktopAccessSignInRequired
-	}
-	return proxy.ClaudeDesktopAvailabilityAvailable, ""
-}
-
-func codexDesktopPlanSatisfies(plan, required string) bool {
-	plan = strings.ToLower(strings.TrimSpace(plan))
-	required = strings.ToLower(strings.TrimSpace(required))
-	if required == "" || required == "free" {
-		return true
-	}
-	return plan != "" && plan != "free"
-}
-
-func codexDesktopRecommendationDefaults(catalog []codexDesktopCatalogModel) []launch.LaunchModel {
-	defaults := make([]launch.LaunchModel, 0, codexDesktopMaxModels)
-	for _, entry := range catalog {
-		if !entry.Recommended {
-			continue
-		}
-		defaults = append(defaults, entry.Model)
-		if len(defaults) == codexDesktopMaxModels {
-			return defaults
-		}
-	}
-	if len(defaults) > 0 {
-		return defaults
-	}
-
-	for _, entry := range catalog {
-		if entry.Availability != proxy.ClaudeDesktopAvailabilityAvailable {
-			continue
-		}
-		defaults = append(defaults, entry.Model)
-		if len(defaults) == codexDesktopMaxModels {
-			break
-		}
-	}
-	return defaults
-}
-
-func codexDesktopDefaultPrimary(
-	catalog []codexDesktopCatalogModel,
-	defaults []launch.LaunchModel,
-	access proxy.ClaudeDesktopAccessState,
-	accessKnown bool,
-) string {
-	if len(defaults) == 0 {
-		return ""
-	}
-
-	// Choose the starting model independently of picker order.
-	if accessKnown && access.Account == proxy.ClaudeDesktopAccountSignedIn && codexDesktopPlanSatisfies(access.Plan, "pro") {
-		return codexDesktopPreferredPrimary("glm-5.3-flash:cloud", defaults)
-	}
-	for _, entry := range catalog {
-		if !entry.Recommended {
-			continue
-		}
-		required := strings.ToLower(strings.TrimSpace(entry.RequiredPlan))
-		if required == "" || required == "free" {
-			return entry.Model.Name
-		}
-	}
-	return defaults[0].Name
-}
-
-func codexDesktopPreferredPrimary(preferred string, models []launch.LaunchModel) string {
-	preferredKey := codexDesktopModelKey(preferred)
-	for _, model := range models {
-		if preferredKey != "" && codexDesktopModelKey(model.Name) == preferredKey {
-			return model.Name
-		}
-	}
-	if len(models) > 0 {
-		return models[0].Name
-	}
-	return ""
-}
-
 func codexDesktopModelStatuses(inventory codexDesktopModelInventory, selected []string) []codexDesktopModelStatus {
 	selectedSet := make(map[string]bool, len(selected))
 	for _, name := range selected {
@@ -825,193 +439,6 @@ func codexDesktopModelStatuses(inventory codexDesktopModelInventory, selected []
 	return statuses
 }
 
-func buildCodexDesktopModels(selected []string, listed []api.ListModelResponse, accountCloud []string) (string, []launch.LaunchModel, error) {
-	available := codexDesktopAvailableModels(listed, accountCloud)
-	return selectCodexDesktopModels(selected, available)
-}
-
-func codexDesktopAvailableModels(listed []api.ListModelResponse, accountCloud []string) []launch.LaunchModel {
-	installed := make(map[string]api.ListModelResponse, len(listed))
-	for _, model := range listed {
-		for _, name := range []string{model.Name, model.Model} {
-			if key := codexDesktopModelKey(name); key != "" {
-				installed[key] = model
-			}
-		}
-	}
-	accountCloudSet := make(map[string]bool, len(accountCloud))
-	for _, name := range accountCloud {
-		if key := codexDesktopModelKey(name); key != "" {
-			accountCloudSet[key] = true
-		}
-	}
-	models := make([]launch.LaunchModel, 0, len(listed)+len(accountCloud))
-	seen := make(map[string]bool, cap(models))
-	add := func(model launch.LaunchModel) {
-		model.Name = strings.TrimSpace(model.Name)
-		key := codexDesktopModelKey(model.Name)
-		if key == "" || seen[key] {
-			return
-		}
-		seen[key] = true
-		models = append(models, model)
-	}
-
-	for _, model := range listed {
-		if codexDesktopListedModelIsCloud(model) && !accountCloudSet[codexDesktopModelKey(model.Name)] && !accountCloudSet[codexDesktopModelKey(model.Model)] {
-			continue
-		}
-		add(codexDesktopLaunchModel(model))
-	}
-	for _, name := range accountCloud {
-		key := codexDesktopModelKey(name)
-		if listedModel, ok := installed[key]; ok {
-			add(codexDesktopLaunchModel(listedModel))
-			continue
-		}
-		add(launch.LaunchModel{Name: strings.TrimSpace(name), Remote: true})
-	}
-
-	return models
-}
-
-func codexDesktopDefaultModels(inventory codexDesktopModelInventory) []launch.LaunchModel {
-	if inventory.Catalog != nil || inventory.Defaults != nil {
-		return append([]launch.LaunchModel(nil), inventory.Defaults...)
-	}
-	return append([]launch.LaunchModel(nil), inventory.Available[:min(len(inventory.Available), codexDesktopMaxModels)]...)
-}
-
-func codexDesktopListedModelIsCloud(model api.ListModelResponse) bool {
-	return model.RemoteModel != "" || model.RemoteHost != "" ||
-		codexDesktopCloudModel(model.Name) ||
-		codexDesktopCloudModel(model.Model)
-}
-
-func selectCodexDesktopModels(selected []string, available []launch.LaunchModel) (string, []launch.LaunchModel, error) {
-	byName := make(map[string]launch.LaunchModel, len(available))
-	for _, model := range available {
-		byName[codexDesktopModelKey(model.Name)] = model
-	}
-
-	if len(selected) > codexDesktopMaxModels {
-		return "", nil, fmt.Errorf("choose up to %d models for ChatGPT", codexDesktopMaxModels)
-	}
-	resolved := make([]launch.LaunchModel, 0, codexDesktopMaxModels)
-	seen := make(map[string]bool, codexDesktopMaxModels)
-	for _, name := range selected {
-		name = strings.TrimSpace(name)
-		key := codexDesktopModelKey(name)
-		if key == "" || seen[key] {
-			continue
-		}
-		model, ok := byName[key]
-		if !ok {
-			return "", nil, fmt.Errorf("ChatGPT model %q is not available", name)
-		}
-		seen[key] = true
-		resolved = append(resolved, model)
-	}
-
-	if len(selected) == 0 {
-		for _, model := range available {
-			if len(resolved) == codexDesktopMaxModels {
-				break
-			}
-			key := codexDesktopModelKey(model.Name)
-			if key == "" || seen[key] {
-				continue
-			}
-			seen[key] = true
-			resolved = append(resolved, model)
-		}
-	}
-	if len(resolved) == 0 {
-		return "", nil, errors.New("choose at least one available Ollama model for ChatGPT")
-	}
-	return resolved[0].Name, resolved, nil
-}
-
-// Reopening tolerates stale selections; explicit Settings changes use strict validation.
-func reconcileCodexDesktopModels(selected []string, available, defaults []launch.LaunchModel) (string, []launch.LaunchModel, error) {
-	if len(selected) == 0 {
-		if len(defaults) > 0 {
-			return selectCodexDesktopModels(codexDesktopModelNames(defaults), available)
-		}
-		return selectCodexDesktopModels(nil, available)
-	}
-
-	byName := make(map[string]launch.LaunchModel, len(available))
-	for _, model := range available {
-		byName[codexDesktopModelKey(model.Name)] = model
-	}
-	resolved := make([]launch.LaunchModel, 0, min(len(selected), codexDesktopMaxModels))
-	seen := make(map[string]bool, codexDesktopMaxModels)
-	for _, name := range selected {
-		key := codexDesktopModelKey(name)
-		model, ok := byName[key]
-		if key == "" || !ok || seen[key] {
-			continue
-		}
-		seen[key] = true
-		resolved = append(resolved, model)
-		if len(resolved) == codexDesktopMaxModels {
-			break
-		}
-	}
-	if len(resolved) == 0 {
-		if len(defaults) > 0 {
-			return selectCodexDesktopModels(codexDesktopModelNames(defaults), available)
-		}
-		return selectCodexDesktopModels(nil, available)
-	}
-	return resolved[0].Name, resolved, nil
-}
-
-func codexDesktopModelNames(models []launch.LaunchModel) []string {
-	names := make([]string, 0, len(models))
-	for _, model := range models {
-		if name := strings.TrimSpace(model.Name); name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
-func codexDesktopLaunchModel(model api.ListModelResponse) launch.LaunchModel {
-	name := strings.TrimSpace(model.Name)
-	if name == "" {
-		name = strings.TrimSpace(model.Model)
-	}
-	return launch.LaunchModel{
-		Name:            name,
-		Remote:          model.RemoteModel != "" || model.RemoteHost != "" || codexDesktopCloudModel(name),
-		Capabilities:    append([]modelpkg.Capability(nil), model.Capabilities...),
-		ContextLength:   model.Details.ContextLength,
-		EmbeddingLength: model.Details.EmbeddingLength,
-		Size:            model.Size,
-		Details:         model.Details,
-	}
-}
-
-func codexDesktopModelKey(name string) string {
-	name = strings.TrimSpace(name)
-	parsed, err := modelref.ParseRef(name)
-	if err != nil {
-		return strings.TrimSuffix(name, ":latest")
-	}
-	base := strings.TrimSuffix(strings.TrimSpace(parsed.Base), ":latest")
-	if parsed.Source == modelref.ModelSourceCloud {
-		return base + ":cloud"
-	}
-	return base
-}
-
-func codexDesktopCloudModel(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
-}
-
 func hasUsedCodexDesktopIntegration() bool {
 	if appStore == nil {
 		return false
@@ -1031,3 +458,47 @@ func markCodexDesktopIntegrationUsed() error {
 	}
 	return appStore.MarkCodexDesktopUsed()
 }
+
+func buildCodexDesktopModelInventory(
+	recommendations []api.ModelRecommendation,
+	listed []api.ListModelResponse,
+	accountCloud []string,
+	access proxy.ClaudeDesktopAccessState,
+	accessKnown, localInventoryKnown, cloudInventoryKnown bool,
+) codexDesktopModelInventory {
+	return launch.BuildChatGPTModelInventory(recommendations, listed, accountCloud, access, accessKnown, localInventoryKnown, cloudInventoryKnown)
+}
+
+func codexDesktopInventoryModelAccess(
+	model launch.LaunchModel,
+	access proxy.ClaudeDesktopAccessState,
+	accessKnown, cloudInventoryKnown bool,
+) (proxy.ClaudeDesktopAvailability, proxy.ClaudeDesktopAccessReason) {
+	return launch.ChatGPTInventoryModelAccess(model, access, accessKnown, cloudInventoryKnown)
+}
+
+func buildCodexDesktopModels(selected []string, listed []api.ListModelResponse, accountCloud []string) (string, []launch.LaunchModel, error) {
+	return launch.BuildChatGPTModels(selected, listed, accountCloud)
+}
+
+func codexDesktopAvailableModels(listed []api.ListModelResponse, accountCloud []string) []launch.LaunchModel {
+	return launch.ChatGPTAvailableModels(listed, accountCloud)
+}
+
+func codexDesktopDefaultModels(inventory codexDesktopModelInventory) []launch.LaunchModel {
+	return launch.ChatGPTDefaultModels(inventory)
+}
+
+func selectCodexDesktopModels(selected []string, available []launch.LaunchModel) (string, []launch.LaunchModel, error) {
+	return launch.SelectChatGPTModels(selected, available)
+}
+
+func reconcileCodexDesktopModels(selected []string, available, defaults []launch.LaunchModel) (string, []launch.LaunchModel, error) {
+	return launch.ReconcileChatGPTModels(selected, available, defaults)
+}
+
+func codexDesktopModelNames(models []launch.LaunchModel) []string {
+	return launch.ChatGPTModelNames(models)
+}
+
+func codexDesktopModelKey(name string) string { return launch.ChatGPTModelKey(name) }

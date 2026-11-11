@@ -168,7 +168,7 @@ func (f *fakeCodexDesktopController) RestartFromDesktop(restartConfirmed bool) e
 
 func (f *fakeCodexDesktopController) Onboard() error {
 	f.onboarded = true
-	return nil
+	return config.MarkIntegrationOnboarded(codexDesktopIntegrationName)
 }
 
 func TestSetCodexDesktopConnectionSwitchesRegularProfile(t *testing.T) {
