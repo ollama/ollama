@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
@@ -21,14 +22,16 @@ var (
 var claudeGatewayProfileKeys = []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayApiKey", "inferenceGatewayAuthScheme", "deploymentDisplayName", "chatTabEnabled", "inferenceModels", "disableDeploymentModeChooser", "coworkEgressAllowedHosts", "disableEssentialTelemetry", "disableNonessentialTelemetry", "autoModeEnabled"}
 
 type claudeOwnedValue struct {
-	Before   json.RawMessage `json:"before,omitempty"`
-	Applied  json.RawMessage `json:"applied,omitempty"`
-	Previous json.RawMessage `json:"previous,omitempty"`
-	// PreviousSet distinguishes an absent rollback target from no pending change.
-	PreviousSet bool `json:"previousSet,omitempty"`
-	Restarting  bool `json:"restarting,omitempty"`
-	// PreserveEdit keeps Previous as a user edit, never as an owned value.
-	PreserveEdit bool `json:"preserveEdit,omitempty"`
+	Before  json.RawMessage     `json:"before,omitempty"`
+	Applied json.RawMessage     `json:"applied,omitempty"`
+	Pending *claudePendingValue `json:"pending,omitempty"`
+}
+
+// The wrapper distinguishes an absent value from no pending write.
+type claudePendingValue struct {
+	Value  json.RawMessage `json:"value,omitempty"`
+	Quit   bool            `json:"quit,omitempty"`
+	Edited bool            `json:"edited,omitempty"`
 }
 
 type claudeOwnedFile struct {
@@ -42,73 +45,55 @@ type claudeRestoreState struct {
 }
 
 type claudeProfileChanges struct {
-	state   *claudeRestoreState
-	path    string
-	attempt map[string]*claudeOwnedFile
+	state *claudeRestoreState
+	path  string
 }
 
 type claudeRestartProfile struct {
-	path  string
 	state []byte
-	files map[string]*claudeOwnedFile
 }
 
 type claudeRestartRecovery struct {
-	state  []byte
-	values map[string]map[string]json.RawMessage
+	fingerprint string
 }
+
+type claudeRestartConsentKey struct{}
 
 func (*claudeRestartRecovery) Error() string {
 	return "Claude settings changed during an interrupted restart; run 'ollama launch claude-desktop --restore' in an interactive terminal to recover"
 }
 
-type claudeRestartConsentKey struct{}
-
-type claudeRestartConsent struct {
-	*claudeRestartRecovery
-	used bool
-}
-
-func (recovery *claudeRestartRecovery) matches(state []byte, values map[string]map[string]json.RawMessage) bool {
-	if !bytes.Equal(recovery.state, state) || len(recovery.values) != len(values) {
-		return false
+func withClaudeRestoreState(ctx context.Context, targets claudeDesktopTargets, change func(*claudeRestoreState, string, []byte) error) error {
+	unlock, err := claudeProfileLock(ctx)
+	if err != nil {
+		return err
 	}
-	for path, fields := range recovery.values {
-		if len(fields) != len(values[path]) {
-			return false
-		}
-		for key, value := range fields {
-			current, exists := values[path][key]
-			if !exists || !claudeJSONEqual(value, current) {
-				return false
-			}
+	defer unlock()
+	path, err := claudeRestorePath()
+	if err != nil {
+		return err
+	}
+	state, data, err := claudeReadState(path)
+	if err != nil {
+		return err
+	}
+	if data == nil {
+		state, err = legacyClaudeRestoreState(targets)
+		if err != nil {
+			return err
 		}
 	}
-	return true
+	if err := validateClaudeRestoreState(targets, state); err != nil {
+		return err
+	}
+	return change(state, path, data)
 }
 
-// Only CLI restore may request permission to replace ambiguous shutdown
-// writes. The grant covers the exact journal and values observed then.
+// Approval is limited to the journal and settings the user actually saw.
 func prepareClaudeRestartRecovery(ctx context.Context, targets claudeDesktopTargets) (context.Context, error) {
-	err := func() error {
-		unlock, err := claudeProfileLock(ctx)
-		if err != nil {
-			return err
-		}
-		defer unlock()
-		path, err := claudeRestorePath()
-		if err != nil {
-			return err
-		}
-		state, data, err := claudeReadState(path)
-		if err != nil {
-			return err
-		}
-		if err := validateClaudeRestoreState(targets, state); err != nil {
-			return err
-		}
-		return recoverClaudeRestart(ctx, state, data)
-	}()
+	err := withClaudeRestoreState(ctx, targets, func(state *claudeRestoreState, path string, data []byte) error {
+		return reconcileClaudeQuit(ctx, state, path, data, false, false)
+	})
 	if err == nil {
 		return ctx, nil
 	}
@@ -116,239 +101,176 @@ func prepareClaudeRestartRecovery(ctx context.Context, targets claudeDesktopTarg
 	if !errors.As(err, &recovery) || !isInteractiveSession() {
 		return nil, err
 	}
-	// Generic --yes must not silently approve replacing possible user edits.
 	restorePolicy := withLaunchConfirmPolicy(launchConfirmPolicy{})
-	confirmed, promptErr := ConfirmPromptWithOptions("An interrupted restart left Claude settings changed. Restore the saved settings and replace those changes?", ConfirmOptions{
-		YesLabel: "Restore saved settings",
-		NoLabel:  "Keep current changes",
-		Default:  ConfirmDefaultNo,
+	confirmed, err := ConfirmPromptWithOptions("An interrupted restart left Claude settings changed. Restore the saved settings and replace those changes?", ConfirmOptions{
+		YesLabel: "Restore saved settings", NoLabel: "Keep current changes", Default: ConfirmDefaultNo,
 	})
 	restorePolicy()
-	if promptErr != nil {
-		return nil, promptErr
+	if err != nil {
+		return nil, err
 	}
 	if !confirmed {
 		return nil, ErrCancelled
 	}
-	return context.WithValue(ctx, claudeRestartConsentKey{}, &claudeRestartConsent{claudeRestartRecovery: recovery}), nil
-}
-
-// Known values remain recoverable without a prompt. A pending quit cannot
-// establish who changed an unknown value after an interruption.
-func recoverClaudeRestart(ctx context.Context, state *claudeRestoreState, data []byte) error {
-	values := make(map[string]map[string]json.RawMessage)
-	unknown := false
-	for path, file := range state.Files {
-		var current map[string]any
-		for key, value := range file.Values {
-			if !value.Restarting {
-				continue
-			}
-			if current == nil {
-				var err error
-				current, err = readClaudeDesktopJSONAllowMissing(path)
-				if err != nil {
-					return err
-				}
-				values[path] = make(map[string]json.RawMessage)
-			}
-			values[path][key] = claudeField(current, key)
-			unknown = unknown || !claudeValueRestorable(values[path][key], value)
-		}
-	}
-	consent, _ := ctx.Value(claudeRestartConsentKey{}).(*claudeRestartConsent)
-	if consent != nil && !consent.used {
-		if !consent.matches(data, values) {
-			return errors.New("Claude settings changed while confirming recovery; try again")
-		}
-		consent.used = true
-	} else if unknown {
-		return &claudeRestartRecovery{state: data, values: values}
-	}
-	for path, fields := range values {
-		for key, current := range fields {
-			value := state.Files[path].Values[key]
-			value.Applied = current
-			value.Restarting = false
-			state.Files[path].Values[key] = value
-		}
-	}
-	return nil
+	return context.WithValue(ctx, claudeRestartConsentKey{}, recovery.fingerprint), nil
 }
 
 func snapshotClaudeProfileForRestart(ctx context.Context) (*claudeRestartProfile, error) {
-	unlock, err := claudeProfileLock(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
 	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return nil, err
 	}
-	path, err := claudeRestorePath()
-	if err != nil {
-		return nil, err
-	}
-	state, data, err := claudeReadState(path)
-	if err != nil {
-		return nil, err
-	}
-	if data == nil {
-		state, err = legacyClaudeRestoreState(targets)
-		if err != nil || len(state.Files) == 0 {
-			return nil, err
+	var snapshot *claudeRestartProfile
+	err = withClaudeRestoreState(ctx, targets, func(state *claudeRestoreState, path string, data []byte) error {
+		if len(state.Files) == 0 {
+			return nil
 		}
-		if err := claudeSaveState(path, state); err != nil {
-			return nil, err
-		}
-		data, err = os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := validateClaudeRestoreState(targets, state); err != nil {
-		return nil, err
-	}
-	if err := recoverClaudeRestart(ctx, state, data); err != nil {
-		return nil, err
-	}
-	snapshot := &claudeRestartProfile{path: path, state: data, files: make(map[string]*claudeOwnedFile)}
-	for path, file := range state.Files {
-		current, err := readClaudeDesktopJSONAllowMissing(path)
-		if err != nil {
-			return nil, err
-		}
-		if _, tracked := file.Values["entries"]; tracked && current["entries"] != nil {
-			if _, ok := current["entries"].([]any); !ok {
-				return nil, errors.New("Claude profile entries changed after setup; leaving settings unchanged")
+		// Reuse an interrupted quit's checkpoint rather than replacing saved edits.
+		if hasClaudePendingQuit(state) {
+			if err := reconcileClaudeQuit(ctx, state, path, data, false, false); err != nil {
+				return err
+			}
+		} else {
+			for filePath, file := range state.Files {
+				cfg, err := readClaudeRestoreConfig(filePath)
+				if err != nil {
+					return err
+				}
+				for key, value := range file.Values {
+					current := claudeField(cfg, key)
+					value.Pending = &claudePendingValue{Value: current, Quit: true, Edited: !claudeValueOwned(current, value)}
+					file.Values[key] = value
+				}
+			}
+			if err := claudeSaveState(path, state); err != nil {
+				return err
+			}
+			data, err = os.ReadFile(path)
+			if err != nil {
+				return err
 			}
 		}
-		owned := &claudeOwnedFile{Existed: true, Values: make(map[string]claudeOwnedValue)}
-		for key, value := range file.Values {
-			before := claudeField(current, key)
-			if value.PreserveEdit && claudeValueOwned(before, value) {
-				// A prior interrupted quit may already have persisted a stale
-				// managed value. Retain the saved user edit through this quit.
-				continue
-			}
-			ownedBeforeQuit := claudeValueOwned(before, value)
-			value.Previous = before
-			value.PreviousSet = true
-			value.Restarting = ownedBeforeQuit
-			value.PreserveEdit = !ownedBeforeQuit
-			file.Values[key] = value
-			if ownedBeforeQuit {
-				owned.Values[key] = claudeOwnedValue{Before: before}
-			}
-		}
-		if len(owned.Values) > 0 {
-			snapshot.files[path] = owned
-		}
-	}
-	if err := claudeSaveState(path, state); err != nil {
-		return nil, err
-	}
-	snapshot.state, err = os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return snapshot, nil
+		snapshot = &claudeRestartProfile{state: data}
+		return nil
+	})
+	return snapshot, err
 }
 
-// Accept shutdown writes only for fields owned before this confirmed restart.
-// Retain the original restore values and leave existing user edits unowned.
 func (snapshot *claudeRestartProfile) recordAfterQuit(ctx context.Context) error {
 	if snapshot == nil {
 		return nil
 	}
-	unlock, err := claudeProfileLock(ctx)
+	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	state, data, err := claudeReadState(snapshot.path)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(data, snapshot.state) {
-		return errors.New("Claude settings changed while restarting; try again")
-	}
-	for path, file := range snapshot.files {
-		current, err := readClaudeDesktopJSONAllowMissing(path)
-		if err != nil {
-			return err
+	return withClaudeRestoreState(ctx, targets, func(state *claudeRestoreState, path string, data []byte) error {
+		if !bytes.Equal(data, snapshot.state) {
+			return errors.New("Claude settings changed while restarting; try again")
 		}
-		if _, tracked := file.Values["entries"]; tracked && current["entries"] != nil {
-			if _, ok := current["entries"].([]any); !ok {
-				return errors.New("Claude profile entries changed while restarting; leaving settings unchanged")
-			}
-		}
-		for key, value := range file.Values {
-			owned := state.Files[path].Values[key]
-			owned.Previous = value.Before
-			owned.PreviousSet = true
-			owned.Applied = claudeField(current, key)
-			// Reapply or restore must consume the restart intent before it is
-			// complete. Keep recovery available if the process stops here.
-			state.Files[path].Values[key] = owned
-		}
-	}
-	if err := claudeSaveState(snapshot.path, state); err != nil {
-		return err
-	}
-	return preserveClaudeRestartEdits(ctx, state)
+		return reconcileClaudeQuit(ctx, state, path, data, true, true)
+	})
 }
 
-// Claude can persist a stale managed value while quitting. Restore edits
-// captured before quit, and leave any newer unknown value untouched.
-func preserveClaudeRestartEdits(ctx context.Context, state *claudeRestoreState) error {
-	changed := false
-	for path, file := range state.Files {
-		var current map[string]any
-		write := false
+func hasClaudePendingQuit(state *claudeRestoreState) bool {
+	for _, file := range state.Files {
+		for _, value := range file.Values {
+			if value.Pending != nil && value.Pending.Quit {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Undo shutdown writes before configuring or restoring. After an interruption,
+// unknown values need explicit approval; native and headless calls retain them.
+func reconcileClaudeQuit(ctx context.Context, state *claudeRestoreState, path string, data []byte, live, apply bool) error {
+	current := make(map[string]map[string]any)
+	observed := make(map[string]map[string]claudePendingValue)
+	unknown := false
+	for filePath, file := range state.Files {
 		for key, value := range file.Values {
-			if !value.PreserveEdit {
+			prior := value.Pending
+			if prior == nil || !prior.Quit {
 				continue
 			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if current == nil {
-				var err error
-				current, err = readClaudeDesktopJSONAllowMissing(path)
+			if current[filePath] == nil {
+				cfg, err := readClaudeRestoreConfig(filePath)
 				if err != nil {
 					return err
 				}
+				current[filePath] = cfg
+				observed[filePath] = make(map[string]claudePendingValue)
 			}
-			before := claudeField(current, key)
-			if !claudeJSONEqual(before, value.Previous) && claudeValueOwned(before, value) {
-				claudePutField(current, key, value.Previous)
-				write = true
-			}
-			value.PreserveEdit = false
-			value.Previous = nil
-			value.PreviousSet = false
-			file.Values[key] = value
-			changed = true
-		}
-		if write {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := writeClaudeDesktopJSON(path, current); err != nil {
-				return err
-			}
+			raw := claudeField(current[filePath], key)
+			observed[filePath][key] = claudePendingValue{Value: raw}
+			unknown = unknown || !prior.Edited && !claudeValueRestorable(key, raw, value)
 		}
 	}
-	if !changed {
+	if len(current) == 0 {
 		return nil
 	}
-	path, err := claudeRestorePath()
+	values, _ := json.Marshal(observed)
+	fingerprint := string(data) + string(values)
+	if !live {
+		consent, _ := ctx.Value(claudeRestartConsentKey{}).(string)
+		if consent != "" && consent != fingerprint {
+			return errors.New("Claude settings changed while confirming recovery; try again")
+		}
+		if unknown && consent == "" {
+			return &claudeRestartRecovery{fingerprint: fingerprint}
+		}
+	}
+	if !apply {
+		return nil
+	}
+	for filePath, cfg := range current {
+		file := state.Files[filePath]
+		for key, value := range file.Values {
+			prior := value.Pending
+			if prior == nil || !prior.Quit {
+				continue
+			}
+			// Restore a pre-quit user edit only when Claude replaced it with our value.
+			if !prior.Edited || claudeJSONEqual(claudeField(cfg, key), value.Applied) {
+				claudePutField(cfg, key, prior.Value)
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := writeClaudeDesktopJSON(filePath, cfg); err != nil {
+			return err
+		}
+		for key, value := range file.Values {
+			if value.Pending != nil && value.Pending.Quit {
+				if !value.Pending.Edited {
+					value.Applied = value.Pending.Value
+				}
+				value.Pending = nil
+				file.Values[key] = value
+			}
+		}
+	}
+	return claudeSaveState(path, state)
+}
+
+func recoverClaudePendingQuit(ctx context.Context, state *claudeRestoreState, path string, data []byte) error {
+	if !hasClaudePendingQuit(state) {
+		return nil
+	}
+	if err := reconcileClaudeQuit(ctx, state, path, data, false, false); err != nil {
+		return err
+	}
+	running, err := claudeDesktopIsRunning(ctx)
 	if err != nil {
 		return err
 	}
-	return claudeSaveState(path, state)
+	if running {
+		return fmt.Errorf("quit Claude Desktop before recovering settings; %s", claudeDesktopRestoreMessage)
+	}
+	return reconcileClaudeQuit(ctx, state, path, data, false, true)
 }
 
 func claudeRestorePath() (string, error) {
@@ -365,34 +287,26 @@ func claudeProfileLock(ctx context.Context) (func(), error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	adopted := false
-	defer func() {
-		if !adopted {
-			<-claudeProfileGate
-		}
-	}()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	path, err := claudeRestorePath()
-	if err != nil {
-		return nil, err
+	if err == nil {
+		err = os.MkdirAll(filepath.Dir(path), 0o700)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err != nil {
+		<-claudeProfileGate
 		return nil, err
 	}
 	unlock, err := fileutil.LockContext(ctx, path+".lock")
 	if err != nil {
+		<-claudeProfileGate
 		return nil, err
 	}
-	adopted = true
 	return func() { unlock(); <-claudeProfileGate }, nil
 }
 
 func claudeReadState(path string) (*claudeRestoreState, []byte, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return &claudeRestoreState{Version: 1, Files: make(map[string]*claudeOwnedFile)}, nil, nil
+		return &claudeRestoreState{Version: 2, Files: make(map[string]*claudeOwnedFile)}, nil, nil
 	}
 	if err != nil {
 		return nil, nil, err
@@ -401,7 +315,7 @@ func claudeReadState(path string) (*claudeRestoreState, []byte, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, nil, fmt.Errorf("read Claude restore state: %w", err)
 	}
-	if state.Version != 1 || state.Files == nil {
+	if state.Version != 2 || state.Files == nil {
 		return nil, nil, errors.New("unsupported Claude restore state; leaving settings unchanged")
 	}
 	return &state, data, nil
@@ -413,6 +327,213 @@ func claudeSaveState(path string, state *claudeRestoreState) error {
 		return err
 	}
 	return fileutil.WriteWithBackup(path, append(data, '\n'), "claude-desktop")
+}
+
+func claudeValueOwned(current json.RawMessage, value claudeOwnedValue) bool {
+	return claudeJSONEqual(current, value.Applied) || value.Pending != nil && !value.Pending.Edited && claudeJSONEqual(current, value.Pending.Value)
+}
+
+func claudeValueRestorable(key string, current json.RawMessage, value claudeOwnedValue) bool {
+	// Other profiles can keep entries present after our original entry is gone.
+	return claudeValueOwned(current, value) || claudeJSONEqual(current, value.Before) || key == "entries" && value.Before == nil && bytes.Equal(current, []byte("[]"))
+}
+
+func claudeJSONEqual(a, b json.RawMessage) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	var compactA, compactB bytes.Buffer
+	return json.Compact(&compactA, a) == nil && json.Compact(&compactB, b) == nil && bytes.Equal(compactA.Bytes(), compactB.Bytes())
+}
+
+func readClaudeRestoreConfig(path string) (map[string]any, error) {
+	cfg, err := readClaudeDesktopJSONAllowMissing(path)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Base(path) == "_meta.json" && cfg["entries"] != nil {
+		if _, ok := cfg["entries"].([]any); !ok {
+			return nil, errors.New("Claude profile entries must be an array; leaving settings unchanged")
+		}
+	}
+	return cfg, nil
+}
+
+func validateClaudeRestoreState(targets claudeDesktopTargets, state *claudeRestoreState) error {
+	allowed := make(map[string][]string)
+	for _, path := range targets.normalConfigs {
+		allowed[path] = []string{"deploymentMode"}
+	}
+	for _, target := range targets.thirdPartyProfiles {
+		allowed[target.profile] = claudeGatewayProfileKeys
+		allowed[target.meta] = []string{"appliedId", "entries"}
+		allowed[target.desktopConfig] = []string{"deploymentMode"}
+	}
+	for path, file := range state.Files {
+		keys, ok := allowed[path]
+		if !ok || file == nil || file.Values == nil {
+			return errors.New("Claude restore state refers to an unexpected file; leaving settings unchanged")
+		}
+		for key, value := range file.Values {
+			if !slices.Contains(keys, key) {
+				return fmt.Errorf("unexpected Claude restore setting %s; leaving settings unchanged", key)
+			}
+			values := []json.RawMessage{value.Before, value.Applied}
+			if value.Pending != nil {
+				if value.Pending.Edited && !value.Pending.Quit {
+					return errors.New("invalid Claude restart state; leaving settings unchanged")
+				}
+				values = append(values, value.Pending.Value)
+			}
+			if key != "entries" {
+				continue
+			}
+			for _, raw := range values {
+				if raw == nil || bytes.Equal(raw, []byte("null")) {
+					continue
+				}
+				var entries []map[string]any
+				if err := json.Unmarshal(raw, &entries); err != nil {
+					return errors.New("invalid Claude profile entries in restore state; leaving settings unchanged")
+				}
+				for _, entry := range entries {
+					if entry["id"] != claudeDesktopProfileID {
+						return errors.New("Claude restore state refers to another profile; leaving settings unchanged")
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func claudeWriteOwned(path string, desired map[string]any, keys ...string) error {
+	tx := claudeProfileTransaction
+	if tx == nil {
+		return writeClaudeDesktopJSON(path, desired)
+	}
+	current, err := readClaudeRestoreConfig(path)
+	if err != nil {
+		return err
+	}
+	file := tx.state.Files[path]
+	if file == nil {
+		_, err := os.Stat(path)
+		file = &claudeOwnedFile{Existed: err == nil, Values: make(map[string]claudeOwnedValue)}
+		tx.state.Files[path] = file
+	}
+	for _, key := range keys {
+		before := claudeField(current, key)
+		value, tracked := file.Values[key]
+		if tracked && !claudeValueOwned(before, value) {
+			return fmt.Errorf("Claude setting %s in %s changed after setup; leaving that change intact", key, path)
+		}
+		if !tracked {
+			value.Before = before
+		}
+		value.Pending = &claudePendingValue{Value: before}
+		value.Applied = claudeField(desired, key)
+		file.Values[key] = value
+		claudePutField(current, key, value.Applied)
+	}
+	// Persist both possible values before touching a settings file.
+	if err := claudeSaveState(tx.path, tx.state); err != nil {
+		return err
+	}
+	if err := writeClaudeDesktopJSON(path, current); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		value := file.Values[key]
+		value.Pending = nil
+		file.Values[key] = value
+	}
+	return claudeSaveState(tx.path, tx.state)
+}
+
+func withClaudeProfileChangesContext(ctx context.Context, targets claudeDesktopTargets, change func() error) error {
+	return withClaudeRestoreState(ctx, targets, func(state *claudeRestoreState, path string, data []byte) error {
+		if err := recoverClaudePendingQuit(ctx, state, path, data); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		claudeProfileTransaction = &claudeProfileChanges{state: state, path: path}
+		defer func() { claudeProfileTransaction = nil }()
+		if err := change(); err != nil {
+			return fmt.Errorf("%w; %s", err, claudeDesktopRestoreMessage)
+		}
+		return ctx.Err()
+	})
+}
+
+func restoreClaudeOwnedProfile(ctx context.Context, targets claudeDesktopTargets) error {
+	return withClaudeRestoreState(ctx, targets, func(state *claudeRestoreState, path string, data []byte) error {
+		if len(state.Files) == 0 {
+			return nil
+		}
+		if err := recoverClaudePendingQuit(ctx, state, path, data); err != nil {
+			return err
+		}
+		configs := make(map[string]map[string]any)
+		for filePath, file := range state.Files {
+			cfg, err := readClaudeRestoreConfig(filePath)
+			if err != nil {
+				return err
+			}
+			for _, key := range []string{"appliedId", "inferenceProvider", "inferenceGatewayBaseUrl"} {
+				if value, ok := file.Values[key]; ok && !claudeValueRestorable(key, claudeField(cfg, key), value) {
+					return fmt.Errorf("Claude routing changed at %s; preserving the current profile", filePath)
+				}
+			}
+			configs[filePath] = cfg
+		}
+		if err := claudeSaveState(path, state); err != nil {
+			return err
+		}
+		// Keep the checkpoint until every file is restored. Retrying a partial
+		// restore is safe because original values are always recognized.
+		var failures []error
+		for filePath, file := range state.Files {
+			cfg := configs[filePath]
+			changed := false
+			for key, value := range file.Values {
+				if !claudeValueRestorable(key, claudeField(cfg, key), value) {
+					failures = append(failures, fmt.Errorf("preserved edited Claude setting %s in %s", key, filePath))
+					continue
+				}
+				claudePutField(cfg, key, value.Before)
+				changed = true
+			}
+			if !changed {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			var err error
+			if !file.Existed && len(cfg) == 0 {
+				err = os.Remove(filePath)
+				if os.IsNotExist(err) {
+					err = nil
+				}
+			} else {
+				err = writeClaudeDesktopJSON(filePath, cfg)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if err := errors.Join(failures...); err != nil {
+			return err
+		}
+		err := os.Remove(path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	})
 }
 
 func claudeField(cfg map[string]any, key string) json.RawMessage {
@@ -479,313 +600,20 @@ func claudePutField(cfg map[string]any, key string, raw json.RawMessage) {
 	cfg[key] = value
 }
 
-func claudeValueOwned(current json.RawMessage, value claudeOwnedValue) bool {
-	return claudeJSONEqual(current, value.Applied) || !value.PreserveEdit && (value.PreviousSet || value.Previous != nil) && claudeJSONEqual(current, value.Previous)
-}
-
-func claudeValueRestorable(current json.RawMessage, value claudeOwnedValue) bool {
-	return claudeValueOwned(current, value) || claudeJSONEqual(current, value.Before)
-}
-
-func claudeJSONEqual(a, b json.RawMessage) bool {
-	if (a == nil) != (b == nil) {
-		return false
-	}
-	var compactA, compactB bytes.Buffer
-	if a == nil {
-		return true
-	}
-	return json.Compact(&compactA, a) == nil && json.Compact(&compactB, b) == nil && bytes.Equal(compactA.Bytes(), compactB.Bytes())
-}
-
-func validateClaudeRestoreState(targets claudeDesktopTargets, state *claudeRestoreState) error {
-	allowed := make(map[string][]string)
-	for _, path := range targets.normalConfigs {
-		allowed[path] = []string{"deploymentMode"}
-	}
-	for _, target := range targets.thirdPartyProfiles {
-		allowed[target.profile] = claudeGatewayProfileKeys
-		allowed[target.meta] = []string{"appliedId", "entries"}
-		allowed[target.desktopConfig] = []string{"deploymentMode"}
-	}
-	for path, file := range state.Files {
-		keys, ok := allowed[path]
-		if !ok || file == nil || file.Values == nil {
-			return errors.New("Claude restore state refers to an unexpected file; leaving settings unchanged")
-		}
-		for key, value := range file.Values {
-			if value.PreserveEdit && (!value.PreviousSet || value.Restarting) {
-				return errors.New("invalid Claude restart state; leaving settings unchanged")
-			}
-			found := false
-			for _, allowedKey := range keys {
-				found = found || key == allowedKey
-			}
-			if !found {
-				return fmt.Errorf("unexpected Claude restore setting %s; leaving settings unchanged", key)
-			}
-			for _, raw := range []json.RawMessage{value.Before, value.Applied, value.Previous} {
-				if raw != nil && !json.Valid(raw) {
-					return errors.New("invalid Claude restore value; leaving settings unchanged")
-				}
-				if key == "entries" && raw != nil && !claudeJSONEqual(raw, json.RawMessage(`null`)) {
-					var entries []map[string]any
-					if err := json.Unmarshal(raw, &entries); err != nil {
-						return errors.New("invalid Claude profile entries in restore state; leaving settings unchanged")
-					}
-					for _, entry := range entries {
-						if entry["id"] != claudeDesktopProfileID {
-							return errors.New("Claude restore state refers to another profile; leaving settings unchanged")
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func claudeWriteOwned(path string, desired map[string]any, keys ...string) error {
-	current, err := readClaudeDesktopJSONAllowMissing(path)
-	if err != nil {
-		return err
-	}
-	tx := claudeProfileTransaction
-	if tx == nil {
-		return writeClaudeDesktopJSON(path, desired)
-	}
-	file := tx.state.Files[path]
-	if file == nil {
-		_, statErr := os.Stat(path)
-		file = &claudeOwnedFile{Existed: statErr == nil, Values: make(map[string]claudeOwnedValue)}
-		tx.state.Files[path] = file
-	}
-	attempt := tx.attempt[path]
-	if attempt == nil {
-		_, statErr := os.Stat(path)
-		attempt = &claudeOwnedFile{Existed: statErr == nil, Values: make(map[string]claudeOwnedValue)}
-		tx.attempt[path] = attempt
-	}
-	for _, key := range keys {
-		before, after := claudeField(current, key), claudeField(desired, key)
-		value, tracked := file.Values[key]
-		if tracked && !claudeValueOwned(before, value) {
-			return fmt.Errorf("Claude setting %s in %s changed after setup; leaving that change intact", key, path)
-		}
-		if !tracked {
-			value.Before = before
-		}
-		if _, exists := attempt.Values[key]; !exists {
-			// Retain the first rollback target until the entire change commits.
-			// Recovery can then recognize keys rolled back before a later failure.
-			value.Previous = before
-			value.PreviousSet = true
-			attempt.Values[key] = claudeOwnedValue{Before: before, Applied: after}
-		} else {
-			v := attempt.Values[key]
-			v.Applied = after
-			attempt.Values[key] = v
-		}
-		value.Applied = after
-		value.Restarting = false
-		file.Values[key] = value
-		claudePutField(current, key, after)
-	}
-	if err := claudeSaveState(tx.path, tx.state); err != nil {
-		return err
-	}
-	return writeClaudeDesktopJSON(path, current)
-}
-
-func claudeRestoreFiles(ctx context.Context, files map[string]*claudeOwnedFile, checkpoint func() error) error {
-	var failures []error
-	for path, file := range files {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(append(failures, err)...)
-		}
-		current, err := readClaudeDesktopJSONAllowMissing(path)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		changed := false
-		restored := make([]string, 0, len(file.Values))
-		for key, value := range file.Values {
-			if !claudeValueRestorable(claudeField(current, key), value) {
-				failures = append(failures, fmt.Errorf("preserved edited Claude setting %s in %s", key, path))
-				continue
-			}
-			if checkpoint != nil {
-				value.Previous = claudeField(current, key)
-				value.PreviousSet = true
-				value.Applied = value.Before
-				value.Restarting = false
-				file.Values[key] = value
-			}
-			claudePutField(current, key, value.Before)
-			restored = append(restored, key)
-			changed = true
-		}
-		if changed {
-			if checkpoint != nil {
-				if err := checkpoint(); err != nil {
-					return errors.Join(append(failures, err)...)
-				}
-			}
-			if err := ctx.Err(); err != nil {
-				return errors.Join(append(failures, err)...)
-			}
-			if !file.Existed && len(current) == 0 {
-				err = os.Remove(path)
-				if os.IsNotExist(err) {
-					err = nil
-				}
-			} else {
-				err = writeClaudeDesktopJSON(path, current)
-			}
-			if err != nil {
-				failures = append(failures, err)
-			} else {
-				for _, key := range restored {
-					delete(file.Values, key)
-				}
-				if checkpoint != nil {
-					if err := checkpoint(); err != nil {
-						return errors.Join(append(failures, err)...)
-					}
-				}
-			}
-		}
-	}
-	return errors.Join(failures...)
-}
-
-func withClaudeProfileChangesContext(ctx context.Context, targets claudeDesktopTargets, change func() error) error {
-	unlock, err := claudeProfileLock(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	path, err := claudeRestorePath()
-	if err != nil {
-		return err
-	}
-	state, prior, err := claudeReadState(path)
-	if err != nil {
-		return err
-	}
-	if err := validateClaudeRestoreState(targets, state); err != nil {
-		return err
-	}
-	if err := recoverClaudeRestart(ctx, state, prior); err != nil {
-		return err
-	}
-	if err := preserveClaudeRestartEdits(ctx, state); err != nil {
-		return err
-	}
-	if prior != nil {
-		// Edit preservation may have committed recovery progress. A failed
-		// configure must roll back to that checkpoint, not undo it.
-		prior, err = os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-	}
-	// Parse every file before the first write so a damaged later file leaves
-	// the existing connection untouched.
-	paths := append([]string(nil), targets.normalConfigs...)
-	for _, target := range targets.thirdPartyProfiles {
-		paths = append(paths, target.profile, target.meta, target.desktopConfig)
-	}
-	for _, file := range paths {
-		cfg, err := readClaudeDesktopJSONAllowMissing(file)
-		if err != nil {
-			return err
-		}
-		for _, target := range targets.thirdPartyProfiles {
-			if file == target.meta && cfg["entries"] != nil {
-				if _, ok := cfg["entries"].([]any); !ok {
-					return errors.New("Claude profile entries must be an array; leaving settings unchanged")
-				}
-			}
-		}
-	}
-	if prior == nil {
-		legacy, err := legacyClaudeRestoreState(targets)
-		if err != nil {
-			return err
-		}
-		if len(legacy.Files) > 0 {
-			// Legacy metadata and mode files are already managed. Checkpoint all
-			// of them before the first write so an interrupted connect can restore.
-			state = legacy
-			if err := claudeSaveState(path, state); err != nil {
-				return err
-			}
-			prior, err = os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	tx := &claudeProfileChanges{state: state, path: path, attempt: make(map[string]*claudeOwnedFile)}
-	claudeProfileTransaction = tx
-	err = change()
-	claudeProfileTransaction = nil
-	if err == nil {
-		err = ctx.Err()
-	}
-	if err == nil {
-		if len(tx.attempt) == 0 {
-			return nil
-		}
-		for file, attempt := range tx.attempt {
-			for key := range attempt.Values {
-				value := state.Files[file].Values[key]
-				value.Previous = nil
-				value.PreviousSet = false
-				state.Files[file].Values[key] = value
-			}
-		}
-		if err = claudeSaveState(path, state); err == nil {
-			return nil
-		}
-	}
-	rollbackErr := claudeRestoreFiles(context.Background(), tx.attempt, nil)
-	if rollbackErr == nil {
-		if prior == nil {
-			rollbackErr = os.Remove(path)
-			if os.IsNotExist(rollbackErr) {
-				rollbackErr = nil
-			}
-		} else {
-			rollbackErr = fileutil.WriteWithBackup(path, prior, "claude-desktop")
-		}
-	}
-	return errors.Join(err, rollbackErr)
-}
-
+// Connections made before checkpoints existed can only restore the known
+// legacy defaults. Require both the local gateway and our applied profile ID.
 func legacyClaudeRestoreState(targets claudeDesktopTargets) (*claudeRestoreState, error) {
-	state := &claudeRestoreState{Version: 1, Files: make(map[string]*claudeOwnedFile)}
-	track := func(path, key string, before json.RawMessage) error {
-		cfg, err := readClaudeDesktopJSONAllowMissing(path)
+	state := &claudeRestoreState{Version: 2, Files: make(map[string]*claudeOwnedFile)}
+	track := func(path string, before map[string]json.RawMessage) error {
+		cfg, err := readClaudeRestoreConfig(path)
 		if err != nil {
 			return err
 		}
-		if key == "entries" && cfg[key] != nil {
-			if _, ok := cfg[key].([]any); !ok {
-				return errors.New("Claude profile entries must be an array; leaving settings unchanged")
-			}
+		file := &claudeOwnedFile{Existed: true, Values: make(map[string]claudeOwnedValue)}
+		for key, value := range before {
+			file.Values[key] = claudeOwnedValue{Before: value, Applied: claudeField(cfg, key)}
 		}
-		file := state.Files[path]
-		if file == nil {
-			file = &claudeOwnedFile{Existed: true, Values: make(map[string]claudeOwnedValue)}
-			state.Files[path] = file
-		}
-		file.Values[key] = claudeOwnedValue{Before: before, Applied: claudeField(cfg, key)}
+		state.Files[path] = file
 		return nil
 	}
 	for _, target := range targets.thirdPartyProfiles {
@@ -797,106 +625,36 @@ func legacyClaudeRestoreState(targets claudeDesktopTargets) (*claudeRestoreState
 		if cfg["inferenceProvider"] != "gateway" || (endpoint != "http://127.0.0.1:11435" && !claudeDesktopGatewayURLMatches(endpoint)) {
 			continue
 		}
-		metadata, err := readClaudeDesktopJSON(target.meta)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
+		metadata, err := readClaudeDesktopJSONAllowMissing(target.meta)
 		if err != nil {
-			return nil, fmt.Errorf("read Claude profile metadata: %w", err)
+			return nil, err
 		}
 		if metadata["appliedId"] != claudeDesktopProfileID {
 			continue
 		}
+		before := make(map[string]json.RawMessage)
 		for _, key := range claudeGatewayProfileKeys {
-			if key == "inferenceGatewayApiKey" || key == "chatTabEnabled" {
-				continue
-			}
-			var before json.RawMessage
-			if key == "disableDeploymentModeChooser" {
-				before = json.RawMessage(`false`)
-			}
-			if err := track(target.profile, key, before); err != nil {
-				return nil, err
+			if key != "inferenceGatewayApiKey" && key != "chatTabEnabled" {
+				before[key] = nil
 			}
 		}
-		if err := track(target.meta, "appliedId", nil); err != nil {
-			return nil, err
-		}
-		if err := track(target.meta, "entries", nil); err != nil {
-			return nil, err
-		}
-		if err := track(target.desktopConfig, "deploymentMode", json.RawMessage(`"1p"`)); err != nil {
-			return nil, err
+		before["disableDeploymentModeChooser"] = json.RawMessage(`false`)
+		defaults := map[string]map[string]json.RawMessage{
+			target.profile:       before,
+			target.meta:          {"appliedId": nil, "entries": nil},
+			target.desktopConfig: {"deploymentMode": json.RawMessage(`"1p"`)},
 		}
 		normalRoot := strings.TrimSuffix(filepath.Dir(target.desktopConfig), "-3p")
 		for _, normal := range targets.normalConfigs {
 			if filepath.Dir(normal) == normalRoot {
-				if err := track(normal, "deploymentMode", json.RawMessage(`"1p"`)); err != nil {
-					return nil, err
-				}
+				defaults[normal] = map[string]json.RawMessage{"deploymentMode": json.RawMessage(`"1p"`)}
+			}
+		}
+		for path, before := range defaults {
+			if err := track(path, before); err != nil {
+				return nil, err
 			}
 		}
 	}
 	return state, nil
-}
-
-func restoreClaudeOwnedProfile(ctx context.Context, targets claudeDesktopTargets) error {
-	path, err := claudeRestorePath()
-	if err != nil {
-		return err
-	}
-	unlock, err := claudeProfileLock(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	state, data, err := claudeReadState(path)
-	if err != nil {
-		return err
-	}
-	if data == nil {
-		state, err = legacyClaudeRestoreState(targets)
-		if err != nil {
-			return err
-		}
-		if len(state.Files) == 0 {
-			return nil
-		}
-		if err := claudeSaveState(path, state); err != nil {
-			return err
-		}
-	}
-	if err := validateClaudeRestoreState(targets, state); err != nil {
-		return err
-	}
-	if err := recoverClaudeRestart(ctx, state, data); err != nil {
-		return err
-	}
-	if err := preserveClaudeRestartEdits(ctx, state); err != nil {
-		return err
-	}
-	for file, values := range state.Files {
-		current, err := readClaudeDesktopJSONAllowMissing(file)
-		if err != nil {
-			return err
-		}
-		if _, tracked := values.Values["entries"]; tracked && current["entries"] != nil {
-			if _, ok := current["entries"].([]any); !ok {
-				return errors.New("Claude profile entries changed after setup; leaving settings unchanged")
-			}
-		}
-		for _, key := range []string{"appliedId", "inferenceProvider", "inferenceGatewayBaseUrl"} {
-			if value, ok := values.Values[key]; ok && !claudeValueRestorable(claudeField(current, key), value) {
-				return fmt.Errorf("Claude routing changed at %s; preserving the current profile", file)
-			}
-		}
-	}
-	err = claudeRestoreFiles(ctx, state.Files, func() error { return claudeSaveState(path, state) })
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
 }
