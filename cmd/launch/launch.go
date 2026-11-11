@@ -376,7 +376,7 @@ Examples:
 			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
-						if canonical == "pi" {
+						if canonical == "pi" || canonical == chatGPTIntegrationName {
 							return fmt.Errorf("cloud is disabled; enable cloud to use %s", modelFlag)
 						}
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
@@ -390,7 +390,7 @@ Examples:
 			if forceConfigure && !configFlag && modelFlag == "" {
 				if _, runner, err := LookupIntegration(name); err == nil {
 					switch runner.(type) {
-					case ManagedAutodiscoveryIntegration, *Pi:
+					case ManagedAutodiscoveryIntegration, *Pi, *CodexApp:
 						forceConfigure = false
 					}
 				}
@@ -681,6 +681,9 @@ func (c *launcherClient) launcherManagedModelState(ctx context.Context, name str
 		cfg, loadErr := loadStoredIntegrationConfig(name)
 		if loadErr == nil {
 			current = primaryModelFromConfig(cfg)
+			if name == chatGPTIntegrationName && cfg.Primary != "" {
+				current = cfg.Primary
+			}
 		}
 		if current != "" {
 			return current, false, nil
@@ -830,6 +833,11 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 }
 
 func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	if name == chatGPTIntegrationName {
+		if controller, ok := managed.(ChatGPTController); ok {
+			return c.launchChatGPTIntegration(ctx, controller, req)
+		}
+	}
 	current := managed.CurrentModel()
 	selectionCurrent := current
 	if selectionCurrent == "" {

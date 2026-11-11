@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,7 +50,19 @@ func TestWelcomeInConfig(t *testing.T) {
 			if needed, err := needsWelcomeInConfig(); err != nil || !needed {
 				t.Fatalf("fresh config: needed=%v err=%v", needed, err)
 			}
-			if err := save(&config{LastModel: "saved-model", OnboardingVersion: tc.version}); err != nil {
+
+			data, err := json.Marshal(&config{LastModel: "saved-model", OnboardingVersion: tc.version})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path, err := configPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
 				t.Fatal(err)
 			}
 			if needed, err := needsWelcomeInConfig(); err != nil || needed != (tc.version == 0) {
@@ -625,52 +638,31 @@ func TestMigrateConfig(t *testing.T) {
 	})
 }
 
-func TestSave(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
+func TestSaveIntegrationRoundTrip(t *testing.T) {
 	t.Run("creates config file", func(t *testing.T) {
-		cfg := &config{
-			Integrations: map[string]*integration{
-				"test": {Models: []string{"model-a", "model-b"}},
-			},
-		}
-
-		if err := save(cfg); err != nil {
+		setTestHome(t, t.TempDir())
+		if err := SaveIntegration("test", []string{"model-a", "model-b"}); err != nil {
 			t.Fatal(err)
 		}
-
 		path, _ := configPath()
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Error("config file was not created")
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("config file was not created: %v", err)
 		}
 	})
-
 	t.Run("round-trip preserves data", func(t *testing.T) {
-		cfg := &config{
-			Integrations: map[string]*integration{
-				"claude": {Models: []string{"llama3.2", "mistral"}},
-				"codex":  {Models: []string{"qwen2.5"}},
-			},
-		}
-
-		if err := save(cfg); err != nil {
+		setTestHome(t, t.TempDir())
+		if err := SaveIntegration("claude", []string{"llama3.2", "mistral"}); err != nil {
 			t.Fatal(err)
 		}
-
+		if err := SaveIntegration("codex", []string{"qwen2.5"}); err != nil {
+			t.Fatal(err)
+		}
 		loaded, err := load()
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		if len(loaded.Integrations) != 2 {
-			t.Errorf("expected 2 integrations, got %d", len(loaded.Integrations))
-		}
-		if loaded.Integrations["claude"] == nil {
-			t.Error("missing claude integration")
-		}
-		if len(loaded.Integrations["claude"].Models) != 2 {
-			t.Errorf("expected 2 models for claude, got %d", len(loaded.Integrations["claude"].Models))
+		if len(loaded.Integrations) != 2 || loaded.Integrations["claude"] == nil || len(loaded.Integrations["claude"].Models) != 2 || loaded.Integrations["codex"] == nil {
+			t.Fatalf("saved integration data lost: %+v", loaded)
 		}
 	})
 }

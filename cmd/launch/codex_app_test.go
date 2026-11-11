@@ -914,6 +914,7 @@ func TestCodexAppDesktopRestartRepairsCatalogWithoutLiveInventory(t *testing.T) 
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
 	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 	app := &CodexApp{}

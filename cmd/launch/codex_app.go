@@ -81,6 +81,8 @@ type CodexApp struct{}
 // ChatGPT profile would interrupt a running task.
 var ErrCodexAppRestartConfirmationRequired = errors.New("ChatGPT restart confirmation is required before changing its profile")
 
+var errCodexAppProfileUnchanged = errors.New("ChatGPT settings were not changed")
+
 func (c *CodexApp) String() string { return "ChatGPT" }
 
 func (c *CodexApp) Supported() error { return codexAppSupported() }
@@ -721,42 +723,52 @@ func (c *CodexApp) UpdateOllamaModelsFromDesktop(primary string, models []Launch
 }
 
 func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []LaunchModel, openWhenStopped, restartConfirmed bool) error {
-	if err := codexAppSupported(); err != nil {
-		return err
-	}
 	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
 	defer stop()
+	return c.updateOllamaModels(ctx, primary, models, openWhenStopped, restartConfirmed)
+}
+
+func (c *CodexApp) updateOllamaModels(ctx context.Context, primary string, models []LaunchModel, openWhenStopped, restartConfirmed bool) error {
+	unchanged := func(err error) error { return fmt.Errorf("%w: %w", errCodexAppProfileUnchanged, err) }
+	if err := codexAppSupported(); err != nil {
+		return unchanged(err)
+	}
 	installed := codexAppInstalledContext(ctx)
 	if err := codexAppExitContextError(ctx); err != nil {
-		return err
+		return unchanged(err)
 	}
 	if !installed {
-		return fmt.Errorf("ChatGPT is not installed")
+		return unchanged(errors.New("ChatGPT is not installed"))
 	}
 	if err := codexAppRouterHealth(); err != nil {
-		return err
+		return unchanged(err)
 	}
-	// Check before cleanup so cancellation is a no-op; check again when applying the profile.
 	legacyRunning, legacyErr := codexAppProfileIsRunning(ctx)
 	running := codexAppIsRunning(ctx) || legacyRunning
 	if err := codexAppExitContextError(ctx); err != nil {
-		return err
+		return unchanged(err)
 	}
 	if running && !restartConfirmed {
-		return ErrCodexAppRestartConfirmationRequired
+		return unchanged(ErrCodexAppRestartConfirmationRequired)
 	}
 	if err := codexAppStatusError(ctx, legacyErr); err != nil {
-		return err
+		return unchanged(err)
 	}
 	if _, err := stopLegacyCodexAppOllamaProfile(ctx, restartConfirmed); err != nil {
-		return err
+		return unchanged(err)
 	}
-	return codexAppApplyProfileChange(ctx, func() error {
+	changeStarted := false
+	err := codexAppApplyProfileChange(ctx, func() error {
+		changeStarted = true
 		if err := resetCodexAppRegularProfileRequestCount(); err != nil {
 			return err
 		}
 		return c.ConfigureWithModels(primary, models)
 	}, openWhenStopped, restartConfirmed)
+	if err != nil && !changeStarted {
+		return unchanged(err)
+	}
+	return err
 }
 
 func defaultCodexAppRouterHealth() error {
@@ -841,11 +853,15 @@ func (c *CodexApp) restore(restartConfirmed bool, cancel <-chan struct{}, exitTi
 
 // RestartFromDesktop repairs and restarts the saved profile without requiring live inventory.
 func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
+	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
+	defer stop()
+	return c.restart(ctx, restartConfirmed)
+}
+
+func (c *CodexApp) restart(ctx context.Context, restartConfirmed bool) error {
 	if err := codexAppSupported(); err != nil {
 		return err
 	}
-	ctx, stop := codexAppExitContext(codexAppExitTimeout, nil)
-	defer stop()
 	installed := codexAppInstalledContext(ctx)
 	if err := codexAppExitContextError(ctx); err != nil {
 		return err
@@ -855,6 +871,12 @@ func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 	}
 	if !c.OllamaConfigured() {
 		return errors.New("ChatGPT is not configured to use Ollama")
+	}
+	if c.CurrentModel() == "" {
+		return errors.New("ChatGPT's saved Ollama connection is out of date; reconfigure ChatGPT in Ollama Settings and try again")
+	}
+	if err := codexAppRouterHealth(); err != nil {
+		return err
 	}
 	return codexAppApplyProfileChange(ctx, repairCodexAppCatalogAuthVisibility, true, restartConfirmed)
 }
@@ -888,20 +910,43 @@ func stopLegacyCodexAppOllamaProfile(ctx context.Context, restartConfirmed bool)
 }
 
 func (c *CodexApp) Restore() error {
-	err := c.restore(false, nil, codexAppCLIExitTimeout())
-	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
-		return err
-	}
-	restart, err := ConfirmPrompt("Restart ChatGPT to use your usual profile?")
+	// Validate before asking to interrupt a running task. Native restore also
+	// re-reads and validates immediately before writing.
+	path, err := codexConfigPath()
 	if err != nil {
 		return err
 	}
-	if !restart {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return codexAppRestoreFailure(path, err)
+	}
+	if err == nil {
+		if err := codexValidateConfigText(string(data)); err != nil {
+			return codexAppRestoreFailure(path, err)
+		}
+	}
+	restore := func(confirmed bool, cancel <-chan struct{}) error {
+		unlock, err := chatGPTConfigurationLock()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		return c.restore(confirmed, cancel, codexAppCLIExitTimeout())
+	}
+	err = restore(false, nil)
+	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
+		return err
+	}
+	confirmed, err := ConfirmPromptWithOptions("Restart ChatGPT to use your usual profile?", ConfirmOptions{YesLabel: "Restart", NoLabel: "Cancel", Default: ConfirmDefaultNo})
+	if err != nil {
+		return err
+	}
+	if !confirmed {
 		return ErrCancelled
 	}
 	sp := StartSpinner(codexAppRestartMessage)
 	defer sp.Stop()
-	return c.restore(true, sp.Cancelled(), codexAppCLIExitTimeout())
+	return restore(true, sp.Cancelled())
 }
 
 func restoreCodexAppProfile() error {

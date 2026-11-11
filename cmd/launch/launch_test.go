@@ -395,6 +395,8 @@ func withLauncherHooks(t *testing.T) {
 	oldSingle := DefaultSingleSelector
 	oldSingleWithUpdates := DefaultSingleSelectorWithUpdates
 	oldMulti := DefaultMultiSelector
+	oldModelList := DefaultModelListSelector
+	DefaultModelListSelector = nil
 	oldMultiWithUpdates := DefaultMultiSelectorWithUpdates
 	oldConfirm := DefaultConfirmPrompt
 	oldSignIn := DefaultSignIn
@@ -402,6 +404,7 @@ func withLauncherHooks(t *testing.T) {
 		DefaultSingleSelector = oldSingle
 		DefaultSingleSelectorWithUpdates = oldSingleWithUpdates
 		DefaultMultiSelector = oldMulti
+		DefaultModelListSelector = oldModelList
 		DefaultMultiSelectorWithUpdates = oldMultiWithUpdates
 		DefaultConfirmPrompt = oldConfirm
 		DefaultSignIn = oldSignIn

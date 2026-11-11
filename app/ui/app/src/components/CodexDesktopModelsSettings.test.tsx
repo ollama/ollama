@@ -12,7 +12,7 @@ import type {
   ReactNode,
 } from "react";
 import { createRef } from "react";
-import { act, create } from "react-test-renderer";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CodexDesktopModelsSettings,
@@ -939,6 +939,64 @@ describe("CodexDesktopModelsSettings", () => {
           "aria-label": `Remove ${available[4]}`,
         }),
       ).toHaveLength(0);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("confirms the original version and shows newer saved models after a conflict", async () => {
+    const later = [available[5]];
+    const error =
+      "ChatGPT settings changed while awaiting restart confirmation; review the current models and try again";
+    const apply = vi
+      .fn()
+      .mockResolvedValueOnce({
+        settings: settings({ connected: true, running: true }),
+        restartConfirmationRequired: true,
+        confirmationVersion: "original-version",
+      })
+      .mockResolvedValueOnce({
+        settings: settings({ connected: true, running: true, selected: later }),
+        error,
+      });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      applyCodexDesktopModels: apply,
+      confirm: vi.fn(() => true),
+    });
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            initialSettings={settings({ connected: true })}
+          />,
+        );
+      });
+      const start = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Start ChatGPT");
+      if (!start) throw new Error("Start button not found");
+      await act(async () => {
+        await start.props.onClick();
+      });
+
+      expect(apply.mock.calls).toEqual([
+        [available.slice(0, 5), false],
+        [available.slice(0, 5), true, "original-version"],
+      ]);
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": `Remove ${later[0]}` }),
+      ).toHaveLength(1);
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": `Remove ${available[0]}`,
+        }),
+      ).toHaveLength(0);
+      expect(textContent(renderer!.root)).toContain(error);
     } finally {
       await act(async () => renderer?.unmount());
     }

@@ -64,6 +64,10 @@ var DefaultSingleSelectorWithUpdates SingleSelectorWithUpdates
 // DefaultMultiSelector is the default multi-select implementation.
 var DefaultMultiSelector MultiSelector
 
+// DefaultModelListSelector edits a bounded ordered list without selecting a
+// primary model. ChatGPT stores its primary separately from picker order.
+var DefaultModelListSelector func(title string, items []SelectionItem, preChecked []string, limit int) ([]string, error)
+
 // DefaultMultiSelectorWithUpdates is the default multi-select implementation with live updates.
 var DefaultMultiSelectorWithUpdates MultiSelectorWithUpdates
 

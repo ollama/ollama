@@ -33,12 +33,14 @@ func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("installCodexDesktop", func() codexDesktopInstallResult {
 		return requestCodexDesktopInstall()
 	})
-	wv.Bind("applyCodexDesktopModels", func(models []string, restartConfirmed bool) codexDesktopModelsSettingsResult {
-		err := applyCodexDesktopModels(models, restartConfirmed)
+	wv.Bind("applyCodexDesktopModels", func(models []string, restartConfirmed bool, versions ...string) codexDesktopModelsSettingsResult {
+		err := applyCodexDesktopModels(models, restartConfirmed, versions...)
 		settings, statusErr := getCodexDesktopModelsSettings()
 		result := codexDesktopModelsSettingsResult{Settings: settings}
-		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+		var confirmation interface{ ConfirmationVersion() string }
+		if errors.As(err, &confirmation) {
 			result.RestartConfirmationRequired = true
+			result.ConfirmationVersion = confirmation.ConfirmationVersion()
 		} else if err != nil {
 			result.Error = err.Error()
 		} else if statusErr != nil {

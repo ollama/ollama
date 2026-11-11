@@ -417,8 +417,8 @@ func TestLaunchCmdChatGPT(t *testing.T) {
 			if quitCalls != 0 || openCalls != tt.wantOpen {
 				t.Fatalf("process calls = quit %d, open %d; want quit 0, open %d", quitCalls, openCalls, tt.wantOpen)
 			}
-			if got := routerChecks.Load(); !restoring && got != 1 {
-				t.Fatalf("router health checks = %d, want 1", got)
+			if got := routerChecks.Load(); restoring && got != 0 || !restoring && got == 0 {
+				t.Fatalf("router health checks = %d; connect must check routing and restore must work without it", got)
 			}
 		})
 	}

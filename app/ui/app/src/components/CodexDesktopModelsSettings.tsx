@@ -509,13 +509,17 @@ export const CodexDesktopModelsSettings = forwardRef<
         ) {
           return;
         }
-        result = await window.applyCodexDesktopModels(modelsToApply, true);
+        result = result.confirmationVersion
+          ? await window.applyCodexDesktopModels(
+              modelsToApply,
+              true,
+              result.confirmationVersion,
+            )
+          : await window.applyCodexDesktopModels(modelsToApply, true);
       }
       ++statusRequestRef.current;
       if (result.error) {
-        setSettings(normalizeSettings(result.settings));
-        setError(result.error);
-        setWarning(result.warning ?? null);
+        applyResult(result, true);
         return;
       }
       applyResult(result);

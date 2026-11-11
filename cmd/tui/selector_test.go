@@ -15,6 +15,46 @@ func items(names ...string) []SelectItem {
 	return out
 }
 
+func TestChatGPTFlowListEditorStartsWithCheckboxes(t *testing.T) {
+	m := newModelListSelectorModel("Select up to 5 models for ChatGPT:", items("a", "b", "c", "d", "e", "f"), []string{"b", "a"}, 5)
+	view := m.View()
+	if !m.multi || !strings.Contains(view, "[x]") {
+		t.Fatal("ChatGPT list editing starts in single-add mode instead of showing saved checkboxes")
+	}
+	if strings.Contains(view, "(default)") {
+		t.Fatal("the model-list editor labels list order as the starting model")
+	}
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = model.(multiSelectorModel)
+	if !m.multi {
+		t.Fatal("Tab changed the ChatGPT list editor into a starting-model picker")
+	}
+	for _, cursor := range []int{2, 3, 4, 5} {
+		m.cursor = cursor
+		m.toggleItem()
+	}
+	if got := strings.Join(m.checkedModelNames(), ","); got != "b,a,c,d,e" {
+		t.Fatalf("selected models=%s; want the saved order retained and the sixth model blocked", got)
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.(multiSelectorModel).confirmed {
+		t.Fatal("Enter did not confirm the bounded model list")
+	}
+}
+
+func TestChatGPTFlowListEditorRequiresASelection(t *testing.T) {
+	m := newModelListSelectorModel("Models", items("a"), []string{"a"}, 5)
+	m.toggleItem()
+	model, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if model.(multiSelectorModel).confirmed {
+		t.Fatal("Enter confirmed an empty ChatGPT model list")
+	}
+	model, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !model.(multiSelectorModel).cancelled {
+		t.Fatal("Escape did not cancel the ChatGPT model edit")
+	}
+}
+
 func recItems(names ...string) []SelectItem {
 	var out []SelectItem
 	for _, n := range names {
