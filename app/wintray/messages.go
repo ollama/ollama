@@ -7,6 +7,7 @@ const (
 	firstTimeMessage = "Click here to get started"
 	updateTitle      = "Update available"
 	updateMessage    = "Ollama version %s is ready to install"
+	updateMessageAny = "An Ollama update is ready to install"
 
 	quitMenuTitle            = "Quit Ollama"
 	updateAvailableMenuTitle = "An update is available"
