@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/api"
 )
 
 func (c *launcherClient) localServerContextLength(ctx context.Context) (int, bool) {
@@ -17,6 +19,24 @@ func (c *launcherClient) localServerContextLength(ctx context.Context) (int, boo
 		return 0, false
 	}
 	return status.ContextLength, true
+}
+
+// Read serving metadata from this launch's server, rather than the client's
+// environment or a process-list snapshot from an earlier request.
+func (c *launcherClient) localModelServingContextLength(ctx context.Context, model string) int {
+	if c == nil || c.apiClient == nil || model == "" {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(ctx, modelShowTimeout)
+	defer cancel()
+	resp, err := c.apiClient.Show(ctx, &api.ShowRequest{Model: model})
+	if err != nil || resp.RemoteHost != "" || resp.RemoteModel != "" || resp.ServingContextLength <= 0 {
+		return 0
+	}
+	if maximum, ok := modelInfoContextLength(resp.ModelInfo); ok && resp.ServingContextLength > maximum {
+		return 0
+	}
+	return resp.ServingContextLength
 }
 
 func confirmLocalContextWarning(integration string, current, recommended int) error {

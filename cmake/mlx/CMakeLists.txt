@@ -19,12 +19,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
-if(APPLE)
-    set(CMAKE_BUILD_RPATH "@loader_path")
-    set(CMAKE_INSTALL_RPATH "@loader_path")
-    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
-endif()
-
 if(NOT DEFINED OLLAMA_SOURCE_DIR OR "${OLLAMA_SOURCE_DIR}" STREQUAL "")
     get_filename_component(OLLAMA_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 endif()
@@ -35,6 +29,42 @@ set(OLLAMA_LIB_DIR "lib/ollama" CACHE STRING "Install destination for Ollama run
 set(OLLAMA_RUNNER_DIR "" CACHE STRING "Ollama runtime payload subdirectory")
 set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
 set(OLLAMA_INSTALL_DIR ${OLLAMA_LIB_DIR}/${OLLAMA_RUNNER_DIR})
+set(OLLAMA_DEPENDENCY_INSTALL_DIR "")
+set(OLLAMA_DEPENDENCY_RUNNER_DIR "")
+if(OLLAMA_RUNNER_DIR MATCHES "^mlx_(cuda.*)$")
+    set(OLLAMA_DEPENDENCY_RUNNER_DIR "${CMAKE_MATCH_1}")
+    set(OLLAMA_DEPENDENCY_INSTALL_DIR "${OLLAMA_LIB_DIR}/${OLLAMA_DEPENDENCY_RUNNER_DIR}")
+endif()
+
+set(OLLAMA_MLX_JIT_INCLUDE_DESTINATIONS "${OLLAMA_INSTALL_DIR}/include")
+set(OLLAMA_MLX_SHARED_CUDA_INSTALL_DIR "${OLLAMA_INSTALL_DIR}")
+set(OLLAMA_MLX_PRIVATE_CUDA_INSTALL_DIR "${OLLAMA_INSTALL_DIR}")
+set(OLLAMA_MLX_CUDNN_INSTALL_DIR "${OLLAMA_INSTALL_DIR}")
+set(OLLAMA_MLX_RPATH)
+
+if(APPLE)
+    set(OLLAMA_MLX_RPATH "@loader_path")
+elseif(WIN32)
+    if(OLLAMA_DEPENDENCY_INSTALL_DIR)
+        set(OLLAMA_MLX_SHARED_CUDA_INSTALL_DIR "${OLLAMA_DEPENDENCY_INSTALL_DIR}")
+        set(OLLAMA_MLX_PRIVATE_CUDA_INSTALL_DIR "${OLLAMA_DEPENDENCY_INSTALL_DIR}")
+        set(MLX_CUDA_BIN_DIR "../${OLLAMA_DEPENDENCY_RUNNER_DIR}" CACHE STRING "" FORCE)
+        set(MLX_CUDNN_BIN_DIR "." CACHE STRING "" FORCE)
+    endif()
+elseif(UNIX)
+    set(OLLAMA_MLX_RPATH "$ORIGIN")
+    list(APPEND OLLAMA_MLX_JIT_INCLUDE_DESTINATIONS "${OLLAMA_LIB_DIR}/include")
+    if(OLLAMA_DEPENDENCY_INSTALL_DIR)
+        set(OLLAMA_MLX_SHARED_CUDA_INSTALL_DIR "${OLLAMA_DEPENDENCY_INSTALL_DIR}")
+        list(APPEND OLLAMA_MLX_RPATH "$ORIGIN/../${OLLAMA_DEPENDENCY_RUNNER_DIR}")
+    endif()
+endif()
+
+if(OLLAMA_MLX_RPATH)
+    set(CMAKE_BUILD_RPATH ${OLLAMA_MLX_RPATH})
+    set(CMAKE_INSTALL_RPATH ${OLLAMA_MLX_RPATH})
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
+endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
@@ -48,15 +78,63 @@ if(MLX_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES)
 endif()
 
 option(OLLAMA_MLX_GENERATE_WRAPPERS "Regenerate MLX Go wrappers" OFF)
+option(OLLAMA_MLX_OVERLAY_PACKAGE "Install the MLX payload as an overlay package" OFF)
 
 message(STATUS "Setting up MLX (this takes a while...)")
-add_subdirectory(${OLLAMA_SOURCE_DIR}/x/imagegen/mlx ${CMAKE_BINARY_DIR}/x/imagegen/mlx)
+foreach(_cudnn_var CUDNN_INCLUDE_PATH CUDNN_LIBRARY_PATH)
+    if((NOT DEFINED ${_cudnn_var} OR "${${_cudnn_var}}" STREQUAL "") AND DEFINED ENV{${_cudnn_var}})
+        set(${_cudnn_var} "$ENV{${_cudnn_var}}" CACHE PATH "")
+    endif()
+endforeach()
+add_subdirectory(${OLLAMA_SOURCE_DIR}/mlx ${CMAKE_BINARY_DIR}/mlx)
+
+if(UNIX AND NOT APPLE)
+    foreach(_mlx_target mlx mlxc)
+        if(TARGET ${_mlx_target})
+            set_target_properties(${_mlx_target} PROPERTIES
+                BUILD_RPATH "${OLLAMA_MLX_RPATH}"
+                INSTALL_RPATH "${OLLAMA_MLX_RPATH}"
+                BUILD_WITH_INSTALL_RPATH ON)
+            # DT_RPATH is inherited by transitive dependencies such as
+            # OpenBLAS -> libgfortran -> libquadmath; DT_RUNPATH is not.
+            target_link_options(${_mlx_target} PRIVATE LINKER:--disable-new-dtags)
+        endif()
+    endforeach()
+endif()
+
+include(FetchContent)
+set(XGRAMMAR_VERSION v0.2.7)
+FetchContent_Declare(xgrammar
+    GIT_REPOSITORY "https://github.com/mlc-ai/xgrammar.git"
+    GIT_TAG ${XGRAMMAR_VERSION}
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES 3rdparty/dlpack
+    # Do not add XGrammar's Python-oriented CMake project.
+    SOURCE_SUBDIR cmake/ollama)
+FetchContent_MakeAvailable(xgrammar)
+
+file(GLOB_RECURSE XGRAMMAR_SOURCES CONFIGURE_DEPENDS "${xgrammar_SOURCE_DIR}/cpp/*.cc")
+list(FILTER XGRAMMAR_SOURCES EXCLUDE REGEX "/cpp/tvm_ffi/.*\\.cc$")
+add_library(xgrammar STATIC ${XGRAMMAR_SOURCES})
+set_target_properties(xgrammar PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+target_include_directories(xgrammar PUBLIC "${xgrammar_SOURCE_DIR}/include")
+target_include_directories(xgrammar SYSTEM PUBLIC
+    "${xgrammar_SOURCE_DIR}/3rdparty/picojson"
+    "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/include")
+target_compile_definitions(xgrammar PUBLIC
+    XGRAMMAR_ENABLE_CPPTRACE=0
+    XGRAMMAR_ENABLE_INTERNAL_CHECK=0)
+
+add_subdirectory(${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native ${CMAKE_BINARY_DIR}/xgrammar)
 
 # Find CUDA toolkit if MLX is built with CUDA support.
 find_package(CUDAToolkit)
 
 # Build list of directories for runtime dependency resolution.
-set(MLX_RUNTIME_DIRS ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR})
+set(MLX_RUNTIME_SEARCH_DIRS ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR})
 # Add cuDNN bin paths for DLLs (Windows MLX CUDA builds).
 # CUDNN_ROOT_DIR is the standard CMake variable for cuDNN location.
 if(CUDNN_ROOT_DIR)
@@ -65,39 +143,141 @@ elseif(DEFINED ENV{CUDNN_ROOT_DIR})
     set(_cudnn_root "$ENV{CUDNN_ROOT_DIR}")
 endif()
 if(_cudnn_root)
+    file(TO_CMAKE_PATH "${_cudnn_root}" _cudnn_root)
     # cuDNN 9.x has versioned subdirectories under bin/ (e.g., bin/13.0/).
     file(GLOB CUDNN_BIN_SUBDIRS "${_cudnn_root}/bin/*")
-    list(APPEND MLX_RUNTIME_DIRS ${CUDNN_BIN_SUBDIRS})
+    list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CUDNN_BIN_SUBDIRS})
 endif()
 # Add build output directory and MLX dependency build directories.
-list(APPEND MLX_RUNTIME_DIRS ${OLLAMA_BUILD_DIR})
+list(APPEND MLX_RUNTIME_SEARCH_DIRS ${OLLAMA_BUILD_DIR})
+if(UNIX AND NOT APPLE)
+    list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
+endif()
 # OpenBLAS DLL location (pre-built zip extracts into openblas-src/bin/).
-list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
+list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
 # NCCL: on Linux, if real NCCL is found, cmake bundles libnccl.so via the
 # regex below. If NCCL is not found, MLX links a static stub (OBJECT lib)
 # so there is no runtime dependency. This path covers the stub build dir
 # for windows so we include the DLL in our dependencies.
-list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
+list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
 
-# Base regexes for runtime dependencies (cross-platform).
-set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl openblas gfortran)
+# Non-link-time deps stay explicit; link-time deps derive from the mlx target.
+set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl cusolver cusparse nv[Jj]it[Ll]ink openblas gfortran quadmath)
 # On Windows, also include dl.dll (dlfcn-win32 POSIX emulation layer).
 if(WIN32)
     list(APPEND MLX_INCLUDE_REGEXES "^dl\\.dll$")
 endif()
+set(MLX_RUNTIME_DEPENDENCY_FILTERS
+    DIRECTORIES ${MLX_RUNTIME_SEARCH_DIRS}
+    PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}
+    PRE_EXCLUDE_REGEXES ".*")
+set(MLX_EXPLICIT_CUDA_RUNTIME_REGEXES)
+if(WIN32)
+    list(APPEND MLX_EXPLICIT_CUDA_RUNTIME_REGEXES
+        "[/\\\\]cublas[^/\\\\]*\\.dll$"
+        "[/\\\\]cudart[^/\\\\]*\\.dll$"
+        "[/\\\\]cudnn[^/\\\\]*\\.dll$"
+        "[/\\\\]cufft[^/\\\\]*\\.dll$"
+        "[/\\\\]cusolver[^/\\\\]*\\.dll$"
+        "[/\\\\]cusparse[^/\\\\]*\\.dll$"
+        "[/\\\\]nvfatbin[^/\\\\]*\\.dll$"
+        "[/\\\\][nN][vV][jJ][iI][tT][lL][iI][nN][kK][^/\\\\]*\\.dll$"
+        "[/\\\\]nvrtc[^/\\\\]*\\.dll$"
+        "[/\\\\]nvrtc-builtins[^/\\\\]*\\.dll$")
+elseif(UNIX AND NOT APPLE)
+    list(APPEND MLX_EXPLICIT_CUDA_RUNTIME_REGEXES
+        "[/\\\\]libcublas\\.so(\\..*)?$"
+        "[/\\\\]libcublasLt\\.so(\\..*)?$"
+        "[/\\\\]libcudart\\.so(\\..*)?$"
+        "[/\\\\]libcudnn[^/\\\\]*\\.so(\\..*)?$"
+        "[/\\\\]libcufft\\.so(\\..*)?$"
+        "[/\\\\]libcusolver\\.so(\\..*)?$"
+        "[/\\\\]libcusparse\\.so(\\..*)?$"
+        "[/\\\\]libnvfatbin\\.so(\\..*)?$"
+        "[/\\\\]libnvJitLink\\.so(\\..*)?$"
+        "[/\\\\]libnvrtc\\.so(\\..*)?$"
+        "[/\\\\]libnvrtc-builtins\\.so(\\..*)?$")
+endif()
+if(MLX_EXPLICIT_CUDA_RUNTIME_REGEXES)
+    list(APPEND MLX_RUNTIME_DEPENDENCY_FILTERS
+        POST_EXCLUDE_REGEXES ${MLX_EXPLICIT_CUDA_RUNTIME_REGEXES})
+endif()
 
 # Keep mlx/mlxc targets separate from runtime dependencies so --strip only
 # applies to the binaries we build, not vendor DLLs/libs.
-install(TARGETS mlx mlxc
+install(TARGETS mlx mlxc ollama_xgrammar
     RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
 )
+install(FILES
+    "${xgrammar_SOURCE_DIR}/LICENSE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    RENAME XGRAMMAR_LICENSE
+    COMPONENT MLX)
+install(FILES
+    "${xgrammar_SOURCE_DIR}/NOTICE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    RENAME XGRAMMAR_NOTICE
+    COMPONENT MLX)
+install(FILES
+    "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/LICENSE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    RENAME DLPACK_LICENSE
+    COMPONENT MLX)
+file(READ "${xgrammar_SOURCE_DIR}/3rdparty/picojson/picojson.h" _picojson_header LIMIT 4096)
+string(FIND "${_picojson_header}" "*/" _picojson_license_end)
+if(_picojson_license_end EQUAL -1)
+    message(FATAL_ERROR "picojson license header not found")
+endif()
+math(EXPR _picojson_license_end "${_picojson_license_end} + 2")
+string(SUBSTRING "${_picojson_header}" 0 ${_picojson_license_end} _picojson_license)
+file(WRITE "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE" "${_picojson_license}\n")
+install(FILES
+    "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    COMPONENT MLX)
+get_target_property(_mlx_license_source mlx SOURCE_DIR)
+if(NOT _mlx_license_source OR _mlx_license_source MATCHES "-NOTFOUND$")
+    message(FATAL_ERROR "MLX source directory not found for license install")
+endif()
+install(FILES
+    "${_mlx_license_source}/LICENSE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    RENAME MLX_LICENSE
+    COMPONENT MLX)
+get_target_property(_mlxc_license_source mlxc SOURCE_DIR)
+if(NOT _mlxc_license_source OR _mlxc_license_source MATCHES "-NOTFOUND$")
+    message(FATAL_ERROR "MLX-C source directory not found for license install")
+endif()
+install(FILES
+    "${_mlxc_license_source}/LICENSE"
+    DESTINATION ${OLLAMA_LIB_DIR}
+    RENAME MLX_C_LICENSE
+    COMPONENT MLX)
+# Ship LICENSE/NOTICE/COPYING from every fetched MLX dependency.
+install(CODE "
+    file(GLOB _dep_dirs
+         LIST_DIRECTORIES true
+         \"${CMAKE_BINARY_DIR}/_deps/*-src\")
+    foreach(_dep \${_dep_dirs})
+        get_filename_component(_dep_name \${_dep} NAME)
+        string(REGEX REPLACE \"-src$\" \"\" _dep_name \"\${_dep_name}\")
+        string(TOUPPER \"\${_dep_name}\" _dep_name)
+        string(REGEX REPLACE \"[^A-Z0-9]\" \"_\" _dep_name \"\${_dep_name}\")
+        file(GLOB _lics \"\${_dep}/LICENSE*\" \"\${_dep}/COPYING*\" \"\${_dep}/NOTICE*\")
+        foreach(_lic \${_lics})
+            get_filename_component(_lic_name \${_lic} NAME)
+            file(INSTALL DESTINATION \"$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}\"
+                 TYPE FILE FILES \"\${_lic}\"
+                 RENAME \"\${_dep_name}_\${_lic_name}\")
+        endforeach()
+    endforeach()
+" COMPONENT MLX)
+
 install(RUNTIME_DEPENDENCY_SET mlx_runtime_deps
-    DIRECTORIES ${MLX_RUNTIME_DIRS}
-    PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}
-    PRE_EXCLUDE_REGEXES ".*"
+    ${MLX_RUNTIME_DEPENDENCY_FILTERS}
     RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX_VENDOR
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX_VENDOR
 )
@@ -119,21 +299,6 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
         COMPONENT MLX)
 endif()
 
-# Install headers for NVRTC JIT compilation at runtime.
-# MLX's own install rules use the default component so they get skipped by
-# --component MLX. Headers are installed alongside libmlx in OLLAMA_INSTALL_DIR.
-#
-# Layout:
-#   ${OLLAMA_INSTALL_DIR}/include/cccl/            - CCCL headers
-#   ${OLLAMA_INSTALL_DIR}/include/{cute,cutlass}/  - CUTLASS/CUTE headers
-#   ${OLLAMA_INSTALL_DIR}/include/                 - CUDA runtime/core headers
-#
-# MLX's jit_module.cpp resolves JIT support headers from the backend-local
-# include directory. On Linux it also probes current_binary_dir().parent_path()
-# / "include", so we create a symlink from lib/ollama/include to the backend
-# include directory for archive packaging.
-# This will need refinement if we add multiple CUDA versions for MLX in the future.
-# CUDA runtime headers are found via CUDA_PATH env var (set by mlxrunner).
 set(_mlx_jit_cccl_include_dir "")
 if(CUDAToolkit_FOUND)
     foreach(_dir ${CUDAToolkit_INCLUDE_DIRS})
@@ -149,28 +314,25 @@ endif()
 if(_mlx_jit_cccl_include_dir)
     foreach(_cccl_dir cuda nv cub thrust)
         if(EXISTS "${_mlx_jit_cccl_include_dir}/${_cccl_dir}")
-            install(DIRECTORY "${_mlx_jit_cccl_include_dir}/${_cccl_dir}"
-                DESTINATION ${OLLAMA_INSTALL_DIR}/include/cccl
-                COMPONENT MLX)
+            foreach(_dst IN LISTS OLLAMA_MLX_JIT_INCLUDE_DESTINATIONS)
+                install(DIRECTORY "${_mlx_jit_cccl_include_dir}/${_cccl_dir}"
+                    DESTINATION ${_dst}/cccl
+                    COMPONENT MLX)
+            endforeach()
         endif()
     endforeach()
 endif()
 if(EXISTS ${CMAKE_BINARY_DIR}/_deps/cutlass-src/include/cute)
-    install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cutlass-src/include/cute
-        DESTINATION ${OLLAMA_INSTALL_DIR}/include
-        COMPONENT MLX)
-    install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cutlass-src/include/cutlass
-        DESTINATION ${OLLAMA_INSTALL_DIR}/include
-        COMPONENT MLX)
+    foreach(_dst IN LISTS OLLAMA_MLX_JIT_INCLUDE_DESTINATIONS)
+        install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cutlass-src/include/cute
+            DESTINATION ${_dst}
+            COMPONENT MLX)
+        install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cutlass-src/include/cutlass
+            DESTINATION ${_dst}
+            COMPONENT MLX)
+    endforeach()
 endif()
 
-# Install CUDA runtime/core headers needed by MLX JIT kernels.
-# NVIDIA's NVRTC bundled-header model is CUDA Runtime + CCCL, not the entire
-# toolkit include tree. Keep CCCL coherent above, include CUTLASS/CUTE above,
-# and avoid shipping unrelated SDK headers such as NPP, CUPTI, cuRAND, NVML,
-# cuBLAS, cuSPARSE, and cuSOLVER.
-# The Go mlxrunner sets CUDA_PATH to OLLAMA_INSTALL_DIR so MLX finds them at
-# $CUDA_PATH/include via NVRTC --include-path.
 if(CUDAToolkit_FOUND)
     # CUDAToolkit_INCLUDE_DIRS may be a semicolon-separated list
     # (e.g. ".../include;.../include/cccl"). Find the entry that
@@ -185,8 +347,6 @@ if(CUDAToolkit_FOUND)
     if(NOT _cuda_inc)
         message(WARNING "Could not find cuda_runtime_api.h in CUDAToolkit_INCLUDE_DIRS: ${CUDAToolkit_INCLUDE_DIRS}")
     else()
-        set(_dst "${OLLAMA_INSTALL_DIR}/include")
-
         set(_mlx_jit_cuda_headers
             builtin_types.h
             channel_descriptor.h
@@ -264,28 +424,23 @@ if(CUDAToolkit_FOUND)
             endif()
         endforeach()
         if(_mlx_jit_cuda_header_paths)
-            install(FILES ${_mlx_jit_cuda_header_paths}
-                DESTINATION ${_dst}
-                COMPONENT MLX)
+            foreach(_dst IN LISTS OLLAMA_MLX_JIT_INCLUDE_DESTINATIONS)
+                install(FILES ${_mlx_jit_cuda_header_paths}
+                    DESTINATION ${_dst}
+                    COMPONENT MLX)
+            endforeach()
         endif()
 
         foreach(_runtime_dir cooperative_groups crt)
             if(EXISTS "${_cuda_inc}/${_runtime_dir}")
-                install(DIRECTORY "${_cuda_inc}/${_runtime_dir}"
-                    DESTINATION ${_dst}
-                    COMPONENT MLX)
+                foreach(_dst IN LISTS OLLAMA_MLX_JIT_INCLUDE_DESTINATIONS)
+                    install(DIRECTORY "${_cuda_inc}/${_runtime_dir}"
+                        DESTINATION ${_dst}
+                        COMPONENT MLX)
+                endforeach()
             endif()
         endforeach()
 
-        if(NOT WIN32 AND NOT APPLE)
-            install(CODE "
-                set(_link \"${CMAKE_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/include\")
-                set(_target \"${OLLAMA_RUNNER_DIR}/include\")
-                if(NOT EXISTS \${_link})
-                    execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink \${_target} \${_link})
-                endif()
-            " COMPONENT MLX)
-        endif()
     endif()
 endif()
 
@@ -293,26 +448,92 @@ endif()
 # RUNTIME_DEPENDENCIES auto-excludes it via POST_EXCLUDE_FILES_STRICT because
 # dlfcn-win32 is a known CMake target with its own install rules (which install
 # to the wrong destination). We must install it explicitly here.
-if(WIN32)
-    install(FILES ${OLLAMA_BUILD_DIR}/dl.dll
-        DESTINATION ${OLLAMA_INSTALL_DIR}
+if(WIN32 AND TARGET dl)
+    install(TARGETS dl
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR}
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR}
         COMPONENT MLX)
 endif()
 
-# Manually install CUDA runtime libraries that MLX loads via dlopen
-# (not detected by RUNTIME_DEPENDENCIES since they aren't link-time deps).
 if(CUDAToolkit_FOUND)
-    file(GLOB MLX_CUDA_LIBS
-        "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcublasLt.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libnvrtc.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcufft.so*"
-        "${CUDAToolkit_LIBRARY_DIR}/libcudnn.so*")
-    if(MLX_CUDA_LIBS)
-        install(FILES ${MLX_CUDA_LIBS}
-            DESTINATION ${OLLAMA_INSTALL_DIR}
+    set(MLX_SHARED_CUDA_LIBS)
+    set(MLX_PRIVATE_CUDA_LIBS)
+    set(MLX_CUDNN_LIBS)
+    if(WIN32)
+        file(GLOB MLX_SHARED_CUDA_LIBS
+            "${CUDAToolkit_BIN_DIR}/cublas64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cublasLt64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cudart64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/nvfatbin_*.dll"
+            "${CUDAToolkit_BIN_DIR}/nvJitLink_*.dll"
+            "${CUDAToolkit_BIN_DIR}/nvrtc64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/nvrtc-builtins64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cublas64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cublasLt64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cudart64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvfatbin_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvJitLink_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvrtc64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/nvrtc-builtins64_*.dll")
+        file(GLOB MLX_PRIVATE_CUDA_LIBS
+            "${CUDAToolkit_BIN_DIR}/cufft64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cusolver64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/cusparse64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cufft64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cusolver64_*.dll"
+            "${CUDAToolkit_BIN_DIR}/x64/cusparse64_*.dll")
+    elseif(UNIX AND NOT APPLE)
+        file(GLOB MLX_SHARED_CUDA_LIBS
+            "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcublasLt.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libnvrtc.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libnvfatbin.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libnvJitLink.so*")
+        file(GLOB MLX_PRIVATE_CUDA_LIBS
+            "${CUDAToolkit_LIBRARY_DIR}/libcufft.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcusolver.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcusparse.so*")
+    endif()
+    if(MLX_SHARED_CUDA_LIBS)
+        list(REMOVE_DUPLICATES MLX_SHARED_CUDA_LIBS)
+        install(FILES ${MLX_SHARED_CUDA_LIBS}
+            DESTINATION ${OLLAMA_MLX_SHARED_CUDA_INSTALL_DIR}
+            COMPONENT MLX_SHARED)
+    endif()
+    if(MLX_PRIVATE_CUDA_LIBS)
+        list(REMOVE_DUPLICATES MLX_PRIVATE_CUDA_LIBS)
+        install(FILES ${MLX_PRIVATE_CUDA_LIBS}
+            DESTINATION ${OLLAMA_MLX_PRIVATE_CUDA_INSTALL_DIR}
             COMPONENT MLX_VENDOR)
     endif()
+    if(UNIX AND NOT APPLE)
+        find_library(MLX_CUDNN_LIBRARY NAMES cudnn
+            HINTS "${CUDNN_LIBRARY_PATH}" "$ENV{CUDNN_LIBRARY_PATH}")
+        if(MLX_CUDNN_LIBRARY)
+            get_filename_component(MLX_CUDNN_LIBRARY_DIR "${MLX_CUDNN_LIBRARY}" DIRECTORY)
+            file(GLOB MLX_CUDNN_LIBS "${MLX_CUDNN_LIBRARY_DIR}/libcudnn*.so*")
+        endif()
+    endif()
+    if(WIN32 AND _cudnn_root)
+        file(GLOB MLX_CUDNN_DLLS
+            "${_cudnn_root}/bin/${CUDAToolkit_VERSION_MAJOR}.0/cudnn*.dll"
+            "${_cudnn_root}/bin/x64/cudnn*.dll")
+        list(APPEND MLX_CUDNN_LIBS ${MLX_CUDNN_DLLS})
+    endif()
+    if(MLX_CUDNN_LIBS)
+        list(REMOVE_DUPLICATES MLX_CUDNN_LIBS)
+        install(FILES ${MLX_CUDNN_LIBS}
+            DESTINATION ${OLLAMA_MLX_CUDNN_INSTALL_DIR}
+            COMPONENT MLX_VENDOR)
+    endif()
+endif()
+
+if(OLLAMA_MLX_OVERLAY_PACKAGE)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/README_MLX.txt"
+        "Extract this MLX package to the same location as the Ollama base package.\n")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/README_MLX.txt"
+        DESTINATION .
+        COMPONENT MLX)
 endif()

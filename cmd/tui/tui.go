@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -45,8 +46,6 @@ type menuItem struct {
 	isOthers    bool
 }
 
-const pinnedIntegrationCount = 4
-
 var runModelMenuItem = menuItem{
 	title:       "Chat with a model",
 	description: "Start an interactive chat with a model",
@@ -58,6 +57,13 @@ var othersMenuItem = menuItem{
 	description: "Show additional integrations",
 	isOthers:    true,
 }
+
+// launcherMenuIntegrations defines the default priority before the additional
+// integrations in registry order. Chat with a model comes first, then installed
+// apps are promoted above missing apps, with only the first four shown before More.
+var launcherMenuIntegrations = []string{"claude", "opencode", "hermes", "openclaw"}
+
+const launcherMenuLimit = 4
 
 type model struct {
 	state      *launch.LauncherState
@@ -71,6 +77,9 @@ type model struct {
 }
 
 func newModel(state *launch.LauncherState) model {
+	if state == nil {
+		state = &launch.LauncherState{}
+	}
 	m := model{
 		state: state,
 	}
@@ -84,8 +93,8 @@ func shouldExpandOthers(state *launch.LauncherState) bool {
 	if state == nil {
 		return false
 	}
-	for _, item := range otherIntegrationItems(state) {
-		if item.integration == state.LastSelection {
+	for i, item := range orderedIntegrationItems(state) {
+		if i >= launcherMenuLimit && item.integration == state.LastSelection {
 			return true
 		}
 	}
@@ -93,18 +102,11 @@ func shouldExpandOthers(state *launch.LauncherState) bool {
 }
 
 func buildMenuItems(state *launch.LauncherState, showOthers bool) []menuItem {
-	items := []menuItem{runModelMenuItem}
-	items = append(items, pinnedIntegrationItems(state)...)
-
-	otherItems := otherIntegrationItems(state)
-	switch {
-	case showOthers:
-		items = append(items, otherItems...)
-	case len(otherItems) > 0:
-		items = append(items, othersMenuItem)
+	items := orderedIntegrationItems(state)
+	if !showOthers && len(items) > launcherMenuLimit {
+		items = append(items[:launcherMenuLimit], othersMenuItem)
 	}
-
-	return items
+	return append([]menuItem{runModelMenuItem}, items...)
 }
 
 func integrationMenuItem(state launch.LauncherIntegrationState) menuItem {
@@ -119,40 +121,39 @@ func integrationMenuItem(state launch.LauncherIntegrationState) menuItem {
 	}
 }
 
-func otherIntegrationItems(state *launch.LauncherState) []menuItem {
-	ordered := orderedIntegrationItems(state)
-	if len(ordered) <= pinnedIntegrationCount {
-		return nil
-	}
-	return ordered[pinnedIntegrationCount:]
-}
-
-func pinnedIntegrationItems(state *launch.LauncherState) []menuItem {
-	ordered := orderedIntegrationItems(state)
-	if len(ordered) <= pinnedIntegrationCount {
-		return ordered
-	}
-	return ordered[:pinnedIntegrationCount]
-}
-
 func orderedIntegrationItems(state *launch.LauncherState) []menuItem {
 	if state == nil {
 		return nil
 	}
 
-	items := make([]menuItem, 0, len(state.Integrations))
+	var items []menuItem
+	for _, name := range launcherMenuIntegrations {
+		integrationState, ok := state.Integrations[name]
+		if !ok {
+			continue
+		}
+		items = append(items, integrationMenuItem(integrationState))
+	}
 	for _, info := range launch.ListIntegrationInfos() {
+		if slices.Contains(launcherMenuIntegrations, info.Name) {
+			continue
+		}
 		integrationState, ok := state.Integrations[info.Name]
 		if !ok {
 			continue
 		}
 		items = append(items, integrationMenuItem(integrationState))
 	}
-	return items
-}
 
-func primaryMenuItemCount(state *launch.LauncherState) int {
-	return 1 + len(pinnedIntegrationItems(state))
+	var installed, missing []menuItem
+	for _, item := range items {
+		if state.Integrations[item.integration].Installed {
+			installed = append(installed, item)
+		} else {
+			missing = append(missing, item)
+		}
+	}
+	return append(installed, missing...)
 }
 
 func initialCursor(state *launch.LauncherState, items []menuItem) int {
@@ -160,9 +161,6 @@ func initialCursor(state *launch.LauncherState, items []menuItem) int {
 		return 0
 	}
 	for i, item := range items {
-		if state.LastSelection == "run" && item.isRunModel {
-			return i
-		}
 		if item.integration == state.LastSelection {
 			return i
 		}
@@ -190,7 +188,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
-			if m.showOthers && m.cursor < primaryMenuItemCount(m.state) {
+			if m.showOthers && m.cursor <= launcherMenuLimit {
 				m.showOthers = false
 				m.items = buildMenuItems(m.state, false)
 				m.cursor = min(m.cursor, len(m.items)-1)
@@ -218,7 +216,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "right", "l":
 			item := m.items[m.cursor]
-			if item.isRunModel || m.changeableItem(item) {
+			if m.changeableItem(item) {
 				m.selected = true
 				m.action = actionForMenuItem(item, true)
 				m.quitting = true
@@ -235,7 +233,7 @@ func (m model) selectableItem(item menuItem) bool {
 	if item.isRunModel {
 		return true
 	}
-	if item.integration == "" || item.isOthers {
+	if item.integration == "" || m.state == nil {
 		return false
 	}
 	state, ok := m.state.Integrations[item.integration]
@@ -243,7 +241,10 @@ func (m model) selectableItem(item menuItem) bool {
 }
 
 func (m model) changeableItem(item menuItem) bool {
-	if item.integration == "" || item.isOthers {
+	if item.isRunModel {
+		return true
+	}
+	if item.integration == "" || m.state == nil {
 		return false
 	}
 	state, ok := m.state.Integrations[item.integration]
@@ -281,16 +282,14 @@ func (m model) renderMenuItem(index int, item menuItem) string {
 	}
 
 	if item.isRunModel {
-		if m.cursor == index && m.state.RunModel != "" {
-			modelSuffix = " " + modelStyle.Render("("+m.state.RunModel+")")
-		}
 		if m.cursor == index {
 			style = menuSelectedItemStyle
+			if m.state.RunModel != "" {
+				modelSuffix = " " + modelStyle.Render("("+m.state.RunModel+")")
+			}
 		}
 	} else if item.isOthers {
-		if m.cursor == index {
-			style = menuSelectedItemStyle
-		}
+		// More immediately expands when reached, so it always uses the default style.
 	} else {
 		integrationState := m.state.Integrations[item.integration]
 		if !integrationState.Selectable {

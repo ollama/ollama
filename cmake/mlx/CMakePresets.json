@@ -17,6 +17,8 @@
       "inherits": [ "default" ],
       "cacheVariables": {
         "CMAKE_CUDA_FLAGS": "-t 2",
+        "MLX_BUILD_CUDA": "ON",
+        "MLX_BUILD_METAL": "OFF",
         "OLLAMA_RUNNER_DIR": "mlx_cuda_v13"
       }
     },
@@ -55,7 +57,7 @@
       "inherits": [ "default" ],
       "binaryDir": "${sourceDir}/../../build/metal-v4",
       "cacheVariables": {
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.0",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "26.2",
         "OLLAMA_RUNNER_DIR": "mlx_metal_v4"
       }
     }

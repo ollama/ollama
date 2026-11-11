@@ -80,14 +80,17 @@ func NormalizePullName(raw string) (string, bool, error) {
 }
 
 func toLegacyCloudPullName(base string) string {
-	if hasExplicitTag(base) {
+	if HasExplicitTag(base) {
 		return base + "-cloud"
 	}
 
 	return base + ":cloud"
 }
 
-func hasExplicitTag(name string) bool {
+// HasExplicitTag reports whether name contains an explicit tag (e.g.
+// "model:8b"), as opposed to relying on the default tag. Colons in a
+// registry host (e.g. "registry.example.com:5000/model") don't count.
+func HasExplicitTag(name string) bool {
 	lastSlash := strings.LastIndex(name, "/")
 	lastColon := strings.LastIndex(name, ":")
 	return lastColon > lastSlash

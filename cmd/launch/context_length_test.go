@@ -12,11 +12,17 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+type contextTestTransport func(*http.Request) (*http.Response, error)
+
+func (f contextTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func testLauncherClientWithStatus(t *testing.T, contextLength int) (*launcherClient, *int) {
 	t.Helper()
 
 	statusCalls := 0
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: contextTestTransport(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != "/api/status" {
 			return &http.Response{
 				StatusCode: http.StatusNotFound,

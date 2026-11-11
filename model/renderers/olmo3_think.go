@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Olmo3ThinkVariant int
@@ -85,4 +86,8 @@ func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api
 	sb.WriteString("<|im_start|>assistant\n<think>")
 
 	return sb.String(), nil
+}
+
+func (r *Olmo3ThinkRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{true}, Default: true}
 }

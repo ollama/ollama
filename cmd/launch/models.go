@@ -194,10 +194,10 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 	}
 
 	var aErr api.AuthorizationError
-	if !errors.As(err, &aErr) || aErr.SigninURL == "" {
-		if err != nil {
-			return err
-		}
+	if err != nil && !errors.As(err, &aErr) {
+		return nil
+	}
+	if err == nil || aErr.SigninURL == "" {
 		return fmt.Errorf("%s requires sign in", modelList)
 	}
 
@@ -258,19 +258,32 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
 		return nil
 	} else {
+		if isCloudModel {
+			if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
+				return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
+			}
+			var statusErr api.StatusError
+			if errors.As(err, &statusErr) {
+				switch statusErr.StatusCode {
+				case http.StatusNotFound:
+					return fmt.Errorf("model %q not found", model)
+				case http.StatusGone:
+					return err
+				}
+			}
+			return nil
+		}
+
 		var statusErr api.StatusError
 		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusNotFound {
 			return err
 		}
 	}
 
-	if isCloudModel {
-		if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
-			return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
-		}
-		return fmt.Errorf("model %q not found", model)
-	}
+	return pullMissingModelWithPolicy(ctx, client, model, policy)
+}
 
+func pullMissingModelWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy) error {
 	switch policy {
 	case missingModelAutoPull:
 		return pullMissingModel(ctx, client, model)
@@ -318,6 +331,9 @@ func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, mo
 	}
 	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
+	}
+	if current := managed.CurrentModel(); current != "" {
+		model = current
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {
 		return fmt.Errorf("failed to save: %w", err)

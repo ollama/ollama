@@ -32,6 +32,13 @@ type Nemotron3NanoParser struct {
 func (p *Nemotron3NanoParser) HasToolSupport() bool     { return true }
 func (p *Nemotron3NanoParser) HasThinkingSupport() bool { return true }
 
+func (p *Nemotron3NanoParser) ThinkingClose() []string {
+	if p.state == Nemotron3NanoCollectingThinking {
+		return []string{nemotronThinkClose}
+	}
+	return nil
+}
+
 func (p *Nemotron3NanoParser) PreservedTokens() []string {
 	return []string{
 		nemotronThinkOpen,
@@ -97,6 +104,12 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 				p.buffer.Reset()
 				p.buffer.WriteString(trimmed)
 			}
+			if done {
+				thinking = p.buffer.String()
+				p.buffer.Reset()
+				p.maybeThinkingOpenAtBOL = false
+				return "", thinking, nil, nil
+			}
 			return "", "", nil, nil
 		}
 	}
@@ -132,6 +145,10 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 
 	// No end marker - emit unambiguous thinking
 	thinking = p.emitThinking(bufStr)
+	if done {
+		thinking += p.buffer.String()
+		p.buffer.Reset()
+	}
 	return "", thinking, nil, nil
 }
 
@@ -143,10 +160,11 @@ func (p *Nemotron3NanoParser) emitThinking(bufStr string) string {
 	maxOverlap := max(thinkOverlap, toolOverlap)
 
 	if maxOverlap > 0 {
-		unambiguous := bufStr[:len(bufStr)-maxOverlap]
-		unambiguous = strings.TrimRightFunc(unambiguous, unicode.IsSpace)
+		beforePartialTag := bufStr[:len(bufStr)-maxOverlap]
+		ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen(beforePartialTag)
+		unambiguous := bufStr[:ambiguousStart]
 		p.buffer.Reset()
-		p.buffer.WriteString(bufStr[len(bufStr)-maxOverlap:])
+		p.buffer.WriteString(bufStr[ambiguousStart:])
 		return unambiguous
 	}
 

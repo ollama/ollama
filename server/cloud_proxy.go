@@ -21,15 +21,16 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/version"
 )
 
 const (
-	defaultCloudProxyBaseURL      = "https://ollama.com:443"
-	defaultCloudProxySigningHost  = "ollama.com"
-	cloudProxyBaseURLEnv          = "OLLAMA_CLOUD_BASE_URL"
-	legacyCloudAnthropicKey       = "legacy_cloud_anthropic_web_search"
-	cloudProxyClientVersionHeader = "X-Ollama-Client-Version"
+	defaultCloudProxyBaseURL       = "https://ollama.com:443"
+	defaultCloudProxySigningHost   = "ollama.com"
+	cloudProxyBaseURLEnv           = "OLLAMA_CLOUD_BASE_URL"
+	cloudWebSearchOrchestrationKey = "cloud_web_search_orchestration"
+	cloudProxyClientVersionHeader  = "X-Ollama-Client-Version"
 
 	// maxDecompressedBodySize limits the size of a decompressed request body
 	maxDecompressedBodySize = 20 << 20
@@ -120,14 +121,14 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 			return
 		}
 
-		// TEMP(drifkin): keep Anthropic web search requests on the local middleware
-		// path so WebSearchAnthropicWriter can orchestrate follow-up calls.
-		if c.Request.URL.Path == "/v1/messages" {
-			if hasAnthropicWebSearchTool(body) {
-				c.Set(legacyCloudAnthropicKey, true)
-				c.Next()
-				return
-			}
+		// Keep server-side web search on the local compatibility middleware path.
+		// The converted model requests use Ollama's /api/chat contract, including
+		// for cloud models; all other cloud compatibility traffic remains raw
+		// passthrough.
+		if hasWebSearchTool(c.Request.URL.Path, body) {
+			c.Set(cloudWebSearchOrchestrationKey, true)
+			c.Next()
+			return
 		}
 
 		proxyCloudRequest(c, normalizedBody, disabledOperation)
@@ -163,7 +164,7 @@ func proxyCloudJSONRequest(c *gin.Context, payload any, disabledOperation string
 }
 
 func proxyCloudJSONRequestWithPath(c *gin.Context, payload any, path string, disabledOperation string) {
-	body, err := json.Marshal(payload)
+	body, err := marshalNoHTMLEscape(payload)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -200,6 +201,12 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	}
 
 	copyProxyRequestHeaders(outReq.Header, c.Request.Header)
+	transformChat := path == "/api/chat" && c.GetBool(cloudWebSearchOrchestrationKey)
+	if transformChat {
+		// Let net/http negotiate and decode gzip. Client encodings describe the
+		// downstream representation, not the JSON that compatibility writers read.
+		outReq.Header.Del("Accept-Encoding")
+	}
 	if clientVersion := strings.TrimSpace(version.Version); clientVersion != "" {
 		outReq.Header.Set(cloudProxyClientVersionHeader, clientVersion)
 	}
@@ -209,7 +216,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 
 	if err := cloudProxySignRequest(outReq.Context(), outReq); err != nil {
 		slog.Warn("cloud proxy signing failed", "error", err)
-		writeCloudUnauthorized(c)
+		writeCloudUnauthorized(c, path)
 		return
 	}
 
@@ -223,25 +230,30 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	}
 	defer resp.Body.Close()
 
+	if transformChat {
+		// The compatibility writer owns the downstream representation headers.
+		resp.Header.Del("Content-Type")
+		resp.Header.Del("Content-Length")
+	}
 	copyProxyResponseHeaders(c.Writer.Header(), resp.Header)
+	if transformChat {
+		c.Writer.Header().Del("Content-Encoding")
+		if encoding := resp.Header.Get("Content-Encoding"); encoding != "" && !strings.EqualFold(encoding, "identity") {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "unsupported cloud response encoding: " + encoding})
+			return
+		}
+	}
 	c.Status(resp.StatusCode)
 
-	var bodyWriter http.ResponseWriter = c.Writer
-	var framedWriter *jsonlFramingResponseWriter
-	// TEMP(drifkin): only needed on the cloud-proxied first leg of Anthropic
-	// web_search fallback (which is a path we're removing soon). Local
-	// /v1/messages writes one JSON value per streamResponse callback directly
-	// into WebSearchAnthropicWriter, but this proxy copy loop may coalesce
-	// multiple jsonl records into one Write.  WebSearchAnthropicWriter currently
-	// unmarshals one JSON value per Write.
-	if path == "/api/chat" && resp.StatusCode == http.StatusOK && c.GetBool(legacyCloudAnthropicKey) {
-		framedWriter = &jsonlFramingResponseWriter{ResponseWriter: c.Writer}
-		bodyWriter = framedWriter
-	}
-
-	err = copyProxyResponseBody(bodyWriter, resp.Body)
-	if err == nil && framedWriter != nil {
-		err = framedWriter.FlushPending()
+	if transformChat && resp.StatusCode == http.StatusOK {
+		var request struct {
+			Stream *bool `json:"stream"`
+		}
+		if err = json.Unmarshal(body, &request); err == nil {
+			err = copyCloudChatResponse(c.Writer, resp.Body, request.Stream == nil || *request.Stream)
+		}
+	} else {
+		err = copyProxyResponseBody(c.Writer, resp.Body)
 	}
 	if err != nil {
 		ctxErr := c.Request.Context().Err()
@@ -263,6 +275,9 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 			"request_context_err", ctxErr,
 			"error", err,
 		)
+		if transformChat && ctxErr == nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read cloud response: " + err.Error()})
+		}
 		return
 	}
 }
@@ -283,7 +298,20 @@ func replaceJSONModelField(body []byte, model string) ([]byte, error) {
 	}
 	payload["model"] = modelJSON
 
-	return json.Marshal(payload)
+	return marshalNoHTMLEscape(payload)
+}
+
+// marshalNoHTMLEscape is json.Marshal without HTML escaping, which would turn
+// each <, >, and & in a client's values into six bytes that count against
+// upstream byte limits.
+func marshalNoHTMLEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func readRequestBody(r *http.Request) ([]byte, error) {
@@ -324,8 +352,19 @@ func extractModelField(body []byte) (string, bool) {
 	return model, model != ""
 }
 
-func hasAnthropicWebSearchTool(body []byte) bool {
+func hasWebSearchTool(path string, body []byte) bool {
 	if len(body) == 0 {
+		return false
+	}
+
+	if path == "/v1/responses" {
+		var payload struct {
+			Tools []openai.ResponsesTool `json:"tools"`
+		}
+		return json.Unmarshal(body, &payload) == nil && openai.HasWebSearchTool(payload.Tools)
+	}
+
+	if path != "/v1/messages" {
 		return false
 	}
 
@@ -347,14 +386,23 @@ func hasAnthropicWebSearchTool(body []byte) bool {
 	return false
 }
 
-func writeCloudUnauthorized(c *gin.Context) {
+func writeCloudUnauthorized(c *gin.Context, path string) {
 	signinURL, err := cloudProxySigninURL()
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		signinURL = ""
+	}
+	// Responses passthrough runs before the compatibility writer. Requests
+	// routed through /api/chat (including web search) still need native errors.
+	if path == "/v1/responses" {
+		c.JSON(http.StatusUnauthorized, openai.NewResponsesAuthenticationError(signinURL))
 		return
 	}
 
-	c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": signinURL})
+	response := gin.H{"error": "unauthorized"}
+	if err == nil {
+		response["signin_url"] = signinURL
+	}
+	c.JSON(http.StatusUnauthorized, response)
 }
 
 func signCloudProxyRequest(ctx context.Context, req *http.Request) error {
@@ -374,9 +422,15 @@ func signCloudProxyRequest(ctx context.Context, req *http.Request) error {
 }
 
 func buildCloudSignatureChallenge(req *http.Request, ts string) string {
-	query := req.URL.Query()
-	query.Set("ts", ts)
-	req.URL.RawQuery = query.Encode()
+	query, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		// Preserve malformed queries for the cloud to reject. Its verifier uses
+		// the first timestamp, so prepend ours ahead of any client value.
+		req.URL.RawQuery = "ts=" + ts + "&" + req.URL.RawQuery
+	} else {
+		query.Set("ts", ts)
+		req.URL.RawQuery = query.Encode()
+	}
 
 	return fmt.Sprintf("%s,%s", req.Method, req.URL.RequestURI())
 }
@@ -491,50 +545,44 @@ func copyProxyResponseBody(dst http.ResponseWriter, src io.Reader) error {
 	}
 }
 
-type jsonlFramingResponseWriter struct {
-	http.ResponseWriter
-	pending []byte
-}
-
-func (w *jsonlFramingResponseWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
-}
-
-func (w *jsonlFramingResponseWriter) Write(p []byte) (int, error) {
-	w.pending = append(w.pending, p...)
-	if err := w.flushCompleteLines(); err != nil {
-		return len(p), err
-	}
-	return len(p), nil
-}
-
-func (w *jsonlFramingResponseWriter) FlushPending() error {
-	trailing := bytes.TrimSpace(w.pending)
-	w.pending = nil
-	if len(trailing) == 0 {
-		return nil
-	}
-
-	_, err := w.ResponseWriter.Write(trailing)
-	return err
-}
-
-func (w *jsonlFramingResponseWriter) flushCompleteLines() error {
+// copyCloudChatResponse frames JSON records for compatibility writers and holds
+// completion until EOF, including validation of the compression trailer.
+func copyCloudChatResponse(w http.ResponseWriter, r io.Reader, stream bool) error {
+	decoder := json.NewDecoder(r)
+	var final json.RawMessage
 	for {
-		newline := bytes.IndexByte(w.pending, '\n')
-		if newline < 0 {
-			return nil
+		var data json.RawMessage
+		if err := decoder.Decode(&data); err != nil {
+			if err != io.EOF {
+				return err
+			}
+			if final == nil {
+				return io.ErrUnexpectedEOF
+			}
+			_, err = w.Write(final)
+			return err
 		}
-
-		line := bytes.TrimSpace(w.pending[:newline])
-		w.pending = w.pending[newline+1:]
-		if len(line) == 0 {
+		if final != nil {
+			return errors.New("unexpected data after final cloud response")
+		}
+		var response struct {
+			Done  bool   `json:"done"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(data, &response); err != nil {
+			return err
+		}
+		if response.Error != "" {
+			return errors.New(response.Error)
+		}
+		if response.Done {
+			final = data
 			continue
 		}
-
-		if _, err := w.ResponseWriter.Write(line); err != nil {
+		if !stream {
+			return errors.New("incomplete non-streaming cloud response")
+		}
+		if _, err := w.Write(data); err != nil {
 			return err
 		}
 	}

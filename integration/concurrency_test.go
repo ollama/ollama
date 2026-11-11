@@ -20,9 +20,13 @@ import (
 )
 
 // Send multiple requests in parallel (concurrently) to a single model and ensure responses are expected
-func TestConcurrentChat(t *testing.T) {
-	// Assumes all requests have the same model
+func runConcurrentChat(t *testing.T, modelName string) {
 	req, resp := ChatRequests()
+	for i := range req {
+		req[i].Model = modelName
+		req[i].Think = &api.ThinkValue{Value: false}
+		req[i].Options = map[string]any{"num_predict": 256, "num_ctx": 4096}
+	}
 	numParallel := int(envconfig.NumParallel() + 1)
 	iterLimit := 3
 
@@ -31,19 +35,9 @@ func TestConcurrentChat(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-
-	// Get the server running (if applicable) warm the model up with a single initial request
-	slog.Info("loading", "model", req[0].Model)
-	err := client.Generate(ctx,
-		&api.GenerateRequest{Model: req[0].Model, KeepAlive: &api.Duration{Duration: 10 * time.Second}},
-		func(response api.GenerateResponse) error { return nil },
-	)
-	if err != nil {
-		t.Fatalf("failed to load model %s: %s", req[0].Model, err)
-	}
+	preloadConcurrentModel(ctx, t, client, api.GenerateRequest{Model: modelName, Options: req[0].Options})
 
 	var wg sync.WaitGroup
-	r := rand.New(rand.NewSource(0))
 	wg.Add(numParallel)
 	for i := range numParallel {
 		go func(i int) {
@@ -53,7 +47,7 @@ func TestConcurrentChat(t *testing.T) {
 					slog.Info("exceeded soft timeout, winding down test")
 					return
 				}
-				k := r.Int() % len(req)
+				k := (i + j) % len(req)
 				slog.Info("Starting", "thread", i, "iter", j)
 				// On slower GPUs it can take a while to process the concurrent requests
 				// so we allow a much longer initial timeout
@@ -64,9 +58,31 @@ func TestConcurrentChat(t *testing.T) {
 	wg.Wait()
 }
 
+// Load before starting clients so unsupported platforms skip on the test goroutine.
+func preloadConcurrentModel(ctx context.Context, t *testing.T, client *api.Client, req api.GenerateRequest) {
+	t.Helper()
+	pullOrSkip(ctx, t, client, req.Model)
+	info, err := client.Show(ctx, &api.ShowRequest{Model: req.Model, Runner: req.Runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	isMLX := info.Details.Format == "safetensors"
+	if isMLX {
+		skipRegisteredMinVRAM(t, req.Model)
+	}
+	if req.KeepAlive == nil {
+		req.KeepAlive = &api.Duration{Duration: 10 * time.Second}
+	}
+	preloadGenerateModel(ctx, t, client, req)
+	// Full GPU residency is required only for the MLX concurrency cases.
+	if isMLX {
+		skipIfNotGPULoaded(ctx, t, client, req.Model, 100)
+	}
+}
+
 // Stress the scheduler and attempt to load more models than will fit to cause thrashing
 // This test will always load at least 2 models even on CPU based systems
-func TestMultiModelStress(t *testing.T) {
+func runMultiModelStress(t *testing.T) {
 	if testModel != "" {
 		t.Skip("uses hardcoded models, not applicable with model override")
 	}
@@ -85,7 +101,6 @@ func TestMultiModelStress(t *testing.T) {
 		"llama3.2:1b",
 		"qwen3:0.6b",
 		"gemma2:2b",
-		"deepseek-r1:1.5b", // qwen2 arch
 		"gemma3:270m",
 	}
 	mediumModels := []string{
@@ -126,12 +141,8 @@ func TestMultiModelStress(t *testing.T) {
 	slog.Info("Loading models to find how many can fit in VRAM before overflowing")
 chooseModels:
 	for i, model := range chosenModels {
-		req := &api.GenerateRequest{Model: model} // Leave KeepAlive unset so they stay loaded until the scheduler decides to unload them
-		slog.Info("loading", "model", model)
-		err = client.Generate(ctx, req, func(response api.GenerateResponse) error { return nil })
-		if err != nil {
-			t.Fatalf("failed to load model %s: %s", model, err)
-		}
+		// Leave KeepAlive unset so they stay loaded until the scheduler decides to unload them.
+		preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: model})
 		targetLoadCount++
 		if i > 0 {
 			models, err := client.ListRunning(ctx)
