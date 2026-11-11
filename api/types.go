@@ -1327,6 +1327,9 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 		} else {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
+				if len(vals) == 0 && field.Kind() != reflect.Slice {
+					return nil, fmt.Errorf("missing value for parameter %q", key)
+				}
 				switch field.Kind() {
 				case reflect.Float32:
 					floatVal, err := strconv.ParseFloat(vals[0], 32)
