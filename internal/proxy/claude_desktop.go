@@ -20,18 +20,20 @@ import (
 	"github.com/ollama/ollama/anthropic"
 )
 
+// DefaultClaudeDesktopListenAddr supports clients using the legacy app-owned gateway.
+const DefaultClaudeDesktopListenAddr = "127.0.0.1:11435"
+
 const (
-	// DefaultClaudeDesktopListenAddr is the loopback address used by the Ollama
-	// app and the Claude Desktop profile it manages.
-	DefaultClaudeDesktopListenAddr = "127.0.0.1:11435"
-	maxRequestBodyBytes            = 64 << 20
-	maxErrorBodyBytes              = 64 << 10
-	upstreamReadyTimeout           = 10 * time.Second
-	upstreamReadyPoll              = 100 * time.Millisecond
-	upstreamReadyTTL               = 5 * time.Second
-	healthPath                     = "/_ollama/health"
-	healthHeader                   = "X-Ollama-Claude-Gateway"
-	unsupportedImageNotice         = "[Image omitted by Ollama because the selected model does not support image recognition.]"
+	// ClaudeDesktopPathPrefix mounts the Claude adapter on the Ollama listener.
+	ClaudeDesktopPathPrefix = "/api/claude"
+	maxRequestBodyBytes     = 64 << 20
+	maxErrorBodyBytes       = 64 << 10
+	upstreamReadyTimeout    = 10 * time.Second
+	upstreamReadyPoll       = 100 * time.Millisecond
+	upstreamReadyTTL        = 5 * time.Second
+	healthPath              = "/_ollama/health"
+	healthHeader            = "X-Ollama-Claude-Gateway"
+	unsupportedImageNotice  = "[Image omitted by Ollama because the selected model does not support image recognition.]"
 )
 
 type gatewayModel struct {
@@ -48,6 +50,7 @@ type gatewayModel struct {
 
 // ClaudeDesktopConfig configures a Claude Desktop proxy instance.
 type ClaudeDesktopConfig struct {
+	PathPrefix         string
 	ListenAddr         string
 	OllamaURL          string
 	Model              string
@@ -74,6 +77,7 @@ type upstreamReadinessCheck struct {
 // proxy: Claude terminates its own gateway protocol here, so no TLS
 // interception or system trust changes are necessary.
 type ClaudeDesktop struct {
+	pathPrefix         string
 	listenAddr         string
 	ollamaURL          *url.URL
 	ollamaProxy        *httputil.ReverseProxy
@@ -104,10 +108,10 @@ type ClaudeDesktop struct {
 
 // NewClaudeDesktop creates a Claude Desktop proxy.
 func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
-	if strings.TrimSpace(config.ListenAddr) == "" {
+	if strings.TrimSpace(config.ListenAddr) == "" && config.PathPrefix == "" {
 		return nil, errors.New("Claude gateway listen address is required")
 	}
-	if strings.TrimSpace(config.Model) == "" {
+	if strings.TrimSpace(config.Model) == "" && config.PathPrefix == "" {
 		return nil, errors.New("Claude gateway model is required")
 	}
 
@@ -129,6 +133,7 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 	proxy.Transport = transport
 	proxy.FlushInterval = -1
 	p := &ClaudeDesktop{
+		pathPrefix:         strings.TrimRight(config.PathPrefix, "/"),
 		listenAddr:         config.ListenAddr,
 		ollamaURL:          ollamaURL,
 		logger:             logger,
@@ -143,7 +148,7 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		readyWait:          upstreamReadyTimeout,
 		readyPoll:          upstreamReadyPoll,
 	}
-	if len(p.models) == 0 {
+	if len(p.models) == 0 && p.pathPrefix == "" {
 		p.models = SelectClaudeDesktopModels(DefaultClaudeDesktopModels(), nil)
 	}
 	dialer := &net.Dialer{Timeout: upstreamReadyPoll}
@@ -196,6 +201,9 @@ func ProbeClaudeDesktop(ctx context.Context, baseURL string) error {
 }
 
 func (p *ClaudeDesktop) Start() error {
+	if p.pathPrefix != "" {
+		return errors.New("the Claude gateway uses the Ollama server listener")
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.listener != nil {
@@ -298,6 +306,10 @@ func claudeDesktopModelsEqual(left, right []ClaudeDesktopModel) bool {
 }
 
 func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if p.pathPrefix != "" && !isLoopbackRequest(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if !p.allowsHost(r.Host) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -309,6 +321,16 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	if p.pathPrefix != "" {
+		path, ok := strings.CutPrefix(r.URL.Path, p.pathPrefix+"/")
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		r = r.Clone(r.Context())
+		r.URL.Path = "/" + path
+		r.URL.RawPath = ""
+	}
 
 	if r.URL.Path == healthPath {
 		if r.Method != http.MethodGet {
@@ -319,6 +341,16 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	if p.pathPrefix != "" {
+		if err := p.refreshModelCatalog(r.Context()); err != nil {
+			writeAnthropicError(w, http.StatusServiceUnavailable, err)
+			return
+		}
+		if r.URL.Path == "/_ollama/status" && r.Method == http.MethodGet {
+			p.serveRuntimeStatus(w)
+			return
+		}
+	}
 	_, models := p.modelSnapshot()
 	switch r.URL.Path {
 	case "/v1/models":
@@ -326,7 +358,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		if hasCloudClaudeDesktopModel(models) {
+		if p.pathPrefix == "" && hasCloudClaudeDesktopModel(models) {
 			if err := p.refreshModelCatalog(r.Context()); err != nil {
 				p.logger.Debug("could not refresh Claude model catalog", "error", err)
 			}
@@ -389,7 +421,7 @@ func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(models) == 0 {
+	if len(models) == 0 && p.pathPrefix == "" {
 		return errors.New("Claude Desktop model refresh returned no models")
 	}
 	models = SelectClaudeDesktopModels(models, nil)
@@ -402,7 +434,10 @@ func (p *ClaudeDesktop) refreshModelCatalog(ctx context.Context) error {
 		return nil
 	}
 	p.models = cloneClaudeDesktopModels(models)
-	p.model = models[0].OllamaModel
+	p.model = ""
+	if len(models) > 0 {
+		p.model = models[0].OllamaModel
+	}
 	p.modelsGeneration++
 	return nil
 }
@@ -417,6 +452,14 @@ func hasCloudClaudeDesktopModel(models []ClaudeDesktopModel) bool {
 }
 
 func (p *ClaudeDesktop) allowsHost(host string) bool {
+	if p.pathPrefix != "" {
+		hostname, _, err := net.SplitHostPort(host)
+		if err != nil {
+			return false
+		}
+		ip := net.ParseIP(hostname)
+		return strings.EqualFold(hostname, "localhost") || ip != nil && ip.IsLoopback()
+	}
 	_, listenerPort, err := net.SplitHostPort(p.Addr())
 	if err != nil {
 		return false
@@ -570,7 +613,7 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, 
 		writeAnthropicError(w, http.StatusBadRequest, err)
 		return
 	}
-	if selected.Cloud {
+	if selected.Cloud && p.pathPrefix == "" {
 		if err := p.refreshModelCatalog(r.Context()); err != nil {
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}
@@ -608,7 +651,7 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, models []ClaudeDesktopModel)
 	if err != nil {
 		return err
 	}
-	if selected.Cloud {
+	if selected.Cloud && p.pathPrefix == "" {
 		if err := p.refreshModelCatalog(r.Context()); err != nil {
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}

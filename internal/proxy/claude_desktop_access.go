@@ -22,9 +22,10 @@ const (
 // evaluate Claude Desktop models. Callers should resolve it again at each user
 // action or proxy request because both settings and account state can change.
 type ClaudeDesktopAccessState struct {
-	Cloud   ClaudeDesktopCloudStatus
-	Account ClaudeDesktopAccountStatus
-	Plan    string
+	Cloud     ClaudeDesktopCloudStatus
+	Account   ClaudeDesktopAccountStatus
+	AccountID string
+	Plan      string
 }
 
 type ClaudeDesktopAvailability string

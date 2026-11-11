@@ -2348,6 +2348,10 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 }
 
 func (s *Server) GenerateRoutes() (http.Handler, error) {
+	claudeDesktopProxy, err := newClaudeDesktopProxy()
+	if err != nil {
+		return nil, err
+	}
 	codexDesktopProxy, err := newCodexDesktopProxy()
 	if err != nil {
 		return nil, err
@@ -2382,6 +2386,15 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
+	// Run before CORS, which can otherwise accept a browser preflight before
+	// the local-only Claude adapter sees its Origin header.
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, proxy.ClaudeDesktopPathPrefix+"/") && c.Request.Header.Get("Origin") != "" {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		c.Next()
+	})
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
@@ -2396,6 +2409,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	// Codex uses this existing Ollama listener for both native and Ollama
 	// models. The proxy selects the upstream per request.
 	r.Any(proxy.CodexDesktopPathPrefix+"/*path", gin.WrapH(codexDesktopProxy))
+	r.Any(proxy.ClaudeDesktopPathPrefix+"/*path", gin.WrapH(claudeDesktopProxy))
 
 	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)

@@ -1,0 +1,153 @@
+package proxy
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func TestClaudeSharedListenerReloadsMappingsAndPreservesNativeAPI(t *testing.T) {
+	var mu sync.Mutex
+	var models []ClaudeDesktopModel
+	var configErr error
+	var routed []string
+	var gateway *ClaudeDesktop
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, ClaudeDesktopPathPrefix+"/") {
+			gateway.ServeHTTP(w, r)
+			return
+		}
+		switch r.URL.Path {
+		case "/":
+			w.WriteHeader(http.StatusOK)
+		case "/v1/models":
+			_, _ = io.WriteString(w, `{"native":true}`)
+		case "/v1/messages":
+			if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("X-Api-Key") != "ollama" {
+				t.Error("unexpected forwarded credentials")
+			}
+			model := requestModel(t, r)
+			mu.Lock()
+			routed = append(routed, model+" "+r.URL.RequestURI())
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	var err error
+	gateway, err = NewClaudeDesktop(ClaudeDesktopConfig{
+		PathPrefix: ClaudeDesktopPathPrefix, OllamaURL: server.URL,
+		RefreshModels: func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return models, configErr
+		},
+		ListLocalModels: func(context.Context) ([]string, error) { return []string{"local-one", "local-two"}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gateway.Close(context.Background())
+	if err := gateway.Start(); err == nil {
+		t.Fatal("shared handler started a second listener")
+	}
+	client := NewClaudeDesktopClient(ClaudeDesktopBaseURL(server.URL))
+	if status, err := client.Status(context.Background()); err != nil || len(status.Models) != 0 {
+		t.Fatalf("empty config status = %+v, %v", status, err)
+	}
+	for _, target := range []string{"local-one", "local-two"} {
+		mu.Lock()
+		models = MapClaudeDesktopModels(nil, map[string]string{"claude-sonnet-5": target})
+		mu.Unlock()
+		if err := client.SetModels(models); err != nil {
+			t.Fatal(err)
+		}
+		catalog, err := FetchClaudeDesktopCatalog(context.Background(), nil, client.BaseURL, "test")
+		if err != nil || len(catalog) != 1 || catalog[0].ID != "claude-sonnet-5" || catalog[0].DisplayName != target {
+			t.Fatalf("catalog = %+v, %v", catalog, err)
+		}
+		req, _ := http.NewRequest(http.MethodPost, client.BaseURL+"/v1/messages?beta=true", strings.NewReader(`{"model":"claude-sonnet-5","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer private-placeholder")
+		req.Header.Set("Cookie", "private=test")
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("messages = %s", response.Status)
+		}
+	}
+	mu.Lock()
+	got := strings.Join(routed, ",")
+	mu.Unlock()
+	if got != "local-one /v1/messages?beta=true,local-two /v1/messages?beta=true" {
+		t.Fatalf("upstream requests = %s", got)
+	}
+	if client.Counts().Routed != 2 {
+		t.Fatal("server request count was not shared")
+	}
+	if err := client.SetModels(MapClaudeDesktopModels(nil, map[string]string{"claude-sonnet-5": "different"})); err == nil {
+		t.Fatal("client replaced saved selection")
+	}
+	if err := client.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ProbeClaudeDesktop(context.Background(), client.BaseURL); err != nil {
+		t.Fatalf("closing client stopped server: %v", err)
+	}
+	response, err := server.Client().Get(server.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if string(body) != `{"native":true}` {
+		t.Fatalf("native API changed: %s", body)
+	}
+	mu.Lock()
+	configErr = errors.New("malformed saved selection")
+	mu.Unlock()
+	response, err = server.Client().Get(client.BaseURL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("invalid config = %s", response.Status)
+	}
+}
+
+func TestClaudeSharedListenerRejectsRemotePeersAndBrowserRequests(t *testing.T) {
+	gateway, err := NewClaudeDesktop(ClaudeDesktopConfig{PathPrefix: ClaudeDesktopPathPrefix, OllamaURL: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		peer, host, origin string
+		status             int
+	}{
+		{"127.0.0.1:40000", "localhost:11434", "", http.StatusNoContent},
+		{"[::1]:40000", "[::1]:11434", "", http.StatusNoContent},
+		{"192.0.2.10:40000", "localhost:11434", "", http.StatusForbidden},
+		{"127.0.0.1:40000", "evil.example:11434", "", http.StatusForbidden},
+		{"127.0.0.1:40000", "localhost:11434", "http://localhost:3000", http.StatusForbidden},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "http://"+test.host+ClaudeDesktopPathPrefix+healthPath, nil)
+		r.RemoteAddr, r.Host = test.peer, test.host
+		r.Header.Set("Origin", test.origin)
+		r.Header.Set("X-Forwarded-For", "127.0.0.1")
+		w := httptest.NewRecorder()
+		gateway.ServeHTTP(w, r)
+		if w.Code != test.status {
+			t.Errorf("peer=%s host=%s origin=%s: %d", test.peer, test.host, test.origin, w.Code)
+		}
+	}
+}
