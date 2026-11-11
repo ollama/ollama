@@ -1144,15 +1144,22 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			case "text":
 				item.text = str
 			case "image", "audio":
-				raw, err := base64.StdEncoding.DecodeString(str)
-				if err != nil {
-					return item, fmt.Errorf("input.%s: %v", key, err)
-				}
-				item.media = append(item.media, raw)
+				// Decode media in a fixed order below.
 			case "video":
 				return item, fmt.Errorf("input.video not supported")
 			default:
 				return item, fmt.Errorf("unknown input field %q", key)
+			}
+		}
+		// Media order determines the model's input sequence, so it must not
+		// depend on map iteration or JSON field order.
+		for _, key := range []string{"image", "audio"} {
+			if v, ok := m[key]; ok {
+				raw, err := base64.StdEncoding.DecodeString(v.(string))
+				if err != nil {
+					return item, fmt.Errorf("input.%s: %v", key, err)
+				}
+				item.media = append(item.media, raw)
 			}
 		}
 		if item.text == "" && len(item.media) == 0 {
