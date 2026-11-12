@@ -24,9 +24,9 @@ func withClaudeDesktopPlatform(t *testing.T, goos string) {
 	oldCatalog := claudeDesktopFetchCatalog
 	claudeDesktopGOOS = goos
 	claudeDesktopProbeGateway = func(context.Context, string) error { return nil }
-	// Most tests exercise profile plumbing, not the gateway catalog.
+	// Most tests exercise profile plumbing with one available gateway route.
 	claudeDesktopFetchCatalog = func(context.Context, *http.Client, string, string) ([]proxy.ClaudeDesktopCatalogModel, error) {
-		return nil, errors.New("no gateway in tests")
+		return []proxy.ClaudeDesktopCatalogModel{{ID: "claude-sonnet-5", DisplayName: "qwen3.5"}}, nil
 	}
 	t.Cleanup(func() {
 		claudeDesktopGOOS = oldGOOS
@@ -241,8 +241,8 @@ func TestClaudeDesktopConfigureWritesOllamaCloudProfile(t *testing.T) {
 	if profile["disableNonessentialTelemetry"] != true {
 		t.Fatalf("disableNonessentialTelemetry = %v, want true", profile["disableNonessentialTelemetry"])
 	}
-	if _, ok := profile["inferenceModels"]; ok {
-		t.Fatalf("inferenceModels should be omitted so Claude can discover models, got %v", profile["inferenceModels"])
+	if !(&ClaudeDesktop{}).AutodiscoveryConfigured() {
+		t.Fatalf("profile should pin the gateway's current models: %v", profile["inferenceModels"])
 	}
 }
 
@@ -281,7 +281,7 @@ func TestClaudeDesktopConfigureActivatesNormalProfileLast(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testing.T) {
+func TestClaudeDesktopConfigureAutodiscoveryReplacesStaleModelCatalog(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
@@ -303,8 +303,8 @@ func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testi
 	}
 
 	profile := claudeDesktopReadJSON(t, paths.profile)
-	if _, ok := profile["inferenceModels"]; ok {
-		t.Fatalf("inferenceModels should be removed, got %v", profile["inferenceModels"])
+	if !(&ClaudeDesktop{}).AutodiscoveryConfigured() {
+		t.Fatalf("profile should pin the gateway's current models: %v", profile["inferenceModels"])
 	}
 	if profile["inferenceGatewayApiKey"] != "ollama" {
 		t.Fatal("expected local placeholder API key to replace the old key")
@@ -1227,49 +1227,50 @@ func TestClaudeDesktopApplyProfileChangeRequiresRestartConfirmation(t *testing.T
 	}
 }
 
-func TestClaudeDesktopConfigureOmitsInferenceModelsWithoutMappedIDs(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withClaudeDesktopPlatform(t, "darwin")
-
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(paths.desktopConfig), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(paths.meta), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(paths.desktopConfig, []byte(`{}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(paths.meta, []byte(`{"entries":[]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Persisted selections keep exact Ollama routes, but the generic configure
-	// path must not write them as inferenceModels: Claude Desktop autodiscovers
-	// the Claude-facing IDs the gateway advertises instead.
-	persisted := []string{"glm-5.2:cloud", "deepseek-v4-flash:cloud", "gemma4:26b:cloud", "qwen3:8b"}
-	if err := SaveClaudeDesktopModels(persisted); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
-		t.Fatal(err)
-	}
-
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	if models, ok := profile["inferenceModels"]; ok {
-		t.Fatalf("inferenceModels = %v, want omitted so Claude discovers gateway models", models)
-	}
-	if got := ClaudeDesktopModels(); !slices.Equal(got, persisted) {
-		t.Fatalf("persisted models = %v, want Ollama routes %v", got, persisted)
+func TestClaudeDesktopCatalogFailurePreservesProfile(t *testing.T) {
+	for _, failure := range []struct {
+		name string
+		err  error
+	}{
+		{"unavailable", errors.New("gateway catalog unavailable")},
+		{"empty", nil},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			withClaudeDesktopPlatform(t, "darwin")
+			withClaudeDesktopProcessHooks(t, func() bool { return false }, nil, func() error {
+				t.Fatal("Claude must not open after a catalog failure")
+				return nil
+			})
+			paths, err := claudeDesktopConfigPaths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			before := []byte(`{"inferenceModels":[{"name":"claude-sonnet-5","labelOverride":"saved-model"}],"customSetting":true}`)
+			if err := os.WriteFile(paths.profile, before, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			claudeDesktopFetchCatalog = func(context.Context, *http.Client, string, string) ([]proxy.ClaudeDesktopCatalogModel, error) {
+				return nil, failure.err
+			}
+			if err := (&ClaudeDesktop{}).SetInstalledFromDesktop(true, false); err == nil {
+				t.Fatal("connection succeeded without a model catalog")
+			}
+			after, err := os.ReadFile(paths.profile)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("profile changed on catalog failure: %s, %v", after, err)
+			}
+			if (&ClaudeDesktop{}).UsesOllamaGateway() {
+				t.Fatal("failed connection changed deployment mode")
+			}
+		})
 	}
 }
 
-func TestClaudeDesktopSetInstalledFromDesktopUsesGatewayDiscovery(t *testing.T) {
+func TestClaudeDesktopSetInstalledFromDesktopPinsGatewayLabels(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	withClaudeDesktopPlatform(t, "darwin")
 	openCalls := 0
@@ -1290,8 +1291,8 @@ func TestClaudeDesktopSetInstalledFromDesktopUsesGatewayDiscovery(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	// Settings persist exact Ollama routes while Claude discovers that selected
-	// catalog from the gateway instead of a stale profile list.
+	// Settings keep Ollama routes while the profile pins the gateway's route IDs
+	// and labels, preserving unrelated profile fields.
 	persisted := []string{"kimi-k3:cloud", "gemma4:26b:cloud"}
 	if err := SaveClaudeDesktopModels(persisted); err != nil {
 		t.Fatal(err)
@@ -1304,8 +1305,8 @@ func TestClaudeDesktopSetInstalledFromDesktopUsesGatewayDiscovery(t *testing.T) 
 	}
 
 	profile := claudeDesktopReadJSON(t, paths.profile)
-	if models, ok := profile["inferenceModels"]; ok {
-		t.Fatalf("inferenceModels = %v, want gateway discovery", models)
+	if !(&ClaudeDesktop{}).AutodiscoveryConfigured() {
+		t.Fatalf("profile should pin the gateway's current models: %v", profile["inferenceModels"])
 	}
 	custom, _ := profile["customSetting"].(map[string]any)
 	if custom["nested"] != true {
@@ -1313,35 +1314,6 @@ func TestClaudeDesktopSetInstalledFromDesktopUsesGatewayDiscovery(t *testing.T) 
 	}
 	if got := ClaudeDesktopModels(); !slices.Equal(got, persisted) {
 		t.Fatalf("persisted models = %v, want Ollama routes %v", got, persisted)
-	}
-}
-
-func TestClaudeDesktopSetInstalledFromDesktopOmitsInferenceModelsWithoutMappedIDs(t *testing.T) {
-	setTestHome(t, t.TempDir())
-	withClaudeDesktopPlatform(t, "darwin")
-	withClaudeDesktopProcessHooks(t,
-		func() bool { return false },
-		func() error { t.Fatal("stopped Claude should not be quit"); return nil },
-		func() error { return nil },
-	)
-
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(paths.profile, []byte(`{"inferenceModels":["kimi-k3:cloud"]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := (&ClaudeDesktop{}).SetInstalledFromDesktop(true, false); err != nil {
-		t.Fatalf("SetInstalledFromDesktop returned error: %v", err)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	if models, ok := profile["inferenceModels"]; ok {
-		t.Fatalf("inferenceModels = %v, want omitted without mapped IDs", models)
 	}
 }
 
@@ -1608,6 +1580,17 @@ func TestClaudeDesktopConfigureAutodiscoveryPinsGatewayLabels(t *testing.T) {
 	second, _ := entries[1].(map[string]any)
 	if _, ok := second["isFamilyDefault"]; ok {
 		t.Fatalf("non-default route should omit isFamilyDefault: %v", second)
+	}
+	c := &ClaudeDesktop{}
+	if !c.AutodiscoveryConfigured() {
+		t.Fatal("configured profile should match the gateway catalog")
+	}
+	delete(profile, "inferenceModels")
+	if err := writeClaudeDesktopJSON(paths.profile, profile); err != nil {
+		t.Fatal(err)
+	}
+	if c.AutodiscoveryConfigured() {
+		t.Fatal("profile without Ollama model labels needs repair")
 	}
 
 	if err := restoreClaudeDesktopProfile(); err != nil {

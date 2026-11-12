@@ -550,12 +550,15 @@ func reconcileClaudeAppProxy() error {
 			slog.Warn("failed to remember existing Claude Desktop connection", "error", err)
 		}
 	}
-	if !claudeDesktopInstalled() || !configured {
+	if !claudeDesktopInstalled() {
 		stopClaudeAppProxy()
 		return nil
 	}
 	if err := startClaudeAppProxy(); err != nil {
 		return err
+	}
+	if !configured {
+		return nil
 	}
 	return updateClaudeDesktopProfile()
 }
@@ -608,9 +611,6 @@ func startClaudeAppProxy() error {
 		)
 	}
 	availableModels, activeModels, modelSource := resolveClaudeDesktopStartupCatalog(context.Background())
-	if err := ensureClaudeDesktopModelsAvailable(context.Background(), activeModels); err != nil {
-		return recordClaudeProxyFailure(err, claudeProxyFailureNone)
-	}
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
 		RefreshLocalModels: true,
 		ListenAddr:         claudeProxyListenAddr,
@@ -1225,6 +1225,9 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 		if err := startClaudeAppProxy(); err != nil {
 			return err
 		}
+		if err := ensureClaudeDesktopModelsAvailable(context.Background(), activeClaudeDesktopModels()); err != nil {
+			return err
+		}
 	}
 	autoMode := false
 	if installed {
@@ -1235,9 +1238,6 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 		}
 	}
 	err := claudeDesktop.SetInstalledFromDesktopWithAutoMode(installed, restart, autoMode)
-	if !claudeDesktop.UsesOllamaGateway() {
-		stopClaudeAppProxy()
-	}
 	if err != nil {
 		return err
 	}

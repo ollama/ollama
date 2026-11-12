@@ -2379,6 +2379,14 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 				claudeProxyMu.Unlock()
 			})
 
+			// A disconnected profile still needs the gateway for CLI setup, even
+			// when no cloud model is currently usable. Starting it must not connect.
+			if err := reconcileClaudeAppProxy(); err != nil {
+				t.Fatal(err)
+			}
+			if claudeAppProxy == nil || fake.installed || fake.configureCalls != 0 {
+				t.Fatal("startup must serve the gateway without changing Claude's profile")
+			}
 			err := setClaudeGatewayInstalled(true, false)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("setClaudeGatewayInstalled() error = %v, want %q", err, tt.wantError)
@@ -2386,8 +2394,8 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 			if fake.installed {
 				t.Fatal("Claude profile changed without a usable model")
 			}
-			if claudeAppProxy != nil {
-				t.Fatal("Claude gateway started without a usable model")
+			if claudeAppProxy == nil {
+				t.Fatal("failed connect stopped the gateway needed for CLI recovery")
 			}
 			if !hasUsedClaudeDesktopIntegration() {
 				t.Fatal("failed enable did not expose Claude recovery settings")

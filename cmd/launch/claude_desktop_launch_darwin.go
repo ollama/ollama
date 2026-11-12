@@ -37,7 +37,7 @@ func (c *launcherClient) launchClaudeDesktop(ctx context.Context, desktop *Claud
 			candidate = proxy.ClaudeDesktopMappings(proxy.SelectClaudeDesktopModels(nil, saved.Models))
 		}
 	}
-	catalog, err := fetchClaudeDesktopCLICatalog(ctx)
+	catalog, err := fetchClaudeDesktopCatalog(ctx)
 	if err != nil {
 		return err
 	}
@@ -98,7 +98,7 @@ func (c *launcherClient) launchClaudeDesktop(ctx context.Context, desktop *Claud
 		return applyClaudeDesktopMappings(ctx, candidate, func() error {
 			// The app gateway resolves metadata and checks current Cloud, account,
 			// plan, and local-model access before advertising these routes.
-			catalog, err := fetchClaudeDesktopCLICatalog(ctx)
+			catalog, err := fetchClaudeDesktopCatalog(ctx)
 			if err != nil {
 				return err
 			}
@@ -118,33 +118,12 @@ func (c *launcherClient) launchClaudeDesktop(ctx context.Context, desktop *Claud
 	return nil
 }
 
-func fetchClaudeDesktopCLICatalog(ctx context.Context) ([]proxy.ClaudeDesktopCatalogModel, error) {
-	ctx, cancel := context.WithTimeout(ctx, claudeDesktopCatalogTimeout)
-	defer cancel()
-	return claudeDesktopFetchCatalog(ctx, nil, claudeDesktopGatewayBaseURL, "ollama")
-}
-
 func claudeDesktopCatalogMappings(catalog []proxy.ClaudeDesktopCatalogModel) map[string]string {
 	mappings := make(map[string]string, len(catalog))
 	for _, model := range catalog {
 		mappings[model.ID] = model.DisplayName
 	}
 	return mappings
-}
-
-func claudeDesktopPinnedCatalogMatches(targets claudeDesktopTargets, catalog []proxy.ClaudeDesktopCatalogModel) bool {
-	wanted, _ := json.Marshal(claudeDesktopInferenceModels(catalog))
-	for _, target := range targets.thirdPartyProfiles {
-		profile, err := readClaudeDesktopJSON(target.profile)
-		if err != nil {
-			return false
-		}
-		actual, _ := json.Marshal(profile["inferenceModels"])
-		if string(actual) != string(wanted) {
-			return false
-		}
-	}
-	return true
 }
 
 // Change only the Claude selection. Raw JSON preserves unrelated settings and
@@ -238,7 +217,7 @@ func applyClaudeDesktopMappings(ctx context.Context, mappings map[string]string,
 		rollbackErr := write(document, integrations)
 		// Refresh the gateway back to the restored selection; no inference runs.
 		if rollbackErr == nil {
-			_, rollbackErr = fetchClaudeDesktopCLICatalog(context.Background())
+			_, rollbackErr = fetchClaudeDesktopCatalog(context.Background())
 		}
 		return errors.Join(applyErr, rollbackErr)
 	}

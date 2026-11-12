@@ -89,25 +89,24 @@ func (c *ClaudeDesktop) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error 
 	if err := ensureClaudeDesktopGateway(); err != nil {
 		return err
 	}
+	models, err := fetchClaudeDesktopCatalog(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(claudeDesktopInferenceModels(models)) == 0 {
+		return errors.New("no Claude Desktop models are available; check model access in Ollama Settings")
+	}
 	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return err
 	}
-	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode, claudeDesktopCatalog())
+	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode, models)
 }
 
-// claudeDesktopCatalog reads the routes the gateway advertises so the profile
-// can pin the same names the gateway serves. Claude Desktop names well-known
-// route IDs itself, so discovery alone never renames them in the picker. A
-// failed read is not fatal: the profile then stays on plain discovery.
-func claudeDesktopCatalog() []proxy.ClaudeDesktopCatalogModel {
-	ctx, cancel := context.WithTimeout(context.Background(), claudeDesktopCatalogTimeout)
+func fetchClaudeDesktopCatalog(ctx context.Context) ([]proxy.ClaudeDesktopCatalogModel, error) {
+	ctx, cancel := context.WithTimeout(ctx, claudeDesktopCatalogTimeout)
 	defer cancel()
-	models, err := claudeDesktopFetchCatalog(ctx, nil, claudeDesktopGatewayBaseURL, "ollama")
-	if err != nil {
-		return nil
-	}
-	return models
+	return claudeDesktopFetchCatalog(ctx, nil, claudeDesktopGatewayBaseURL, "ollama")
 }
 
 func (c *ClaudeDesktop) RestoreHint() string {
@@ -137,7 +136,26 @@ func (c *ClaudeDesktop) AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool 
 	if err != nil {
 		return false
 	}
-	return claudeDesktopTargetsConfigured(targets, autoMode)
+	if !claudeDesktopTargetsConfigured(targets, autoMode) {
+		return false
+	}
+	catalog, err := fetchClaudeDesktopCatalog(context.Background())
+	return err == nil && len(catalog) > 0 && claudeDesktopPinnedCatalogMatches(targets, catalog)
+}
+
+func claudeDesktopPinnedCatalogMatches(targets claudeDesktopTargets, catalog []proxy.ClaudeDesktopCatalogModel) bool {
+	wanted, _ := json.Marshal(claudeDesktopInferenceModels(catalog))
+	for _, target := range targets.thirdPartyProfiles {
+		profile, err := readClaudeDesktopJSON(target.profile)
+		if err != nil {
+			return false
+		}
+		actual, _ := json.Marshal(profile["inferenceModels"])
+		if string(actual) != string(wanted) {
+			return false
+		}
+	}
+	return true
 }
 
 // UsesOllamaGateway reports whether Claude Desktop is currently routed through
@@ -1262,7 +1280,11 @@ func defaultClaudeDesktopQuitApp(ctx context.Context) error {
 		script := `Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
 		return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Run()
 	}
-	return exec.CommandContext(ctx, "osascript", "-e", `tell application "Claude" to quit`).Run()
+	output, err := exec.CommandContext(ctx, "osascript", "-e", `tell application "Claude" to quit`).CombinedOutput()
+	if err != nil && len(output) > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return err
 }
 
 func quotePowerShellString(s string) string {
