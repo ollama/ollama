@@ -52,7 +52,7 @@ func TestPackedMXFP4ExpertSelection(t *testing.T) {
 		input := mlx.FromValues(make([]float32, 32), 1, 1, 1, 32)
 		input = mlx.AddScalar(input, 1)
 		selected := mlx.FromValues([]uint32{1}, 1, 1)
-		output := bank.apply(input, selected)
+		output := bank.apply(input, selected, false)
 		mlx.Eval(output)
 		if got := output.Dims(); !slices.Equal(got, []int{1, 1, 1, 32}) {
 			t.Fatalf("expert output shape = %v", got)
@@ -90,6 +90,57 @@ func TestMixtureOfExpertsMultiExpertShape(t *testing.T) {
 		}
 		if !slices.Contains(mlx.Collect(&moe), shared.Weight) {
 			t.Fatal("model weight collection omitted shared expert projection")
+		}
+	})
+}
+
+// A prompt's tokens run their experts grouped by expert; the result matches
+// running them token by token.
+func TestMixtureOfExpertsSortedMatchesUnsorted(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const experts, width = 8, 64
+		bank := func(seed int) expertBank {
+			weights := make([]*mlx.Array, experts)
+			scales := make([]*mlx.Array, experts)
+			for e := range weights {
+				values := make([]float32, width*width)
+				for i := range values {
+					values[i] = float32((i*7+e*13+seed*5)%17-8) * .03
+				}
+				weights[e], scales[e], _ = mlx.Quantize(mlx.FromValues(values, width, width), 32, 4, "mxfp4")
+			}
+			return expertBank{Weight: mlx.Stack(weights, 0), Scale: mlx.Stack(scales, 0)}
+		}
+		gateWeights := make([]float32, experts*width)
+		for i := range gateWeights {
+			gateWeights[i] = float32((i*11)%23-11) * .05
+		}
+		shared := nn.NewLinear(mlx.FromValues(make([]float32, width*width), width, width), nil)
+		moe := mixtureOfExperts{
+			Gate: &expertGate{Weight: mlx.FromValues(gateWeights, experts, width), Bias: mlx.FromValues(make([]float32, experts), experts), TopK: 3, Scale: 1},
+			Up:   bank(1), GateUp: bank(2), Down: bank(3),
+			Shared: []nn.LinearLayer{shared, shared, shared},
+			Limit:  100,
+		}
+		const tokens = sortedRoutes + 44
+		values := make([]float32, tokens*width)
+		for i := range values {
+			values[i] = float32((i*3)%29-14) * .05
+		}
+		input := mlx.FromValues(values, 1, tokens, width)
+		sorted := moe.forward(input, nil)
+		var rows []*mlx.Array
+		for i := 0; i < tokens; i += sortedRoutes / 2 {
+			end := min(i+sortedRoutes/2, tokens)
+			rows = append(rows, moe.forward(input.Slice(mlx.Slice(), mlx.Slice(i, end), mlx.Slice()), nil))
+		}
+		unsorted := mlx.Concatenate(rows, 1)
+		mlx.Eval(sorted, unsorted)
+		got, want := sorted.Floats(), unsorted.Floats()
+		for i := range want {
+			if math.Abs(float64(got[i]-want[i])) > 1e-3*(1+math.Abs(float64(want[i]))) {
+				t.Fatalf("output %d: sorted %g, unsorted %g", i, got[i], want[i])
+			}
 		}
 	})
 }

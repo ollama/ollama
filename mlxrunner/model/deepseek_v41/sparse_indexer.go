@@ -44,15 +44,24 @@ func (s *sparseIndexer) encodeKeys(latent *mlx.Array, start, ratio int, frequenc
 			positions[i] = int32(start + i + 1 - ratio)
 		}
 	}
-	rotated := rotateTail(mlx.ExpandDims(key, 2), mlx.FromValues(positions, batch, length), frequencies, false)
+	rotated := mlx.RotateTail(mlx.ExpandDims(key, 2), mlx.FromValues(positions, batch, length), frequencies, false)
 	return mlx.Squeeze(rotated, 2).AsType(mlx.DTypeFloat32)
 }
+
+// indexScoreBytes bounds each FP32 score matrix across batch rows, attention
+// heads, queries, and compressed keys. Each query's selection is independent.
+const indexScoreBytes = 384 << 20
 
 // selectKeys ranks compressed positions once more history exists than the
 // published top-k budget. Before then every completed position is selected.
 // Candidate-block pruning precedes this ranking for index sources after the
 // candidate source layer.
 func (s *sparseIndexer) selectKeys(x, queryLow, keys, candidates *mlx.Array, start, ratio int, frequencies []float32) (selection, candidateMask *mlx.Array) {
+	rows := max(1, indexScoreBytes/(4*max(x.Dim(0), 1)*s.Heads*max(keys.Dim(1), 1)))
+	return s.selectKeysInRows(x, queryLow, keys, candidates, start, ratio, frequencies, rows)
+}
+
+func (s *sparseIndexer) selectKeysInRows(x, queryLow, keys, candidates *mlx.Array, start, ratio int, frequencies []float32, rows int) (selection, candidateMask *mlx.Array) {
 	count := keys.Dim(1)
 	if count <= s.TopK {
 		return nil, nil
@@ -64,13 +73,42 @@ func (s *sparseIndexer) selectKeys(x, queryLow, keys, candidates *mlx.Array, sta
 	for i := range positions {
 		positions[i] = int32(start + i)
 	}
-	query = rotateTail(query, mlx.FromValues(positions, batch, length), frequencies, false)
+	query = mlx.RotateTail(query, mlx.FromValues(positions, batch, length), frequencies, false)
 	queries := mlx.Transpose(query.AsType(mlx.DTypeFloat32), 0, 2, 1, 3)
 	keyMatrix := mlx.ExpandDims(mlx.Transpose(keys.AsType(mlx.DTypeFloat32), 0, 2, 1), 1)
-	scores := mlx.Transpose(mlx.Matmul(queries, keyMatrix), 0, 2, 1, 3)
-	scores = mlx.Maximum(scores, mlx.FromValue(float32(0)))
 	weights := s.Weights.Forward(x).AsType(mlx.DTypeFloat32)
 	weights = mlx.MulScalar(weights, 1/float32(math.Sqrt(float64(s.Width*s.Heads))))
+	var selections, masks []*mlx.Array
+	for first := 0; first < length; first += rows {
+		n := min(rows, length-first)
+		block := mlx.Slice(first, first+n)
+		var blockCandidates *mlx.Array
+		if candidates != nil {
+			blockCandidates = candidates.Slice(mlx.Slice(), block, mlx.Slice())
+		}
+		sel, mask := s.selectRows(queries.Slice(mlx.Slice(), mlx.Slice(), block, mlx.Slice()), keyMatrix,
+			weights.Slice(mlx.Slice(), block, mlx.Slice()), blockCandidates, start+first, n, count, ratio)
+		selections = append(selections, sel)
+		if mask != nil {
+			masks = append(masks, mask)
+		}
+	}
+	selection = selections[0]
+	if len(selections) > 1 {
+		selection = mlx.Concatenate(selections, 1)
+	}
+	if len(masks) > 0 {
+		candidateMask = masks[0]
+		if len(masks) > 1 {
+			candidateMask = mlx.Concatenate(masks, 1)
+		}
+	}
+	return selection, candidateMask
+}
+
+func (s *sparseIndexer) selectRows(queries, keyMatrix, weights, candidates *mlx.Array, start, length, count, ratio int) (selection, candidateMask *mlx.Array) {
+	scores := mlx.Transpose(mlx.Matmul(queries, keyMatrix), 0, 2, 1, 3)
+	scores = mlx.Maximum(scores, mlx.FromValue(float32(0)))
 	scores = mlx.Sum(mlx.Mul(scores, mlx.ExpandDims(weights, -1)), 2, false)
 
 	visible := make([]bool, length*count)

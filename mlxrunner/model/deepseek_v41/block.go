@@ -136,32 +136,7 @@ func (h connectionMix) coefficients(streams *mlx.Array) (pre, post, residual *ml
 	flat := mlx.Reshape(streams.AsType(mlx.DTypeFloat32), int32(dims[0]), int32(dims[1]), h.Copies*int32(dims[3]))
 	variance := mlx.Mean(mlx.Mul(flat, flat), -1, true)
 	projected := mlx.Matmul(flat, mlx.Transpose(h.Projection, 1, 0))
-	logits := mlx.Mul(projected, mlx.RSqrt(mlx.AddScalar(variance, h.NormEpsilon)))
-	return splitConnectionMix(logits, h.Scale, h.Base, h.Copies, h.Iterations, h.MixEpsilon)
-}
-
-func splitConnectionMix(logits, scales, base *mlx.Array, copies int32, iterations int, eps float32) (pre, post, residual *mlx.Array) {
-	count := int(copies)
-	preLogits := logits.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, count))
-	postLogits := logits.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(count, 2*count))
-	matrixLogits := logits.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(2*count, int((copies+2)*copies)))
-	preBias := base.Slice(mlx.Slice(0, count))
-	postBias := base.Slice(mlx.Slice(count, 2*count))
-	matrixBias := base.Slice(mlx.Slice(2*count, int((copies+2)*copies)))
-	preScale := scales.Slice(mlx.Slice(0, 1))
-	postScale := scales.Slice(mlx.Slice(1, 2))
-	matrixScale := scales.Slice(mlx.Slice(2, 3))
-	pre = mlx.AddScalar(mlx.Sigmoid(mlx.Add(mlx.Mul(preLogits, preScale), preBias)), eps)
-	post = mlx.MulScalar(mlx.Sigmoid(mlx.Add(mlx.Mul(postLogits, postScale), postBias)), 2)
-	matrix := mlx.Add(mlx.Mul(matrixLogits, matrixScale), matrixBias)
-	matrix = mlx.Reshape(matrix, int32(logits.Dim(0)), int32(logits.Dim(1)), copies, copies)
-	matrix = mlx.AddScalar(mlx.SoftmaxAxis(matrix, -1, true), eps)
-	matrix = mlx.Div(matrix, mlx.AddScalar(mlx.Sum(matrix, -2, true), eps))
-	for range iterations - 1 {
-		matrix = mlx.Div(matrix, mlx.AddScalar(mlx.Sum(matrix, -1, true), eps))
-		matrix = mlx.Div(matrix, mlx.AddScalar(mlx.Sum(matrix, -2, true), eps))
-	}
-	return pre, post, matrix
+	return mlx.ConnectionMix(projected, variance, h.Scale, h.Base, int(h.Copies), h.Iterations, h.NormEpsilon, h.MixEpsilon)
 }
 
 func collapseConnection(streams, pre *mlx.Array) *mlx.Array {

@@ -2,6 +2,7 @@ package deepseek_v41
 
 import (
 	"math"
+	"math/rand/v2"
 	"slices"
 	"testing"
 
@@ -94,6 +95,57 @@ func TestCandidateBlocksPadPartialLastBlock(t *testing.T) {
 		mlx.Eval(selected)
 		if got, want := selected.AsType(mlx.DTypeInt32).Ints(), []int32{0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1}; !slices.Equal(got, want) {
 			t.Fatalf("partial final block %v, want %v", got, want)
+		}
+	})
+}
+
+// Scoring queries in row blocks bounds the scores' memory without changing any
+// selection: each query's scores, causal limit, and candidate blocks are its own.
+func TestSparseIndexerRowBlocksMatchOneBlock(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const heads, width, low, hidden, length, count, start = 32, 128, 64, 64, 2047, 3000, 2000
+		rng := rand.New(rand.NewPCG(1, 2))
+		values := func(n int, scale float64) []float32 {
+			v := make([]float32, n)
+			for i := range v {
+				v[i] = float32(rng.NormFloat64() * scale)
+			}
+			return v
+		}
+		source := &sparseIndexer{
+			Query:              nn.NewLinear(mlx.FromValues(values(heads*width*low, 0.1), heads*width, low), nil),
+			Weights:            nn.NewLinear(mlx.FromValues(values(heads*hidden, 0.1), heads, hidden), nil),
+			Heads:              heads,
+			Width:              width,
+			TopK:               512,
+			CandidateSource:    true,
+			CandidateBlocks:    8,
+			CandidateBlockSize: 128,
+		}
+		x := mlx.FromValues(values(length*hidden, 1), 1, length, hidden)
+		queryLow := mlx.FromValues(values(length*low, 1), 1, length, low)
+		keys := mlx.FromValues(values(count*width, 1), 1, count, width)
+		frequencies := []float32{1, 0.1, 0.01, 0.001}
+
+		later := *source
+		later.CandidateSource = false
+		later.UsesCandidates = true
+		for _, rows := range []int{256, 100} {
+			wholeSel, wholeMask := source.selectKeysInRows(x, queryLow, keys, nil, start, 1, frequencies, length)
+			blockSel, blockMask := source.selectKeysInRows(x, queryLow, keys, nil, start, 1, frequencies, rows)
+			wholeLater, _ := later.selectKeysInRows(x, queryLow, keys, wholeMask, start, 1, frequencies, length)
+			blockLater, _ := later.selectKeysInRows(x, queryLow, keys, blockMask, start, 1, frequencies, rows)
+			wm, bm := wholeMask.AsType(mlx.DTypeInt32), blockMask.AsType(mlx.DTypeInt32)
+			mlx.Eval(wholeSel, blockSel, wm, bm, wholeLater, blockLater)
+			if !slices.Equal(wholeSel.Ints(), blockSel.Ints()) {
+				t.Fatalf("%d-row blocks select differently from one block", rows)
+			}
+			if !slices.Equal(wm.Ints(), bm.Ints()) {
+				t.Fatalf("%d-row blocks keep different candidate blocks", rows)
+			}
+			if !slices.Equal(wholeLater.Ints(), blockLater.Ints()) {
+				t.Fatalf("%d-row blocks select differently under candidates", rows)
+			}
 		}
 	})
 }

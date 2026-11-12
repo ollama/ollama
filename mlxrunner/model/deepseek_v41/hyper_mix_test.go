@@ -22,7 +22,7 @@ func TestConnectionMix(t *testing.T) {
 		logits := mlx.FromValues(logitValues, 1, 1, len(logitValues))
 		base := mlx.FromValues(baseValues, len(baseValues))
 		scale := mlx.FromValues(scales, 3)
-		pre, post, matrix := splitConnectionMix(logits, scale, base, copies, 20, eps)
+		pre, post, matrix := mlx.ConnectionMix(logits, mlx.Zeros(mlx.DTypeFloat32, 1, 1, 1), scale, base, copies, 20, 1, eps)
 		streams := mlx.FromValues([]float32{1, 2, 3, 4, 5, 6, 7, 8}, 1, 1, copies, 2)
 		collapsed := collapseConnection(streams, pre)
 		injected := injectConnection(mlx.FromValues([]float32{.5, -.75}, 1, 1, 2), streams, post, matrix)

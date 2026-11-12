@@ -31,13 +31,13 @@ func (a *latentAttention) project(x, positions *mlx.Array) (query, keyValue, que
 	query = mlx.Reshape(a.QueryHigh.Forward(queryLow), batch, length, a.Heads, a.HeadWidth)
 	keyValue = a.KeyNorm.Forward(a.KeyValue.Forward(x), 0)
 	keyValue = mlx.Reshape(keyValue, batch, length, 1, a.HeadWidth)
-	return rotateTail(query, positions, a.Frequencies, false), rotateTail(keyValue, positions, a.Frequencies, false), queryLow
+	return mlx.RotateTail(query, positions, a.Frequencies, false), mlx.RotateTail(keyValue, positions, a.Frequencies, false), queryLow
 }
 
 func (a *latentAttention) finish(query, keyHistory, compressed, selected, positions *mlx.Array, queryStart, keyStart, ratio int) *mlx.Array {
 	keys := mlx.Squeeze(keyHistory, 2)
 	out := attendWindow(query, keys, compressed, selected, a.Sink, queryStart, keyStart, a.Window, ratio, 1/float32(math.Sqrt(float64(a.HeadWidth))))
-	out = rotateTail(out, positions, a.Frequencies, true)
+	out = mlx.RotateTail(out, positions, a.Frequencies, true)
 	out = a.OutputLow.forward(out)
 	return a.OutputHigh.Forward(out)
 }
@@ -66,36 +66,24 @@ func rotaryFrequencies(cfg *Config, compressed bool) []float32 {
 	return freq
 }
 
-// rotateTail applies adjacent-pair RoPE to the last rotaryWidth channels of
-// [batch, tokens, heads, channels]. The inverse removes query rotation from
-// the attention output before the grouped output projection.
-func rotateTail(x, positions *mlx.Array, frequencies []float32, inverse bool) *mlx.Array {
-	shape := x.Dims()
-	batch, length, heads, width := int32(shape[0]), int32(shape[1]), int32(shape[2]), int32(shape[3])
-	rotaryWidth := int32(len(frequencies) * 2)
-	pass := x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, int(width-rotaryWidth)))
-	tail := x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(int(width-rotaryWidth), mlx.End))
-	pairs := mlx.Reshape(tail.AsType(mlx.DTypeFloat32), batch, length, heads, rotaryWidth/2, 2)
-	real := mlx.Squeeze(pairs.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0)), -1)
-	imag := mlx.Squeeze(pairs.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(1)), -1)
-	angles := mlx.Mul(mlx.Reshape(positions.AsType(mlx.DTypeFloat32), batch, length, 1, 1), mlx.FromValues(frequencies, 1, 1, 1, len(frequencies)))
-	cosine, sine := mlx.Cos(angles), mlx.Sin(angles)
-	if inverse {
-		sine = mlx.Neg(sine)
-	}
-	rotatedReal := mlx.Sub(mlx.Mul(real, cosine), mlx.Mul(imag, sine))
-	rotatedImag := mlx.Add(mlx.Mul(real, sine), mlx.Mul(imag, cosine))
-	rotated := mlx.Reshape(mlx.Stack([]*mlx.Array{rotatedReal, rotatedImag}, -1), batch, length, heads, rotaryWidth).AsType(x.DType())
-	if rotaryWidth == width {
-		return rotated
-	}
-	return mlx.Concatenate([]*mlx.Array{pass, rotated}, -1)
-}
-
 // attendWindow includes each head's learned sink in the softmax denominator.
 // Queries and keys have absolute positions, while the supplied raw KV begins
 // at keyStart. Compressed key j becomes visible after raw token (j+1)*ratio-1.
 func attendWindow(q, kv, compressed, selection, sink *mlx.Array, queryStart, keyStart, window, ratio int, scale float32) *mlx.Array {
+	if compressed != nil && selection != nil {
+		first := max(queryStart-window+1, keyStart)
+		last := min(queryStart+q.Dim(1), keyStart+kv.Dim(1))
+		if first < last {
+			raw := kv.Slice(mlx.Slice(), mlx.Slice(first-keyStart, last-keyStart), mlx.Slice())
+			if out, ok := mlx.SparseWindowAttention(q, raw, compressed, selection, sink, queryStart, first, window, scale); ok {
+				return out
+			}
+		}
+	}
+	return attendWindowGraph(q, kv, compressed, selection, sink, queryStart, keyStart, window, ratio, scale)
+}
+
+func attendWindowGraph(q, kv, compressed, selection, sink *mlx.Array, queryStart, keyStart, window, ratio int, scale float32) *mlx.Array {
 	batch, length, heads, width := q.Dim(0), q.Dim(1), q.Dim(2), q.Dim(3)
 	keyCount := kv.Dim(1)
 	indices := make([]int32, length*window)
@@ -194,7 +182,7 @@ func (c *compressor) encode(x, previous *mlx.Array, start int, frequencies []flo
 			positions[i] = int32(start + i)
 		}
 		latent := c.Norm.Forward(values.AsType(x.DType()), 0)
-		rotated := mlx.Squeeze(rotateTail(mlx.ExpandDims(latent, 2), mlx.FromValues(positions, batch, length), frequencies, false), 2)
+		rotated := mlx.Squeeze(mlx.RotateTail(mlx.ExpandDims(latent, 2), mlx.FromValues(positions, batch, length), frequencies, false), 2)
 		return rotated.AsType(mlx.DTypeFloat32), latent, values, scores
 	}
 
@@ -227,7 +215,7 @@ func (c *compressor) encode(x, previous *mlx.Array, start int, frequencies []flo
 	for i := range positions {
 		positions[i] = int32(groupStart + i*c.Ratio)
 	}
-	rotated := mlx.Squeeze(rotateTail(mlx.ExpandDims(pooled, 2), mlx.FromValues(positions, batch, groups), frequencies, false), 2)
+	rotated := mlx.Squeeze(mlx.RotateTail(mlx.ExpandDims(pooled, 2), mlx.FromValues(positions, batch, groups), frequencies, false), 2)
 
 	indices := make([]int32, length)
 	visible := make([]float32, length)

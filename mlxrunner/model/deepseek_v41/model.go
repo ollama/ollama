@@ -197,6 +197,8 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	if err != nil {
 		return err
 	}
+	// Unembed consumes FP32 weights. Keep the conversion across decode steps.
+	m.Head = m.Head.AsType(mlx.DTypeFloat32)
 	norm, err := requireTensor(tensors, "norm.weight")
 	if err != nil {
 		return err

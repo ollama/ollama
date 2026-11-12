@@ -135,8 +135,8 @@ func TestRotateTailPreservesLeadingChannelsAndInverts(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		x := mlx.FromValues([]float32{10, 20, 1, 0, 10, 20, 1, 0}, 1, 2, 1, 4)
 		positions := mlx.FromValues([]int32{0, 1}, 1, 2)
-		rotated := rotateTail(x, positions, []float32{1}, false)
-		recovered := rotateTail(rotated, positions, []float32{1}, true)
+		rotated := mlx.RotateTail(x, positions, []float32{1}, false)
+		recovered := mlx.RotateTail(rotated, positions, []float32{1}, true)
 		mlx.Eval(rotated, recovered)
 		compareFloats(t, "rotated", rotated.Floats(), []float32{10, 20, 1, 0, 10, 20, float32(math.Cos(1)), float32(math.Sin(1))}, 1e-5)
 		compareFloats(t, "inverse", recovered.Floats(), x.Floats(), 1e-5)
@@ -182,5 +182,148 @@ func TestAttendWindowUsesSelectedCompressedPositions(t *testing.T) {
 		result := attendWindow(q, kv, compressed, selection, sink, 0, 0, 2, 1, 1)
 		mlx.Eval(result)
 		compareFloats(t, "selected compressed attention", result.Floats(), []float32{.5, 0, 3.25, 0, 6.25, 0}, 1e-5)
+	})
+}
+
+func TestSparseWindowAttentionMatchesGraph(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("sparse window kernel requires a GPU")
+		}
+		const length, context, compressedCount, heads, width, window, topK = 33, 70, 64, 64, 512, 7, 32
+		queryValues := make([]float32, length*heads*width)
+		keyValues := make([]float32, context*width)
+		compressedValues := make([]float32, compressedCount*width)
+		selected := make([]int32, length*topK)
+		sinks := make([]float32, heads)
+		for i := range queryValues {
+			queryValues[i] = float32((i*17)%29-14) / 19
+		}
+		for i := range keyValues {
+			keyValues[i] = float32((i*13)%31-15) / 17
+		}
+		for i := range compressedValues {
+			compressedValues[i] = float32((i*7)%23-11) / 13
+		}
+		for i := range selected {
+			selected[i] = int32((i * 7) % compressedCount)
+			if i%11 == 0 {
+				selected[i] = -1
+			}
+		}
+		for i := range sinks {
+			sinks[i] = float32(i%7-3) / 10
+		}
+		compressed := mlx.FromValues(compressedValues, 1, compressedCount, width)
+		selection := mlx.FromValues(selected, 1, length, topK)
+		sink := mlx.FromValues(sinks, heads)
+		for _, dtype := range []mlx.DType{mlx.DTypeBFloat16, mlx.DTypeFloat32} {
+			q := mlx.FromValues(queryValues, 1, length, heads, width).AsType(dtype)
+			for _, rawType := range []mlx.DType{mlx.DTypeBFloat16, mlx.DTypeFloat32} {
+				kv := mlx.FromValues(keyValues, 1, context, width).AsType(rawType)
+				kernel, ok := mlx.SparseWindowAttention(q, kv, compressed, selection, sink, 25, 5, window, .125)
+				if !ok {
+					t.Fatal("GPU sparse window kernel was unavailable")
+				}
+				got := attendWindow(q, kv, compressed, selection, sink, 25, 5, window, 1, .125).AsType(mlx.DTypeFloat32)
+				want := attendWindowGraph(q, kv, compressed, selection, sink, 25, 5, window, 1, .125).AsType(mlx.DTypeFloat32)
+				kernel = kernel.AsType(mlx.DTypeFloat32)
+				mlx.Eval(got, want, kernel)
+				tolerance := 1e-4
+				if dtype == mlx.DTypeBFloat16 {
+					tolerance = 1e-3
+				}
+				compareFloats(t, "sparse window wrapper", got.Floats(), want.Floats(), tolerance)
+				compareFloats(t, "sparse window kernel", kernel.Floats(), want.Floats(), tolerance)
+			}
+		}
+	})
+}
+
+func TestSparseWindowAttentionKeepsBatchRowsSeparate(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("sparse window kernel requires a GPU")
+		}
+		const batchSize, length, heads, width, rawCount, compressedCount, topK = 2, 1, 3, 64, 12, 13, 5
+		queryValues := make([]float32, batchSize*length*heads*width)
+		rawValues := make([]float32, batchSize*rawCount*width)
+		compressedValues := make([]float32, batchSize*compressedCount*width)
+		selected := make([]int32, batchSize*length*topK)
+		for i := range queryValues {
+			queryValues[i] = float32(i%23-11) / 17
+		}
+		for i := range rawValues {
+			rawValues[i] = float32(i%31-15) / 19
+		}
+		for i := range compressedValues {
+			compressedValues[i] = float32(i%37-18) / 21
+		}
+		for i := range topK {
+			selected[i] = int32((i * 3) % compressedCount)
+			selected[topK+i] = -1
+		}
+		q := mlx.FromValues(queryValues, batchSize, length, heads, width).AsType(mlx.DTypeBFloat16)
+		raw := mlx.FromValues(rawValues, batchSize, rawCount, width).AsType(mlx.DTypeBFloat16)
+		compressed := mlx.FromValues(compressedValues, batchSize, compressedCount, width)
+		selection := mlx.FromValues(selected, batchSize, length, topK)
+		sink := mlx.FromValues([]float32{.2, -.1, .4}, heads)
+		got, ok := mlx.SparseWindowAttention(q, raw, compressed, selection, sink, 14, 5, 4, .125)
+		if !ok {
+			t.Fatal("GPU sparse window kernel was unavailable")
+		}
+		wantRows := make([]*mlx.Array, batchSize)
+		for row := range batchSize {
+			part := mlx.Slice(row, row+1)
+			wantRows[row] = attendWindowGraph(q.Slice(part, mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				raw.Slice(part, mlx.Slice(), mlx.Slice()),
+				compressed.Slice(part, mlx.Slice(), mlx.Slice()),
+				selection.Slice(part, mlx.Slice(), mlx.Slice()), sink, 14, 5, 4, 1, .125)
+		}
+		want := mlx.Concatenate(wantRows, 0).AsType(mlx.DTypeFloat32)
+		got = got.AsType(mlx.DTypeFloat32)
+		mlx.Eval(got, want)
+		compareFloats(t, "batch rows with masked selection", got.Floats(), want.Floats(), 1e-3)
+	})
+}
+
+func TestSparseWindowAttentionModelDecodeShape(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("sparse window kernel requires a GPU")
+		}
+		const width, heads, window, topK, compressedCount = 512, 64, 128, 512, 1024
+		qValues := make([]float32, heads*width)
+		rawValues := make([]float32, window*width)
+		compressedValues := make([]float32, compressedCount*width)
+		selected := make([]int32, topK)
+		for i := range qValues {
+			qValues[i] = float32(i%37-18) / 29
+		}
+		for i := range rawValues {
+			rawValues[i] = float32(i%31-15) / 23
+		}
+		for i := range compressedValues {
+			compressedValues[i] = float32(i%41-20) / 31
+		}
+		for i := range selected {
+			selected[i] = int32((i * 17) % compressedCount)
+			if i%13 == 0 {
+				selected[i] = -1
+			}
+		}
+		q := mlx.FromValues(qValues, 1, 1, heads, width).AsType(mlx.DTypeBFloat16)
+		raw := mlx.FromValues(rawValues, 1, window, width).AsType(mlx.DTypeBFloat16)
+		compressed := mlx.FromValues(compressedValues, 1, compressedCount, width)
+		selection := mlx.FromValues(selected, 1, 1, topK)
+		sink := mlx.Zeros(mlx.DTypeFloat32, heads)
+		got, ok := mlx.SparseWindowAttention(q, raw, compressed, selection, sink, 1023, 896, window, 1/float32(math.Sqrt(width)))
+		if !ok {
+			t.Fatal("GPU sparse window kernel was unavailable at model decode shape")
+		}
+		want := attendWindowGraph(q, raw, compressed, selection, sink, 1023, 896, window, 1, 1/float32(math.Sqrt(width)))
+		got, want = got.AsType(mlx.DTypeFloat32), want.AsType(mlx.DTypeFloat32)
+		mlx.Eval(got, want)
+		compareFloats(t, "model decode attention", got.Floats(), want.Floats(), 1e-3)
 	})
 }

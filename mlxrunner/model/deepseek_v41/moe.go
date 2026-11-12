@@ -39,9 +39,14 @@ type expertBank struct {
 	Scale  *mlx.Array
 }
 
-func (b expertBank) apply(x, indices *mlx.Array) *mlx.Array {
-	return mlx.GatherQMM(x, b.Weight, b.Scale, nil, nil, indices, true, 32, 4, "mxfp4", nil, false)
+func (b expertBank) apply(x, indices *mlx.Array, sorted bool) *mlx.Array {
+	return mlx.GatherQMM(x, b.Weight, b.Scale, nil, nil, indices, true, 32, 4, "mxfp4", nil, sorted)
 }
+
+// sortedRoutes is the token count from which the experts run over their tokens
+// grouped by expert, so a prompt reads each expert's weights once rather than
+// once per token.
+const sortedRoutes = 256
 
 type mixtureOfExperts struct {
 	Gate   *expertGate
@@ -60,17 +65,31 @@ func (m *mixtureOfExperts) forward(x, imageMask *mlx.Array) *mlx.Array {
 	if imageMask != nil {
 		flatMask = mlx.Reshape(imageMask, batch*length)
 	}
-	weights, indices := m.Gate.route(mlx.Reshape(flat, 1, batch*length, width), flatMask)
-	indices = mlx.Reshape(indices, batch*length, m.Gate.TopK)
-	weights = mlx.Reshape(weights, batch*length, m.Gate.TopK)
-	selected := mlx.Reshape(flat, batch*length, 1, 1, width)
-	gate := m.GateUp.apply(selected, indices).AsType(mlx.DTypeFloat32)
-	up := m.Up.apply(selected, indices).AsType(mlx.DTypeFloat32)
+	tokens, topK := batch*length, m.Gate.TopK
+	weights, indices := m.Gate.route(mlx.Reshape(flat, 1, tokens, width), flatMask)
+	indices = mlx.Reshape(indices, tokens, topK)
+	weights = mlx.Reshape(weights, tokens, topK)
+	selected := mlx.Reshape(flat, tokens, 1, 1, width)
+	sorted := tokens >= sortedRoutes
+	var inverse *mlx.Array
+	if sorted {
+		routes := mlx.Flatten(indices)
+		order := mlx.Argsort(routes, 0)
+		inverse = mlx.Argsort(order, 0)
+		indices = mlx.Reshape(mlx.Take(routes, order, 0), tokens*topK, 1)
+		selected = mlx.Reshape(mlx.Take(flat, mlx.FloorDivideScalar(order, topK), 0), tokens*topK, 1, 1, width)
+	}
+	gate := m.GateUp.apply(selected, indices, sorted).AsType(mlx.DTypeFloat32)
+	up := m.Up.apply(selected, indices, sorted).AsType(mlx.DTypeFloat32)
 	gate = mlx.Minimum(gate, mlx.FromValue(m.Limit))
 	up = mlx.Clip(up, mlx.FromValue(-m.Limit), mlx.FromValue(m.Limit))
 	hidden := mlx.Mul(mlx.Mul(gate, mlx.Sigmoid(gate)), up).AsType(x.DType())
-	out := m.Down.apply(hidden, indices)
-	out = mlx.Squeeze(out, 2)
+	out := m.Down.apply(hidden, indices, sorted)
+	if sorted {
+		out = mlx.Reshape(mlx.Take(mlx.Reshape(out, tokens*topK, width), inverse, 0), tokens, topK, width)
+	} else {
+		out = mlx.Squeeze(out, 2)
+	}
 	out = mlx.Sum(mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.ExpandDims(weights, -1)), 1, false)
 
 	sharedGate := m.Shared[0].Forward(x).AsType(mlx.DTypeFloat32)
