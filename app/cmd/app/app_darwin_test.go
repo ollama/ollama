@@ -1818,7 +1818,11 @@ func testResetClaudeDesktopMappingsSerializesLifecycleChange(t *testing.T, name 
 	claudeProxyMu.Lock()
 	activeGateway := claudeAppProxy
 	claudeProxyMu.Unlock()
-	if activeGateway != nil {
+	if name == "disconnect" {
+		if activeGateway != gateway {
+			t.Fatal("disconnect must preserve the gateway for CLI setup")
+		}
+	} else if activeGateway != nil {
 		t.Fatalf("Claude gateway remained active after %s", name)
 	}
 }
@@ -1987,12 +1991,16 @@ func TestPrepareClaudeDesktopConnectionPreservesFirstUseIntro(t *testing.T) {
 	if err := setClaudeDesktopConnection(true, false); err != nil {
 		t.Fatal(err)
 	}
+	if localCalls != preparationLocalCalls+1 {
+		t.Fatalf("local model lookups after Continue = %d, want %d for connection validation", localCalls, preparationLocalCalls+1)
+	}
+	continuedLocalCalls := localCalls
 	continued := getClaudeDesktopConnectionSummary()
 	if !continued.Used {
 		t.Fatalf("continued status = %+v, want integration marked used", continued)
 	}
-	if localCalls != preparationLocalCalls {
-		t.Fatalf("local model lookups after Continue = %d, want %d", localCalls, preparationLocalCalls)
+	if localCalls != continuedLocalCalls {
+		t.Fatalf("local model lookups after continued status = %d, want %d", localCalls, continuedLocalCalls)
 	}
 }
 
