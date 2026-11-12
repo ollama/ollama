@@ -291,6 +291,9 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
 					return err
+				case isFatalDownloadStatus(err):
+					// the download host refused the request; retrying the same URL will not help
+					return err
 				case errors.Is(err, errPartStalled):
 					try--
 					continue
@@ -382,6 +385,13 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 		}
 		defer resp.Body.Close()
 
+		// A 200 response carries the blob from its first byte, which is only
+		// correct for a part that starts there.
+		if resp.StatusCode != http.StatusPartialContent && (resp.StatusCode != http.StatusOK || part.StartsAt() != 0) {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+			return &downloadStatusError{StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(body))}
+		}
+
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			// rollback progress
@@ -429,6 +439,32 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 	})
 
 	return g.Wait()
+}
+
+// downloadStatusError is returned when the download host answers a part
+// request with something other than the requested bytes.
+type downloadStatusError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *downloadStatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("download host returned %s", e.Status)
+	}
+	return fmt.Sprintf("download host returned %s: %s", e.Status, e.Body)
+}
+
+// isFatalDownloadStatus reports whether err is a client error from the
+// download host that will not go away by retrying.
+func isFatalDownloadStatus(err error) bool {
+	var statusErr *downloadStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	code := statusErr.StatusCode
+	return code >= 400 && code < 500 && code != http.StatusRequestTimeout && code != http.StatusTooManyRequests
 }
 
 func (b *blobDownload) newPart(offset, size int64) error {
