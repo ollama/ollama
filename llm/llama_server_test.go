@@ -3764,17 +3764,22 @@ func TestIsGPUBuffer(t *testing.T) {
 }
 
 func TestAccumulatedToolCallsRejectsInvalidArguments(t *testing.T) {
-	_, err := accumulatedToolCalls(map[int]*llamaServerToolCallAccumulator{
-		0: {
-			name:      "weather",
-			arguments: `{"city":`,
-		},
-	})
+	acc := &llamaServerToolCallAccumulator{}
+	acc.name.WriteString("weather")
+	acc.arguments.WriteString(`{"city":`)
+	_, err := accumulatedToolCalls(map[int]*llamaServerToolCallAccumulator{0: acc})
 	if err == nil {
 		t.Fatal("expected invalid tool call arguments to return an error")
 	}
 	if !strings.Contains(err.Error(), "weather") {
 		t.Fatalf("expected function name in error, got %v", err)
+	}
+
+	trailing := &llamaServerToolCallAccumulator{}
+	trailing.name.WriteString("weather")
+	trailing.arguments.WriteString(`{"city":"oslo"} trailing`)
+	if _, err := accumulatedToolCalls(map[int]*llamaServerToolCallAccumulator{0: trailing}); err == nil {
+		t.Fatal("expected trailing data after tool call arguments to return an error")
 	}
 }
 
@@ -4066,5 +4071,91 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 	if got := conversions.Load(); got != 1 {
 		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+}
+
+// BenchmarkChatToolCallFragments streams ~2000 single-character tool-call
+// argument fragments through Chat, exercising the tool-call accumulator.
+func BenchmarkChatToolCallFragments(b *testing.B) {
+	const chunks = 2000
+
+	fullArgs := `{"data":"` + strings.Repeat("x", chunks) + `"}`
+	lines := make([]string, 0, len(fullArgs)+1)
+	for i := 0; i < len(fullArgs); i++ {
+		frag, err := json.Marshal(fullArgs[i : i+1])
+		if err != nil {
+			b.Fatal(err)
+		}
+		if i == 0 {
+			lines = append(lines, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_data","arguments":`+string(frag)+`}}]}}]}`)
+		} else {
+			lines = append(lines, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":`+string(frag)+`}}]}}]}`)
+		}
+	}
+	lines = append(lines, `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "text/event-stream")
+			for _, line := range lines {
+				fmt.Fprintln(w, line)
+			}
+		default:
+			b.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	opts := api.DefaultOptions()
+	req := ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+		Options:  &opts,
+	}
+
+	// Validate the reassembled tool call once before timing.
+	var validated ChatResponse
+	if err := runner.Chat(b.Context(), req, func(cr ChatResponse) {
+		if cr.Done {
+			validated = cr
+		}
+	}); err != nil {
+		b.Fatal(err)
+	}
+	if !validated.Done || len(validated.Message.ToolCalls) != 1 {
+		b.Fatalf("expected one done tool call, got %+v", validated)
+	}
+	got, ok := validated.Message.ToolCalls[0].Function.Arguments.Get("data")
+	if !ok || got != strings.Repeat("x", chunks) {
+		b.Fatalf("reassembled arguments mismatch: got %v (present %v)", got, ok)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		var final ChatResponse
+		if err := runner.Chat(b.Context(), req, func(cr ChatResponse) {
+			if cr.Done {
+				final = cr
+			}
+		}); err != nil {
+			b.Fatal(err)
+		}
+		if !final.Done || len(final.Message.ToolCalls) != 1 {
+			b.Fatalf("expected one done tool call, got %+v", final)
+		}
 	}
 }
