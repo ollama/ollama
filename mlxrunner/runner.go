@@ -111,6 +111,12 @@ type Runner struct {
 }
 
 func (r *Runner) Load(modelName string) error {
+	if mlx.MetalIsAvailable() {
+		// Weight preparation can free large buffers while other weights are
+		// still being evaluated. Release those buffers during loading.
+		previous := mlx.SetCacheLimit(0)
+		defer mlx.SetCacheLimit(previous)
+	}
 	weights, err := r.loadModel(modelName)
 	if err != nil {
 		return err

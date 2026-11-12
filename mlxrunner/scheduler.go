@@ -3,9 +3,11 @@ package mlxrunner
 import (
 	"context"
 	"log/slog"
+	"math"
 	"slices"
 	"time"
 
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -29,6 +31,18 @@ func (slot *batchSlot) busy() bool {
 	return slot.request != nil || slot.evaluation != nil || slot.speech != nil
 }
 
+// activeCache identifies state still owned by an executing session. A response
+// waiting for a slow reader no longer needs the completed session's cache.
+func (slot *batchSlot) activeCache() *prefixCache {
+	if slot.request != nil && !slot.request.finished {
+		return slot.cache
+	}
+	if slot.evaluation != nil {
+		return slot.scoreCache
+	}
+	return nil
+}
+
 type batchRequest struct {
 	request   request
 	session   *cacheSession
@@ -46,11 +60,16 @@ type batchRequest struct {
 }
 
 type batchScheduler struct {
-	r           *Runner
-	slots       []*batchSlot
-	nextPrefill int
-	keepScratch bool
-	drafting    batchDrafting
+	r                    *Runner
+	slots                []*batchSlot
+	nextPrefill          int
+	keepScratch          bool
+	drafting             batchDrafting
+	snapshotWorkspace    int64
+	snapshotCheck        time.Time
+	retention            snapshotRetention
+	retentionInitialized bool
+	snapshotChanges      <-chan struct{}
 }
 
 type draftBatchSize struct {
@@ -126,6 +145,11 @@ func (r *Runner) onMLX(ctx context.Context, f func() error) error {
 
 func (r *Runner) runBatchRequests(ctx context.Context) error {
 	s := &batchScheduler{r: r, slots: make([]*batchSlot, max(1, r.parallel))}
+	defer func() {
+		if s.retention != nil {
+			s.retention.Close()
+		}
+	}()
 	defer skipCleanupOnPanic(func() {
 		_ = r.onMLX(context.Background(), func() error {
 			mlx.Scoped(func() {
@@ -156,6 +180,7 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 	})
 	slog.Info("MLX request scheduler", "parallel", r.parallel, "drafting", "shared-verification", "attention", "per-request")
 	for {
+		snapshotChanged := false
 		var pending queuedRequest
 		var incoming chan queuedRequest
 		active := false
@@ -167,21 +192,35 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 			}
 		}
 		if !active {
+			var idle <-chan time.Time
+			if !s.snapshotCheck.IsZero() {
+				idle = time.After(time.Second)
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case pending = <-incoming:
+			case <-idle:
+			case <-s.snapshotChanges:
+				snapshotChanged = true
 			}
 		} else {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case pending = <-incoming:
+			case <-s.snapshotChanges:
+				snapshotChanged = true
 			default:
 			}
 		}
 		progressed := false
 		err := r.onMLX(ctx, func() error {
+			if snapshotChanged {
+				s.trimSnapshots(true)
+			}
+			measure := false
+			var before, peak int
 			mlx.Scoped(func() {
 				if pending != nil {
 					if _, generation := pending.(request); generation && !active {
@@ -192,9 +231,24 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 				}
 				// Coalesce already waiting callers without delaying the first one.
 				s.admitPending()
-				worked := s.step()
-				progressed = progressed || worked
+				step := func() {
+					worked := s.step()
+					progressed = progressed || worked
+				}
+				measure = s.hasPrefixCache() && s.retention != nil
+				if measure {
+					before = mlx.ActiveMemory()
+					peak = mlx.MeasurePeakMemory(step)
+				} else {
+					step()
+				}
 			})
+			if measure {
+				// Reserve transient workspace and growth of live cache buffers.
+				// Prefill buffers can be larger than their decode-time state.
+				s.snapshotWorkspace = max(s.snapshotWorkspace, int64(peak-before))
+			}
+			s.trimSnapshots(false)
 			// Release unused allocator buffers after the round's temporaries
 			// are freed, once all responses have drained.
 			for _, slot := range s.slots {
@@ -231,6 +285,7 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 }
 
 func (s *batchScheduler) admit(pending queuedRequest) {
+	s.trimSnapshots(true)
 	switch req := pending.(type) {
 	case request:
 		s.admitGeneration(req)
@@ -240,6 +295,11 @@ func (s *batchScheduler) admit(pending queuedRequest) {
 		s.admitSpeech(req)
 	default:
 		panic("unknown scheduler request type")
+	}
+	// The first prefix cache is created during admission. Seed the observation
+	// before its first forward so that any resulting compression remains visible.
+	if s.snapshotCheck.IsZero() {
+		s.trimSnapshots(true)
 	}
 }
 
@@ -276,7 +336,7 @@ func (s *batchScheduler) admitGeneration(request request) {
 		}
 		slot.targets = targets
 		slot.cache = newPrefixCache(slices.Concat(targets, draft))
-		slot.cache.limitBytes = maxPagedOutBytes / int64(len(s.slots))
+		slot.cache.limitBytes = s.r.snapshotLimit()
 		if s.r.spec != nil {
 			slot.speculation = newSpeculation(s.r, slot.id, s.r.spec.draft, targets, draft)
 			slot.cache.draftLookahead = s.r.cache.draftLookahead
@@ -676,4 +736,76 @@ func (s *batchScheduler) admitPending() {
 			return
 		}
 	}
+}
+
+// Other backends keep their current allowance until separately qualified.
+func (r *Runner) snapshotLimit() int64 {
+	if mlx.MetalIsAvailable() {
+		if monitor, err := discover.NewMemoryMonitor(); err == nil {
+			defer monitor.Close()
+			if _, err := monitor.Read(); err == nil {
+				return math.MaxInt64
+			}
+		}
+	}
+	return maxPagedOutBytes / int64(max(1, r.parallel))
+}
+
+func (s *batchScheduler) hasPrefixCache() bool {
+	for _, slot := range s.slots {
+		if slot != nil && (slot.cache != nil || slot.scoreCache != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+// Keep reclamation local to this runner. Revisit cross-runner pruning after
+// disk paging, with headroom for each model's active KV and workspace;
+// fitting both sets of weights alone need not improve throughput.
+func (s *batchScheduler) trimSnapshots(admitting bool) {
+	if !s.hasPrefixCache() {
+		return
+	}
+	if !s.retentionInitialized {
+		s.retentionInitialized = true
+		var err error
+		s.retention, err = newSnapshotRetention(s.r.parallel)
+		if err != nil {
+			slog.Debug("adaptive history disabled", "error", err)
+		}
+	}
+	if s.retention == nil {
+		return
+	}
+	if !admitting && time.Since(s.snapshotCheck) < time.Second {
+		return
+	}
+	s.snapshotCheck = time.Now()
+	var caches, idle []*prefixCache
+	var working, next int64
+	for _, slot := range s.slots {
+		if slot == nil {
+			continue
+		}
+		for _, c := range []*prefixCache{slot.cache, slot.scoreCache} {
+			if c == nil {
+				continue
+			}
+			caches = append(caches, c)
+			live := int64(c.liveBytes())
+			busy := c == slot.activeCache()
+			if busy {
+				working += live
+			} else {
+				idle = append(idle, c)
+				next = max(next, live)
+			}
+		}
+	}
+	// Allow one copy per active row, and one idle row which may be admitted.
+	// Restoring history or writing a shared buffer can require a fresh copy.
+	working += next
+	s.retention.trim(caches, idle, s.snapshotWorkspace, working, admitting)
+	s.snapshotChanges = s.retention.Changes()
 }

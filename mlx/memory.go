@@ -58,14 +58,32 @@ func CacheMemory() int {
 	return int(cache)
 }
 
+// priorPeak preserves the reporting interval while measuring smaller operations.
+// Like other MLX state, it is accessed only on the MLX thread.
+var priorPeak int
+
 func PeakMemory() int {
+	return max(priorPeak, nativePeakMemory())
+}
+
+func nativePeakMemory() int {
 	var peak C.size_t
 	mlxCheck(C.mlx_get_peak_memory(&peak))
 	return int(peak)
 }
 
 func ResetPeakMemory() {
+	priorPeak = 0
 	mlxCheck(C.mlx_reset_peak_memory())
+}
+
+// MeasurePeakMemory returns the allocation peak during f while preserving the
+// peak since ResetPeakMemory for request logs and other cumulative reporting.
+func MeasurePeakMemory(f func()) int {
+	priorPeak = PeakMemory()
+	mlxCheck(C.mlx_reset_peak_memory())
+	f()
+	return nativePeakMemory()
 }
 
 // MaxRecommendedWorkingSetSize returns the device's recommended upper bound
@@ -126,4 +144,14 @@ type (
 
 func ClearCache() {
 	mlxCheck(C.mlx_clear_cache())
+}
+
+// SetCacheLimit limits the freed buffers retained by MLX's allocator.
+func SetCacheLimit(limit int) int {
+	if limit < 0 {
+		panic("mlx: negative cache limit")
+	}
+	var previous C.size_t
+	mlxCheck(C.mlx_set_cache_limit(&previous, C.size_t(limit)))
+	return int(previous)
 }
