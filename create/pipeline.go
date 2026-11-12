@@ -58,19 +58,28 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 			return err
 		}
 	}
-	if inv.Config.Architecture() == "Qwen3_5Model" {
-		format, formatErr := qwenDecisionFormat(modelDir)
-		if formatErr != nil {
-			return formatErr
-		}
-		if format == d3FormatID {
-			inv, err = prepareD3Inventory(inv)
-		} else {
-			inv, err = preparePplxInventory(inv)
-		}
+	var format string
+	if arch := inv.Config.Architecture(); arch == "Qwen3_5Model" || arch == "Qwen3_5ForConditionalGeneration" {
+		format, err = qwenDecisionFormat(modelDir)
 		if err != nil {
 			return err
 		}
+	}
+	switch format {
+	case d3FormatID:
+		if inv.Config.Architecture() != "Qwen3_5Model" {
+			return fmt.Errorf("d3 decision checkpoint must declare the Qwen3_5Model architecture, got %q", inv.Config.Architecture())
+		}
+		inv, err = prepareD3Inventory(inv)
+	case autoTrustFormatID:
+		inv, err = prepareAutoTrustCodeReadoutInventory(inv)
+	default:
+		if inv.Config.Architecture() == "Qwen3_5Model" {
+			inv, err = preparePplxInventory(inv)
+		}
+	}
+	if err != nil {
+		return err
 	}
 	modelConfig, err := inferSafetensorsConfig(modelDir, inv.Config, opts.Parser, opts.Renderer)
 	if err != nil {
@@ -114,6 +123,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	policy, err := newTensorImportTransform(inv)
 	if err != nil {
 		return fmt.Errorf("build quantization policy for %q: %w", inv.Config.Architecture(), err)
+	}
+	if format == autoTrustFormatID {
+		policy = foldedReadoutImportTransform{}
 	}
 	// Arch-specific policies may fill manifest-config fields the shared
 	// inference can't derive from an arch-specific config layout.

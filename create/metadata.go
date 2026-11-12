@@ -38,7 +38,7 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 			return model.ConfigV2{}, err
 		}
 		rendererName = "pplx"
-		if format == d3FormatID {
+		if format == d3FormatID || format == autoTrustFormatID {
 			rendererName = "d3"
 		}
 		sourceDecisionRenderer = rendererName

@@ -20,7 +20,7 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, fmt.Errorf("read Qwen decision format: %w", err)
 	}
 	switch cfg.FormatID {
-	case "d3-code-readout-v1":
+	case "d3-code-readout-v1", "jev-code-readout-v1":
 		return d3.NewModel(root)
 	case "":
 		return pplxdecider.NewModel(root)
