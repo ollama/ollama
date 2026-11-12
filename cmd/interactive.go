@@ -628,6 +628,7 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 
 func normalizeFilePath(fp string) string {
 	return strings.NewReplacer(
+		"'\\''", "'", // Apostrophe embedded in a shell single-quoted path
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
