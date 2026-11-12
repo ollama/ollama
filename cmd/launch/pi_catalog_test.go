@@ -727,48 +727,52 @@ func TestPiCatalogInventoryErrorPreservesConfig(t *testing.T) {
 }
 
 func TestPiShowBudgetDoesNotChargeStatus(t *testing.T) {
-	setLaunchTestHome(t, t.TempDir())
-	withLauncherHooks(t)
-	oldTimeout := modelShowTimeout
-	modelShowTimeout = 40 * time.Millisecond
-	t.Cleanup(func() { modelShowTimeout = oldTimeout })
-	if err := config.SaveIntegration("pi", []string{"alias"}); err != nil {
-		t.Fatal(err)
-	}
-	DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "alias", nil }
-	DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			time.Sleep(100 * time.Millisecond)
-			fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
-		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"alias","remote_model":"remote","capabilities":["completion","tools"]}]}`)
-		case "/api/show":
-			fmt.Fprint(w, `{"remote_model":"remote","capabilities":["completion","tools"],"model_info":{"test.context_length":8192}}`)
-		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[{"model":"alias"}]}`)
-		case "/api/me":
-			fmt.Fprint(w, `{"name":"fixture"}`)
-		default:
-			http.NotFound(w, r)
+	synctest.Test(t, func(t *testing.T) {
+		setLaunchTestHome(t, t.TempDir())
+		withLauncherHooks(t)
+		oldTimeout := modelShowTimeout
+		modelShowTimeout = 40 * time.Millisecond
+		t.Cleanup(func() { modelShowTimeout = oldTimeout })
+		if err := config.SaveIntegration("pi", []string{"alias"}); err != nil {
+			t.Fatal(err)
 		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	c, err := newLauncherClient(defaultLaunchPolicy(true, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	current, usable, stateErr := c.launcherModelState(ctx, "pi", true)
-	if stateErr != nil || current != "alias" || !usable {
-		t.Errorf("status latency made the root primary unusable: %s/%t, %v", current, usable, stateErr)
-	}
-	if err := LaunchIntegration(ctx, IntegrationLaunchRequest{Name: "pi", ConfigureOnly: true}); err != nil {
-		t.Fatalf("status latency was charged to /show: %v", err)
-	}
+		DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "alias", nil }
+		DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/status":
+				time.Sleep(100 * time.Millisecond)
+				fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+			case "/api/tags":
+				fmt.Fprint(w, `{"models":[{"name":"alias","remote_model":"remote","capabilities":["completion","tools"]}]}`)
+			case "/api/show":
+				fmt.Fprint(w, `{"remote_model":"remote","capabilities":["completion","tools"],"model_info":{"test.context_length":8192}}`)
+			case "/api/experimental/model-recommendations":
+				fmt.Fprint(w, `{"recommendations":[{"model":"alias"}]}`)
+			case "/api/me":
+				fmt.Fprint(w, `{"name":"fixture"}`)
+			default:
+				http.NotFound(w, r)
+			}
+		})
+		originalClient := http.DefaultClient
+		http.DefaultClient = &http.Client{Transport: piMetadataTestTransport{handler: handler}}
+		t.Cleanup(func() { http.DefaultClient = originalClient })
+		t.Setenv("OLLAMA_HOST", "http://pi.test")
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		c, err := newLauncherClient(defaultLaunchPolicy(true, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, usable, stateErr := c.launcherModelState(ctx, "pi", true)
+		if stateErr != nil || current != "alias" || !usable {
+			t.Errorf("status latency made the root primary unusable: %s/%t, %v", current, usable, stateErr)
+		}
+		if err := LaunchIntegration(ctx, IntegrationLaunchRequest{Name: "pi", ConfigureOnly: true}); err != nil {
+			t.Fatalf("status latency was charged to /show: %v", err)
+		}
+	})
 }
 
 func TestPiCatalogMetadataFallback(t *testing.T) {
