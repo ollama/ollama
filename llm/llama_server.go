@@ -2288,53 +2288,92 @@ func accumulatedToolCalls(accs map[int]*llamaServerToolCallAccumulator) ([]api.T
 	return toolCalls, nil
 }
 
-func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool) (map[string]any, error) {
+// llamaServerChatRequest is the request format for llama-server's
+// POST /v1/chat/completions endpoint. Fields are declared in alphabetical
+// JSON key order so the marshaled output stays byte-identical to the
+// previous map-based encoding (encoding/json sorts map keys).
+type llamaServerChatRequest struct {
+	CachePrompt        bool                            `json:"cache_prompt"`
+	ChatTemplateKwargs map[string]any                  `json:"chat_template_kwargs,omitempty"`
+	FrequencyPenalty   float32                         `json:"frequency_penalty"`
+	Logprobs           bool                            `json:"logprobs,omitempty"`
+	Messages           []llamaServerChatRequestMessage `json:"messages"`
+	MinP               float32                         `json:"min_p"`
+	NKeep              int                             `json:"n_keep"`
+	NPredict           int                             `json:"n_predict"`
+	PresencePenalty    float32                         `json:"presence_penalty"`
+	RepeatLastN        int                             `json:"repeat_last_n"`
+	RepeatPenalty      float32                         `json:"repeat_penalty"`
+	ResponseFormat     map[string]any                  `json:"response_format,omitempty"`
+	Seed               int                             `json:"seed"`
+	Stop               []string                        `json:"stop"`
+	Stream             bool                            `json:"stream"`
+	Temperature        float32                         `json:"temperature"`
+	Tools              api.Tools                       `json:"tools,omitempty"`
+	TopK               int                             `json:"top_k"`
+	TopLogprobs        int                             `json:"top_logprobs,omitempty"`
+	TopP               float32                         `json:"top_p"`
+	TypicalP           float32                         `json:"typical_p"`
+}
+
+// llamaServerChatRequestMessage is a single chat message in a
+// llamaServerChatRequest. Like the request, fields follow alphabetical JSON
+// key order to match the previous map-based encoding.
+type llamaServerChatRequestMessage struct {
+	Content    any                       `json:"content"`
+	Name       string                    `json:"name,omitempty"`
+	Role       string                    `json:"role"`
+	ToolCallID string                    `json:"tool_call_id,omitempty"`
+	ToolCalls  []llamaServerChatToolCall `json:"tool_calls,omitempty"`
+}
+
+func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool) (llamaServerChatRequest, error) {
 	if req.Options == nil {
 		opts := api.DefaultOptions()
 		req.Options = &opts
 	}
 
-	messages := make([]map[string]any, 0, len(req.Messages))
+	messages := make([]llamaServerChatRequestMessage, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		converted, err := llamaServerChatMessage(MessageFromAPI(msg))
 		if err != nil {
-			return nil, err
+			return llamaServerChatRequest{}, err
 		}
 		messages = append(messages, converted)
 	}
 
-	body := map[string]any{
-		"messages":          messages,
-		"stream":            stream,
-		"cache_prompt":      true,
-		"n_predict":         req.Options.NumPredict,
-		"n_keep":            req.Options.NumKeep,
-		"temperature":       req.Options.Temperature,
-		"top_k":             req.Options.TopK,
-		"top_p":             req.Options.TopP,
-		"min_p":             req.Options.MinP,
-		"stop":              req.Options.Stop,
-		"repeat_penalty":    req.Options.RepeatPenalty,
-		"repeat_last_n":     llamaServerRepeatLastN(req.Options.RepeatLastN, s.options.NumCtx),
-		"frequency_penalty": req.Options.FrequencyPenalty,
-		"presence_penalty":  req.Options.PresencePenalty,
-		"typical_p":         req.Options.TypicalP,
-		"seed":              req.Options.Seed,
+	body := llamaServerChatRequest{
+		Messages:         messages,
+		Stream:           stream,
+		CachePrompt:      true,
+		NPredict:         req.Options.NumPredict,
+		NKeep:            req.Options.NumKeep,
+		Temperature:      req.Options.Temperature,
+		TopK:             req.Options.TopK,
+		TopP:             req.Options.TopP,
+		MinP:             req.Options.MinP,
+		Stop:             req.Options.Stop,
+		RepeatPenalty:    req.Options.RepeatPenalty,
+		RepeatLastN:      llamaServerRepeatLastN(req.Options.RepeatLastN, s.options.NumCtx),
+		FrequencyPenalty: req.Options.FrequencyPenalty,
+		PresencePenalty:  req.Options.PresencePenalty,
+		TypicalP:         req.Options.TypicalP,
+		Seed:             req.Options.Seed,
 	}
 	if len(req.Tools) > 0 {
-		body["tools"] = req.Tools
+		body.Tools = req.Tools
 	}
 	if req.Logprobs {
-		body["logprobs"] = true
-		body["top_logprobs"] = max(req.TopLogprobs, 1)
+		body.Logprobs = true
+		body.TopLogprobs = max(req.TopLogprobs, 1)
 	}
 	if kwargs := llamaServerChatTemplateKwargs(req.Think); kwargs != nil {
-		body["chat_template_kwargs"] = kwargs
+		body.ChatTemplateKwargs = kwargs
 	}
 	if format, err := llamaServerChatResponseFormat(req.Format); err != nil {
-		return nil, err
+		return llamaServerChatRequest{}, err
 	} else if format != nil {
-		body["response_format"] = format
+		body.ResponseFormat = format
 	}
 
 	return body, nil
@@ -2356,26 +2395,26 @@ func llamaServerChatTemplateKwargs(think *api.ThinkValue) map[string]any {
 	return kwargs
 }
 
-func llamaServerChatMessage(msg Message) (map[string]any, error) {
-	converted := map[string]any{
-		"role": msg.Role,
+func llamaServerChatMessage(msg Message) (llamaServerChatRequestMessage, error) {
+	converted := llamaServerChatRequestMessage{
+		Role: msg.Role,
 	}
 	if msg.ToolCallID != "" {
-		converted["tool_call_id"] = msg.ToolCallID
+		converted.ToolCallID = msg.ToolCallID
 	}
 	if msg.ToolName != "" {
-		converted["name"] = msg.ToolName
+		converted.Name = msg.ToolName
 	}
 	if len(msg.ToolCalls) > 0 {
 		toolCalls, err := llamaServerChatToolCalls(msg.ToolCalls)
 		if err != nil {
-			return nil, err
+			return llamaServerChatRequestMessage{}, err
 		}
-		converted["tool_calls"] = toolCalls
+		converted.ToolCalls = toolCalls
 	}
 
 	if len(msg.Media) == 0 {
-		converted["content"] = msg.Content
+		converted.Content = msg.Content
 		return converted, nil
 	}
 
@@ -2389,11 +2428,11 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 	for _, media := range msg.Media {
 		part, err := llamaServerChatMediaPart(media)
 		if err != nil {
-			return nil, err
+			return llamaServerChatRequestMessage{}, err
 		}
 		parts = append(parts, part)
 	}
-	converted["content"] = parts
+	converted.Content = parts
 	return converted, nil
 }
 
