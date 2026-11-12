@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -202,8 +203,10 @@ func describeModelFromManifest(name model.Name, mf *manifest.Manifest, runner st
 	}
 
 	// A model that will not load is the one a user most needs to see, in
-	// order to remove it. Report what the manifest says.
+	// order to remove it. Report what the manifest says, applying only limits
+	// that can be determined without the loaded model's Modelfile options.
 	if m == nil {
+		summary.Details.ContextLength = effectiveContextLength(summary.Details.ContextLength, nil)
 		return summary, nil
 	}
 	summary.Details.ParentModel = m.ParentModel
@@ -224,7 +227,39 @@ func describeModelFromManifest(name model.Name, mf *manifest.Manifest, runner st
 		}
 	}
 
+	summary.Details.ContextLength = effectiveContextLength(summary.Details.ContextLength, m.Options)
 	return summary, nil
+}
+
+// effectiveContextLength reports the configured context that can be determined
+// from model metadata and server defaults. An explicit Modelfile num_ctx takes
+// precedence over the environment-derived default, matching modelOptions.
+// Without an explicit model value, OLLAMA_CONTEXT_LENGTH caps the native window.
+// Automatic VRAM-based allocation can still choose a smaller runtime context;
+// the active value is reported by /api/ps.
+func effectiveContextLength(native int, options map[string]any) int {
+	if value, ok := options["num_ctx"]; ok {
+		var configured int
+		switch n := value.(type) {
+		case int:
+			configured = n
+		case int32:
+			configured = int(n)
+		case int64:
+			configured = int(n)
+		case float32:
+			configured = int(n)
+		case float64:
+			configured = int(n)
+		}
+		if configured > 0 {
+			return configured
+		}
+	}
+	if limit := int(envconfig.ContextLength()); limit > 0 {
+		return min(native, limit)
+	}
+	return native
 }
 
 func readModelListConfig(mf *manifest.Manifest) (model.ConfigV2, error) {

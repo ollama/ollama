@@ -65,6 +65,63 @@ func TestListModelsDescribesModel(t *testing.T) {
 	}
 }
 
+func TestEffectiveContextLength(t *testing.T) {
+	tests := []struct {
+		name        string
+		native      int
+		serverLimit string
+		options     map[string]any
+		want        int
+	}{
+		{
+			name:   "native context without configured limit",
+			native: 262144,
+			want:   262144,
+		},
+		{
+			name:        "environment limit caps native context",
+			native:      262144,
+			serverLimit: "4096",
+			want:        4096,
+		},
+		{
+			name:        "environment limit above native context",
+			native:      8192,
+			serverLimit: "16384",
+			want:        8192,
+		},
+		{
+			name:        "Modelfile num_ctx overrides environment default",
+			native:      262144,
+			serverLimit: "4096",
+			options:     map[string]any{"num_ctx": float64(150000)},
+			want:        150000,
+		},
+		{
+			name:    "Modelfile num_ctx is honored without environment limit",
+			native:  262144,
+			options: map[string]any{"num_ctx": 150000},
+			want:    150000,
+		},
+		{
+			name:        "invalid stored num_ctx falls back to environment limit",
+			native:      262144,
+			serverLimit: "4096",
+			options:     map[string]any{"num_ctx": "150000"},
+			want:        4096,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", tt.serverLimit)
+			if got := effectiveContextLength(tt.native, tt.options); got != tt.want {
+				t.Errorf("effectiveContextLength(%d, %v) = %d, want %d", tt.native, tt.options, got, tt.want)
+			}
+		})
+	}
+}
+
 // Listing reads the manifests every time, so a model created or deleted after
 // the last call shows up without anything needing to be told about it.
 func TestListModelsFollowsManifestChanges(t *testing.T) {
