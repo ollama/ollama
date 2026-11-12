@@ -58,6 +58,9 @@ func TestSpeechBatchCancellationAndReuse(t *testing.T) {
 			requests[0].ctx = cancelCtx
 			s.admit(requests[0])
 			s.admit(requests[1])
+			if s.snapshotTimer != nil || s.memory != nil {
+				t.Fatal("cacheless speech started history maintenance")
+			}
 			s.step()
 			wantErr := context.Canceled
 			if failure == "cancel" {

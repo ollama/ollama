@@ -60,3 +60,34 @@ func checkWiredLimitRejectsOversize() (err error) {
 	}
 	return nil
 }
+
+func TestMeasurePeakMemoryPreservesReportingPeak(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !GPUIsAvailable() {
+			t.Skip("GPU allocator counters required")
+		}
+		ResetPeakMemory()
+		before := ActiveMemory()
+		large := MeasurePeakMemory(func() {
+			Scoped(func() { Eval(Zeros(DTypeFloat32, 4096)) })
+		})
+		DefaultStream().Synchronize()
+		if large <= before {
+			t.Fatal("fixture did not allocate")
+		}
+		small := MeasurePeakMemory(func() {
+			Scoped(func() { Eval(Zeros(DTypeFloat32, 4)) })
+		})
+		if small >= large {
+			t.Fatalf("small interval peak %d must be below %d", small, large)
+		}
+		if got := PeakMemory(); got != large {
+			t.Fatalf("cumulative peak = %d, want %d", got, large)
+		}
+		DefaultStream().Synchronize()
+		ResetPeakMemory()
+		if got := PeakMemory(); got >= large {
+			t.Fatalf("reset kept prior interval peak: %d", got)
+		}
+	})
+}

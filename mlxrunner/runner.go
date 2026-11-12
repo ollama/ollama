@@ -41,6 +41,8 @@ type request struct {
 	Grammar     *grammarCompilation
 }
 
+func (r request) context() context.Context { return r.Ctx }
+
 func (r request) reject(err error) {
 	r.Grammar.close()
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -68,12 +70,16 @@ func completionStatusError(err error) *api.StatusError {
 // An evaluation computes embeddings or decision scores from the supplied input without
 // entering the token decode loop. Its callback runs on the MLX worker.
 type evaluationRequest struct {
-	ctx  context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
-	open func(*batchSlot, []*prefixCache) (*evaluationState, error)
-	done chan error
+	ctx    context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
+	tokens []int32
+	items  []mediaItem
+	open   func(*batchSlot, []*prefixCache) (*evaluationState, error)
+	done   chan error
 }
 
 func (r *evaluationRequest) reject(err error) { r.done <- err }
+
+func (r *evaluationRequest) context() context.Context { return r.ctx }
 
 type speechRequest struct {
 	ctx   context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
@@ -85,9 +91,12 @@ type speechRequest struct {
 
 func (r *speechRequest) reject(err error) { r.done <- err }
 
+func (r *speechRequest) context() context.Context { return r.ctx }
+
 // All request types share admission and the same slot limit. Once admitted,
 // the scheduler advances each type using its own model operations.
 type queuedRequest interface {
+	context() context.Context
 	// reject releases a request that has not acquired a slot.
 	reject(error)
 }
@@ -108,6 +117,9 @@ type Runner struct {
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
+
+	// Last retention observation for new slots; accessed on the MLX worker.
+	snapshotLimitBytes int64
 }
 
 func (r *Runner) Load(modelName string) error {

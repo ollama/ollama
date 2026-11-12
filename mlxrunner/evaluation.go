@@ -15,8 +15,8 @@ type activeEvaluation struct {
 	state   *evaluationState
 }
 
-func (r *Runner) scheduleEvaluation(ctx context.Context, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
-	request := &evaluationRequest{ctx: ctx, open: open, done: make(chan error, 1)}
+func (r *Runner) scheduleEvaluation(ctx context.Context, tokens []int32, items []mediaItem, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
+	request := &evaluationRequest{ctx: ctx, tokens: tokens, items: items, open: open, done: make(chan error, 1)}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -89,7 +89,7 @@ func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest
 		return 0, err
 	}
 	cached := 0
-	err = r.scheduleEvaluation(ctx, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+	err = r.scheduleEvaluation(ctx, input.Tokens, items, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 		p := r.openEvaluation(slot, input, items, consume, peers...)
 		p.keepScratch = true
 		cached = p.position
@@ -106,7 +106,7 @@ func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, i
 		if len(cs) > 0 {
 			slot.scoreHidden = cache.NewHiddenCache()
 			slot.scoreCache = newPrefixCache(append(cs, slot.scoreHidden))
-			slot.scoreCache.limitBytes = maxPagedOutBytes / int64(max(1, r.parallel))
+			slot.scoreCache.limitBytes = r.snapshotLimit()
 		}
 	}
 	if slot.scoreCache != nil {
