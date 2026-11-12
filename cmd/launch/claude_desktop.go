@@ -381,6 +381,52 @@ func (c *ClaudeDesktop) Run(_ string, _ []LaunchModel, args []string) error {
 	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use Ollama?", c.ConfigureAutodiscovery)
 }
 
+func claudeDesktopContextError(ctx context.Context) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ErrCancelled
+	}
+	return ctx.Err()
+}
+
+func applyClaudeDesktopChangeContext(ctx context.Context, prompt string, change func(context.Context) error, openWhenStopped bool) error {
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	running, err := claudeDesktopIsRunning(probeCtx)
+	contextErr := claudeDesktopContextError(probeCtx)
+	cancel()
+	if contextErr != nil {
+		return contextErr
+	}
+	if err != nil {
+		return err
+	}
+	if running {
+		confirmed, err := ConfirmPrompt(prompt)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return ErrCancelled
+		}
+		return restartClaudeDesktopContext(ctx, change)
+	}
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
+	if err := change(ctx); err != nil {
+		return err
+	}
+	if openWhenStopped {
+		if err := claudeDesktopContextError(ctx); err != nil {
+			return err
+		}
+		return claudeDesktopOpenApp()
+	}
+	return nil
+}
+
 func (c *ClaudeDesktop) Restore() error {
 	if err := claudeDesktopRestoreSupported(); err != nil {
 		return err
@@ -389,13 +435,12 @@ func (c *ClaudeDesktop) Restore() error {
 	if err != nil {
 		return err
 	}
-
-	if err := restoreClaudeDesktopTargets(targets); err != nil {
-		return err
-	}
-	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use the usual Claude profile?", func() error {
+	return applyClaudeDesktopChangeContext(context.Background(), "Restart Claude Desktop to use the usual Claude profile?", func(ctx context.Context) error {
+		if err := claudeDesktopContextError(ctx); err != nil {
+			return err
+		}
 		return restoreClaudeDesktopTargets(targets)
-	})
+	}, false)
 }
 
 func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool, models []proxy.ClaudeDesktopCatalogModel) error {
@@ -1040,22 +1085,36 @@ func claudeDesktopLaunchOrRestart(prompt string, reapplyProfile func() error) er
 }
 
 func restartClaudeDesktop(reapplyProfile func() error) error {
+	return restartClaudeDesktopContext(context.Background(), func(context.Context) error { return reapplyProfile() })
+}
+
+func restartClaudeDesktopContext(parent context.Context, reapplyProfile func(context.Context) error) error {
 	restartAppPath := ""
 	if claudeDesktopGOOS == "windows" {
 		restartAppPath = claudeDesktopRunningAppPath()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
 	if err := claudeDesktopQuitApp(ctx); err != nil {
 		return fmt.Errorf("quit Claude Desktop: %w", err)
 	}
 	if err := waitForClaudeDesktopExit(ctx); err != nil {
 		return err
 	}
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
 	// Claude persists settings while shutting down. Reapply the profile after
 	// exit so its last write cannot restore stale surface or gateway values.
-	if err := reapplyProfile(); err != nil {
-		reapplyErr := fmt.Errorf("reapply Claude Desktop profile: %w", err)
+	profileErr := reapplyProfile(ctx)
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return errors.Join(err, profileErr)
+	}
+	if profileErr != nil {
+		reapplyErr := fmt.Errorf("reapply Claude Desktop profile: %w", profileErr)
 		if openErr := openClaudeDesktopAfterRestart(restartAppPath); openErr != nil {
 			return errors.Join(reapplyErr, fmt.Errorf("reopen Claude Desktop after profile failure: %w", openErr))
 		}
@@ -1073,7 +1132,13 @@ func openClaudeDesktopAfterRestart(restartAppPath string) error {
 
 func waitForClaudeDesktopExit(ctx context.Context) error {
 	for {
+		if err := claudeDesktopContextError(ctx); err != nil {
+			return err
+		}
 		running, err := claudeDesktopIsRunning(ctx)
+		if contextErr := claudeDesktopContextError(ctx); contextErr != nil {
+			return contextErr
+		}
 		if err != nil {
 			return fmt.Errorf("check whether Claude Desktop is running: %w", err)
 		}

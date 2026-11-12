@@ -2473,7 +2473,7 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 		}, nil
 	}
 	claudeLocalModelsResolver = func(context.Context) ([]string, error) {
-		return []string{"qwen3:8b"}, nil
+		return []string{"qwen3:8b", "qwen3:4b"}, nil
 	}
 	t.Cleanup(func() {
 		stopClaudeAppProxy()
@@ -2497,6 +2497,26 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 	}
 	if loaderCalls != 0 || accessCalls != 0 {
 		t.Fatalf("cloud startup calls = recommendations:%d access:%d, want zero", loaderCalls, accessCalls)
+	}
+	// A CLI save must be visible without restarting the app or making cloud
+	// discovery calls, even when the running gateway started with a local model.
+	want := map[string]string{"claude-opus-5": "qwen3:4b"}
+	if err := launch.SaveClaudeDesktopModelMappings(want); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := proxy.FetchClaudeDesktopCatalog(t.Context(), nil, "http://"+claudeAppProxy.Addr(), "ollama")
+	if err != nil || len(catalog) != 1 || catalog[0].ID != "claude-opus-5" || catalog[0].DisplayName != "qwen3:4b" {
+		t.Fatalf("gateway did not reload CLI mappings: %+v, %v", catalog, err)
+	}
+	if err := launch.SaveClaudeDesktopModels([]string{"qwen3:8b"}); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err = proxy.FetchClaudeDesktopCatalog(t.Context(), nil, "http://"+claudeAppProxy.Addr(), "ollama")
+	if err != nil || len(catalog) != 1 || catalog[0].DisplayName != "qwen3:8b" {
+		t.Fatalf("gateway did not restore the prior selection: %+v, %v", catalog, err)
+	}
+	if loaderCalls != 0 || accessCalls != 0 {
+		t.Fatalf("local CLI reload made cloud calls: %d/%d", loaderCalls, accessCalls)
 	}
 	status := getClaudeDesktopConnectionStatus()
 	var foundCloud, foundSelectedLocal bool

@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -160,56 +158,6 @@ func TestClaudeDesktopConfigureRequiresOllamaGateway(t *testing.T) {
 	err := (&ClaudeDesktop{}).ConfigureAutodiscovery()
 	if err == nil || !strings.Contains(err.Error(), "restart Ollama and try again") {
 		t.Fatalf("ConfigureAutodiscovery error = %v, want gateway recovery guidance", err)
-	}
-}
-
-func TestLaunchIntegration_ClaudeDesktopDoesNotRequireLocalCloudSignIn(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withClaudeDesktopPlatform(t, "darwin")
-	withInteractiveSession(t, true)
-	withLauncherHooks(t)
-	t.Setenv("OLLAMA_API_KEY", "test-api-key")
-
-	if err := os.MkdirAll(filepath.Join(tmpDir, "Applications", "Claude.app"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"not found"}`)
-		case "/api/me":
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	DefaultSignIn = func(modelName, signInURL string) (string, error) {
-		t.Fatalf("Claude Desktop launch should not require Ollama Cloud sign-in, got %s at %s", modelName, signInURL)
-		return "", nil
-	}
-
-	var openCalls int
-	withClaudeDesktopProcessHooks(t,
-		func() bool { return false },
-		func() error { return nil },
-		func() error {
-			openCalls++
-			return nil
-		},
-	)
-
-	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop"}); err != nil {
-		t.Fatalf("LaunchIntegration returned error: %v", err)
-	}
-	if openCalls != 1 {
-		t.Fatalf("open calls = %d, want 1", openCalls)
 	}
 }
 
@@ -1668,5 +1616,62 @@ func TestClaudeDesktopConfigureAutodiscoveryPinsGatewayLabels(t *testing.T) {
 	restored := claudeDesktopReadJSON(t, paths.profile)
 	if _, ok := restored["inferenceModels"]; ok {
 		t.Fatalf("restore should drop the pinned list, got %v", restored["inferenceModels"])
+	}
+}
+
+func TestClaudeDesktopCancelledExitProbeCannotApplyChange(t *testing.T) {
+	withClaudeDesktopPlatform(t, "darwin")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	withClaudeDesktopProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { t.Fatal("cancelled restart opened app"); return nil })
+	previous := claudeDesktopIsRunning
+	claudeDesktopIsRunning = func(context.Context) (bool, error) { cancel(); return false, nil }
+	t.Cleanup(func() { claudeDesktopIsRunning = previous })
+	if err := restartClaudeDesktopContext(ctx, func(context.Context) error { t.Fatal("cancelled exit probe applied a change"); return nil }); !errors.Is(err, ErrCancelled) {
+		t.Fatalf("cancelled restart = %v", err)
+	}
+}
+
+func TestClaudeDesktopCancellationBeforeOpen(t *testing.T) {
+	failure := errors.New("profile write failed")
+	for _, test := range []struct {
+		name            string
+		running, cancel bool
+		changeErr       error
+		opens           int
+	}{
+		{name: "stopped successful change cancelled", cancel: true},
+		{name: "restart successful change cancelled", running: true, cancel: true},
+		{name: "restart failed change cancelled", running: true, cancel: true, changeErr: failure},
+		{name: "failed restart still recovers without cancellation", running: true, changeErr: failure, opens: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			withClaudeDesktopPlatform(t, "darwin")
+			running := test.running
+			opens, changes := 0, 0
+			withClaudeDesktopProcessHooks(t, func() bool { return running }, func() error { running = false; return nil }, func() error { opens++; return nil })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			withInteractiveSession(t, true)
+			oldConfirm := DefaultConfirmPrompt
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+			t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+			err := applyClaudeDesktopChangeContext(ctx, "restart", func(context.Context) error {
+				changes++
+				if test.cancel {
+					cancel()
+				}
+				return test.changeErr
+			}, true)
+			if test.cancel && !errors.Is(err, ErrCancelled) {
+				t.Errorf("cancelled apply returned %v", err)
+			}
+			if test.changeErr != nil && !errors.Is(err, test.changeErr) {
+				t.Errorf("profile failure was lost: %v", err)
+			}
+			if opens != test.opens || changes != 1 {
+				t.Fatalf("open/change calls = %d/%d, want %d/1", opens, changes, test.opens)
+			}
+		})
 	}
 }

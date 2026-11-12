@@ -612,14 +612,25 @@ func startClaudeAppProxy() error {
 		return recordClaudeProxyFailure(err, claudeProxyFailureNone)
 	}
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
-		ListenAddr:      claudeProxyListenAddr,
-		OllamaURL:       ollamaURL.String(),
-		Model:           activeModels[0].OllamaModel,
-		Models:          activeModels,
-		Logger:          slog.Default(),
-		OnCountsChanged: updateClaudeProxyMenu,
+		RefreshLocalModels: true,
+		ListenAddr:         claudeProxyListenAddr,
+		OllamaURL:          ollamaURL.String(),
+		Model:              activeModels[0].OllamaModel,
+		Models:             activeModels,
+		Logger:             slog.Default(),
+		OnCountsChanged:    updateClaudeProxyMenu,
 		RefreshModels: func(ctx context.Context, current []proxy.ClaudeDesktopModel) ([]proxy.ClaudeDesktopModel, error) {
-			_, selected, _ := refreshClaudeDesktopCatalog(ctx, current, false)
+			// The CLI saves through the same selection file. Resolve it again on
+			// catalog reads, including when the old selection was local-only.
+			refreshCurrent := activeModels
+			if len(launch.ClaudeDesktopModels()) > 0 {
+				selected := configuredClaudeDesktopModels(current, nil)
+				if !hasCloudClaudeDesktopModel(selected) {
+					return selected, nil
+				}
+				refreshCurrent = nil
+			}
+			_, selected, _ := refreshClaudeDesktopCatalog(ctx, refreshCurrent, false)
 			return selected, nil
 		},
 		ResolveAccessState: claudeAccessStateResolver,
