@@ -70,11 +70,11 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	var tensorBytes int64
-	for _, layer := range modelManifest.TensorLayers() {
-		tensorBytes += layer.Size
+	tensorBytes, err := modelGPUBytes(modelManifest)
+	if err != nil {
+		return nil, err
 	}
-	c.memory.Store(uint64(tensorBytes))
+	c.memory.Store(tensorBytes)
 
 	return c, nil
 }

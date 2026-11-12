@@ -85,6 +85,8 @@ func rendererForName(name string) Renderer {
 	case "deepseek3.1":
 		renderer := &DeepSeek3Renderer{IsThinking: true, Variant: Deepseek31}
 		return renderer
+	case "deepseek-v41":
+		return &DeepSeekV41Renderer{}
 	case "olmo3":
 		renderer := &Olmo3Renderer{UseExtendedSystemMessage: false}
 		return renderer

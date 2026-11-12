@@ -92,6 +92,11 @@ func NewModel(root *model.Root) (model.Model, error) {
 	}, nil
 }
 
+// Close releases the host-backed PLE mappings when the runner unloads the model.
+func (m *Model) Close() error {
+	return closeHostPLETables(m.hostPLE)
+}
+
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	linears := model.NewLinearFactory(tensors, m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant)
 	var err error

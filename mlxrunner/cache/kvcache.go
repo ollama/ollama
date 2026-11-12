@@ -94,6 +94,9 @@ func (c *KVCache) appendKV(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 // View returns the current cache contents as attention history without writing.
 func (c *KVCache) View(_ *batch.Batch) *nn.KVHistory {
 	state := c.State()
+	if len(state) == 0 {
+		return nn.NewKVHistory(nil, nil, nil)
+	}
 	return nn.NewKVHistory(state[0], state[1], nil)
 }
 

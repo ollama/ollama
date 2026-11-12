@@ -79,6 +79,8 @@ func ParserForName(name string) Parser {
 		return &CogitoParser{}
 	case "deepseek3":
 		return &DeepSeek3Parser{hasThinkingSupport: true}
+	case "deepseek-v41":
+		return &DeepSeekV41Parser{}
 	case "olmo3":
 		return &Olmo3Parser{}
 	case "olmo3-think":
