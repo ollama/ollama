@@ -656,6 +656,123 @@ func (s *cacheSession) close() {
 	}
 }
 
+// reclaimColdHistory responds to observed pressure with released owned storage.
+// Removing only a lazy snapshot's possible future copy does not repay pressure.
+func reclaimColdHistory(caches []*prefixCache, bytes int64) int64 {
+	before := mlx.ActiveMemory()
+	changed := false
+	for int64(before-mlx.ActiveMemory()) < bytes {
+		if !evictColdHistory(caches, nil) {
+			break
+		}
+		changed = true
+	}
+	if changed {
+		mlx.ClearCache()
+	}
+	return int64(before - mlx.ActiveMemory())
+}
+
+// trimRetainedHistory reclaims cold history through copy-free checkpoint merges
+// and complete-edge eviction. Surviving paths keep continuous KV history.
+func trimRetainedHistory(caches, idle []*prefixCache, target int64) {
+	pending := func() int64 {
+		var bytes int64
+		for _, c := range caches {
+			walkNodes(c.root, func(n *trieNode) bool {
+				for _, snap := range n.snapshots {
+					if snap != nil {
+						bytes += int64(cache.PendingCopyBytes(snap))
+					}
+				}
+				return true
+			})
+		}
+		return bytes
+	}
+	changed := false
+	for int64(mlx.ActiveMemory())+pending() > target {
+		if !evictColdHistory(caches, idle) {
+			break // Remaining buffers belong to active requests.
+		}
+		changed = true
+	}
+	if changed {
+		// Closed arrays become unused allocator buffers; release those pages to
+		// the OS now, including while a scoring runner is idle.
+		mlx.ClearCache()
+	}
+}
+
+// evictColdHistory selects the oldest eligible checkpoint or inactive leaf.
+// Checkpoint merges must preserve the child's state without allocating. Only
+// after these candidates are exhausted may an idle slot give up its frontier.
+func evictColdHistory(caches, idle []*prefixCache) bool {
+	var owner *prefixCache
+	var oldest *trieNode
+	for _, c := range caches {
+		walkNodes(c.root, func(n *trieNode) bool {
+			if n.parent == nil || len(n.children) > 1 || len(c.activePath) == 0 || n == c.activePath[len(c.activePath)-1] {
+				return true
+			}
+			if len(n.children) == 1 {
+				child := n.children[0]
+				for i, layer := range c.caches {
+					var parentSnap, childSnap cache.Snapshot
+					if i < len(n.snapshots) {
+						parentSnap = n.snapshots[i]
+					}
+					if i < len(child.snapshots) {
+						childSnap = child.snapshots[i]
+					}
+					if !cache.CanMergeWithoutCopy(layer, parentSnap, childSnap) {
+						return true
+					}
+				}
+			}
+			if oldest == nil || cmp.Or(n.lastUsed.Compare(oldest.lastUsed), cmp.Compare(oldest.endOffset, n.endOffset), cmp.Compare(oldest.snapshotBytes(), n.snapshotBytes())) < 0 {
+				owner, oldest = c, n
+			}
+			return true
+		})
+	}
+	if oldest == nil {
+		for _, c := range idle {
+			if len(c.activePath) < 2 {
+				continue
+			}
+			n := c.activePath[len(c.activePath)-1]
+			if len(n.children) == 0 && (oldest == nil || n.lastUsed.Before(oldest.lastUsed)) {
+				owner, oldest = c, n
+			}
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+	if len(oldest.children) == 0 {
+		if i := slices.Index(owner.activePath, oldest); i >= 0 {
+			owner.activePath = owner.activePath[:i]
+		}
+	}
+	owner.evictNode(oldest)
+	if len(owner.root.children) == 0 && slices.Contains(idle, owner) {
+		owner.freeAll()
+	}
+	return true
+}
+
+// liveBytes includes unused attention capacity which a write may copy.
+func (c *prefixCache) liveBytes() int {
+	var bytes int
+	mlx.Scoped(func() {
+		for _, kv := range c.caches {
+			bytes += cache.CopyBytes(kv)
+		}
+	})
+	return bytes
+}
+
 // enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
 func (c *prefixCache) enforceEvictionPolicy() {
 	limit := c.limitBytes

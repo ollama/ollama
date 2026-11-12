@@ -74,6 +74,9 @@ func TestWholeForwardRows(t *testing.T) {
 				}
 			}
 		}
+		if !s.snapshotCheck.IsZero() || s.observedMemory {
+			t.Fatal("cacheless evaluation started history maintenance")
+		}
 		if !slices.Equal(m.batches, []int{2, 2}) {
 			t.Fatalf("forward batch sizes %v, want [2 2]", m.batches)
 		}
@@ -166,7 +169,7 @@ func (m *cachedRowTestModel) Forward(b *batch.Batch, layers []cache.Layer) (*mlx
 func TestCachedForwardBatchesAndRestores(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		m := &cachedRowTestModel{}
-		r := &Runner{Model: m, parallel: 2, Requests: make(chan queuedRequest, 2)}
+		r := &Runner{Model: m, parallel: 2}
 		s := &batchScheduler{r: r, slots: make([]*batchSlot, 2)}
 		defer func() {
 			for _, slot := range s.slots {
@@ -175,6 +178,7 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 				}
 			}
 		}()
+		// Retain the fixtures while comparing restored and fresh evaluations.
 		for round, prompts := range [][][]int32{
 			{{1, 2, 3, 4, 5}, {6, 7, 8}},
 			{{1, 2, 9, 10}, {6, 7, 8, 9}},
@@ -185,13 +189,12 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 			cached := make([]int, 2)
 			for id, tokens := range prompts {
 				done[id] = make(chan error, 1)
-				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*evaluationState, error) {
+				s.admitEvaluation(&evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot) (*evaluationState, error) {
 					p := r.openEvaluation(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 2 - id}, nil, func(h *mlx.Array) error { got[id] = h.Floats(); return nil })
 					cached[id] = p.position
 					return p, nil
-				}}
+				}})
 			}
-			s.admitPending()
 			for s.slots[0].busy() || s.slots[1].busy() {
 				s.step()
 			}
