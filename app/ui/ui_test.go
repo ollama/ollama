@@ -1153,6 +1153,83 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) 
 	}
 }
 
+func TestExploreModels(t *testing.T) {
+	// Point the catalog at a stub server so the test never hits the network.
+	oldDotCom := OllamaDotCom
+	defer func() { OllamaDotCom = oldDotCom }()
+
+	var hits atomic.Int32
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tags" {
+			http.NotFound(w, r)
+			return
+		}
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"models":[
+			{"model":"qwen3:8b","size":5000000000,"capabilities":["completion","tools"]},
+			{"model":"gemma3:4b","size":3000000000,"capabilities":["vision"]},
+			{"model":"","size":0}
+		]}`)
+	}))
+	defer stub.Close()
+	OllamaDotCom = stub.URL
+
+	server := &Server{}
+
+	t.Run("returns catalog entries and skips empty names", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		if err := server.getExploreModels(rr, httptest.NewRequest("GET", "/api/v1/explore", nil)); err != nil {
+			t.Fatalf("getExploreModels() error = %v", err)
+		}
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+
+		var resp responses.ExploreModelsResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(resp.Models) != 2 {
+			t.Fatalf("expected 2 models, got %d: %+v", len(resp.Models), resp.Models)
+		}
+		if resp.Models[0].Model != "qwen3:8b" || resp.Models[0].Size != 5000000000 {
+			t.Fatalf("unexpected first model: %+v", resp.Models[0])
+		}
+		if len(resp.Models[0].Capabilities) != 2 {
+			t.Fatalf("expected capabilities to be preserved, got %+v", resp.Models[0])
+		}
+	})
+
+	t.Run("caches the catalog between requests", func(t *testing.T) {
+		before := hits.Load()
+		rr := httptest.NewRecorder()
+		if err := server.getExploreModels(rr, httptest.NewRequest("GET", "/api/v1/explore", nil)); err != nil {
+			t.Fatalf("getExploreModels() error = %v", err)
+		}
+		if hits.Load() != before {
+			t.Fatalf("expected cached catalog, but the upstream was fetched again")
+		}
+	})
+}
+
+func TestExploreModelsUpstreamFailure(t *testing.T) {
+	oldDotCom := OllamaDotCom
+	defer func() { OllamaDotCom = oldDotCom }()
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer stub.Close()
+	OllamaDotCom = stub.URL
+
+	server := &Server{}
+	rr := httptest.NewRecorder()
+	if err := server.getExploreModels(rr, httptest.NewRequest("GET", "/api/v1/explore", nil)); err == nil {
+		t.Fatal("expected an error when the catalog upstream fails")
+	}
+}
+
 func TestSettingsPreservesCodexDesktopUsedWhenOmitted(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
@@ -1302,4 +1379,107 @@ func TestSettingsPreservesConcurrentCodexDesktopAcknowledgment(t *testing.T) {
 	if !response.Settings.CodexDesktopUsed {
 		t.Error("settings response returned a stale acknowledgment")
 	}
+}
+
+func TestSavedModelsHandlers(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	server := &Server{Store: testStore}
+
+	decode := func(t *testing.T, rr *httptest.ResponseRecorder) []string {
+		t.Helper()
+		var resp responses.SavedModelsResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		return resp.Models
+	}
+
+	mutate := func(t *testing.T, method, model string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(responses.SavedModelRequest{Model: model})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(method, "/api/v1/saved-models", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+
+		var handlerErr error
+		switch method {
+		case http.MethodPost:
+			handlerErr = server.saveModel(rr, req)
+		case http.MethodDelete:
+			handlerErr = server.unsaveModel(rr, req)
+		default:
+			t.Fatalf("unexpected method %s", method)
+		}
+		if handlerErr != nil {
+			t.Fatalf("%s saved model error = %v", method, handlerErr)
+		}
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s saved model status = %d, want %d", method, rr.Code, http.StatusOK)
+		}
+		return rr
+	}
+
+	t.Run("empty collection", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		if err := server.getSavedModels(rr, httptest.NewRequest("GET", "/api/v1/saved-models", nil)); err != nil {
+			t.Fatalf("getSavedModels() error = %v", err)
+		}
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+		}
+		if models := decode(t, rr); len(models) != 0 {
+			t.Fatalf("expected empty collection, got %v", models)
+		}
+	})
+
+	t.Run("save returns updated collection", func(t *testing.T) {
+		rr := mutate(t, http.MethodPost, "qwen3:8b")
+		models := decode(t, rr)
+		if len(models) != 1 || models[0] != "qwen3:8b" {
+			t.Fatalf("expected [qwen3:8b], got %v", models)
+		}
+	})
+
+	t.Run("saving twice does not duplicate", func(t *testing.T) {
+		rr := mutate(t, http.MethodPost, "qwen3:8b")
+		if models := decode(t, rr); len(models) != 1 {
+			t.Fatalf("expected 1 model after duplicate save, got %v", models)
+		}
+	})
+
+	t.Run("unsave returns updated collection", func(t *testing.T) {
+		rr := mutate(t, http.MethodDelete, "qwen3:8b")
+		if models := decode(t, rr); len(models) != 0 {
+			t.Fatalf("expected empty collection after unsave, got %v", models)
+		}
+	})
+
+	t.Run("empty model name is rejected", func(t *testing.T) {
+		body, err := json.Marshal(responses.SavedModelRequest{Model: ""})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("POST", "/api/v1/saved-models", bytes.NewReader(body))
+		rr := httptest.NewRecorder()
+
+		if err := server.saveModel(rr, req); err == nil {
+			t.Fatal("expected error saving an empty model name")
+		}
+	})
+
+	t.Run("malformed body is rejected", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/api/v1/saved-models", strings.NewReader("not json"))
+		rr := httptest.NewRecorder()
+
+		if err := server.saveModel(rr, req); err == nil {
+			t.Fatal("expected error for malformed request body")
+		}
+	})
 }
