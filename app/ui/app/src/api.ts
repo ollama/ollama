@@ -432,6 +432,57 @@ export async function updateSettings(settings: Settings): Promise<{
   };
 }
 
+export interface ExploreModel {
+  model: string;
+  size?: number;
+  capabilities?: string[];
+}
+
+export async function getExploreModels(): Promise<ExploreModel[]> {
+  const response = await fetch(`${API_BASE}/api/v1/explore`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch model catalog");
+  }
+  const data = await response.json();
+  return Array.isArray(data.models) ? data.models : [];
+}
+
+export async function getSavedModels(): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/api/v1/saved-models`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch saved models");
+  }
+  const data = await response.json();
+  return Array.isArray(data.models) ? data.models : [];
+}
+
+async function mutateSavedModel(
+  method: "POST" | "DELETE",
+  model: string,
+): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/api/v1/saved-models`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to update saved models");
+  }
+  const data = await response.json();
+  return Array.isArray(data.models) ? data.models : [];
+}
+
+export async function saveModel(model: string): Promise<string[]> {
+  return mutateSavedModel("POST", model);
+}
+
+export async function unsaveModel(model: string): Promise<string[]> {
+  return mutateSavedModel("DELETE", model);
+}
+
 export async function updateCloudSetting(
   enabled: boolean,
 ): Promise<CloudStatusResponse> {
