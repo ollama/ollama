@@ -368,7 +368,7 @@ func TestThinkingHarmonyDiscoveryPreservesInference(t *testing.T) {
 		{"high", &api.ThinkValue{Value: "high"}, "high", false},
 		{"max", &api.ThinkValue{Value: "max"}, "high", false},
 		{"true", &api.ThinkValue{Value: true}, "medium", false},
-		{"false", &api.ThinkValue{Value: false}, "", false},
+		{"false", &api.ThinkValue{Value: false}, "low", false},
 		{"xhigh", &api.ThinkValue{Value: "xhigh"}, "", true},
 		{"future", &api.ThinkValue{Value: "future"}, "", true},
 	} {
@@ -398,5 +398,34 @@ func TestThinkingHarmonyDiscoveryPreservesInference(t *testing.T) {
 				}
 			})
 		}
+	}
+
+	router := gin.New()
+	router.POST("/v1/chat/completions", middleware.ChatMiddleware(lookupThinking), s.ChatHandler)
+	router.POST("/v1/responses", middleware.ResponsesMiddleware(lookupThinking), s.ChatHandler)
+	router.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(lookupThinking), s.ChatHandler)
+	for _, protocol := range []struct {
+		name, path, fields string
+	}{
+		{"openai", "/v1/chat/completions", `"reasoning_effort":"none"`},
+		{"responses", "/v1/responses", `"reasoning":{"effort":"none"}`},
+		{"anthropic", "/v1/messages", `"thinking":{"type":"disabled"},"max_tokens":64`},
+	} {
+		t.Run(protocol.name+"/disabled", func(t *testing.T) {
+			input := `"input":"hello"`
+			if protocol.name != "responses" {
+				input = `"messages":[{"role":"user","content":"hello"}]`
+			}
+			body := fmt.Sprintf(`{"model":"thinking-harmony","stream":false,%s,%s}`, input, protocol.fields)
+			mock.CompletionRequest = llm.CompletionRequest{}
+			w := NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, protocol.path, strings.NewReader(body)))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(mock.CompletionRequest.Prompt, "Reasoning: low ") {
+				t.Fatalf("expected minimum reasoning: %s", mock.CompletionRequest.Prompt)
+			}
+		})
 	}
 }
