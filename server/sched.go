@@ -960,7 +960,7 @@ func availableMemoryForLoad(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) (ava
 	var discreteGPUFree uint64
 	for _, gpu := range gpus {
 		gpuFree += gpu.FreeMemory
-		if gpu.Integrated {
+		if gpu.Integrated && !hasDedicatedCarveOut(systemInfo, gpu) {
 			sharedGPUFree += gpu.FreeMemory
 		} else {
 			discreteGPUFree += gpu.FreeMemory
@@ -1146,8 +1146,16 @@ func hasDiscreteGPU(gpus []ml.DeviceInfo) bool {
 	return false
 }
 
+// hasDedicatedCarveOut reports whether an integrated GPU has more memory than
+// the whole system, which only happens with a firmware (BIOS UMA) carve-out.
+// That memory is reserved for the GPU and not counted as system RAM, so free
+// system memory is not a limit on what the GPU can load.
+func hasDedicatedCarveOut(systemInfo ml.SystemInfo, gpu ml.DeviceInfo) bool {
+	return gpu.Integrated && systemInfo.TotalMemory > 0 && gpu.TotalMemory > systemInfo.TotalMemory
+}
+
 func availableMemoryForGPU(systemInfo ml.SystemInfo, gpu ml.DeviceInfo) uint64 {
-	if gpu.Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
+	if gpu.Integrated && !hasDedicatedCarveOut(systemInfo, gpu) && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < gpu.FreeMemory {
 		return systemInfo.FreeMemory
 	}
 
