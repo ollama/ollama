@@ -2,6 +2,9 @@ package launch
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"maps"
@@ -15,11 +18,28 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/internal/proxy"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 )
 
 func claudeDesktopCLIFixture(t *testing.T, state proxy.ClaudeDesktopAccessState) {
 	t.Helper()
 	claudeDesktopEditorClient(t)
+	t.Setenv("OLLAMA_DOT_COM_URL", os.Getenv("OLLAMA_HOST"))
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey, err := ssh.MarshalPrivateKey(key, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDir := filepath.Join(os.Getenv("HOME"), ".ollama")
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(keyDir, "id_ed25519"), pem.EncodeToMemory(privateKey), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	withClaudeDesktopPlatform(t, "darwin")
 	if err := os.MkdirAll(filepath.Join(os.Getenv("HOME"), "Applications", "Claude.app"), 0o700); err != nil {
 		t.Fatal(err)
@@ -57,7 +77,7 @@ func claudeDesktopCLIFixture(t *testing.T, state proxy.ClaudeDesktopAccessState)
 }
 
 func TestClaudeDesktopCLIEditorLaunchAndRestore(t *testing.T) {
-	claudeDesktopCLIFixture(t, proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff})
+	claudeDesktopCLIFixture(t, proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"})
 	path := filepath.Join(os.Getenv("HOME"), ".ollama", "config.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -66,7 +86,7 @@ func TestClaudeDesktopCLIEditorLaunchAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	DefaultClaudeDesktopMappingSelector = func(rows []ClaudeDesktopMapping, _ string) (ClaudeDesktopMappingChoice, error) {
-		if len(rows) != 5 || rows[2].DefaultModel != "local-one" {
+		if len(rows) != 5 || rows[2].DefaultModel != "test:cloud" || rows[0].DefaultModel != "" {
 			t.Fatalf("fresh editor = %+v", rows)
 		}
 		return ClaudeDesktopMappingChoice{}, nil
@@ -78,7 +98,7 @@ func TestClaudeDesktopCLIEditorLaunchAndRestore(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if opens != 1 || len(ClaudeDesktopModelMappings()) != 5 {
+	if opens != 1 || !maps.Equal(ClaudeDesktopModelMappings(), map[string]string{"claude-sonnet-5": "test:cloud"}) {
 		t.Fatalf("fresh setup opens/mappings = %d/%v", opens, ClaudeDesktopModelMappings())
 	}
 	data, _ := os.ReadFile(path)
@@ -87,7 +107,7 @@ func TestClaudeDesktopCLIEditorLaunchAndRestore(t *testing.T) {
 	}
 	paths, _ := claudeDesktopConfigPaths()
 	profile := claudeDesktopReadJSON(t, paths.profile)
-	if profile["inferenceGatewayBaseUrl"] != claudeDesktopGatewayBaseURL || profile["autoModeEnabled"] != false {
+	if profile["inferenceGatewayBaseUrl"] != claudeDesktopGatewayBaseURL || profile["autoModeEnabled"] != true {
 		t.Fatalf("profile = %v", profile)
 	}
 	running = true
@@ -102,8 +122,41 @@ func TestClaudeDesktopCLIEditorLaunchAndRestore(t *testing.T) {
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop", Restore: true}); err != nil {
 		t.Fatal(err)
 	}
-	if readClaudeDesktopDeploymentMode(paths.normalConfig) != "1p" || len(ClaudeDesktopModelMappings()) != 5 {
+	if readClaudeDesktopDeploymentMode(paths.normalConfig) != "1p" || len(ClaudeDesktopModelMappings()) != 1 {
 		t.Fatal("restore did not recover the normal profile and retain model choices")
+	}
+}
+
+func TestClaudeDesktopCLIResetUsesSettingsDefaults(t *testing.T) {
+	claudeDesktopCLIFixture(t, proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"})
+	before := map[string]string{"claude-fable-5": "local-one", "claude-sonnet-5": "local-one"}
+	if err := SaveClaudeDesktopModelMappings(before); err != nil {
+		t.Fatal(err)
+	}
+	step := 0
+	DefaultClaudeDesktopMappingSelector = func(rows []ClaudeDesktopMapping, _ string) (ClaudeDesktopMappingChoice, error) {
+		step++
+		if !maps.Equal(ClaudeDesktopModelMappings(), before) || rows[0].Model != "local-one" || rows[0].DefaultModel != "" || rows[2].DefaultModel != "test:cloud" {
+			t.Fatalf("saved choices were confused with defaults: %+v", rows)
+		}
+		if step == 1 {
+			if rows[2].Model != "local-one" {
+				t.Fatalf("custom selection was replaced on editor open: %+v", rows[2])
+			}
+			return ClaudeDesktopMappingChoice{RouteID: "claude-sonnet-5", Clear: true}, nil
+		}
+		if step != 2 || rows[2].Model != "" {
+			t.Fatalf("reset did not select the Settings default: %+v", rows[2])
+		}
+		return ClaudeDesktopMappingChoice{}, nil
+	}
+	withClaudeDesktopProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "claude-desktop", ForceConfigure: true}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"claude-fable-5": "local-one", "claude-sonnet-5": "test:cloud"}
+	if !maps.Equal(ClaudeDesktopModelMappings(), want) {
+		t.Fatalf("reset saved %v, want %v", ClaudeDesktopModelMappings(), want)
 	}
 }
 

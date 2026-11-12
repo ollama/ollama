@@ -6,10 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/internal/proxy"
@@ -41,15 +45,9 @@ func (c *launcherClient) launchClaudeDesktop(ctx context.Context, desktop *Claud
 	if err != nil {
 		return err
 	}
-	defaults := claudeDesktopCatalogMappings(catalog)
-	standard := defaults["claude-sonnet-5"]
-	if standard == "" && len(catalog) > 0 {
-		standard = catalog[0].DisplayName
-	}
-	for _, route := range proxy.ClaudeDesktopRoutes() {
-		if defaults[route.ID] == "" && standard != "" {
-			defaults[route.ID] = standard
-		}
+	var defaults map[string]string
+	if req.ModelOverride == "" && (req.ForceConfigure || len(candidate) == 0) {
+		defaults = claudeDesktopDefaultMappings(ctx)
 	}
 	if req.ForceConfigure && req.ModelOverride == "" {
 		candidate, err = c.configureClaudeDesktopMappings(ctx, candidate, defaults)
@@ -116,6 +114,35 @@ func (c *launcherClient) launchClaudeDesktop(ctx context.Context, desktop *Claud
 	}
 	fmt.Fprintln(os.Stderr, desktop.ConfigurationSuccessMessage())
 	return nil
+}
+
+// Use the same app-specific contract, resolver and offline fallback as Settings.
+// The gateway catalog describes saved selections, which may be custom mappings.
+func claudeDesktopDefaultMappings(ctx context.Context) map[string]string {
+	fallback := proxy.DefaultClaudeDesktopMappingsForModels(proxy.DefaultClaudeDesktopModels())
+	baseURL := os.Getenv("OLLAMA_DOT_COM_URL")
+	if baseURL == "" {
+		baseURL = "https://ollama.com"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/experimental/model-recommendations?app=claude-desktop", nil)
+	if err != nil {
+		return fallback
+	}
+	query := req.URL.Query()
+	query.Set("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	req.URL.RawQuery = query.Encode()
+	signature, err := auth.Sign(ctx, []byte(fmt.Sprintf("%s,%s", req.Method, req.URL.RequestURI())))
+	if err != nil {
+		return fallback
+	}
+	req.Header.Set("Authorization", signature)
+	models, err := proxy.FetchClaudeDesktopModels(http.DefaultClient, req)
+	if err != nil {
+		return fallback
+	}
+	return proxy.DefaultClaudeDesktopMappingsForModels(models)
 }
 
 func claudeDesktopCatalogMappings(catalog []proxy.ClaudeDesktopCatalogModel) map[string]string {

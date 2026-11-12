@@ -27,7 +27,14 @@ func claudeDesktopEditorClient(t *testing.T) *launcherClient {
 		case "/api/me":
 			fmt.Fprint(w, `{"name":"fixture-user","plan":"pro"}`)
 		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[]}`)
+			if r.URL.Query().Get("app") == "claude-desktop" {
+				if r.URL.Query().Get("ts") == "" || r.Header.Get("Authorization") == "" {
+					t.Error("Claude defaults request must use the app's signed request format")
+				}
+				fmt.Fprint(w, `{"recommendations":[{"model":"test:cloud","required_plan":"pro"}],"mappings":{"claude-sonnet-5":{"model":"test:cloud"}}}`)
+			} else {
+				fmt.Fprint(w, `{"recommendations":[]}`)
+			}
 		default:
 			t.Errorf("unexpected editor request: %s", r.URL.Path)
 			http.NotFound(w, r)

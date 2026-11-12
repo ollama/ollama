@@ -12,6 +12,7 @@ func TestClaudeDesktopMappingOverview(t *testing.T) {
 	rows := []launch.ClaudeDesktopMapping{
 		{ID: "fable", Name: "Fable 5", Model: "local-one", DefaultModel: "local-one"},
 		{ID: "opus", Name: "Opus 5", DefaultModel: "local-two"},
+		{ID: "sonnet", Name: "Sonnet 5", Model: "custom-model", DefaultModel: "local-two"},
 	}
 	m := newClaudeDesktopMappingModel(rows, "opus")
 	view := m.View()
@@ -19,6 +20,9 @@ func TestClaudeDesktopMappingOverview(t *testing.T) {
 		if !strings.Contains(view, text) {
 			t.Fatalf("overview missing %q: %s", text, view)
 		}
+	}
+	if !strings.Contains(view, "custom-model") || strings.Contains(view, "custom-model (Default)") {
+		t.Fatalf("custom mapping was labelled as a default: %s", view)
 	}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	if got := updated.(claudeDesktopMappingModel); cmd == nil || got.choice.RouteID != "opus" || got.choice.Clear {
