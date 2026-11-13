@@ -392,6 +392,7 @@ func withInteractiveSession(t *testing.T, interactive bool) {
 
 func withLauncherHooks(t *testing.T) {
 	t.Helper()
+	oldMappings := DefaultClaudeDesktopMappingSelector
 	oldSingle := DefaultSingleSelector
 	oldSingleWithUpdates := DefaultSingleSelectorWithUpdates
 	oldMulti := DefaultMultiSelector
@@ -399,6 +400,7 @@ func withLauncherHooks(t *testing.T) {
 	oldConfirm := DefaultConfirmPrompt
 	oldSignIn := DefaultSignIn
 	t.Cleanup(func() {
+		DefaultClaudeDesktopMappingSelector = oldMappings
 		DefaultSingleSelector = oldSingle
 		DefaultSingleSelectorWithUpdates = oldSingleWithUpdates
 		DefaultMultiSelector = oldMulti

@@ -1818,7 +1818,11 @@ func testResetClaudeDesktopMappingsSerializesLifecycleChange(t *testing.T, name 
 	claudeProxyMu.Lock()
 	activeGateway := claudeAppProxy
 	claudeProxyMu.Unlock()
-	if activeGateway != nil {
+	if name == "disconnect" {
+		if activeGateway != gateway {
+			t.Fatal("disconnect must preserve the gateway for CLI setup")
+		}
+	} else if activeGateway != nil {
 		t.Fatalf("Claude gateway remained active after %s", name)
 	}
 }
@@ -1987,12 +1991,16 @@ func TestPrepareClaudeDesktopConnectionPreservesFirstUseIntro(t *testing.T) {
 	if err := setClaudeDesktopConnection(true, false); err != nil {
 		t.Fatal(err)
 	}
+	if localCalls != preparationLocalCalls+1 {
+		t.Fatalf("local model lookups after Continue = %d, want %d for connection validation", localCalls, preparationLocalCalls+1)
+	}
+	continuedLocalCalls := localCalls
 	continued := getClaudeDesktopConnectionSummary()
 	if !continued.Used {
 		t.Fatalf("continued status = %+v, want integration marked used", continued)
 	}
-	if localCalls != preparationLocalCalls {
-		t.Fatalf("local model lookups after Continue = %d, want %d", localCalls, preparationLocalCalls)
+	if localCalls != continuedLocalCalls {
+		t.Fatalf("local model lookups after continued status = %d, want %d", localCalls, continuedLocalCalls)
 	}
 }
 
@@ -2379,6 +2387,14 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 				claudeProxyMu.Unlock()
 			})
 
+			// A disconnected profile still needs the gateway for CLI setup, even
+			// when no cloud model is currently usable. Starting it must not connect.
+			if err := reconcileClaudeAppProxy(); err != nil {
+				t.Fatal(err)
+			}
+			if claudeAppProxy == nil || fake.installed || fake.configureCalls != 0 {
+				t.Fatal("startup must serve the gateway without changing Claude's profile")
+			}
 			err := setClaudeGatewayInstalled(true, false)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("setClaudeGatewayInstalled() error = %v, want %q", err, tt.wantError)
@@ -2386,8 +2402,8 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 			if fake.installed {
 				t.Fatal("Claude profile changed without a usable model")
 			}
-			if claudeAppProxy != nil {
-				t.Fatal("Claude gateway started without a usable model")
+			if claudeAppProxy == nil {
+				t.Fatal("failed connect stopped the gateway needed for CLI recovery")
 			}
 			if !hasUsedClaudeDesktopIntegration() {
 				t.Fatal("failed enable did not expose Claude recovery settings")
@@ -2473,7 +2489,7 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 		}, nil
 	}
 	claudeLocalModelsResolver = func(context.Context) ([]string, error) {
-		return []string{"qwen3:8b"}, nil
+		return []string{"qwen3:8b", "qwen3:4b"}, nil
 	}
 	t.Cleanup(func() {
 		stopClaudeAppProxy()
@@ -2497,6 +2513,26 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 	}
 	if loaderCalls != 0 || accessCalls != 0 {
 		t.Fatalf("cloud startup calls = recommendations:%d access:%d, want zero", loaderCalls, accessCalls)
+	}
+	// A CLI save must be visible without restarting the app or making cloud
+	// discovery calls, even when the running gateway started with a local model.
+	want := map[string]string{"claude-opus-5": "qwen3:4b"}
+	if err := launch.SaveClaudeDesktopModelMappings(want); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := proxy.FetchClaudeDesktopCatalog(t.Context(), nil, "http://"+claudeAppProxy.Addr(), "ollama")
+	if err != nil || len(catalog) != 1 || catalog[0].ID != "claude-opus-5" || catalog[0].DisplayName != "qwen3:4b" {
+		t.Fatalf("gateway did not reload CLI mappings: %+v, %v", catalog, err)
+	}
+	if err := launch.SaveClaudeDesktopModels([]string{"qwen3:8b"}); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err = proxy.FetchClaudeDesktopCatalog(t.Context(), nil, "http://"+claudeAppProxy.Addr(), "ollama")
+	if err != nil || len(catalog) != 1 || catalog[0].DisplayName != "qwen3:8b" {
+		t.Fatalf("gateway did not restore the prior selection: %+v, %v", catalog, err)
+	}
+	if loaderCalls != 0 || accessCalls != 0 {
+		t.Fatalf("local CLI reload made cloud calls: %d/%d", loaderCalls, accessCalls)
 	}
 	status := getClaudeDesktopConnectionStatus()
 	var foundCloud, foundSelectedLocal bool

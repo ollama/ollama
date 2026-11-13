@@ -3,6 +3,7 @@ package launch
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -239,21 +240,23 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 	})
 }
 
-func TestLaunchCmdClaudeDesktopRequiresRestore(t *testing.T) {
+func TestLaunchCmdClaudeDesktopUsesSharedServerStartup(t *testing.T) {
+	startupErr := errors.New("server startup failed")
 	for _, name := range []string{"claude-desktop", "claude-app"} {
-		heartbeatCalled := false
-		cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error {
-			heartbeatCalled = true
-			return nil
-		}, func(cmd *cobra.Command) {})
+		calls := 0
+		cmd := LaunchCmd(func(_ *cobra.Command, args []string) error {
+			calls++
+			if len(args) != 1 || args[0] != name {
+				t.Fatalf("startup arguments = %v", args)
+			}
+			return startupErr
+		}, nil)
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
 		cmd.SetArgs([]string{name})
-
 		err := cmd.Execute()
-		if err == nil || !strings.Contains(err.Error(), "can only be restored from the command line") {
-			t.Fatalf("expected %s launch to require --restore, got %v", name, err)
-		}
-		if heartbeatCalled {
-			t.Fatalf("expected %s to fail before checking the Ollama server heartbeat", name)
+		if calls != 1 || !errors.Is(err, startupErr) {
+			t.Fatalf("launch %s: startup calls = %d, error = %v", name, calls, err)
 		}
 	}
 }

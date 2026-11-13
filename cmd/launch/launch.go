@@ -295,6 +295,7 @@ Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude          Claude Code
+  claude-desktop  Claude Desktop
   chatgpt         ChatGPT (aliases: codex-app, codex-desktop, codex-gui)
   hermes          Hermes Agent
   openclaw        OpenClaw (aliases: clawdbot, moltbot)
@@ -330,9 +331,6 @@ Examples:
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if restoreFlag {
 				return nil
-			}
-			if len(args) > 0 && launchCommandIsClaudeDesktop(args[0]) {
-				return fmt.Errorf("Claude Desktop can only be restored from the command line: ollama launch claude-desktop --restore")
 			}
 			return checkServerHeartbeat(cmd, args)
 		},
@@ -376,7 +374,7 @@ Examples:
 			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
-						if canonical == "pi" {
+						if canonical == "pi" || canonical == "claude-desktop" {
 							return fmt.Errorf("cloud is disabled; enable cloud to use %s", modelFlag)
 						}
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
@@ -412,15 +410,10 @@ Examples:
 	}
 
 	cmd.Flags().StringVarP(&modelFlag, "model", "m", "", "Model to use")
-	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
+	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching (Claude Desktop offers Save and launch)")
 	cmd.Flags().BoolVar(&restoreFlag, "restore", false, "Restore an integration to its default profile")
 	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
 	return cmd
-}
-
-func launchCommandIsClaudeDesktop(name string) bool {
-	canonical, _, err := LookupIntegration(name)
-	return err == nil && canonical == claudeDesktopIntegrationName
 }
 
 type launcherClient struct {
@@ -506,6 +499,19 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		return runIntegration(pi, "", nil, req.ExtraArgs)
 	}
 
+	if desktop, ok := runner.(*ClaudeDesktop); ok {
+		launchClient, err := newLauncherClient(policy)
+		if err != nil {
+			return err
+		}
+		launchClient.accountState = req.AccountState
+		launchClient.accountStateProvider = req.AccountStateProvider
+		launchClient.accountStateUpdates = req.AccountStateUpdates
+		if err := EnsureIntegrationInstalled(name, runner); err != nil {
+			return err
+		}
+		return launchClient.launchClaudeDesktop(ctx, desktop, req)
+	}
 	launchClient, saved, err := prepareIntegrationLaunch(name, policy)
 	if err != nil {
 		return err
