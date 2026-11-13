@@ -685,6 +685,44 @@ func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 	}
 }
 
+func TestToCompletion_Logprobs(t *testing.T) {
+	logprobs := []api.Logprob{
+		{
+			TokenLogprob: api.TokenLogprob{Token: "Paris", Logprob: -0.08},
+			TopLogprobs: []api.TokenLogprob{
+				{Token: "Paris", Logprob: -0.08},
+				{Token: "Lyon", Logprob: -2.6},
+			},
+		},
+	}
+
+	choices := map[string]func(api.GenerateResponse) CompleteChunkChoice{
+		"ToCompletion": func(r api.GenerateResponse) CompleteChunkChoice {
+			return ToCompletion("cmpl-test", r).Choices[0]
+		},
+		"ToCompleteChunk": func(r api.GenerateResponse) CompleteChunkChoice {
+			return ToCompleteChunk("cmpl-test", r).Choices[0]
+		},
+	}
+
+	for name, choice := range choices {
+		t.Run(name, func(t *testing.T) {
+			got := choice(api.GenerateResponse{Model: "test-model", Response: "Paris", Logprobs: logprobs})
+			if got.Logprobs == nil {
+				t.Fatal("expected logprobs to be returned")
+			}
+			if diff := cmp.Diff(logprobs, got.Logprobs.Content); diff != "" {
+				t.Errorf("logprobs mismatch (-want +got):\n%s", diff)
+			}
+
+			got = choice(api.GenerateResponse{Model: "test-model", Response: "Paris"})
+			if got.Logprobs != nil {
+				t.Errorf("expected no logprobs when none were generated, got %+v", got.Logprobs)
+			}
+		})
+	}
+}
+
 func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	modified := time.Unix(1234567890, 0).UTC()
 

@@ -1457,6 +1457,69 @@ func TestCompletionsMiddleware(t *testing.T) {
 	}
 }
 
+func TestCompleteWriter_Logprobs(t *testing.T) {
+	logprobs := []api.Logprob{
+		{
+			TokenLogprob: api.TokenLogprob{Token: "Paris", Logprob: -0.08},
+			TopLogprobs:  []api.TokenLogprob{{Token: "Paris", Logprob: -0.08}},
+		},
+	}
+
+	for _, stream := range []bool{false, true} {
+		name := "non-streaming"
+		if stream {
+			name = "streaming"
+		}
+		t.Run(name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+
+			writer := &CompleteWriter{
+				BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+				stream:     stream,
+				id:         "cmpl-test",
+			}
+
+			data, err := json.Marshal(api.GenerateResponse{
+				Model:      "test-model",
+				Response:   "Paris",
+				Done:       true,
+				DoneReason: "stop",
+				Logprobs:   logprobs,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := writer.Write(data); err != nil {
+				t.Fatal(err)
+			}
+
+			body := recorder.Body.String()
+			if stream {
+				frames := sseDataFrames(body)
+				if len(frames) == 0 {
+					t.Fatalf("expected SSE data frames, got %q", body)
+				}
+				body = frames[0]
+			}
+
+			var resp struct {
+				Choices []openai.CompleteChunkChoice `json:"choices"`
+			}
+			if err := json.Unmarshal([]byte(body), &resp); err != nil {
+				t.Fatalf("decode %q: %v", body, err)
+			}
+			if len(resp.Choices) != 1 || resp.Choices[0].Logprobs == nil {
+				t.Fatalf("expected one choice with logprobs, got %s", body)
+			}
+			if diff := cmp.Diff(logprobs, resp.Choices[0].Logprobs.Content); diff != "" {
+				t.Errorf("logprobs mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestSamplerOptionsPassThrough(t *testing.T) {
 	endpoints := []struct {
 		name       string
