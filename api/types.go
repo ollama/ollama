@@ -853,6 +853,16 @@ type CopyRequest struct {
 	Destination string `json:"destination"`
 }
 
+// PullLimits carries the per-request pull limits through the CLI and server
+// call chains. Zero in either field means "use the environment default", so a
+// caller that sets neither behaves exactly as before.
+type PullLimits struct {
+	// Rate is the total bandwidth in bytes/s, shared by all streams.
+	Rate int64
+	// Streams is how many blob parts transfer at once.
+	Streams int
+}
+
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
@@ -861,6 +871,14 @@ type PullRequest struct {
 	Username string `json:"username"`           // Deprecated: ignored
 	Password string `json:"password"`           // Deprecated: ignored
 	Stream   *bool  `json:"stream,omitempty"`
+	// LimitRate caps the total pull bandwidth at this many bytes/s, shared by
+	// all streams. 0 falls back to OLLAMA_MAX_PULL_RATE.
+	LimitRate int64 `json:"limit_rate,omitempty"`
+	// LimitStreams caps how many blob parts transfer at once. 0 falls back to
+	// OLLAMA_MAX_PULL_STREAMS. Only the concurrency takes effect when a pull is
+	// resumed: the part layout is fixed in the on-disk state from the first
+	// attempt.
+	LimitStreams int `json:"limit_streams,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`

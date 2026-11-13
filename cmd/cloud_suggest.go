@@ -80,14 +80,18 @@ func cloudSuggestionName(name string, insecure bool) (string, bool) {
 // a confirmation prompt, or by augmenting the returned error when not at a
 // terminal. It returns the name that was actually pulled. `verb` is the
 // user-facing command ("run" or "pull") used in the hint text.
-func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name, runner string, insecure bool, verb string) (string, error) {
+func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name, runner string, insecure bool, verb string, limits ...api.PullLimits) (string, error) {
+	var lim api.PullLimits
+	if len(limits) > 0 {
+		lim = limits[0]
+	}
 	// If a suggestion prompt may follow a failed pull, erase the failed
 	// attempt's progress display instead of leaving its "pulling manifest"
 	// line to stack up against the accepted pull's identical one.
 	_, eligible := cloudSuggestionName(name, insecure)
 	clearNotFound := eligible && isInteractiveTerminal()
 
-	pullErr := pullModelWithProgress(ctx, client, name, runner, insecure, clearNotFound)
+	pullErr := pullModelWithProgress(ctx, client, name, runner, insecure, clearNotFound, lim)
 	if pullErr == nil {
 		return name, nil
 	}
@@ -114,7 +118,7 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name, runn
 		return "", pullErr
 	}
 
-	if err := pullModelWithProgress(ctx, client, cloudName, runner, insecure, false); err != nil {
+	if err := pullModelWithProgress(ctx, client, cloudName, runner, insecure, false, lim); err != nil {
 		return "", err
 	}
 	return cloudName, nil
