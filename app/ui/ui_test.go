@@ -1160,17 +1160,13 @@ func TestExploreModels(t *testing.T) {
 
 	var hits atomic.Int32
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/tags" {
+		if r.URL.Path != "/library" {
 			http.NotFound(w, r)
 			return
 		}
 		hits.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"models":[
-			{"model":"qwen3:8b","size":5000000000,"capabilities":["completion","tools"]},
-			{"model":"gemma3:4b","size":3000000000,"capabilities":["vision"]},
-			{"model":"","size":0}
-		]}`)
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, libraryFixture)
 	}))
 	defer stub.Close()
 	OllamaDotCom = stub.URL
@@ -1193,11 +1189,21 @@ func TestExploreModels(t *testing.T) {
 		if len(resp.Models) != 2 {
 			t.Fatalf("expected 2 models, got %d: %+v", len(resp.Models), resp.Models)
 		}
-		if resp.Models[0].Model != "qwen3:8b" || resp.Models[0].Size != 5000000000 {
-			t.Fatalf("unexpected first model: %+v", resp.Models[0])
+		first := resp.Models[0]
+		if first.Model != "llama3.1" {
+			t.Fatalf("unexpected first model: %+v", first)
 		}
-		if len(resp.Models[0].Capabilities) != 2 {
-			t.Fatalf("expected capabilities to be preserved, got %+v", resp.Models[0])
+		if !strings.Contains(first.Description, "state-of-the-art model from Meta") {
+			t.Fatalf("expected description to be parsed, got %q", first.Description)
+		}
+		if len(first.Capabilities) != 1 || first.Capabilities[0] != "tools" {
+			t.Fatalf("expected capabilities to be parsed, got %+v", first.Capabilities)
+		}
+		if len(first.Variants) != 3 {
+			t.Fatalf("expected 3 variants, got %+v", first.Variants)
+		}
+		if first.Pulls != "121.1M" || first.Tags != 93 {
+			t.Fatalf("expected pulls and tags to be parsed, got %+v", first)
 		}
 	})
 

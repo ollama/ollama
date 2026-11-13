@@ -110,8 +110,11 @@ type SavedModelRequest struct {
 // ExploreModel is a publicly available model from the Ollama library.
 type ExploreModel struct {
 	Model        string   `json:"model"`
-	Size         int64    `json:"size,omitempty"`
+	Description  string   `json:"description,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
+	Variants     []string `json:"variants,omitempty"`
+	Pulls        string   `json:"pulls,omitempty"`
+	Tags         int      `json:"tags,omitempty"`
 }
 
 // ExploreModelsResponse is the public model catalog.

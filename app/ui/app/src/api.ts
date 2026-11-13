@@ -434,8 +434,11 @@ export async function updateSettings(settings: Settings): Promise<{
 
 export interface ExploreModel {
   model: string;
-  size?: number;
+  description?: string;
   capabilities?: string[];
+  variants?: string[];
+  pulls?: string;
+  tags?: number;
 }
 
 export async function getExploreModels(): Promise<ExploreModel[]> {

@@ -1686,6 +1686,11 @@ func (s *Server) getExploreModels(w http.ResponseWriter, r *http.Request) error 
 }
 
 // exploreModels fetches and caches the public model catalog.
+//
+// The catalog comes from the library page, which lists every published model
+// along with its description, capabilities and available variants. The
+// registry's /api/tags endpoint only returns a small curated subset, so it is
+// not used here.
 func (s *Server) exploreModels(ctx context.Context) ([]responses.ExploreModel, error) {
 	s.exploreMu.Lock()
 	defer s.exploreMu.Unlock()
@@ -1694,7 +1699,7 @@ func (s *Server) exploreModels(ctx context.Context) ([]responses.ExploreModel, e
 		return s.exploreCache, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OllamaDotCom+"/api/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OllamaDotCom+"/library", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1706,30 +1711,12 @@ func (s *Server) exploreModels(ctx context.Context) ([]responses.ExploreModel, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("library returned status %d", resp.StatusCode)
 	}
 
-	var payload struct {
-		Models []struct {
-			Model        string   `json:"model"`
-			Size         int64    `json:"size"`
-			Capabilities []string `json:"capabilities"`
-		} `json:"models"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode model catalog: %w", err)
-	}
-
-	models := make([]responses.ExploreModel, 0, len(payload.Models))
-	for _, m := range payload.Models {
-		if m.Model == "" {
-			continue
-		}
-		models = append(models, responses.ExploreModel{
-			Model:        m.Model,
-			Size:         m.Size,
-			Capabilities: m.Capabilities,
-		})
+	models, err := parseLibrary(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
 	s.exploreCache = models

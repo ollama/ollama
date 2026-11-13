@@ -10,7 +10,6 @@ import { useSavedModels } from "@/hooks/useSavedModels";
 import { usePullModel } from "@/hooks/usePullModel";
 import { useModels } from "@/hooks/useModels";
 import BookmarkButton from "@/components/BookmarkButton";
-import { formatBytes } from "@/utils/formatBytes";
 
 export default function Explore() {
   const { data: catalog = [], isLoading, error } = useExploreModels();
@@ -31,6 +30,7 @@ export default function Explore() {
     return catalog.filter(
       (m) =>
         m.model.toLowerCase().includes(q) ||
+        (m.description ?? "").toLowerCase().includes(q) ||
         (m.capabilities ?? []).some((c) => c.toLowerCase().includes(q)),
     );
   }, [catalog, query]);
@@ -92,13 +92,16 @@ export default function Explore() {
                         <span className="block truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
                           {model.model}
                         </span>
+                        {model.description && (
+                          <span className="mt-0.5 block truncate text-xs text-neutral-500 dark:text-neutral-400">
+                            {model.description}
+                          </span>
+                        )}
                         <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-neutral-500 dark:text-neutral-400">
-                          {model.size ? (
-                            <span>{formatBytes(model.size)}</span>
-                          ) : null}
                           {(model.capabilities ?? []).map((c) => (
                             <span key={c}>{c}</span>
                           ))}
+                          {model.pulls && <span>{model.pulls} pulls</span>}
                           {isInstalled && (
                             <span className="text-green-600 dark:text-green-400">
                               Installed
@@ -172,20 +175,31 @@ export default function Explore() {
             </div>
 
             <dl className="mt-4 space-y-2 text-sm">
-              <div className="flex justify-between gap-4">
-                <dt className="text-neutral-500 dark:text-neutral-400">Size</dt>
-                <dd className="text-neutral-900 dark:text-neutral-100">
-                  {selectedModel.size
-                    ? formatBytes(selectedModel.size)
-                    : "Unknown"}
-                </dd>
-              </div>
+              {selectedModel.description && (
+                <p className="text-neutral-600 dark:text-neutral-300">
+                  {selectedModel.description}
+                </p>
+              )}
               <div className="flex justify-between gap-4">
                 <dt className="text-neutral-500 dark:text-neutral-400">
                   Capabilities
                 </dt>
                 <dd className="text-right text-neutral-900 dark:text-neutral-100">
                   {(selectedModel.capabilities ?? []).join(", ") || "Unknown"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-neutral-500 dark:text-neutral-400">
+                  Variants
+                </dt>
+                <dd className="text-right text-neutral-900 dark:text-neutral-100">
+                  {(selectedModel.variants ?? []).join(", ") || "None"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-neutral-500 dark:text-neutral-400">Pulls</dt>
+                <dd className="text-neutral-900 dark:text-neutral-100">
+                  {selectedModel.pulls || "Unknown"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
