@@ -1350,6 +1350,14 @@ func TestFindArguments(t *testing.T) {
 				"location": "San Francisco, CA",
 			},
 		},
+		{
+			name:   "duplicated tool call envelope in arguments",
+			tool:   "extract_name",
+			buffer: []byte(`{"name": "extract_name", "arguments": {"name": "extract_name", "arguments": {"name": "John"}}}`),
+			want: map[string]any{
+				"name": "John",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1360,5 +1368,29 @@ func TestFindArguments(t *testing.T) {
 				t.Errorf("findArguments() args mismatch (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestUnwrapNestedToolCallPreservesDeclaredFields(t *testing.T) {
+	tool := &api.Tool{
+		Function: api.ToolFunction{
+			Name: "dispatch",
+			Parameters: api.ToolFunctionParameters{
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"name":      {Type: api.PropertyType{"string"}},
+					"arguments": {Type: api.PropertyType{"object"}},
+				}),
+			},
+		},
+	}
+	args := map[string]any{
+		"name": "dispatch",
+		"arguments": map[string]any{
+			"name": "John",
+		},
+	}
+
+	if diff := cmp.Diff(args, unwrapNestedToolCall(tool, args)); diff != "" {
+		t.Errorf("unwrapNestedToolCall() mismatch (-want +got):\n%s", diff)
 	}
 }
