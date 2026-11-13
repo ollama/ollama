@@ -484,7 +484,10 @@ components:
             type: array
             items:
               type: number
-          description: Array of vector embeddings
+          description: >
+            Array of vector embeddings. The length of each vector is its
+            embedding dimension, which depends on the model and can be
+            specified using the dimensions request parameter when supported.
         total_duration:
           type: integer
           description: Total time spent generating in nanoseconds
