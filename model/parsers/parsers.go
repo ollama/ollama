@@ -56,7 +56,7 @@ func ParserForName(name string) Parser {
 	case "ripple":
 		p = &RippleParser{}
 	case "qwen3":
-		p = &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: false}
 	case "qwen3-thinking":
 		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
 	case "qwen3.5":
