@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -319,14 +320,40 @@ func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
 			hasThinkingSupport: true,
 		},
 		{
-			name: "split_tool_calls_begin_tag_conservative_parsing",
+			name: "split_tool_calls_begin_tag",
 			chunks: []string{
 				"Content before<｜tool▁calls▁beg",
 				"in｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test\n```json\n{}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
 			},
-			// Parser is conservative - treats incomplete tags as content
-			expectedContent:    "Content before<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>test\n```json\n{}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
-			expectedToolCalls:  nil,
+			// A partial opening tag is held back until the next chunk completes it
+			expectedContent: "Content before",
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "test",
+						Arguments: testArgs(map[string]any{}),
+					},
+				},
+			},
+			hasThinkingSupport: false,
+		},
+		{
+			name: "partial_tag_that_does_not_complete_is_content",
+			chunks: []string{
+				"1 <",
+				" 2 and 2 <｜",
+				" 3",
+			},
+			expectedContent:    "1 < 2 and 2 <｜ 3",
+			hasThinkingSupport: false,
+		},
+		{
+			name: "truncated_tag_at_end_of_stream_is_content",
+			chunks: []string{
+				"Content before",
+				"<｜tool▁calls▁beg",
+			},
+			expectedContent:    "Content before<｜tool▁calls▁beg",
 			hasThinkingSupport: false,
 		},
 		{
@@ -373,6 +400,109 @@ func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
 				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// cogitoParseChunks feeds chunks to a fresh parser, marking the last one as done,
+// and returns everything the parser emitted.
+func cogitoParseChunks(t *testing.T, thinking bool, chunks []string) (string, string, []api.ToolCall) {
+	t.Helper()
+
+	parser := &CogitoParser{}
+	parser.Init(nil, nil, &api.ThinkValue{Value: thinking})
+
+	var content, thought strings.Builder
+	var toolCalls []api.ToolCall
+	for i, chunk := range chunks {
+		c, th, calls, err := parser.Add(chunk, i == len(chunks)-1)
+		if err != nil {
+			t.Fatalf("Add() error on chunk %d: %v", i, err)
+		}
+		content.WriteString(c)
+		thought.WriteString(th)
+		toolCalls = append(toolCalls, calls...)
+	}
+	return content.String(), thought.String(), toolCalls
+}
+
+// The parsed result must not depend on where the response is split into chunks.
+func TestCogitoParser_ChunkInvariance(t *testing.T) {
+	const toolCall = "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n```json\n{\"city\":\"Oslo\"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>"
+	const toolOutput = "<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>sunny<｜tool▁output▁end｜><｜tool▁outputs▁end｜>"
+
+	tests := []struct {
+		name     string
+		input    string
+		thinking bool
+	}{
+		{name: "tool_call_only", input: toolCall},
+		{name: "content_then_tool_call", input: "Checking the weather." + toolCall},
+		{name: "thinking_then_content_then_tool_call", input: "I should look it up.</think>Checking the weather." + toolCall, thinking: true},
+		{name: "content_then_tool_output", input: "Result:" + toolOutput + "Done."},
+		{name: "plain_content_with_angle_brackets", input: "if a < b and b <｜ c then stop"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wantContent, wantThinking, wantCalls := cogitoParseChunks(t, tt.thinking, []string{tt.input})
+
+			check := func(label string, chunks []string) {
+				t.Helper()
+				content, thinking, calls := cogitoParseChunks(t, tt.thinking, chunks)
+				if content != wantContent {
+					t.Errorf("%s: content = %q, want %q", label, content, wantContent)
+				}
+				if thinking != wantThinking {
+					t.Errorf("%s: thinking = %q, want %q", label, thinking, wantThinking)
+				}
+				if diff := cmp.Diff(wantCalls, calls, argsComparer); diff != "" {
+					t.Errorf("%s: tool calls mismatch (-want +got):\n%s", label, diff)
+				}
+			}
+
+			// every two-way split on a rune boundary
+			for i := range tt.input {
+				if i == 0 {
+					continue
+				}
+				check(fmt.Sprintf("split at byte %d", i), []string{tt.input[:i], tt.input[i:]})
+			}
+
+			// one rune per chunk
+			var runes []string
+			for _, r := range tt.input {
+				runes = append(runes, string(r))
+			}
+			check("one rune per chunk", runes)
+		})
+	}
+}
+
+// The chunk invariance test compares against a single-chunk parse, so pin the
+// single-chunk result as well.
+func TestCogitoParser_ChunkInvarianceReference(t *testing.T) {
+	input := "Checking the weather.<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n```json\n{\"city\":\"Oslo\"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>"
+
+	// split after the first byte of the opening tag
+	idx := strings.Index(input, cogitoToolCallsBeginTag) + 1
+	content, thinking, calls := cogitoParseChunks(t, false, []string{input[:idx], input[idx:]})
+
+	if content != "Checking the weather." {
+		t.Errorf("content = %q, want %q", content, "Checking the weather.")
+	}
+	if thinking != "" {
+		t.Errorf("thinking = %q, want empty", thinking)
+	}
+	want := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Name:      "get_weather",
+				Arguments: testArgs(map[string]any{"city": "Oslo"}),
+			},
+		},
+	}
+	if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+		t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 }
 

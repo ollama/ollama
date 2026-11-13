@@ -122,7 +122,7 @@ func (cogitoEventToolCall) isCogitoEvent()        {}
 
 func (p *CogitoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-	events := p.parseEvents()
+	events := p.parseEvents(done)
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -146,13 +146,13 @@ func (p *CogitoParser) Add(s string, done bool) (content string, thinking string
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
-func (p *CogitoParser) parseEvents() []cogitoEvent {
+func (p *CogitoParser) parseEvents(done bool) []cogitoEvent {
 	var all []cogitoEvent
 
 	keepLooping := true
 	for keepLooping {
 		var events []cogitoEvent
-		events, keepLooping = p.eat()
+		events, keepLooping = p.eat(done)
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -161,7 +161,7 @@ func (p *CogitoParser) parseEvents() []cogitoEvent {
 	return all
 }
 
-func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
+func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
 	var events []cogitoEvent
 	bufStr := p.buffer.String()
 	if bufStr == "" {
@@ -242,6 +242,31 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 			}
 			return events, true
 		default: // otherwise its content
+			// An opening tag can be split across chunks. Hold back a trailing
+			// partial tag until it completes or stops matching, so a tool call
+			// is not lost as content. At the end of the stream a truncated tag
+			// is ordinary content.
+			if !done {
+				overlapLen := max(
+					overlap(bufStr, cogitoToolCallsBeginTag),
+					overlap(bufStr, cogitoToolOutputsBeginTag),
+				)
+				if overlapLen > 0 {
+					beforePartialTag := bufStr[:len(bufStr)-overlapLen]
+					trailingLen := trailingWhitespaceLen(beforePartialTag)
+					ambiguousStart := len(beforePartialTag) - trailingLen
+
+					unambiguous := bufStr[:ambiguousStart]
+					ambiguous := bufStr[ambiguousStart:]
+					p.buffer.Reset()
+					p.buffer.WriteString(ambiguous)
+					if len(unambiguous) > 0 {
+						events = append(events, cogitoEventContent{content: unambiguous})
+					}
+					return events, false
+				}
+			}
+
 			p.buffer.Reset()
 			if len(bufStr) > 0 {
 				events = append(events, cogitoEventContent{content: bufStr})
