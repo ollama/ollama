@@ -1,7 +1,9 @@
 package parsers
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -719,5 +721,194 @@ func TestDeepSeekParser_EdgeCases(t *testing.T) {
 				t.Errorf("Thinking mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// testDeepSeek3Parse feeds chunks to a single parser in order and returns the
+// accumulated result. The last chunk is marked as done.
+func testDeepSeek3Parse(t *testing.T, chunks ...string) (string, string, []api.ToolCall) {
+	t.Helper()
+
+	parser := &DeepSeek3Parser{hasThinkingSupport: false}
+	parser.Init([]api.Tool{}, nil, &api.ThinkValue{Value: false})
+
+	var content, thinking string
+	var calls []api.ToolCall
+	for i, chunk := range chunks {
+		c, th, tc, err := parser.Add(chunk, i == len(chunks)-1)
+		if err != nil {
+			t.Fatalf("Add(%q) error = %v", chunk, err)
+		}
+		content += c
+		thinking += th
+		calls = append(calls, tc...)
+	}
+
+	return content, thinking, calls
+}
+
+// TestDeepSeek3Parser_PartialToolCallTag checks that a tool-call opening tag
+// which arrives split across chunks is still recognized as a delimiter instead
+// of being emitted as ordinary content. The parser withholds trailing bytes
+// that could still grow into an opening tag, so the accumulated result of a
+// response must not depend on where it was split.
+//
+// See ollama/ollama#18681.
+func TestDeepSeek3Parser_PartialToolCallTag(t *testing.T) {
+	openBegin := len(deepseekToolCallsBeginTag)
+
+	const toolCallResponse = deepseekToolCallsBeginTag +
+		deepseekToolCallBeginTag + "get_weather" +
+		deepseekToolSepTag + `{"city":"Oslo"}` +
+		deepseekToolCallEndTag + deepseekToolCallsEndTag
+
+	// Trailing bytes that could still become an opening tag, but never do.
+	// They have to reach the caller as content once the stream is done.
+	const partialTag = "<｜tool▁calls▁"
+
+	// A longer prefix of the same opening tag, used to check a split further in.
+	const partialTagLong = "<｜tool▁calls▁beg"
+
+	if !strings.HasPrefix(toolCallResponse, partialTag) || !strings.HasPrefix(toolCallResponse, partialTagLong) {
+		t.Fatalf("test fixtures are not prefixes of %q", toolCallResponse)
+	}
+
+	// A split inside the tool call payload, past the function name and separator.
+	payloadSplit := openBegin + len(deepseekToolCallBeginTag) + len("get_weather") + len(deepseekToolSepTag) + 3
+
+	weatherCall := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Name: "get_weather",
+				Arguments: testArgs(map[string]any{
+					"city": "Oslo",
+				}),
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		chunks      []string
+		wantContent string
+		wantCalls   []api.ToolCall
+	}{
+		{
+			name:      "complete tool call in one chunk",
+			chunks:    []string{toolCallResponse},
+			wantCalls: weatherCall,
+		},
+		{
+			name:      "minimal split after the opening angle bracket",
+			chunks:    []string{"<", toolCallResponse[1:]},
+			wantCalls: weatherCall,
+		},
+		{
+			name:      "split inside the opening tag",
+			chunks:    []string{partialTagLong, toolCallResponse[len(partialTagLong):]},
+			wantCalls: weatherCall,
+		},
+		{
+			name:      "split on the last character of the opening tag",
+			chunks:    []string{toolCallResponse[:openBegin-1], toolCallResponse[openBegin-1:]},
+			wantCalls: weatherCall,
+		},
+		{
+			name:      "split immediately after the opening tag",
+			chunks:    []string{toolCallResponse[:openBegin], toolCallResponse[openBegin:]},
+			wantCalls: weatherCall,
+		},
+		{
+			name:      "split inside the tool call payload",
+			chunks:    []string{toolCallResponse[:payloadSplit], toolCallResponse[payloadSplit:]},
+			wantCalls: weatherCall,
+		},
+		{
+			name:      "split inside the closing tag",
+			chunks:    []string{toolCallResponse[:len(toolCallResponse)-3], toolCallResponse[len(toolCallResponse)-3:]},
+			wantCalls: weatherCall,
+		},
+		{
+			name:        "ordinary text",
+			chunks:      []string{"Hello, ", "how are ", "you?"},
+			wantContent: "Hello, how are you?",
+		},
+		{
+			name:        "truncated opening tag at end of stream",
+			chunks:      []string{partialTag},
+			wantContent: partialTag,
+		},
+		{
+			name:        "truncated opening tag after content",
+			chunks:      []string{"Partial ", partialTag},
+			wantContent: "Partial " + partialTag,
+		},
+		{
+			name:        "text before a tool call",
+			chunks:      []string{"Let me check." + toolCallResponse},
+			wantContent: "Let me check.",
+			wantCalls:   weatherCall,
+		},
+		{
+			name:        "text before a tool call with the opening tag split",
+			chunks:      []string{"Let me check." + partialTag, toolCallResponse[len(partialTag):]},
+			wantContent: "Let me check.",
+			wantCalls:   weatherCall,
+		},
+		{
+			name:        "tool output tag split",
+			chunks:      []string{"Report: <｜tool▁output▁beg", "in｜>25C" + deepseekToolOutputEndTag},
+			wantContent: "Report: 25C",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, thinking, calls := testDeepSeek3Parse(t, tt.chunks...)
+
+			if diff := cmp.Diff(tt.wantContent, content); diff != "" {
+				t.Errorf("content mismatch (-want +got):\n%s", diff)
+			}
+			if thinking != "" {
+				t.Errorf("thinking = %q, want empty", thinking)
+			}
+			if diff := cmp.Diff(tt.wantCalls, calls, argsComparer); diff != "" {
+				t.Errorf("calls mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestDeepSeek3Parser_ChunkInvariance asserts that the smallest valid tool-call
+// response produces the same accumulated result whether it is parsed whole or
+// split at any rune boundary. Byte offsets that fall inside a multi-byte rune
+// are skipped, since they cannot correspond to a tokenizer boundary.
+func TestDeepSeek3Parser_ChunkInvariance(t *testing.T) {
+	const toolCallResponse = deepseekToolCallsBeginTag +
+		deepseekToolCallBeginTag + "get_weather" +
+		deepseekToolSepTag + `{"city":"Oslo"}` +
+		deepseekToolCallEndTag + deepseekToolCallsEndTag
+
+	wholeContent, wholeThinking, wholeCalls := testDeepSeek3Parse(t, toolCallResponse)
+	if len(wholeCalls) == 0 {
+		t.Fatalf("parsing the whole response produced no tool call")
+	}
+
+	for i := range toolCallResponse {
+		if !utf8.RuneStart(toolCallResponse[i]) {
+			continue
+		}
+
+		content, thinking, calls := testDeepSeek3Parse(t, toolCallResponse[:i], toolCallResponse[i:])
+
+		if diff := cmp.Diff(wholeContent, content); diff != "" {
+			t.Errorf("split at byte %d: content mismatch (-whole +split):\n%s", i, diff)
+		}
+		if diff := cmp.Diff(wholeThinking, thinking); diff != "" {
+			t.Errorf("split at byte %d: thinking mismatch (-whole +split):\n%s", i, diff)
+		}
+		if diff := cmp.Diff(wholeCalls, calls, argsComparer); diff != "" {
+			t.Errorf("split at byte %d: calls mismatch (-whole +split):\n%s", i, diff)
+		}
 	}
 }
