@@ -30,7 +30,7 @@ jobs:
       - name: Install pinned xgrammar into a prefix
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^set(XGRAMMAR_VERSION \(.*\))$/\1/p' cmake/mlx/CMakeLists.txt)"
+          version="$(sed -n 's/^[[:space:]]*set(XGRAMMAR_VERSION \(.*\))$/\1/p' cmake/mlx/CMakeLists.txt)"
           [ -n "${version}" ] || { echo "XGRAMMAR_VERSION not found in cmake/mlx/CMakeLists.txt" >&2; exit 1; }
           echo "XGRAMMAR_VERSION=${version}" >>"${GITHUB_ENV}"
           src="${RUNNER_TEMP}/xgrammar-src"
