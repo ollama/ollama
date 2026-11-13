@@ -116,7 +116,16 @@ type Server struct {
 	IntegrationInstalled func(string) bool
 	IntegrationModels    http.Handler
 	ListCloudModels      func(context.Context) (*api.ListResponse, error)
+
+	// exploreMu guards the cached public model catalog.
+	exploreMu        sync.Mutex
+	exploreCache     []responses.ExploreModel
+	exploreFetchedAt time.Time
 }
+
+// exploreCacheTTL is how long the public model catalog is reused before it is
+// fetched again.
+const exploreCacheTTL = 10 * time.Minute
 
 func (s *Server) log() *slog.Logger {
 	if s.Logger == nil {
@@ -294,6 +303,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
+	mux.Handle("GET /api/v1/saved-models", handle(s.getSavedModels))
+	mux.Handle("POST /api/v1/saved-models", handle(s.saveModel))
+	mux.Handle("DELETE /api/v1/saved-models", handle(s.unsaveModel))
+	mux.Handle("GET /api/v1/explore", handle(s.getExploreModels))
+	mux.Handle("POST /api/v1/models/pull", handle(s.pullModel))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
 	mux.Handle("GET /api/v1/models/cloud", handle(s.getCloudModels))
@@ -1608,6 +1622,177 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	return json.NewEncoder(w).Encode(responses.SettingsResponse{
 		Settings: settings,
 	})
+}
+
+func (s *Server) getSavedModels(w http.ResponseWriter, r *http.Request) error {
+	models, err := s.Store.SavedModels()
+	if err != nil {
+		return fmt.Errorf("failed to load saved models: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(responses.SavedModelsResponse{Models: models})
+}
+
+func (s *Server) saveModel(w http.ResponseWriter, r *http.Request) error {
+	var req responses.SavedModelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if err := s.Store.SaveModel(req.Model); err != nil {
+		return fmt.Errorf("failed to save model: %w", err)
+	}
+
+	return s.writeSavedModels(w)
+}
+
+func (s *Server) unsaveModel(w http.ResponseWriter, r *http.Request) error {
+	var req responses.SavedModelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if err := s.Store.UnsaveModel(req.Model); err != nil {
+		return fmt.Errorf("failed to unsave model: %w", err)
+	}
+
+	return s.writeSavedModels(w)
+}
+
+// writeSavedModels responds with the current saved collection so the client can
+// update its cache from a single source of truth after a mutation.
+func (s *Server) writeSavedModels(w http.ResponseWriter) error {
+	models, err := s.Store.SavedModels()
+	if err != nil {
+		return fmt.Errorf("failed to load saved models: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(responses.SavedModelsResponse{Models: models})
+}
+
+// getExploreModels returns the public model catalog from the Ollama library.
+// The catalog is fetched from ollama.com and cached briefly so that browsing
+// does not hit the network on every render.
+func (s *Server) getExploreModels(w http.ResponseWriter, r *http.Request) error {
+	models, err := s.exploreModels(r.Context())
+	if err != nil {
+		return fmt.Errorf("failed to load model catalog: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(responses.ExploreModelsResponse{Models: models})
+}
+
+// exploreModels fetches and caches the public model catalog.
+//
+// The catalog comes from the library page, which lists every published model
+// along with its description, capabilities and available variants. The
+// registry's /api/tags endpoint only returns a small curated subset, so it is
+// not used here.
+func (s *Server) exploreModels(ctx context.Context) ([]responses.ExploreModel, error) {
+	s.exploreMu.Lock()
+	defer s.exploreMu.Unlock()
+
+	if len(s.exploreCache) > 0 && time.Since(s.exploreFetchedAt) < exploreCacheTTL {
+		return s.exploreCache, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OllamaDotCom+"/library", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := s.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("library returned status %d", resp.StatusCode)
+	}
+
+	models, err := parseLibrary(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	s.exploreCache = models
+	s.exploreFetchedAt = time.Now()
+
+	return models, nil
+}
+
+// pullModel downloads a model, streaming progress events as JSONL. It reuses
+// the same pull path as chat so downloads behave identically wherever they are
+// started from.
+func (s *Server) pullModel(w http.ResponseWriter, r *http.Request) error {
+	w.Header().Set("Content-Type", "text/jsonl")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Transfer-Encoding", "chunked")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return errors.New("streaming not supported")
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+	if req.Name == "" {
+		return fmt.Errorf("model is required")
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	var largestDigest string
+	var largestTotal int64
+
+	err := s.inferenceClient().Pull(ctx, &api.PullRequest{Model: req.Name}, func(progress api.ProgressResponse) error {
+		if progress.Digest != "" && progress.Total > largestTotal {
+			largestDigest = progress.Digest
+			largestTotal = progress.Total
+		}
+
+		if progress.Digest != "" && progress.Digest == largestDigest {
+			event := responses.DownloadEvent{
+				EventName: string(EventDownload),
+				Total:     progress.Total,
+				Completed: progress.Completed,
+				Done:      false,
+			}
+			if err := json.NewEncoder(w).Encode(event); err != nil {
+				return err
+			}
+			flusher.Flush()
+		}
+		return nil
+	})
+	if err != nil {
+		s.log().Error("model download error", "error", err, "model", req.Name)
+		json.NewEncoder(w).Encode(s.getError(err))
+		flusher.Flush()
+		return nil
+	}
+
+	if err := json.NewEncoder(w).Encode(responses.DownloadEvent{
+		EventName: string(EventDownload),
+		Completed: largestTotal,
+		Total:     largestTotal,
+		Done:      true,
+	}); err != nil {
+		return err
+	}
+	flusher.Flush()
+
+	return nil
 }
 
 func (s *Server) cloudSetting(w http.ResponseWriter, r *http.Request) error {

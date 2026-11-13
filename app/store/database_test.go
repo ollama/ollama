@@ -430,6 +430,77 @@ func TestChatDeletionWithCascade(t *testing.T) {
 	})
 }
 
+func TestMigrationV19ToV20CreatesSavedModelsTable(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	// Simulate a v19 database that predates the saved_models table.
+	if _, err := db.conn.Exec(`
+		DROP TABLE saved_models;
+		UPDATE settings SET schema_version = 19;
+	`); err != nil {
+		t.Fatalf("failed to seed v19 database: %v", err)
+	}
+
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v19 to v20 failed: %v", err)
+	}
+
+	if err := db.saveModel("qwen3:8b"); err != nil {
+		t.Fatalf("failed to save model after migration: %v", err)
+	}
+
+	models, err := db.getSavedModels()
+	if err != nil {
+		t.Fatalf("failed to read saved models after migration: %v", err)
+	}
+	if len(models) != 1 || models[0] != "qwen3:8b" {
+		t.Fatalf("expected [qwen3:8b] after migration, got %v", models)
+	}
+
+	version, err := db.getSchemaVersion()
+	if err != nil {
+		t.Fatalf("failed to get schema version: %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("expected schema version %d, got %d", currentSchemaVersion, version)
+	}
+}
+
+func TestMigrationV19ToV20IsIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.saveModel("qwen3:8b"); err != nil {
+		t.Fatalf("failed to save model: %v", err)
+	}
+
+	// Re-running the migration must not drop existing saved models.
+	if err := db.migrateV19ToV20(); err != nil {
+		t.Fatalf("re-running migration failed: %v", err)
+	}
+
+	models, err := db.getSavedModels()
+	if err != nil {
+		t.Fatalf("failed to read saved models: %v", err)
+	}
+	if len(models) != 1 || models[0] != "qwen3:8b" {
+		t.Fatalf("expected saved models to survive re-running the migration, got %v", models)
+	}
+}
+
 func countRows(t *testing.T, db *database, table string) int {
 	t.Helper()
 	var count int

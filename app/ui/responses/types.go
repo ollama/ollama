@@ -97,6 +97,31 @@ type SettingsResponse struct {
 	Settings store.Settings `json:"settings"`
 }
 
+// SavedModelsResponse is the list of model names the user has saved.
+type SavedModelsResponse struct {
+	Models []string `json:"models"`
+}
+
+// SavedModelRequest identifies a single model for a save or unsave request.
+type SavedModelRequest struct {
+	Model string `json:"model"`
+}
+
+// ExploreModel is a publicly available model from the Ollama library.
+type ExploreModel struct {
+	Model        string   `json:"model"`
+	Description  string   `json:"description,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Variants     []string `json:"variants,omitempty"`
+	Pulls        string   `json:"pulls,omitempty"`
+	Tags         int      `json:"tags,omitempty"`
+}
+
+// ExploreModelsResponse is the public model catalog.
+type ExploreModelsResponse struct {
+	Models []ExploreModel `json:"models"`
+}
+
 type HealthResponse struct {
 	Healthy bool `json:"healthy"`
 }

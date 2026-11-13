@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -469,6 +470,47 @@ func (s *Store) MarkCodexDesktopUsed() error {
 		return err
 	}
 	return s.db.markCodexDesktopUsed()
+}
+
+// SavedModels returns the names of models the user has saved, most recently
+// saved first. Saved models are independent of installed models: a saved model
+// may or may not be downloaded locally.
+func (s *Store) SavedModels() ([]string, error) {
+	if err := s.ensureDB(); err != nil {
+		return nil, fmt.Errorf("load saved models: %w", err)
+	}
+
+	return s.db.getSavedModels()
+}
+
+// SaveModel adds a model to the saved collection. Saving a model that is
+// already saved is a no-op, so callers do not need to check first.
+func (s *Store) SaveModel(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("model name is required")
+	}
+
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	return s.db.saveModel(name)
+}
+
+// UnsaveModel removes a model from the saved collection. It never deletes the
+// model from disk; removing a model that is not saved is a no-op.
+func (s *Store) UnsaveModel(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("model name is required")
+	}
+
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	return s.db.unsaveModel(name)
 }
 
 func (s *Store) Chats() ([]Chat, error) {
