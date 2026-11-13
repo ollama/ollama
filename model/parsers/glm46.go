@@ -233,6 +233,30 @@ func (p *GLM46Parser) eatLeadingWhitespaceAndTransitionTo(nextState glm46ParserS
 	return nil, true // Successfully transitioned
 }
 
+// glm46ToolCloseTagIndex returns the tool-call terminator outside an argument value.
+// GLM values may contain the literal tool-call terminator as ordinary text.
+func glm46ToolCloseTagIndex(s string) int {
+	inArgValue := false
+	for i := 0; i < len(s); {
+		switch {
+		case strings.HasPrefix(s[i:], glm46ArgValueOpenTag):
+			inArgValue = true
+			i += len(glm46ArgValueOpenTag)
+		case strings.HasPrefix(s[i:], glm46ArgValueCloseTag):
+			inArgValue = false
+			i += len(glm46ArgValueCloseTag)
+		case strings.HasPrefix(s[i:], glm46ToolCloseTag):
+			if !inArgValue {
+				return i
+			}
+			i += len(glm46ToolCloseTag)
+		default:
+			i++
+		}
+	}
+	return -1
+}
+
 // glm46SplitAtTag splits the buffer at the given tag, returns the content before (trimmed of trailing whitespace),
 // the content after (optionally trimmed of leading whitespace), and updates the buffer
 func glm46SplitAtTag(p *GLM46Parser, tag string, trimAfter bool) (string, string) {
@@ -371,8 +395,11 @@ func (p *GLM46Parser) eat() ([]glm46Event, bool) {
 
 	case glm46ParserState_CollectingToolContent:
 		acc := p.buffer.String()
-		if strings.Contains(acc, glm46ToolCloseTag) {
-			toolContent, _ := glm46SplitAtTag(p, glm46ToolCloseTag, true)
+		if closeTagIndex := glm46ToolCloseTagIndex(acc); closeTagIndex >= 0 {
+			toolContent := strings.TrimRightFunc(acc[:closeTagIndex], unicode.IsSpace)
+			remaining := strings.TrimLeftFunc(acc[closeTagIndex+len(glm46ToolCloseTag):], unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
 			if len(toolContent) == 0 {
 				slog.Warn("glm46 tool call closing tag found but no content before it")
 			}
@@ -398,21 +425,36 @@ type GLMToolCallXML struct {
 	Values  []string `xml:"arg_value"` // All arg_value elements in document order
 }
 
-// escapeGLM46Content escapes XML entities in text content while preserving arg_key/arg_value tags
+// escapeGLM46Content escapes XML entities in text while preserving structural argument tags.
 func escapeGLM46Content(s string) string {
 	var result strings.Builder
 	inTag := false
+	inArgValue := false
+	inArgKey := false
 
 	for i := range len(s) {
 		ch := s[i]
 
 		if ch == '<' {
-			// Check if this is a known tag
-			if strings.HasPrefix(s[i:], glm46ArgKeyOpenTag) ||
-				strings.HasPrefix(s[i:], glm46ArgKeyCloseTag) ||
-				strings.HasPrefix(s[i:], glm46ArgValueOpenTag) ||
-				strings.HasPrefix(s[i:], glm46ArgValueCloseTag) {
+			switch {
+			case strings.HasPrefix(s[i:], glm46ArgValueOpenTag):
 				inTag = true
+				inArgValue = true
+				inArgKey = false
+			case strings.HasPrefix(s[i:], glm46ArgValueCloseTag):
+				inTag = true
+				inArgValue = false
+				inArgKey = false
+			case strings.HasPrefix(s[i:], glm46ArgKeyOpenTag):
+				if !inArgValue || glm46HasArgKeyCloseBeforeArgValueClose(s, i) {
+					inTag = true
+					inArgKey = true
+				}
+			case strings.HasPrefix(s[i:], glm46ArgKeyCloseTag):
+				if !inArgValue || inArgKey {
+					inTag = true
+					inArgKey = false
+				}
 			}
 		}
 
@@ -437,6 +479,18 @@ func escapeGLM46Content(s string) string {
 	}
 
 	return result.String()
+}
+
+// glm46HasArgKeyCloseBeforeArgValueClose recognizes a key tag that repair can
+// use to recover a missing closing tag for the preceding value.
+func glm46HasArgKeyCloseBeforeArgValueClose(s string, openIndex int) bool {
+	remaining := s[openIndex+len(glm46ArgKeyOpenTag):]
+	keyCloseIndex := strings.Index(remaining, glm46ArgKeyCloseTag)
+	if keyCloseIndex == -1 {
+		return false
+	}
+	valueCloseIndex := strings.Index(remaining, glm46ArgValueCloseTag)
+	return valueCloseIndex == -1 || keyCloseIndex < valueCloseIndex
 }
 
 // repairPhase represents the expected next tag in the repair cycle.
@@ -609,12 +663,14 @@ func parseGLM46ToolCall(raw glm46EventRawToolCall, tools []api.Tool) (api.ToolCa
 
 	// Parse XML into struct, retrying once with repaired XML if it fails
 	var parsed GLMToolCallXML
+	usedRepair := false
 	if err := xml.Unmarshal([]byte(xmlString), &parsed); err != nil {
 		parsed = GLMToolCallXML{}
 		repaired := "<tool_call>" + repairGLM46XML(escaped) + "</tool_call>"
 		if err2 := xml.Unmarshal([]byte(repaired), &parsed); err2 != nil {
 			return api.ToolCall{}, fmt.Errorf("failed to parse XML: %w", err)
 		}
+		usedRepair = true
 	}
 
 	// Extract and trim function name
@@ -644,10 +700,15 @@ func parseGLM46ToolCall(raw glm46EventRawToolCall, tools []api.Tool) (api.ToolCa
 			Arguments: api.NewToolCallFunctionArguments(),
 		},
 	}
+	parseValueFunc := parseTypedToolValue
+	if usedRepair {
+		// Repaired tags can capture separator newlines as values.
+		parseValueFunc = parseValue
+	}
 
 	for i := range parsed.Keys {
 		key := strings.TrimSpace(parsed.Keys[i])
-		value := parsed.Values[i] // Don't trim here - parseValue handles it
+		value := parsed.Values[i] // GLM templates render string values verbatim.
 
 		// Look up parameter type
 		var paramType api.PropertyType
@@ -665,7 +726,7 @@ func parseGLM46ToolCall(raw glm46EventRawToolCall, tools []api.Tool) (api.ToolCa
 		}
 
 		// Parse value with type coercion
-		toolCall.Function.Arguments.Set(key, parseValue(value, paramType))
+		toolCall.Function.Arguments.Set(key, parseValueFunc(value, paramType))
 	}
 
 	return toolCall, nil
