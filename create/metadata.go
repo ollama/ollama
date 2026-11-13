@@ -264,6 +264,15 @@ func nemotronRendererNameFromTemplate(modelDir, chatTemplate string) (string, er
 	return "nemotron-3-nano", nil
 }
 
+// Nemotron-H fine-tunes such as Luciole ship their own chat format. NVIDIA's
+// renderer and parser would replace that prompt format and parse every reply
+// as thinking, so they are inferred only for NVIDIA templates or no template.
+func usesNvidiaNemotronTemplate(chatTemplate string) bool {
+	return chatTemplate == "" ||
+		strings.Contains(chatTemplate, "enable_thinking") ||
+		strings.Contains(chatTemplate, "{reasoning effort: efficient}")
+}
+
 func sourceConfigIdentifiers(cfg sourceModelConfig) []string {
 	ids := append([]string(nil), cfg.Architectures...)
 	return append(ids, cfg.ModelType, cfg.LLMConfig.ModelType)
@@ -305,6 +314,9 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	case strings.Contains(s, "qwen3"):
 		return "qwen3", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
+		if !usesNvidiaNemotronTemplate(chatTemplate) {
+			return "", nil
+		}
 		return "nemotron-3-nano", nil
 	default:
 		return "", nil
@@ -351,6 +363,9 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 	case s == "nemotronh_omni_reasoning_v3":
 		return "nemotron-3.5-super", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
+		if !usesNvidiaNemotronTemplate(chatTemplate) {
+			return "", nil
+		}
 		return nemotronRendererNameFromTemplate(modelDir, chatTemplate)
 	default:
 		return "", nil
