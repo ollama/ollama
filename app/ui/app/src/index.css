@@ -87,25 +87,9 @@
   transition-timing-function: ease-in-out;
 }
 
-@keyframes apps-copy-card-flash {
-  0%,
-  100% {
-    opacity: 0;
-  }
-  25%,
-  50% {
-    opacity: 1;
-  }
-}
-
-.apps-copy-card-feedback {
-  animation: apps-copy-card-flash 1800ms ease-in-out both;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .claude-connected-backdrop,
-  .claude-connected-dialog,
-  .apps-copy-card-feedback {
+  .claude-connected-dialog {
     animation: none;
   }
 
