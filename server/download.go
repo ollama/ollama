@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math"
 	"math/rand/v2"
@@ -129,15 +130,18 @@ func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 }
 
 func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
-	partFilePaths, err := filepath.Glob(b.Name + "-partial-*")
+	// Glob inside the blobs directory so that characters such as '[' in the
+	// models path are not treated as pattern syntax.
+	dir := filepath.Dir(b.Name)
+	partFileNames, err := fs.Glob(os.DirFS(dir), filepath.Base(b.Name)+"-partial-*")
 	if err != nil {
 		return err
 	}
 
 	b.done = make(chan struct{})
 
-	for _, partFilePath := range partFilePaths {
-		part, err := b.readPart(partFilePath)
+	for _, partFileName := range partFileNames {
+		part, err := b.readPart(filepath.Join(dir, partFileName))
 		if err != nil {
 			return err
 		}

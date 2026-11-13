@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1569,24 +1570,21 @@ func MigrateManifestLinks() (int, error) {
 	}
 
 	// TODO(mxyng): use something less brittle
-	matches, err := filepath.Glob(filepath.Join(manifests, "*", "*", "*", "*"))
+	matches, err := fs.Glob(os.DirFS(manifests), "*/*/*/*")
 	if err != nil {
 		return 0, err
 	}
 
 	var migrated int
-	for _, match := range matches {
+	for _, rel := range matches {
+		rel = filepath.FromSlash(rel)
+		match := filepath.Join(manifests, rel)
 		fi, err := os.Stat(match)
 		if err != nil {
 			return migrated, err
 		}
 		if fi.IsDir() {
 			continue
-		}
-
-		rel, err := filepath.Rel(manifests, match)
-		if err != nil {
-			return migrated, fmt.Errorf("%s %w", match, err)
 		}
 
 		n := model.ParseNameFromFilepath(rel)
@@ -1788,27 +1786,22 @@ func namedManifestRefs(continueOnError bool) (map[model.Name]namedManifestRef, e
 
 func collectManifestRefs(refs map[model.Name]namedManifestRef, root string, continueOnError bool) error {
 	// TODO(mxyng): use something less brittle
-	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "*"))
+	// Glob inside root so that characters such as '[' in the models path
+	// are not treated as pattern syntax.
+	matches, err := fs.Glob(os.DirFS(root), "*/*/*/*")
 	if err != nil {
 		return err
 	}
 
-	for _, match := range matches {
+	for _, rel := range matches {
+		rel = filepath.FromSlash(rel)
+		match := filepath.Join(root, rel)
 		fi, err := os.Lstat(match)
 		if err != nil {
 			return err
 		}
 
 		if !fi.IsDir() {
-			rel, err := filepath.Rel(root, match)
-			if err != nil {
-				if !continueOnError {
-					return fmt.Errorf("%s %w", match, err)
-				}
-				slog.Warn("bad filepath", "path", match, "error", err)
-				continue
-			}
-
 			n := parseStoredManifestFilepath(rel)
 			if !n.IsValid() {
 				if !continueOnError {
