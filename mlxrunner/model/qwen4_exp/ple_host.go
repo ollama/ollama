@@ -20,7 +20,7 @@ import (
 var errHostPLEUnsupported = errors.New("host-backed PLE requires standard NVFP4")
 
 type hostPLEShard struct {
-	mapping *hostMapping
+	mapping *model.HostMapping
 
 	weightStart   int64
 	scaleStart    int64
@@ -38,14 +38,37 @@ type hostPLETable struct {
 }
 
 func (m *Model) SkippedTensorNames() []string {
+	return hostPLETensorNames(m.hostPLE)
+}
+
+func hostPLETensorNames(tables map[string]*hostPLETable) []string {
 	var names []string
-	for prefix, table := range m.hostPLE {
+	for prefix, table := range tables {
 		for i := range table.shards {
 			name := fmt.Sprintf("%s.ple_embedding.ngram_embedding.shard_%d.weight", prefix, i)
 			names = append(names, name, name+".scale", name+".global_scale")
 		}
 	}
 	return names
+}
+
+// HostBackedTensorNames reports the PLE tensors the loader will read from host
+// storage. Unsupported PLE quantization falls back to GPU-resident weights.
+func HostBackedTensorNames(root *model.Root) ([]string, error) {
+	data, err := root.Manifest.ReadConfig("config.json")
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := parseConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	tables, err := openHostPLETables(root, &cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer closeHostPLETables(tables)
+	return hostPLETensorNames(tables), nil
 }
 
 func openHostPLETables(root *model.Root, cfg *Config) (map[string]*hostPLETable, error) {
@@ -105,7 +128,7 @@ func openHostPLETable(layers map[string]manifest.Layer, quant map[string]*model.
 		if i == 0 {
 			table.rows = shard.rows
 		} else if shard.rows != table.rows {
-			shard.mapping.close()
+			shard.mapping.Close()
 			table.close()
 			return nil, fmt.Errorf("shard %d has %d rows, want %d", i, shard.rows, table.rows)
 		}
@@ -143,7 +166,7 @@ func openHostPLEShard(path, name string, rowWidth int, quant *model.TensorQuantI
 	if err != nil {
 		return nil, err
 	}
-	mapping, err := openHostMapping(path)
+	mapping, err := model.OpenHostMapping(path)
 	if err != nil {
 		return nil, err
 	}
@@ -185,18 +208,26 @@ func readHostGlobalScale(extractor *safetensors.TensorExtractor, name string) (f
 	return value, nil
 }
 
-func closeHostPLETables(tables map[string]*hostPLETable) {
+func closeHostPLETables(tables map[string]*hostPLETable) error {
+	var first error
 	for _, table := range tables {
-		table.close()
-	}
-}
-
-func (t *hostPLETable) close() {
-	for _, shard := range t.shards {
-		if shard != nil {
-			shard.mapping.close()
+		if err := table.close(); err != nil && first == nil {
+			first = err
 		}
 	}
+	return first
+}
+
+func (t *hostPLETable) close() error {
+	var first error
+	for _, shard := range t.shards {
+		if shard != nil {
+			if err := shard.mapping.Close(); err != nil && first == nil {
+				first = err
+			}
+		}
+	}
+	return first
 }
 
 func (t *hostPLETable) lookup(globalIDs *mlx.Array) *mlx.Array {
@@ -232,7 +263,7 @@ func (t *hostPLETable) lookup(globalIDs *mlx.Array) *mlx.Array {
 
 		shard := t.shards[int(id)/t.rows]
 		row := int64(int(id) % t.rows)
-		weightBytes, err := shard.mapping.bytes(
+		weightBytes, err := shard.mapping.Bytes(
 			shard.weightStart+row*int64(weightColumns*4),
 			shard.weightStart+(row+1)*int64(weightColumns*4),
 		)
@@ -242,7 +273,7 @@ func (t *hostPLETable) lookup(globalIDs *mlx.Array) *mlx.Array {
 		for i := range weightColumns {
 			weightOutput[i] = binary.LittleEndian.Uint32(weightBytes[i*4:])
 		}
-		scaleBytes, err := shard.mapping.bytes(
+		scaleBytes, err := shard.mapping.Bytes(
 			shard.scaleStart+row*int64(scaleColumns),
 			shard.scaleStart+(row+1)*int64(scaleColumns),
 		)

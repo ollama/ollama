@@ -134,6 +134,13 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 			return err
 		}
 	}
+	var engramLayer LayerInfo
+	if inv.Config.Architecture() == "DeepseekV41ForCausalLM" {
+		engramLayer, err = importDeepSeekV41EngramMetadata(ctx, modelDir, store)
+		if err != nil {
+			return fmt.Errorf("import DeepSeek V4.1 engram metadata: %w", err)
+		}
+	}
 
 	fn(fmt.Sprintf("importing %s (%d tensors%s)", modelName, len(inv.Tensors), quantizeStatus(class)))
 	layers, err := WriteBlobs(ctx, specs, modelDir, store)
@@ -147,6 +154,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 		return err
 	}
 	layers = append(layers, configLayers...)
+	if engramLayer.Name != "" {
+		layers = append(layers, engramLayer)
+	}
 	layers = append(layers, draftLayers...)
 	if configLayer.Digest == "" {
 		configLayer, err = store.WriteBlob(bytes.NewReader(inv.RawConfig), mediaTypeImageJSON, "config.json")

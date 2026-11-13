@@ -121,6 +121,11 @@ func normalizeRequested(requested string) (string, error) {
 // missing (e.g. a ModelOpt checkpoint without hf_quant_config.json) is still
 // recognized as already-quantized and not mistaken for a float model.
 func detectKind(inv Inventory) SourceKind {
+	// DeepSeek V4.1 mixes published FP4 experts with FP8 projections. Its
+	// E4M3 weights must not take the generic block-FP8 conversion path.
+	if inv.Config.Architecture() == "DeepseekV41ForCausalLM" {
+		return SourcePrequantized
+	}
 	var hasMLXScales, hasPacked, hasPrequantScale, hasFP8Weight bool
 	for name, t := range inv.Tensors {
 		switch {

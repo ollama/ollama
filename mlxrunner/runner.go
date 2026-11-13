@@ -136,6 +136,13 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 			err = e
 			return nil
 		}
+		defer func() {
+			if err != nil {
+				if closer, ok := m.(interface{ Close() error }); ok {
+					_ = closer.Close()
+				}
+			}
+		}()
 
 		var skippedTensors []string
 		if s, ok := m.(model.SkippedTensorsModel); ok {
@@ -218,6 +225,11 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 }
 
 func (r *Runner) Close() {
+	if closer, ok := r.Model.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			slog.Warn("close model resources", "error", err)
+		}
+	}
 	r.cache.close()
 	r.cache = nil
 	if r.grammarEngine != nil {

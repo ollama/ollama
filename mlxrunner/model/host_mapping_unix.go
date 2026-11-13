@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package qwen4_exp
+package model
 
 import (
 	"fmt"
@@ -9,11 +9,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type hostMapping struct {
+// HostMapping exposes bounded reads from a large tensor blob without copying
+// untouched rows into the model's GPU allocation.
+type HostMapping struct {
 	data []byte
 }
 
-func openHostMapping(path string) (*hostMapping, error) {
+// OpenHostMapping maps a tensor blob for bounded, read-only row access.
+func OpenHostMapping(path string) (*HostMapping, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -35,17 +38,17 @@ func openHostMapping(path string) (*hostMapping, error) {
 	// PLE row IDs are hashes spread across the table. Disabling sequential
 	// readahead keeps untouched pages reclaimable under memory pressure.
 	_ = unix.Madvise(data, unix.MADV_RANDOM)
-	return &hostMapping{data: data}, nil
+	return &HostMapping{data: data}, nil
 }
 
-func (m *hostMapping) bytes(start, end int64) ([]byte, error) {
+func (m *HostMapping) Bytes(start, end int64) ([]byte, error) {
 	if start < 0 || end < start || end > int64(len(m.data)) {
 		return nil, fmt.Errorf("mapping range [%d:%d] outside %d bytes", start, end, len(m.data))
 	}
 	return m.data[start:end], nil
 }
 
-func (m *hostMapping) close() error {
+func (m *HostMapping) Close() error {
 	if len(m.data) == 0 {
 		return nil
 	}
