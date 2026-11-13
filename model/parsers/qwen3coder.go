@@ -349,7 +349,7 @@ func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 
 	// Try integer
 	if typeSet["integer"] {
-		if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		if i, ok := parseInteger(raw); ok {
 			// Return as int if it fits in int32, otherwise int64
 			if i >= math.MinInt32 && i <= math.MaxInt32 {
 				return int(i)
@@ -415,6 +415,26 @@ func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 	// to parse the value as a python literal, but we purposefully don't support
 	// that
 	return raw
+}
+
+// parseInteger parses s as a JSON Schema integer: a base-10 integer, or a
+// decimal number with a zero fractional part such as "30000.0" or "3e4".
+// Decimals are read as float64, like the number branch, and accepted only
+// when their magnitude is below 2^53, where float64 holds every integer exactly.
+func parseInteger(s string) (int64, bool) {
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i, true
+	}
+	// ParseFloat also accepts hex floats and digit separators, which base-10 ParseInt rejects
+	if strings.ContainsAny(s, "xX_") {
+		return 0, false
+	}
+	// NaN fails the Trunc comparison and ±Inf fails the bound
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f != math.Trunc(f) || math.Abs(f) >= 1<<53 {
+		return 0, false
+	}
+	return int64(f), true
 }
 
 var (

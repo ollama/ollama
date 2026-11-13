@@ -673,6 +673,78 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 			raw:       "2147483648", // Just beyond int32 max
 			want:      int64(2147483648),
 		},
+		{
+			desc:      "integer with zero decimal part",
+			paramType: api.PropertyType{"integer"},
+			raw:       "30000.0",
+			want:      30000,
+		},
+		{
+			desc:      "integer in scientific notation",
+			paramType: api.PropertyType{"integer"},
+			raw:       "3e4",
+			want:      30000,
+		},
+		{
+			desc:      "integer in scientific notation with fractional mantissa",
+			paramType: api.PropertyType{"integer"},
+			raw:       "1.5e1",
+			want:      15,
+		},
+		{
+			desc:      "negative integer with zero decimal part",
+			paramType: api.PropertyType{"integer"},
+			raw:       "-5.0",
+			want:      -5,
+		},
+		{
+			desc:      "max safe integer with zero decimal part",
+			paramType: api.PropertyType{"integer"},
+			raw:       "9007199254740991.0",
+			want:      int64(9007199254740991),
+		},
+		{
+			desc:      "integer with fractional part falls back to string",
+			paramType: api.PropertyType{"integer"},
+			raw:       "3.14",
+			want:      "3.14",
+		},
+		{
+			desc:      "integer beyond float64 precision falls back to string",
+			paramType: api.PropertyType{"integer"},
+			raw:       "9007199254740993.0",
+			want:      "9007199254740993.0",
+		},
+		{
+			desc:      "integer beyond int64 range falls back to string",
+			paramType: api.PropertyType{"integer"},
+			raw:       "1e300",
+			want:      "1e300",
+		},
+		{
+			desc:      "integer infinity falls back to string",
+			paramType: api.PropertyType{"integer"},
+			raw:       "Inf",
+			want:      "Inf",
+		},
+		{
+			desc:      "integer NaN falls back to string",
+			paramType: api.PropertyType{"integer"},
+			raw:       "NaN",
+			want:      "NaN",
+		},
+		{
+			desc:      "integer hex float falls back to string",
+			paramType: api.PropertyType{"integer"},
+			raw:       "0x1p4",
+			want:      "0x1p4",
+		},
+		{
+			desc:      "integer with digit separators falls back to string",
+			paramType: api.PropertyType{"integer"},
+			raw:       "1_000.0",
+			want:      "1_000.0",
+		},
 		// Float/number parsing tests
 		{
 			desc:      "float type",
@@ -1012,6 +1084,18 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 			paramType: api.PropertyType{"integer", "string"},
 			raw:       "123",
 			want:      123,
+		},
+		{
+			desc:      "integer string union - whole float string becomes integer",
+			paramType: api.PropertyType{"integer", "string"},
+			raw:       "2.0",
+			want:      2,
+		},
+		{
+			desc:      "integer string union - fractional float string stays string",
+			paramType: api.PropertyType{"integer", "string"},
+			raw:       "3.5",
+			want:      "3.5",
 		},
 		{
 			desc:      "string integer union - integer string becomes integer (precedence)",
