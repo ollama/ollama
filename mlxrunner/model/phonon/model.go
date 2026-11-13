@@ -25,7 +25,7 @@ import (
 )
 
 func init() {
-	model.Register("GradiumPhononTTSForConditionalGeneration", newModel)
+	model.Register("GradiumPhononTTSForConditionalGeneration", newModel, model.WithoutTokenizer())
 }
 
 // config follows the upstream Phonon config.json.

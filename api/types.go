@@ -553,10 +553,15 @@ type ChatResponse struct {
 	Metrics
 }
 
-// DebugInfo contains debug information for template rendering
+// DebugInfo contains debug information for template rendering.
 type DebugInfo struct {
 	RenderedTemplate string `json:"rendered_template"`
 	ImageCount       int    `json:"image_count,omitempty"`
+	InputTokens      *int   `json:"input_tokens,omitempty"`
+}
+
+type InputTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
 }
 
 type Metrics struct {
@@ -641,6 +646,47 @@ type SystemOneAnswers = orderedmap.Map[string, json.RawMessage]
 type SystemOneUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+}
+
+// TokenizeRequest is the request passed to [Client.Tokenize].
+type TokenizeRequest struct {
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
+	// Prompt is the raw text to tokenize. No template is applied.
+	Prompt string `json:"prompt"`
+
+	// AddSpecialTokens returns the tokens the model receives for Prompt as a
+	// raw prompt, including any special tokens the model adds, such as BOS.
+	AddSpecialTokens bool `json:"add_special_tokens,omitempty"`
+}
+
+// TokenizeResponse is the response from [Client.Tokenize].
+type TokenizeResponse struct {
+	Model  string `json:"model"`
+	Tokens []int  `json:"tokens"`
+	Count  int    `json:"count"`
+}
+
+// DetokenizeRequest is the request passed to [Client.Detokenize].
+type DetokenizeRequest struct {
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
+	// Tokens are the token IDs to decode.
+	Tokens []int `json:"tokens"`
+}
+
+// DetokenizeResponse is the response from [Client.Detokenize].
+type DetokenizeResponse struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].

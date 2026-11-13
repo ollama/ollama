@@ -114,12 +114,11 @@ func newModel(root *model.Root) (model.Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	return newModelFromConfig(root, data, nil)
+	return newModelFromConfig(root, data)
 }
 
-// newModelFromConfig builds the decoder. generationConfig replaces
-// generation_config.json for checkpoints that do not ship one.
-func newModelFromConfig(root *model.Root, data, generationConfig []byte) (*Model, error) {
+// newModelFromConfig builds the decoder from its text config.
+func newModelFromConfig(root *model.Root, data []byte) (*Model, error) {
 	var source struct {
 		Config
 		RopeParameters    map[string]ropeConfig `json:"rope_parameters"`
@@ -201,23 +200,9 @@ func newModelFromConfig(root *model.Root, data, generationConfig []byte) (*Model
 		cfg.FullRopeFreqs = mlx.FromValues(frequencies, len(frequencies))
 	}
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.Tokenizer()
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer: %w", err)
-	}
-	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: data}
-	tokConfig.GenerationConfigJSON = generationConfig
-	if generationConfig == nil {
-		if tokConfig.GenerationConfigJSON, err = root.Manifest.ReadConfig("generation_config.json"); err != nil {
-			return nil, fmt.Errorf("load generation_config.json: %w", err)
-		}
-	}
-	if tokConfig.TokenizerConfigJSON, err = root.Manifest.ReadConfig("tokenizer_config.json"); err != nil {
-		return nil, fmt.Errorf("load tokenizer_config.json: %w", err)
-	}
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 	return &Model{Config: &cfg, tok: tok, Layers: make([]*Layer, cfg.NumHiddenLayers), prefix: "model."}, nil
 }

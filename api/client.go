@@ -305,6 +305,35 @@ func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc
 	})
 }
 
+// ChatInputTokens returns the rendered input token count for a chat request
+// without running model inference.
+func (c *Client) ChatInputTokens(ctx context.Context, req *ChatRequest) (*InputTokensResponse, error) {
+	if req == nil {
+		return nil, errors.New("nil chat request")
+	}
+
+	renderReq := *req
+	stream := false
+	renderReq.Stream = &stream
+	renderReq.DebugRenderOnly = true
+
+	var result InputTokensResponse
+	if err := c.Chat(ctx, &renderReq, func(resp ChatResponse) error {
+		if resp.DebugInfo == nil {
+			return errors.New("chat input token count response missing debug info")
+		}
+		if resp.DebugInfo.InputTokens == nil {
+			return errors.New("chat input token count response missing input tokens")
+		}
+		result.InputTokens = *resp.DebugInfo.InputTokens
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
 // PullProgressFunc is a function that [Client.Pull] invokes every time there
 // is progress with a "pull" request sent to the service. If this function
 // returns an error, [Client.Pull] will stop the process and return this error.
@@ -456,6 +485,24 @@ func (c *Client) SystemOne(ctx context.Context, req *SystemOneRequest) (*SystemO
 func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
 	var resp EmbedResponse
 	if err := c.do(ctx, http.MethodPost, "/api/embed", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Tokenize converts text to the model's token IDs.
+func (c *Client) Tokenize(ctx context.Context, req *TokenizeRequest) (*TokenizeResponse, error) {
+	var resp TokenizeResponse
+	if err := c.do(ctx, http.MethodPost, "/api/tokenize", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Detokenize converts the model's token IDs to text.
+func (c *Client) Detokenize(ctx context.Context, req *DetokenizeRequest) (*DetokenizeResponse, error) {
+	var resp DetokenizeResponse
+	if err := c.do(ctx, http.MethodPost, "/api/detokenize", req, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
