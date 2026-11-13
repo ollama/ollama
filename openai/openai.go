@@ -320,14 +320,19 @@ func ToToolCalls(tc []api.ToolCall) []ToolCall {
 	return toolCalls
 }
 
+// toChoiceLogprobs wraps per-token logprobs for a choice. It returns nil when
+// there are none, so the field is omitted unless logprobs were requested.
+func toChoiceLogprobs(logprobs []api.Logprob) *ChoiceLogprobs {
+	if len(logprobs) == 0 {
+		return nil
+	}
+	return &ChoiceLogprobs{Content: logprobs}
+}
+
 // ToChatCompletion converts an api.ChatResponse to ChatCompletion
 func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
-
-	var logprobs *ChoiceLogprobs
-	if len(r.Logprobs) > 0 {
-		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
-	}
+	logprobs := toChoiceLogprobs(r.Logprobs)
 
 	return ChatCompletion{
 		Id:                id,
@@ -355,11 +360,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 
 func toChunk(id string, r api.ChatResponse, includeRole bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
-
-	var logprobs *ChoiceLogprobs
-	if len(r.Logprobs) > 0 {
-		logprobs = &ChoiceLogprobs{Content: r.Logprobs}
-	}
+	logprobs := toChoiceLogprobs(r.Logprobs)
 
 	var role string
 	if includeRole {
@@ -479,6 +480,7 @@ func ToCompletion(id string, r api.GenerateResponse) Completion {
 				}
 				return nil
 			}(r.DoneReason),
+			Logprobs: toChoiceLogprobs(r.Logprobs),
 		}},
 		Usage: ToUsageGenerate(r),
 	}
@@ -501,6 +503,7 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 				}
 				return nil
 			}(r.DoneReason),
+			Logprobs: toChoiceLogprobs(r.Logprobs),
 		}},
 	}
 }
