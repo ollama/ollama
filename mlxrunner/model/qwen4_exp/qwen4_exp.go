@@ -18,10 +18,11 @@ func init() {
 }
 
 var (
-	_ model.Model      = (*Model)(nil)
-	_ model.SelfDraft  = (*Model)(nil)
-	_ model.DraftModel = (*mtpDraft)(nil)
-	_ model.MediaModel = (*Model)(nil)
+	_ model.Model               = (*Model)(nil)
+	_ model.SkippedTensorsModel = (*Model)(nil)
+	_ model.SelfDraft           = (*Model)(nil)
+	_ model.DraftModel          = (*mtpDraft)(nil)
+	_ model.MediaModel          = (*Model)(nil)
 )
 
 // Model carries the validated architecture and tokenizer.
@@ -40,6 +41,8 @@ type Model struct {
 	quantMode   string
 	tensorQuant map[string]*model.TensorQuantInfo
 	configData  []byte
+	hostPLE     map[string]*hostPLETable
+	numCaches   int
 }
 
 // NewModel validates the publisher config before constructing runtime state.
@@ -72,6 +75,10 @@ func NewModel(root *model.Root) (model.Model, error) {
 	if root.GroupSize() > 0 {
 		group = root.GroupSize()
 	}
+	hostPLE, err := openHostPLETables(root, &cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open host-backed PLE: %w", err)
+	}
 	return &Model{
 		Config:      &cfg,
 		Layers:      make([]*Layer, cfg.NumHiddenLayers),
@@ -81,43 +88,85 @@ func NewModel(root *model.Root) (model.Model, error) {
 		quantMode:   mode,
 		tensorQuant: root.AllTensorQuant(),
 		configData:  configData,
+		hostPLE:     hostPLE,
 	}, nil
 }
 
-func (m *Model) NewCaches() []cache.Cache {
-	fullLayers := 0
-	for _, layer := range m.Layers {
+func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
+	linears := model.NewLinearFactory(tensors, m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant)
+	var err error
+	m.EmbedTokens = model.MakeEmbeddingLayer(tensors, "model.language_model.embed_tokens", m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant)
+	if m.EmbedTokens == nil {
+		return fmt.Errorf("missing embedding weight")
+	}
+	if m.LMHead, err = requiredLinear(linears, "lm_head"); err != nil {
+		return err
+	}
+	if m.OutputMixer, err = loadHyperConnection(linears, tensors, "model.language_model.hyper_connection_mixer", false, m.Config); err != nil {
+		return err
+	}
+
+	m.numCaches = len(m.Layers)
+	for i := range m.Layers {
+		prefix := fmt.Sprintf("model.language_model.layers.%d", i)
+		if m.Layers[i], err = m.loadLayer(linears, tensors, prefix, m.LayerTypes[i], i); err != nil {
+			return fmt.Errorf("load layer %d: %w", i, err)
+		}
+		layer := m.Layers[i]
 		if layer.Attention != nil {
-			fullLayers++
+			layer.indexerCache = m.numCaches
+			m.numCaches++
+		}
+		if layer.PLE != nil {
+			layer.pleCache = m.numCaches
+			m.numCaches++
 		}
 	}
-	caches := make([]cache.Cache, 0, len(m.Layers)+fullLayers+1)
+	if m.MTP, err = m.loadMTP(linears, tensors); err != nil {
+		return fmt.Errorf("load MTP: %w", err)
+	}
+	m.Vision, err = qwen3_5.NewVisionAdapter(m.configData, tensors, qwen3_5.VisionAdapterConfig{
+		HiddenSize:   m.HiddenSize,
+		RopeDim:      m.RopeDim,
+		RopeTheta:    m.RopeParameters.RopeTheta,
+		MropeSection: m.RopeParameters.MRoPESection,
+		QuantGroup:   m.quantGroup,
+		QuantBits:    m.quantBits,
+		QuantMode:    m.quantMode,
+		TensorQuant:  m.tensorQuant,
+	})
+	if err != nil {
+		return fmt.Errorf("load vision tower: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Model) NewCaches() []cache.Cache {
+	caches := make([]cache.Cache, m.numCaches)
 	convTail := m.LinearConvKernelDim - 1
 	convDim := 2*m.LinearNumKeyHeads*m.LinearKeyHeadDim + m.LinearNumValueHeads*m.LinearValueHeadDim
-	for i := range m.Layers {
-		if m.layerIsLinear(i) {
-			caches = append(caches, cache.NewRecurrentCache(convTail, convDim, m.LinearNumValueHeads, m.LinearValueHeadDim, m.LinearKeyHeadDim))
+	for i, layer := range m.Layers {
+		if layer.Linear != nil {
+			caches[i] = cache.NewRecurrentCache(convTail, convDim, m.LinearNumValueHeads, m.LinearValueHeadDim, m.LinearKeyHeadDim)
 		} else {
-			caches = append(caches, cache.NewKVCache())
+			caches[i] = cache.NewKVCache()
+			// QSA retains raw index keys and exact 3-axis positions separately
+			// from the attention's rotated keys and values.
+			caches[layer.indexerCache] = cache.NewKVCache()
+		}
+		if layer.PLE != nil {
+			caches[layer.pleCache] = layer.PLE.NewCache(m.Config)
 		}
 	}
-	for range fullLayers {
-		// Full-history raw QSA keys plus exact 3-axis positions. This is the
-		// simple semantic implementation; a compressed streaming cache can
-		// replace it without changing the attention contract.
-		caches = append(caches, cache.NewKVCache())
-	}
-	caches = append(caches, newEngramCache(
-		int(m.NGramSize-1),
-		int((m.PLEConvKernelSize-1)*m.NGramSize),
-		int(m.HCCount*m.HiddenSize),
-		m.EOSTokenID,
-	))
 	return caches
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.Array) {
-	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (*mlx.Array, *mlx.Array) {
+	// The runner may append draft caches; only the target's slots belong here.
+	if len(caches) != 0 && len(caches) < m.numCaches {
+		panic(fmt.Sprintf("Qwen cache count = %d, need at least %d", len(caches), m.numCaches))
+	}
 	L := int32(b.InputIDs.Dim(1))
 	var mrope []int32
 	if m.Vision != nil {
@@ -130,38 +179,26 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.
 	}
 	hidden := expandStreams(embedding, m.Config)
 
-	var tokens *engramCache
-	pleCacheIndex := len(m.Layers)
-	for _, layer := range m.Layers {
-		if layer.Attention != nil {
-			pleCacheIndex++
-		}
-	}
-	if len(caches) > pleCacheIndex {
-		tokens, _ = caches[pleCacheIndex].(*engramCache)
-	}
-	if tokens == nil {
-		tokens = newEngramCache(
-			int(m.NGramSize-1),
-			int((m.PLEConvKernelSize-1)*m.NGramSize),
-			int(m.HCCount*m.HiddenSize),
-			m.EOSTokenID,
-		)
-	}
-
 	for i, layer := range m.Layers {
 		if layer.PLE != nil {
+			var tokens engramState
+			if len(caches) > 0 {
+				tokens = caches[layer.pleCache].(engramState)
+			} else {
+				temporary := layer.PLE.NewCache(m.Config)
+				defer temporary.Free()
+				tokens = temporary
+			}
 			hidden = mlx.Add(hidden, layer.PLE.Forward(hidden, b, tokens, m.Config))
 		}
-		var c cache.Cache
-		if i < len(caches) {
+		var c, side cache.Layer
+		if len(caches) > 0 {
 			c = caches[i]
+			if layer.Attention != nil {
+				side = caches[layer.indexerCache]
+			}
 		}
-		var side cache.Cache
-		if layer.Attention != nil && layer.Attention.SideCacheIndex < len(caches) {
-			side = caches[layer.Attention.SideCacheIndex]
-		}
-		hidden = layer.Forward(hidden, b, c, side, positions, ropePositions, m.Config)
+		hidden = layer.Forward(hidden, b, c, side, ropePositions, m.Config)
 	}
 	multiHidden := hidden
 	hidden = m.OutputMixer.Reduce(multiHidden, m.Config)
@@ -174,6 +211,10 @@ func (m *Model) Unembed(hidden *mlx.Array) *mlx.Array {
 
 func (m *Model) Tokenizer() *tokenizer.Tokenizer { return m.tok }
 
+func (m *Model) MaxContextLength() int {
+	return int(m.MaxPositionEmbeddings)
+}
+
 func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
 	if m.Vision == nil {
 		return nil, fmt.Errorf("this model does not support media input")
@@ -185,59 +226,63 @@ func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Arra
 	return m.Vision.EncodeMedia(item, data)
 }
 
-func (m *Model) MaxContextLength() int {
-	return int(m.MaxPositionEmbeddings)
+type Layer struct {
+	AttentionConnection *hyperConnection
+	MLPConnection       *hyperConnection
+	Linear              *linearAttention
+	Attention           *fullAttention
+	MoE                 *sparseMoE
+	PLE                 *PLE
+
+	// Main attention/recurrent caches occupy the first len(Layers) slots.
+	// These indices identify this layer's additional state in the same slice.
+	indexerCache int
+	pleCache     int
 }
 
-// mtpDraft views the checkpoint's inline predictor through DraftModel.
-type mtpDraft Model
-
-func (m *Model) SelfDraft() model.DraftModel {
-	if m.MTP == nil {
-		return nil
+func (m *Model) loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix, kind string, layer int) (*Layer, error) {
+	l := &Layer{}
+	var err error
+	if l.AttentionConnection, err = loadHyperConnection(linears, tensors, prefix+".attn_hyper_connection", true, m.Config); err != nil {
+		return nil, err
 	}
-	return (*mtpDraft)(m)
+	if l.MLPConnection, err = loadHyperConnection(linears, tensors, prefix+".mlp_hyper_connection", true, m.Config); err != nil {
+		return nil, err
+	}
+	if kind == "linear_attention" {
+		if l.Linear, err = loadLinearAttention(linears, tensors, prefix+".linear_attn"); err != nil {
+			return nil, err
+		}
+	} else if l.Attention, err = loadFullAttention(linears, tensors, prefix+".self_attn", m.RMSNormEps); err != nil {
+		return nil, err
+	}
+	if l.MoE, err = m.loadSparseMoE(linears, tensors, prefix+".mlp"); err != nil {
+		return nil, err
+	}
+
+	for _, id := range m.PLELayerIDs {
+		// PLE layer IDs are one-based and identify the layer receiving the
+		// additive n-gram features before its attention branch.
+		if int(id-1) == layer {
+			l.PLE, err = m.loadPLE(linears, tensors, prefix+".ple")
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return l, nil
 }
 
-func (m *mtpDraft) NewCaches() []cache.Cache {
-	if m.MTP == nil {
-		return nil
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Layer, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
+	branch, state := l.AttentionConnection.Prepare(x, cfg)
+	if l.Linear != nil {
+		branch = l.Linear.Forward(branch, b, c, cfg)
+	} else {
+		branch = l.Attention.Forward(branch, b, c, side, ropePositions, cfg)
 	}
-	return []cache.Cache{cache.NewKVCache(), cache.NewKVCache()}
-}
+	x = l.AttentionConnection.Inject(state, branch, cfg)
 
-func (m *mtpDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
-
-func (m *mtpDraft) Unembed(x *mlx.Array) *mlx.Array { return (*Model)(m).Unembed(x) }
-
-func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
-	B, L := int32(b.InputIDs.Dim(0)), int32(b.InputIDs.Dim(1))
-	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
-	var mrope []int32
-	if m.Vision != nil {
-		mrope = m.Vision.RopePositions(b, L)
-	}
-	ropePositions := canonicalRopePositionRows(b, L, mrope)
-
-	embedding := m.EmbedTokens.Forward(b.InputIDs)
-	// The reference MTP is text-only: visual information reaches it through
-	// the target's multi-stream hidden state, while this branch embeds raw IDs.
-	embedding = m.MTP.FCEmbedding.Forward(m.MTP.EmbeddingNorm.Forward(embedding, m.RMSNormEps))
-
-	backbone := m.MTP.HiddenNorm.Forward(b.Hidden, m.RMSNormEps)
-	backbone = mlx.Reshape(backbone, B, L, m.HCCount, m.HiddenSize)
-	backbone = m.MTP.FCHidden.Forward(backbone)
-	backbone = mlx.Add(backbone, mlx.ExpandDims(embedding, -2))
-	backbone = mlx.Reshape(backbone, B, L, m.HCCount*m.HiddenSize)
-
-	var main, side cache.Cache
-	if len(draftCaches) > 0 {
-		main = draftCaches[0]
-	}
-	if len(draftCaches) > 1 {
-		side = draftCaches[1]
-	}
-	multi := m.MTP.Layer.Forward(backbone, b, main, side, positions, ropePositions, m.Config)
-	sample := m.MTP.Mixer.Reduce(multi, m.Config)
-	return sample, multi
+	branch, state = l.MLPConnection.Prepare(x, cfg)
+	branch = l.MoE.Forward(branch, cfg)
+	return l.MLPConnection.Inject(state, branch, cfg)
 }

@@ -125,6 +125,7 @@ func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 	}{
 		{"local custom CLI model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", false, []any{false, true, "medium"}},
 		{"local custom desktop model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "chatgpt", false, []any{false, true, "medium"}},
+		{"local custom OpenCode model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "opencode", false, []any{false, true, "medium"}},
 		{"show overrides recommendation", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", true, []any{false, true, "medium"}},
 		{"invalid metadata preserves recommendation", `{"thinking":{"values":[false,true],"default":"missing"}}`, "codex", true, []any{false, true}},
 		{"missing metadata preserves recommendation", `{}`, "codex", true, []any{false, true}},
@@ -4481,7 +4482,7 @@ func TestResolveSingleIntegrationTargetPaymentGuidance(t *testing.T) {
 		{name: "new selection continues with free plan", mode: LaunchConfirmPrompt, proceed: true, wantModel: "paid:cloud", wantPrompts: 1},
 		{name: "saved selection skips payment prompt", current: "paid:cloud", mode: LaunchConfirmPrompt, wantModel: "paid:cloud"},
 		{name: "yes approves payment guidance", mode: LaunchConfirmAutoApprove, wantModel: "paid:cloud"},
-		{name: "headless requires yes", mode: LaunchConfirmRequireYes, wantError: "Continue with paid:cloud? requires confirmation; re-run with --yes to continue"},
+		{name: "headless requires yes", mode: LaunchConfirmRequireYes, wantError: "Continue with paid:cloud; re-run with --yes to continue"},
 		{name: "decline returns to picker", mode: LaunchConfirmPrompt, wantModel: "local-model", wantPrompts: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

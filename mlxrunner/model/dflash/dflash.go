@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -49,6 +50,7 @@ type Config struct {
 	Scale             float32
 	SlidingWindow     int32
 	LayerTypes        []string
+	NoRoPELayers      []int
 
 	BlockSize      int
 	MaskTokenID    int32
@@ -143,6 +145,7 @@ type Attention struct {
 	OProj  nn.LinearLayer
 	QNorm  *nn.RMSNorm
 	KNorm  *nn.RMSNorm
+	NoRoPE bool
 
 	// ctxInputNorm applies the layer's input norm to context rows (laguna).
 	ctxInputNorm *nn.RMSNorm
@@ -183,6 +186,7 @@ func parseConfig(data []byte) (*Config, error) {
 		VocabSize       int32    `json:"vocab_size"`
 		HasOwnLMHead    bool     `json:"has_own_lm_head"`
 		LayerTypes      []string `json:"layer_types"`
+		NoRoPELayers    []int    `json:"no_rope_layers"`
 		SlidingWindow   int32    `json:"sliding_window"`
 		RopeInterleaved *bool    `json:"rope_interleaved"`
 	}
@@ -200,6 +204,7 @@ func parseConfig(data []byte) (*Config, error) {
 		RopeTheta:         raw.RopeTheta,
 		SlidingWindow:     raw.SlidingWindow,
 		LayerTypes:        raw.LayerTypes,
+		NoRoPELayers:      raw.NoRoPELayers,
 		BlockSize:         raw.DFlashConfig.BlockSize,
 		VocabSize:         raw.VocabSize,
 		HasOwnLMHead:      raw.HasOwnLMHead,
@@ -216,6 +221,11 @@ func parseConfig(data []byte) (*Config, error) {
 	}
 	if cfg.NumHiddenLayers > maxDraftLayers {
 		return nil, fmt.Errorf("dflash num_hidden_layers %d exceeds supported maximum %d", cfg.NumHiddenLayers, maxDraftLayers)
+	}
+	for _, id := range cfg.NoRoPELayers {
+		if id < 0 || id >= int(cfg.NumHiddenLayers) {
+			return nil, fmt.Errorf("dflash no_rope_layers index %d out of range for %d layers", id, cfg.NumHiddenLayers)
+		}
 	}
 	// The fused projection holds the query, key and value rows.
 	if (int64(cfg.NumAttentionHeads)+2*int64(cfg.NumKeyValueHeads))*int64(cfg.HeadDim) > math.MaxInt32 {
@@ -391,8 +401,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		layer := &Layer{
 			IsSliding: m.LayerTypes[i] == "sliding_attention",
 			Attention: &Attention{
-				GProj: linears.Make(layerPrefix + ".self_attn.g_proj"),
-				OProj: linears.Make(layerPrefix + ".self_attn.o_proj"),
+				NoRoPE: slices.Contains(m.NoRoPELayers, i),
+				GProj:  linears.Make(layerPrefix + ".self_attn.g_proj"),
+				OProj:  linears.Make(layerPrefix + ".self_attn.o_proj"),
 			},
 			MLP: &MLP{
 				DownProj: linears.Make(layerPrefix + ".mlp.down_proj"),
@@ -583,9 +594,19 @@ func (m *Model) BlockParams() (int, int32) { return m.BlockSize, m.MaskTokenID }
 // NewCaches builds the per-layer context caches.
 func (m *Model) NewCaches() []cache.Cache {
 	caches := make([]cache.Cache, len(m.Layers))
+	draftWindow := 0
+	if target, ok := m.target.(interface{ DraftWindow() int }); ok {
+		draftWindow = target.DraftWindow()
+	}
 	for i, layer := range m.Layers {
 		if layer.IsSliding {
-			caches[i] = cache.NewRotatingKVCache(int(m.SlidingWindow))
+			window := int(m.SlidingWindow)
+			if draftWindow > 0 {
+				window = min(window, draftWindow)
+			}
+			caches[i] = cache.NewRotatingKVCache(window)
+		} else if draftWindow > 0 {
+			caches[i] = cache.NewRotatingKVCache(draftWindow)
 		} else {
 			caches[i] = cache.NewKVCache()
 		}
@@ -605,7 +626,7 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 // come from the block only. Either input may be absent: with no block the
 // call just extends the context, with no context the block drafts from
 // whatever is already cached.
-func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	kv := draftCaches
 
 	var hctx *mlx.Array
@@ -662,7 +683,7 @@ func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, a
 	return hidden, hidden
 }
 
-func (l *Layer) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x, ctxK, ctxV *mlx.Array, c cache.Layer, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
 	h, kernel := l.AttentionConv.prepare(l.InputNorm.Forward(x, cfg.RMSNormEps))
 	h = l.Attention.Forward(h, ctxK, ctxV, c, bb, positions, mask, B, L, cfg)
 	x = x.Add(l.AttentionConv.finish(h, kernel))
@@ -681,7 +702,9 @@ func (a *Attention) contextKV(hctx *mlx.Array, positions *mlx.Array, cfg *Config
 	k = a.KNorm.Forward(k, cfg.RMSNormEps)
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	if !a.NoRoPE {
+		k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	}
 	return k, v
 }
 
@@ -692,7 +715,7 @@ func (a *Attention) splitKV(kv *mlx.Array, B, L int32, cfg *Config) (k, v *mlx.A
 	return k, v
 }
 
-func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Layer, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
 	q := mlx.Reshape(a.QProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
 	k, v := a.splitKV(a.KVProj.Forward(x), B, L, cfg)
 
@@ -703,8 +726,10 @@ func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.B
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	if !a.NoRoPE {
+		q = mlx.RoPEWithBase(q, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+		k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	}
 
 	if ctxK != nil {
 		k = ctxK.Concatenate(2, k)

@@ -1,6 +1,7 @@
 package nn
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -161,5 +162,64 @@ func TestSwiGLU(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// Batched tokens share one weight matrix, including quantization scales and
+// the layer bias. Compare each row with an independent request so flattening
+// cannot change row order or apply a scale along the request dimension.
+func TestQuantizedLinearBatch(t *testing.T) {
+	for _, mode := range []string{"affine", "mxfp4", "mxfp8", "nvfp4"} {
+		for _, rows := range []int{2, 4, 8} {
+			t.Run(fmt.Sprintf("%s/rows%d", mode, rows), func(t *testing.T) {
+				mlxtest.Run(t, func(t *mlxtest.T) {
+					if mode != "affine" && !mlx.GPUIsAvailable() {
+						t.Skip("FP quantized matmul requires a GPU backend")
+					}
+					const inputs, outputs = 512, 64
+					group, bits := 32, 4
+					if mode == "mxfp8" {
+						bits = 8
+					}
+					if mode == "nvfp4" {
+						group = 16
+					}
+					w := make([]float32, outputs*inputs)
+					for i := range w {
+						w[i] = float32(i%23-11) / 32
+					}
+					bias := make([]float32, outputs)
+					for i := range bias {
+						bias[i] = float32(i%5-2) / 4
+					}
+					linear := NewQuantizedLinear(mlx.FromValues(w, outputs, inputs).AsType(mlx.DTypeBFloat16), mlx.FromValues(bias, outputs), group, bits, mode)
+					scales := make([]float32, outputs)
+					for i := range scales {
+						scales[i] = float32(i%3+1) / 4
+					}
+					linear.GlobalScale = mlx.FromValues(scales, outputs)
+					for _, tokens := range []int{1, 3} {
+						values := make([]float32, rows*tokens*inputs)
+						for i := range values {
+							values[i] = float32(i%13-6) / 16
+						}
+						x := mlx.FromValues(values, rows, tokens, inputs).AsType(mlx.DTypeBFloat16)
+						got := linear.Forward(x)
+						if want := []int{rows, tokens, outputs}; !slices.Equal(got.Dims(), want) {
+							t.Fatalf("shape = %v, want %v", got.Dims(), want)
+						}
+						for row := range rows {
+							want := linear.Forward(x.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice())).AsType(mlx.DTypeFloat32).Floats()
+							actual := got.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice()).AsType(mlx.DTypeFloat32).Floats()
+							for i := range want {
+								if !approxEqual(actual[i], want[i], 0.02) {
+									t.Fatalf("tokens %d row %d output %d = %g, want %g", tokens, row, i, actual[i], want[i])
+								}
+							}
+						}
+					}
+				})
+			})
+		}
 	}
 }

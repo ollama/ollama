@@ -7,6 +7,7 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
 )
 
 func TestEngramHashes(t *testing.T) {
@@ -102,6 +103,54 @@ func TestEngramCacheRestoresScheduledSnapshot(t *testing.T) {
 		}
 		if merged := c.Merge(nil, child); merged != child {
 			t.Fatalf("Merge(nil, child) = %v, want child", merged)
+		}
+	})
+}
+
+func TestEngramIndependentOwners(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		a, b := newEngramCache(2, 3, 1, 9), newEngramCache(2, 3, 1, 9)
+		defer a.Free()
+		defer b.Free()
+		for i, c := range []*engramCache{a, b} {
+			ids := mlx.FromValues([]int32{int32(i + 1), int32(i + 2)}, 1, 2)
+			batch := &batch.Batch{InputIDs: ids, SeqOffsets: []int32{0}, SeqQueryLens: []int32{2}}
+			c.put(batch, ids.AsType(mlx.DTypeInt64), mlx.MulScalar(ids.AsType(mlx.DTypeFloat32).ExpandDims(2), 10))
+			c.PrepareSnapshots([]int{3})
+		}
+		layers, err := cache.Batch([][]cache.Cache{{b}, {a}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		view := layers[0].(engramState)
+		rb := &batch.Batch{InputIDs: mlx.FromValues([]int32{4, 7}, 2, 1), SeqOffsets: []int32{2, 2}, SeqQueryLens: []int32{1, 1}}
+		history := view.get(rb).AsType(mlx.DTypeInt32)
+		mlx.Eval(history)
+		if got := history.Ints(); !slices.Equal(got, []int32{2, 3, 1, 2}) {
+			t.Fatalf("gathered histories = %v", got)
+		}
+		view.put(rb, rb.InputIDs.AsType(mlx.DTypeInt64), mlx.FromValues([]float32{40, 70}, 2, 1, 1))
+		for i, c := range []*engramCache{b, a} {
+			snapshot := c.TakeSnapshots()[0]
+			if snapshot == nil {
+				t.Fatal("missing row snapshot")
+			}
+			defer snapshot.Close()
+			if !c.Restore(snapshot, 3) {
+				t.Fatal("failed to restore batched state")
+			}
+			h := c.history.AsType(mlx.DTypeInt32)
+			mlx.Eval(h, c.convHistory)
+			wantTokens := [][]int32{{3, 4}, {2, 7}}[i]
+			wantConv := [][]float32{{20, 30, 40}, {10, 20, 70}}[i]
+			if !slices.Equal(h.Ints(), wantTokens) || !slices.Equal(c.convHistory.Floats(), wantConv) {
+				t.Fatalf("row %d history=%v conv=%v", i, h.Ints(), c.convHistory.Floats())
+			}
+		}
+		incompatible := newEngramCache(2, 4, 1, 9)
+		defer incompatible.Free()
+		if _, err := cache.Batch([][]cache.Cache{{a}, {incompatible}}); err == nil {
+			t.Fatal("accepted incompatible Engram owners")
 		}
 	})
 }

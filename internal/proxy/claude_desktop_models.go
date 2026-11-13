@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -471,4 +472,69 @@ func (m *ClaudeDesktopModel) assignClaudeDesktopSlot(slot claudeDesktopModelSlot
 	m.gateway.CreatedAt = slot.createdAt
 	m.gateway.AnthropicFamilyTier = slot.family
 	m.gateway.IsFamilyDefault = slot.familyDefault
+}
+
+// ClaudeDesktopCatalogModel is one model row a Claude Desktop gateway
+// advertises through /v1/models. Claude Desktop names well-known route IDs
+// itself, so the profile pins these rows to show the model each route serves.
+type ClaudeDesktopCatalogModel struct {
+	ID                  string
+	DisplayName         string
+	AnthropicFamilyTier string
+	IsFamilyDefault     bool
+}
+
+// FetchClaudeDesktopCatalog reads the model rows the gateway at baseURL
+// advertises.
+func FetchClaudeDesktopCatalog(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]ClaudeDesktopCatalogModel, error) {
+	endpoint := strings.TrimRight(baseURL, "/") + "/v1/models?limit=1000"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create Claude gateway catalog request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if client == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		defer transport.CloseIdleConnections()
+		client = &http.Client{Transport: transport}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connect to Claude gateway: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("read Claude gateway catalog: status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Data []gatewayModel `json:"data"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, maxClaudeDesktopRecommendationsBody))
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode Claude gateway catalog: %w", err)
+	}
+
+	models := make([]ClaudeDesktopCatalogModel, 0, len(payload.Data))
+	seen := make(map[string]struct{}, len(payload.Data))
+	for _, row := range payload.Data {
+		id := strings.TrimSpace(row.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		models = append(models, ClaudeDesktopCatalogModel{
+			ID:                  id,
+			DisplayName:         strings.TrimSpace(row.DisplayName),
+			AnthropicFamilyTier: strings.TrimSpace(row.AnthropicFamilyTier),
+			IsFamilyDefault:     row.IsFamilyDefault,
+		})
+	}
+	return models, nil
 }

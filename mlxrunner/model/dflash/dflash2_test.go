@@ -241,6 +241,89 @@ func TestSelectorConditionalProbabilities(t *testing.T) {
 	}
 }
 
+func TestFourTapConvolutionOracle(t *testing.T) {
+	for _, dtype := range []mlx.DType{mlx.DTypeFloat32, mlx.DTypeBFloat16} {
+		for _, length := range []int{1, 2, 3, 4, 8, 16} {
+			mlxtest.RunSubtest(t, fmt.Sprintf("%v length %d", dtype, length), func(t *mlxtest.T) {
+				const width, group, taps = 32, 16, 4
+				values := func(n int) []float32 {
+					v := make([]float32, n)
+					for i := range v {
+						v[i] = float32(i%7-3) / 8
+					}
+					return v
+				}
+				h, d, s := values(length*width), values(length*taps*width/group), values(taps*width)
+				want := convolutionOracle(h, d, s, 1, length, width, taps, width/group, func(v float32) float32 {
+					return rounded(v, dtype == mlx.DTypeBFloat16)
+				})
+				inputs := []*mlx.Array{mlx.FromValues(h, 1, length, width).AsType(dtype), mlx.FromValues(d, 1, length, taps, width/group).AsType(dtype), mlx.FromValues(s, taps, width).AsType(dtype)}
+				for _, got := range []*mlx.Array{convolveGraph(inputs[0], inputs[1], inputs[2]), convolve(inputs[0], inputs[1], inputs[2])} {
+					got = mlx.Contiguous(got.AsType(mlx.DTypeFloat32), false)
+					mlx.Eval(got)
+					if !slices.Equal(got.Floats(), want) {
+						t.Fatal("four-tap convolution differs from scalar oracle")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSelectorTop32Probabilities(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const vocab, rank, k, length = 40, 256, 32, 3
+		pred, succ, projection := make([]float32, vocab*rank), make([]float32, vocab*rank), make([]float32, rank)
+		for id := range vocab {
+			for j := range rank {
+				pred[id*rank+j] = float32(id%3-1) / 32
+				succ[id*rank+j] = float32(id%5-2) / 64
+			}
+		}
+		for j := range projection {
+			projection[j] = 0.5
+		}
+		logits := make([]float32, length*vocab)
+		for i := range logits {
+			logits[i] = -float32(i%vocab) / 8
+		}
+		m := &model2{Selector: &candidateSelector{
+			Projection:  nn.NewLinear(mlx.FromValues(projection, rank, 1).AsType(mlx.DTypeBFloat16), nil),
+			Predecessor: mlx.FromValues(pred, vocab, rank).AsType(mlx.DTypeBFloat16),
+			Successor:   mlx.FromValues(succ, vocab, rank).AsType(mlx.DTypeBFloat16), TopK: k,
+		}}
+		sampler := sample.New(16)
+		defer sampler.Free()
+		sampler.Add(0, sample.Options{Temperature: 1, UseSeed: true, Seed: 42}, nil)
+		tokens, ids, probs := m.Select(mlx.FromValues([]float32{1, 1, 1}, 1, length, 1).AsType(mlx.DTypeBFloat16), mlx.FromValues(logits, 1, length, vocab).AsType(mlx.DTypeBFloat16), mlx.FromValues([]int32{0}, 1), func(ids, scores *mlx.Array) (*mlx.Array, *mlx.Array) {
+			tokens, distribution := sampler.SampleCandidates(0, ids, scores)
+			return tokens, distribution.Probs
+		})
+		mlx.Eval(tokens, ids, probs)
+		path, support, q := tokens.Ints(), ids.Ints(), mlx.Contiguous(probs, false).Floats()
+		previous := 0
+		for row := range length {
+			weights, total := make([]float64, k), float64(0)
+			for id := range k {
+				weights[id] = math.Exp(-float64(id)/8 + float64((previous%3-1)*(id%5-2))/16)
+				total += weights[id]
+			}
+			for j, id := range support[row*k : (row+1)*k] {
+				if id < 0 || id >= k {
+					t.Fatalf("unexpected candidate %d", id)
+				}
+				if want := weights[id] / total; math.Abs(float64(q[row*k+j])-want) > 1e-6 {
+					t.Fatalf("row %d candidate %d probability=%g want=%g", row, id, q[row*k+j], want)
+				}
+			}
+			if !slices.Contains(support[row*k:(row+1)*k], path[row]) {
+				t.Fatal("selected token outside proposal support")
+			}
+			previous = int(path[row])
+		}
+	})
+}
+
 func TestDFlash2ConfigValidation(t *testing.T) {
 	valid := Config{HiddenSize: 5120, ConvGroupSize: 16, ConvKernelSize: 2, BlockSize: 8, SelectorRank: 256, SelectorTopK: 16, VocabSize: 248320}
 	for _, tt := range []struct {

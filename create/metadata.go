@@ -282,6 +282,8 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "ricursiveforcausallm" || s == "ricursive":
+		return "ripple", nil
 	case strings.Contains(s, "flint"):
 		return "flint", nil
 	case strings.HasPrefix(s, "lfm3"):
@@ -322,6 +324,8 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "ricursiveforcausallm" || s == "ricursive":
+		return "ripple", nil
 	case strings.Contains(s, "flint"):
 		return "flint", nil
 	case strings.HasPrefix(s, "lfm3"):

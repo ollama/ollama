@@ -6,11 +6,19 @@ import (
 	"github.com/ollama/ollama/mlx"
 )
 
-// Cache is common state management shared by every cache kind. Writers
-// live on the specific caches
-type Cache interface {
-	// State returns the cache-owned state roots that should be kept/evaluated.
+// Layer is one cache slot used during a model forward. Attention and Recurrent
+// provide its read/write operations. It may be a request's Cache or a temporary
+// view of the corresponding caches from several requests. The view does not own
+// those caches and cannot manage their snapshots or lifetime.
+type Layer interface {
+	// State returns state roots that should be kept/evaluated.
 	State() []*mlx.Array
+}
+
+// Cache owns one cache slot's state and snapshots for a single request.
+// A model usually needs one slot per layer, returned together by NewCaches.
+type Cache interface {
+	Layer
 	Free()
 	Offset() int
 
@@ -50,6 +58,19 @@ type Cache interface {
 	// Takes ownership of the input. Cache types that cannot split
 	// (e.g. recurrent) return (nil, snapshot).
 	Split(snapshot Snapshot, at int) (parent, child Snapshot)
+}
+
+// Layers exposes a request's cache slots through the forward-only interface.
+// It converts the slice without copying any cache state or transferring ownership.
+func Layers(caches []Cache) []Layer {
+	if caches == nil {
+		return nil
+	}
+	layers := make([]Layer, len(caches))
+	for i, c := range caches {
+		layers[i] = c
+	}
+	return layers
 }
 
 // Snapshot is paged-out cache state that can be restored later.

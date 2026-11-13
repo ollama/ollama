@@ -8,15 +8,18 @@ import (
 
 // RopeParameters carries common RoPE metadata embedded in model configs.
 type RopeParameters struct {
-	RopeTheta                     float32 `json:"rope_theta"`
-	RopeType                      string  `json:"rope_type"`
-	Type                          string  `json:"type"`
-	PartialRotaryFactor           float32 `json:"partial_rotary_factor"`
-	Factor                        float32 `json:"factor"`
-	OriginalMaxPositionEmbeddings int32   `json:"original_max_position_embeddings"`
-	BetaFast                      float32 `json:"beta_fast"`
-	BetaSlow                      float32 `json:"beta_slow"`
-	AttentionFactor               float32 `json:"attention_factor"`
+	RopeTheta                     float32  `json:"rope_theta"`
+	RopeType                      string   `json:"rope_type"`
+	Type                          string   `json:"type"`
+	PartialRotaryFactor           float32  `json:"partial_rotary_factor"`
+	Factor                        float32  `json:"factor"`
+	OriginalMaxPositionEmbeddings int32    `json:"original_max_position_embeddings"`
+	BetaFast                      float32  `json:"beta_fast"`
+	BetaSlow                      float32  `json:"beta_slow"`
+	AttentionFactor               *float32 `json:"attention_factor"`
+	Mscale                        float32  `json:"mscale"`
+	MscaleAllDim                  float32  `json:"mscale_all_dim"`
+	Truncate                      *bool    `json:"truncate"`
 }
 
 // TypeName returns rope_type when present, falling back to type.
@@ -39,11 +42,16 @@ func BuildYarnRopeFreqs(dim int, base float32, rp *RopeParameters) (*mlx.Array, 
 	if factor <= 0 {
 		factor = 1
 	}
-	attentionFactor := rp.AttentionFactor
-	if attentionFactor == 0 && factor > 1 {
-		attentionFactor = float32(0.1*math.Log(float64(factor)) + 1.0)
-	} else if attentionFactor == 0 {
-		attentionFactor = 1
+	attentionFactor := float32(1)
+	if rp.AttentionFactor != nil {
+		attentionFactor = *rp.AttentionFactor
+	} else if factor > 1 {
+		logScale := 0.1 * math.Log(float64(factor))
+		if rp.Mscale != 0 && rp.MscaleAllDim != 0 {
+			attentionFactor = float32((1 + float64(rp.Mscale)*logScale) / (1 + float64(rp.MscaleAllDim)*logScale))
+		} else {
+			attentionFactor = float32(1 + logScale)
+		}
 	}
 	if factor <= 1 {
 		return nil, attentionFactor
@@ -62,7 +70,8 @@ func BuildYarnRopeFreqs(dim int, base float32, rp *RopeParameters) (*mlx.Array, 
 		betaSlow = 1
 	}
 	half := dim / 2
-	low, high := yarnCorrectionRange(betaFast, betaSlow, dim, base, originalMax)
+	truncate := rp.Truncate == nil || *rp.Truncate
+	low, high := yarnCorrectionRange(betaFast, betaSlow, dim, base, originalMax, truncate)
 	freqs := make([]float32, half)
 	for i := range half {
 		posFreq := math.Pow(float64(base), float64(2*i)/float64(dim))
@@ -78,12 +87,15 @@ func BuildYarnRopeFreqs(dim int, base float32, rp *RopeParameters) (*mlx.Array, 
 	return arr, attentionFactor
 }
 
-func yarnCorrectionRange(betaFast, betaSlow float32, dim int, base float32, maxPosition int32) (float64, float64) {
+func yarnCorrectionRange(betaFast, betaSlow float32, dim int, base float32, maxPosition int32, truncate bool) (float64, float64) {
 	findDim := func(rot float32) float64 {
 		return float64(dim) * math.Log(float64(maxPosition)/(float64(rot)*2*math.Pi)) / (2 * math.Log(float64(base)))
 	}
-	low := math.Floor(findDim(betaFast))
-	high := math.Ceil(findDim(betaSlow))
+	low, high := findDim(betaFast), findDim(betaSlow)
+	if truncate {
+		low = math.Floor(low)
+		high = math.Ceil(high)
+	}
 	low = math.Max(low, 0)
 	high = math.Min(high, float64(dim-1))
 	if low == high {

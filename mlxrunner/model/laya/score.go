@@ -10,10 +10,10 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
-var _ llm.Scorer = (*Model)(nil)
+var _ model.Scorer = (*Model)(nil)
 
 // ScoreRow is a complete bidirectional input. Its marker positions refer to
 // real tokens, not to a padded batch tail.
@@ -104,7 +104,7 @@ func (m *Model) temperature(qtype int32, count int) float32 {
 }
 
 // PrepareScore is CPU-only and needs no MLX thread or array scope, allowing
-// preparation to overlap GPU work. Score currently calls it serially.
+// preparation to overlap GPU work.
 // Encoder rows cannot use causal prefix snapshots:
 // changing an option changes every bidirectional hidden state.
 func (m *Model) PrepareScore(ctx context.Context, input llm.ScoreRequest) ([]ScoreRow, error) {
@@ -140,10 +140,7 @@ func (m *Model) FinishScore(row ScoreRow, hidden *mlx.Array) []float32 {
 	return output.Floats()
 }
 
-// Score retains the serial runner path while sharing preparation and readout.
-// Keep preparation and readout model-owned and separate from forward execution
-// so scheduling can evolve without duplicating model logic.
-func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
 	// Bidirectional attention makes every hidden position depend on the suffix.
 	// Causal prefix state cannot be reused across these rows or requests.
@@ -160,22 +157,13 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		var logits []float32
-		mlx.Scoped(func() {
-			b := &batch.Batch{
-				InputIDs:     mlx.FromValues(row.Tokens, 1, len(row.Tokens)),
-				SeqOffsets:   []int32{0},
-				SeqQueryLens: []int32{int32(len(row.Tokens))},
-				Layout:       []any{row.Type},
-			}
-			// Release forward intermediates before evaluating the decision head.
-			hidden := mlx.ScopedArrays(func() []*mlx.Array {
-				h, _ := m.Forward(b, nil)
-				return []*mlx.Array{h}
-			})[0]
-			logits = m.FinishScore(row, hidden)
+		_, err := forward(ctx, &model.PreparedRequest{Tokens: row.Tokens, Layout: row.Type}, nil, func(hidden *mlx.Array) error {
+			result.Logits = append(result.Logits, m.FinishScore(row, hidden))
+			return nil
 		})
-		result.Logits = append(result.Logits, logits)
+		if err != nil {
+			return result, err
+		}
 		result.InputTokens += len(row.Tokens)
 	}
 	return result, ctx.Err()

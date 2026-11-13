@@ -9,12 +9,11 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/model/renderers"
 )
 
-var _ llm.Scorer = (*Model)(nil)
+var _ model.Scorer = (*Model)(nil)
 
 const (
 	imageMarker = "<|vision_start|><|image_pad|><|vision_end|>"
@@ -58,30 +57,32 @@ func (m *Model) scorePrompt(input llm.ScoreRequest, question *llm.ScoreQuestion)
 	return prompt, start, nil
 }
 
-func (m *Model) prepareRow(input llm.ScoreRequest, question *llm.ScoreQuestion) (*model.PreparedRequest, error) {
+func (m *Model) prepareRow(input llm.ScoreRequest, question *llm.ScoreQuestion) (*model.PreparedRequest, []model.Segment, error) {
 	prompt, imageStart, err := m.scorePrompt(input, question)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(input.Images) == 0 {
-		return m.PrepareMedia([]model.Segment{{Tokens: m.Tokenizer().Encode(prompt, false)}})
+		prepared, err := m.PrepareMedia([]model.Segment{{Tokens: m.Tokenizer().Encode(prompt, false)}})
+		return prepared, nil, err
 	}
 	segments := make([]model.Segment, 0, 2*len(input.Images)+1)
 	start := 0
 	for i, image := range input.Images {
 		end := imageStart + i*len(imageMarker)
 		if !strings.HasPrefix(prompt[end:], imageMarker) {
-			return nil, fmt.Errorf("image %d is missing from the rendered d3 prompt", i)
+			return nil, nil, fmt.Errorf("image %d is missing from the rendered d3 prompt", i)
 		}
 		segments = append(segments, model.Segment{Tokens: m.Tokenizer().Encode(prompt[start:end], false)})
 		segments = append(segments, model.Segment{Kind: "image", Data: image})
 		start = end + len(imageMarker)
 	}
 	segments = append(segments, model.Segment{Tokens: m.Tokenizer().Encode(prompt[start:], false)})
-	return m.PrepareMedia(segments)
+	prepared, err := m.PrepareMedia(segments)
+	return prepared, segments, err
 }
 
-func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
 	cached := 0
 	result.CachedTokens = &cached
@@ -95,7 +96,7 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		prepared, err := m.prepareRow(input, row.Question)
+		prepared, segments, err := m.prepareRow(input, row.Question)
 		if err != nil {
 			return badRequest(fmt.Errorf("question %d: %w", i, err))
 		}
@@ -105,28 +106,13 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 		if len(prepared.Tokens) > input.MaxTokens {
 			return badRequest(fmt.Errorf("question %d needs %d tokens; limit is %d", i, len(prepared.Tokens), input.MaxTokens))
 		}
-		var logits []float32
-		mlx.Scoped(func() {
-			media := make([]batch.MediaItem, len(prepared.Items))
-			for j := range prepared.Items {
-				item := &prepared.Items[j]
-				data := mlx.FromValues(item.MediaData, item.Dims...)
-				media[j] = batch.MediaItem{Pos: item.Range[0], Opaque: item.Opaque, Features: m.EncodeMedia(item, data)}
-				item.MediaData = nil
-			}
-			b := &batch.Batch{
-				InputIDs:     mlx.FromValues(prepared.Tokens, 1, len(prepared.Tokens)),
-				SeqOffsets:   []int32{0},
-				SeqQueryLens: []int32{int32(len(prepared.Tokens))},
-				Media:        media,
-			}
-			if prepared.Layout != nil {
-				b.Layout = []any{prepared.Layout}
-			}
-			hidden, _ := m.Forward(b, nil)
-			logits = m.scoreLogits(hidden, len(prepared.Tokens)-1, len(row.Question.Options))
+		_, err = forward(ctx, prepared, segments, func(hidden *mlx.Array) error {
+			result.Logits = append(result.Logits, m.scoreLogits(hidden, len(prepared.Tokens)-1, len(row.Question.Options)))
+			return nil
 		})
-		result.Logits = append(result.Logits, logits)
+		if err != nil {
+			return result, err
+		}
 		result.InputTokens += len(prepared.Tokens)
 	}
 	return result, ctx.Err()

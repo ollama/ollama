@@ -6,10 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -222,6 +225,145 @@ func TestOpenCodeEdit(t *testing.T) {
 
 		if max["reasoningEffort"] != "max" {
 			t.Fatalf("variants.max.reasoningEffort = %v, want max", max["reasoningEffort"])
+		}
+	})
+
+	t.Run("metadata advertises supported reasoning levels", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "deepseek-v4-pro:0813-cloud",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{false, "low", "high", "max"}, Default: "low"},
+		}})
+		entry, _ := models["deepseek-v4-pro:0813-cloud"].(map[string]any)
+		options, _ := entry["options"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+
+		if options["reasoningEffort"] != "low" {
+			t.Fatalf("options.reasoningEffort = %v, want low", options["reasoningEffort"])
+		}
+		for level, want := range map[string]string{"none": "none", "low": "low", "high": "high", "max": "max"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["reasoningEffort"] != want {
+				t.Fatalf("variants.%s.reasoningEffort = %v, want %s", level, variant["reasoningEffort"], want)
+			}
+			if variant["disabled"] != nil {
+				t.Fatalf("variants.%s.disabled = %v, want omitted", level, variant["disabled"])
+			}
+		}
+		medium, _ := variants["medium"].(map[string]any)
+		if medium["disabled"] != true {
+			t.Fatalf("variants.medium.disabled = %v, want true so OpenCode fallback is absent", medium["disabled"])
+		}
+	})
+
+	t.Run("metadata omits unsupported controls", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "glm-5.3:cloud",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "max"},
+		}})
+		entry, _ := models["glm-5.3:cloud"].(map[string]any)
+		options, _ := entry["options"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+
+		if options["reasoningEffort"] != "max" {
+			t.Fatalf("options.reasoningEffort = %v, want max", options["reasoningEffort"])
+		}
+		for _, level := range []string{"none", "medium"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["disabled"] != true {
+				t.Fatalf("variants.%s.disabled = %v, want true so OpenCode fallback is absent", level, variant["disabled"])
+			}
+		}
+		for _, level := range []string{"low", "high", "max"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["reasoningEffort"] != level || variant["disabled"] != nil {
+				t.Fatalf("variants.%s = %v, want supported %s", level, variant, level)
+			}
+		}
+	})
+
+	t.Run("binary metadata gets an omitted on control", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "binary-thinker:local",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true},
+		}})
+		entry, _ := models["binary-thinker:local"].(map[string]any)
+		options, _ := entry["options"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+
+		if _, ok := options["reasoningEffort"]; ok {
+			t.Fatalf("options.reasoningEffort = %v, want omitted for backend default on", options["reasoningEffort"])
+		}
+		none, _ := variants["none"].(map[string]any)
+		if none["reasoningEffort"] != "none" {
+			t.Fatalf("variants.none = %v, want reasoningEffort none", none)
+		}
+		on, _ := variants["thinking"].(map[string]any)
+		if on["reasoningEffort"] != "" {
+			t.Fatalf("variants.thinking.reasoningEffort = %v, want empty to use boolean default", on["reasoningEffort"])
+		}
+	})
+
+	t.Run("binary metadata default false keeps an on control", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "binary-thinker:local",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false},
+		}})
+		entry, _ := models["binary-thinker:local"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+
+		if _, ok := entry["options"]; ok {
+			t.Fatalf("options = %v, want omitted for boolean default", entry["options"])
+		}
+		none, _ := variants["none"].(map[string]any)
+		if none["reasoningEffort"] != "none" {
+			t.Fatalf("variants.none = %v, want reasoningEffort none", none)
+		}
+		on, _ := variants["thinking"].(map[string]any)
+		if on["reasoningEffort"] != "high" {
+			t.Fatalf("variants.thinking.reasoningEffort = %v, want high for boolean on", on["reasoningEffort"])
+		}
+	})
+
+	t.Run("mixed boolean and named metadata keeps both controls", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "mixed-thinker:local",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{false, true, "high"}, Default: true},
+		}})
+		entry, _ := models["mixed-thinker:local"].(map[string]any)
+		if _, ok := entry["options"]; ok {
+			t.Fatalf("options = %v, want omitted for backend boolean-on default", entry["options"])
+		}
+		variants, _ := entry["variants"].(map[string]any)
+		on, _ := variants["thinking"].(map[string]any)
+		if on["reasoningEffort"] != "" {
+			t.Fatalf("variants.thinking.reasoningEffort = %v, want empty to use boolean default", on["reasoningEffort"])
+		}
+		high, _ := variants["high"].(map[string]any)
+		if high["reasoningEffort"] != "high" {
+			t.Fatalf("variants.high = %v, want named high control", high)
+		}
+	})
+
+	t.Run("metadata drives models even without the capability field", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name: "metadata-only:cloud",
+			Thinking: &api.ModelRecommendationThinking{
+				Values:  []any{"low", "high", "max"},
+				Default: "high",
+			},
+		}})
+		entry, _ := models["metadata-only:cloud"].(map[string]any)
+		if entry["reasoning"] != true {
+			t.Fatalf("reasoning = %v, want true from valid thinking metadata", entry["reasoning"])
+		}
+		options, _ := entry["options"].(map[string]any)
+		if options["reasoningEffort"] != "high" {
+			t.Fatalf("options.reasoningEffort = %v, want metadata default high", options["reasoningEffort"])
 		}
 	})
 }
@@ -1182,5 +1324,362 @@ func TestOpenCodeEdit_BaseURL(t *testing.T) {
 	baseURL, _ := options["baseURL"].(string)
 	if baseURL == "" {
 		t.Error("baseURL should be set")
+	}
+}
+
+func TestOpenCodeEdit_DefaultVariant(t *testing.T) {
+	tests := []struct {
+		name           string
+		thinking       *api.ModelRecommendationThinking
+		currentVariant string
+		wantVariant    string
+	}{
+		{"seeds boolean on", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, "", "thinking"},
+		{"seeds boolean off", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}, "", "none"},
+		{"mixed metadata seeds off", &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: false}, "", "none"},
+		{"mixed metadata preserves named selection", &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: false}, "medium", "medium"},
+		{"reserved named none preserves off label", &api.ModelRecommendationThinking{Values: []any{false, true, "none"}, Default: false}, "", "none-2"},
+		{"preserves an existing selection", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, "none", "none"},
+		{"does not seed a named default", &api.ModelRecommendationThinking{Values: []any{"low", "high"}, Default: "high"}, "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+			if tt.currentVariant != "" {
+				if err := os.MkdirAll(stateDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				models, err := json.Marshal(map[string]any{
+					"variant": map[string]any{"ollama/binary-thinker:local": tt.currentVariant},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(stateDir, "model.json"), models, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			o := &OpenCode{}
+			if err := o.Edit([]LaunchModel{{
+				Name:         "binary-thinker:local",
+				Capabilities: []model.Capability{model.CapabilityThinking},
+				Thinking:     tt.thinking,
+			}}); err != nil {
+				t.Fatal(err)
+			}
+
+			stored, err := os.ReadFile(filepath.Join(stateDir, "model.json"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			var state map[string]any
+			if len(stored) > 0 {
+				if err := json.Unmarshal(stored, &state); err != nil {
+					t.Fatal(err)
+				}
+			}
+			variants, _ := state["variant"].(map[string]any)
+			got := ""
+			if value, ok := variants["ollama/binary-thinker:local"]; ok {
+				got, _ = value.(string)
+			}
+			if got != tt.wantVariant {
+				t.Fatalf("variant = %v, want %v", got, tt.wantVariant)
+			}
+		})
+	}
+}
+
+func TestOpenCodeDefaultVariant(t *testing.T) {
+	tests := []struct {
+		name     string
+		thinking *api.ModelRecommendationThinking
+		want     string
+	}{
+		{"missing metadata", nil, ""},
+		{"boolean on", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, "thinking"},
+		{"boolean off", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}, "none"},
+		{"thinking name collision", &api.ModelRecommendationThinking{Values: []any{false, true, "thinking"}, Default: true}, "thinking-2"},
+		{"named default", &api.ModelRecommendationThinking{Values: []any{"low", "high"}, Default: "high"}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := LaunchModel{Name: "fixture", Thinking: tt.thinking}
+			if got := openCodeDefaultVariant(model); got != tt.want {
+				t.Fatalf("variant = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Exercise the selected variant through the OpenAI adapter and renderer resolution.
+func TestOpenCodeEdit_BooleanThinkingSemantics(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		values       []any
+		defaultValue bool
+	}{
+		{"mixed max", []any{false, true, "max"}, true},
+		{"nemotron medium", []any{false, true, "medium"}, true},
+		{"mixed high", []any{false, true, "high"}, true},
+		{"binary default off", []any{false, true}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			thinking := &api.ModelRecommendationThinking{Values: tt.values, Default: tt.defaultValue}
+			o := &OpenCode{}
+			if err := o.Edit([]LaunchModel{{Name: "fixture", Capabilities: []model.Capability{model.CapabilityThinking}, Thinking: thinking}}); err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Provider map[string]struct {
+					Models map[string]struct {
+						Options  map[string]any
+						Variants map[string]map[string]any
+					}
+				}
+			}
+			if err := json.Unmarshal([]byte(o.configContent), &config); err != nil {
+				t.Fatal(err)
+			}
+			entry := config.Provider["ollama"].Models["fixture"]
+			statePath, err := openCodeStatePath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state struct{ Variant map[string]string }
+			if err := json.Unmarshal(data, &state); err != nil {
+				t.Fatal(err)
+			}
+			selected := state.Variant["ollama/fixture"]
+			check := func(variant string, inherited string, want bool) {
+				t.Helper()
+				effort := inherited
+				if value, ok := entry.Options["reasoningEffort"].(string); ok {
+					effort = value
+				}
+				if value, ok := entry.Variants[variant]["reasoningEffort"].(string); ok {
+					effort = value
+				}
+				requested, err := openai.ThinkingFromReasoningEffort(effort, thinking)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resolved := renderers.ResolveThinking(requested, thinking)
+				if resolved == nil || resolved.Value != want {
+					t.Fatalf("variant %q, inherited %q, effort %q resolved to %v, want boolean %v", variant, inherited, effort, resolved, want)
+				}
+			}
+			check(selected, "", tt.defaultValue)
+			// A selected on variant must overwrite an inherited off option.
+			check("thinking", "none", true)
+			check("none", "", false)
+		})
+	}
+}
+
+func TestOpenCodeEdit_FalseOnlyThinking(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	o := &OpenCode{}
+	if err := o.Edit([]LaunchModel{{Name: "qwen3-coder", Thinking: &api.ModelRecommendationThinking{Values: []any{false}, Default: false}}}); err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Provider map[string]struct{ Models map[string]map[string]any }
+	}
+	if err := json.Unmarshal([]byte(o.configContent), &config); err != nil {
+		t.Fatal(err)
+	}
+	entry := config.Provider["ollama"].Models["qwen3-coder"]
+	for _, field := range []string{"reasoning", "variants", "options"} {
+		if value, ok := entry[field]; ok {
+			t.Errorf("non-thinking model has %s = %v", field, value)
+		}
+	}
+	statePath, err := openCodeStatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct{ Variant map[string]string }
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	if selected := state.Variant["ollama/qwen3-coder"]; selected != "" {
+		t.Errorf("non-thinking model selected variant %q", selected)
+	}
+}
+
+func TestOpenCodeConfigForVersion(t *testing.T) {
+	reservedThinking := &api.ModelRecommendationThinking{Values: []any{"default", "default-2", "high"}, Default: "high"}
+	models := []LaunchModel{
+		{Name: "glm", ContextLength: 1024, MaxOutputTokens: 256, Thinking: &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "max"}},
+		{Name: "gemma", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}},
+		{Name: "nemotron", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: true}},
+		{Name: "coder", Thinking: &api.ModelRecommendationThinking{Values: []any{false}, Default: false}},
+		{Name: "collision", Capabilities: []model.Capability{model.CapabilityVision}, Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "thinking"}, Default: true}},
+		{Name: "unknown"},
+		{Name: "thinking-unknown", Capabilities: []model.Capability{model.CapabilityThinking}},
+		{Name: "reserved", Thinking: reservedThinking},
+		{Name: "mixed-off", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: false}},
+		{Name: "mixed-named", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "low", "high"}, Default: "low"}},
+		{Name: "named-none", Thinking: &api.ModelRecommendationThinking{Values: []any{"none", "high"}, Default: "none"}},
+		{Name: "off-with-named-none", Thinking: &api.ModelRecommendationThinking{Values: []any{false, "none", "high"}, Default: "none"}},
+		{Name: "mixed-only-reserved-named", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true, "none"}, Default: false}},
+		{Name: "levels", Thinking: &api.ModelRecommendationThinking{Values: []any{true, "zeta", "max", "high", false, "alpha", "medium", "xhigh", "minimal", "low"}, Default: true}},
+	}
+	content, err := buildInlineConfig(models[0], models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"", "v1.18.35", "v1.19.2", "v1.19.3-beta.1", "v1.19.3", "v2.2.6"} {
+		t.Run(version, func(t *testing.T) {
+			got, err := openCodeConfigForVersion(content, version, models)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if version != "v1.19.3" && version != "v2.2.6" {
+				if got != content {
+					t.Fatal("legacy client configuration changed")
+				}
+				return
+			}
+			var config map[string]any
+			if err := json.Unmarshal([]byte(got), &config); err != nil {
+				t.Fatal(err)
+			}
+			providerKey, optionsKey := "provider", "options"
+			if version == "v2.2.6" {
+				providerKey, optionsKey = "providers", "settings"
+				if _, exists := config["provider"]; exists {
+					t.Fatal("v2 config still contains a legacy provider")
+				}
+			}
+			provider := config[providerKey].(map[string]any)["ollama"].(map[string]any)
+			if provider[optionsKey].(map[string]any)["baseURL"] == nil {
+				t.Fatal("provider connection settings lost")
+			}
+			entries := provider["models"].(map[string]any)
+			for _, name := range []string{"unknown", "thinking-unknown"} {
+				entry := entries[name].(map[string]any)
+				if version == "v2.2.6" {
+					if _, exists := entry["capabilities"].(map[string]any)["reasoning"]; exists {
+						t.Fatalf("%s replaces configured reasoning without metadata", name)
+					}
+				} else if _, exists := entry["reasoning_options"]; exists {
+					t.Fatalf("%s replaces configured reasoning without metadata", name)
+				}
+			}
+			limits := entries["glm"].(map[string]any)["limit"].(map[string]any)
+			if limits["context"] != float64(1024) || limits["output"] != float64(256) {
+				t.Fatalf("model limits changed: %v", limits)
+			}
+			if version == "v2.2.6" {
+				input := entries["collision"].(map[string]any)["capabilities"].(map[string]any)["input"].([]any)
+				if !slices.Equal(input, []any{"text", "image"}) {
+					t.Fatalf("vision capability changed: %v", input)
+				}
+			}
+			for name, want := range map[string]map[string]any{
+				"glm":                       {"high": "high", "low": "low", "max": "max"},
+				"gemma":                     {"none": false, "thinking": true},
+				"nemotron":                  {"medium": "medium", "none": false, "thinking": true},
+				"coder":                     {},
+				"collision":                 {"none": false, "thinking": "thinking", "thinking-2": true},
+				"reserved":                  {"default-2": "default-2", "default-3": "default", "high": "high"},
+				"mixed-off":                 {"medium": "medium", "none": false},
+				"mixed-named":               {"high": "high", "low": "low", "none": false},
+				"named-none":                {"high": "high"},
+				"off-with-named-none":       {"high": "high", "none-2": false},
+				"mixed-only-reserved-named": {"none-2": false},
+				"levels":                    {"none": false, "thinking": true, "minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max", "alpha": "alpha", "zeta": "zeta"},
+			} {
+				entry := entries[name].(map[string]any)
+				variants := map[string]map[string]any{}
+				var labels []string
+				var efforts []any
+				if version == "v2.2.6" {
+					for _, raw := range entry["variants"].([]any) {
+						variant := raw.(map[string]any)
+						labels = append(labels, variant["id"].(string))
+						variants[variant["id"].(string)] = variant["settings"].(map[string]any)
+					}
+					reasoning := entry["capabilities"].(map[string]any)["reasoning"].(map[string]any)
+					if reasoning["supported"] != (name != "coder") {
+						t.Fatalf("%s thinking support = %v", name, reasoning)
+					}
+					efforts, _ = reasoning["effort"].([]any)
+				} else {
+					if raw, ok := entry["variants"].(map[string]any); ok {
+						for label, variant := range raw {
+							variants[label] = variant.(map[string]any)
+						}
+					}
+					if options := entry["reasoning_options"].([]any); len(options) > 0 {
+						efforts = options[0].(map[string]any)["values"].([]any)
+					}
+				}
+				if len(variants) != len(want) {
+					t.Fatalf("%s variants = %v, want %v", name, variants, want)
+				}
+				if name == "levels" {
+					wantEfforts := []any{"none", "minimal", "low", "medium", "high", "xhigh", "max", "alpha", "zeta"}
+					if !slices.Equal(efforts, wantEfforts) {
+						t.Errorf("native efforts = %v, want %v", efforts, wantEfforts)
+					}
+					wantLabels := []string{"none", "thinking", "minimal", "low", "medium", "high", "xhigh", "max", "alpha", "zeta"}
+					if version == "v2.2.6" && !slices.Equal(labels, wantLabels) {
+						t.Errorf("native variants = %v, want %v", labels, wantLabels)
+					}
+				}
+				model, _ := findLaunchModel(models, name)
+				for label, variant := range variants {
+					wantValue, exists := want[label]
+					if !exists || variant["disabled"] != nil {
+						t.Fatalf("%s has unexpected variant %s: %v", name, label, variant)
+					}
+					effort, _ := variant["reasoningEffort"].(string)
+					requested, err := openai.ThinkingFromReasoningEffort(effort, model.Thinking)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if resolved := renderers.ResolveThinking(requested, model.Thinking); resolved == nil || resolved.Value != wantValue {
+						t.Fatalf("%s variant %s resolved to %v, want %v", name, label, resolved, wantValue)
+					}
+				}
+				options, _ := entry[optionsKey].(map[string]any)
+				defaultEffort, _ := options["reasoningEffort"].(string)
+				requested, err := openai.ThinkingFromReasoningEffort(defaultEffort, model.Thinking)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if resolved := renderers.ResolveThinking(requested, model.Thinking); resolved == nil || resolved.Value != model.Thinking.Default {
+					t.Fatalf("%s default resolved to %v, want %v", name, resolved, model.Thinking.Default)
+				}
+				if model.Thinking.Default == "none" && options["reasoningEffort"] != "" {
+					t.Fatalf("%s must clear inherited effort to use its named default", name)
+				}
+				if (name == "gemma" && slices.Contains(efforts, any("high"))) ||
+					(name == "reserved" && slices.Contains(efforts, any("default"))) ||
+					(model.Thinking.Supports("none") && slices.Contains(efforts, any("none"))) {
+					t.Fatalf("%s native efforts introduce an unsupported or duplicate control: %v", name, efforts)
+				}
+				if name == "nemotron" && variants["thinking"]["reasoningEffort"] != "" {
+					t.Fatalf("boolean-on default no longer clears inherited effort: %v", variants)
+				}
+			}
+		})
 	}
 }

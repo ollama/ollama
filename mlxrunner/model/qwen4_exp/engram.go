@@ -1,25 +1,98 @@
 package qwen4_exp
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
-func (n *streamRMSNorm) Forward(x *mlx.Array, eps float32) *mlx.Array {
-	originalShape := x.Dims()
-	if originalShape[len(originalShape)-1] == n.Weight.Size() {
-		shape := append([]int(nil), originalShape[:len(originalShape)-1]...)
-		shape = append(shape, n.Weight.Dim(0), n.Weight.Dim(1))
-		x = x.Reshape(shape...)
+// PLE is the model's n-gram embedding block. The checkpoint stores one logical
+// table in split vocabulary shards.
+type PLE struct {
+	Conv      *nn.Conv1d
+	KeyProj   nn.LinearLayer
+	ValueProj nn.LinearLayer
+	NormConv  *streamRMSNorm
+	NormKey   *streamRMSNorm
+	NormQuery *streamRMSNorm
+
+	LayerMultipliers *mlx.Array
+	HeadOffsets      *mlx.Array
+	HeadVocabSizes   *mlx.Array
+	EmbeddingShards  []nn.EmbeddingLayer
+	ShardRows        int
+	hostEmbedding    *hostPLETable
+}
+
+func (m *Model) loadPLE(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix string) (*PLE, error) {
+	p := &PLE{}
+	var err error
+	convWeight, err := requiredArray(tensors, prefix+".conv1d.weight", prefix+".conv1d")
+	if err != nil {
+		return nil, err
 	}
-	dtype := x.DType()
-	values := x.AsType(mlx.DTypeFloat32)
-	meanSquare := mlx.Mean(mlx.Mul(values, values), -1, true)
-	invRMS := mlx.Div(mlx.NewScalarArray(1), mlx.AddScalar(meanSquare, eps).Sqrt())
-	normalized := mlx.Mul(mlx.Mul(values, invRMS), n.Weight.AsType(mlx.DTypeFloat32)).AsType(dtype)
-	return normalized.Reshape(originalShape...)
+	if convWeight.NumDims() != 3 || convWeight.Dim(1) != 1 || convWeight.Dim(2) != int(m.PLEConvKernelSize) {
+		return nil, fmt.Errorf("%s.conv1d has shape %v, want [%d, 1, %d]", prefix, convWeight.Dims(), m.HCCount*m.HiddenSize, m.PLEConvKernelSize)
+	}
+	convWeight = mlx.Transpose(convWeight, 0, 2, 1)
+	p.Conv = nn.NewConv1d(convWeight, nil, 1, 0, m.NGramSize, m.HCCount*m.HiddenSize)
+	if p.KeyProj, err = requiredLinear(linears, prefix+".key_proj"); err != nil {
+		return nil, err
+	}
+	if p.ValueProj, err = requiredLinear(linears, prefix+".value_proj"); err != nil {
+		return nil, err
+	}
+	if p.NormConv, err = loadStreamNorm(tensors, prefix+".norm_conv", m.Config); err != nil {
+		return nil, err
+	}
+	if p.NormKey, err = loadStreamNorm(tensors, prefix+".norm_key", m.Config); err != nil {
+		return nil, err
+	}
+	if p.NormQuery, err = loadStreamNorm(tensors, prefix+".norm_query", m.Config); err != nil {
+		return nil, err
+	}
+	if p.LayerMultipliers, err = requiredArray(tensors, prefix+".ple_embedding.layer_multipliers"); err != nil {
+		return nil, err
+	}
+	if p.HeadOffsets, err = requiredArray(tensors, prefix+".ple_embedding.ngram_heads_offsets"); err != nil {
+		return nil, err
+	}
+	if p.HeadVocabSizes, err = requiredArray(tensors, prefix+".ple_embedding.ngram_heads_vocab_sizes"); err != nil {
+		return nil, err
+	}
+
+	if table := m.hostPLE[prefix]; table != nil {
+		p.hostEmbedding = table
+		p.ShardRows = table.rows
+		return p, nil
+	}
+
+	p.EmbeddingShards = make([]nn.EmbeddingLayer, m.SplitNGramParts)
+	for i := range m.SplitNGramParts {
+		path := fmt.Sprintf("%s.ple_embedding.ngram_embedding.shard_%d", prefix, i)
+		weight, err := requiredArray(tensors, path+".weight")
+		if err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			p.ShardRows = weight.Dim(0)
+		} else if weight.Dim(0) != p.ShardRows {
+			return nil, fmt.Errorf("%s has %d rows, want %d", path, weight.Dim(0), p.ShardRows)
+		}
+		p.EmbeddingShards[i] = model.MakeEmbeddingLayer(tensors, path, m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant)
+		if p.EmbeddingShards[i] == nil {
+			return nil, fmt.Errorf("missing embedding %q", path)
+		}
+	}
+	return p, nil
+}
+
+func (p *PLE) NewCache(cfg *Config) *engramCache {
+	return newEngramCache(int(cfg.NGramSize-1), int((cfg.PLEConvKernelSize-1)*cfg.NGramSize), int(cfg.HCCount*cfg.HiddenSize), cfg.EOSTokenID)
 }
 
 func (p *PLE) hashes(b *batch.Batch, history *mlx.Array, cfg *Config) (*mlx.Array, *mlx.Array) {
@@ -30,15 +103,10 @@ func (p *PLE) hashes(b *batch.Batch, history *mlx.Array, cfg *Config) (*mlx.Arra
 	eos := mlx.FromValues([]int64{cfg.EOSTokenID}, 1)
 	for k := range cfg.NGramSize {
 		start := int(cfg.NGramSize - 1 - k)
-		shifts[k] = mlx.SliceStartStop(joined,
-			[]int32{0, int32(start)},
-			[]int32{int32(joined.Dim(0)), int32(start + length)},
-		)
+		shifts[k] = joined.Slice(mlx.Slice(), mlx.Slice(start, start+length))
 		for previous := int32(1); previous <= k; previous++ {
-			boundary := mlx.SliceStartStop(joined,
-				[]int32{0, cfg.NGramSize - 1 - previous},
-				[]int32{int32(joined.Dim(0)), cfg.NGramSize - 1 - previous + int32(length)},
-			)
+			start := int(cfg.NGramSize - 1 - previous)
+			boundary := joined.Slice(mlx.Slice(), mlx.Slice(start, start+length))
 			shifts[k] = mlx.Where(boundary.Equal(eos), eos, shifts[k])
 		}
 	}
@@ -62,15 +130,18 @@ func (p *PLE) hashes(b *batch.Batch, history *mlx.Array, cfg *Config) (*mlx.Arra
 }
 
 func (p *PLE) lookup(globalIDs *mlx.Array) *mlx.Array {
+	if p.hostEmbedding != nil {
+		return p.hostEmbedding.lookup(globalIDs)
+	}
+
 	rows := mlx.FromValues([]int64{int64(p.ShardRows)}, 1)
 	shardIDs := globalIDs.FloorDivide(rows)
 	localIDs := globalIDs.Remainder(rows)
 	zeroID := mlx.FromValues([]int64{0}, 1)
 
 	// The checkpoint partitions one logical table into equal contiguous row
-	// shards. This portable fallback touches every shard, then masks and sums
-	// the selected rows. It prioritizes reference bring-up over performance;
-	// production support should replace it with a fused split-table lookup.
+	// shards. Non-NVFP4 tables remain resident: gather each shard and mask out
+	// rows belonging to the others. NVFP4 tables use the host-backed path above.
 	var result *mlx.Array
 	for i, embedding := range p.EmbeddingShards {
 		mask := shardIDs.Equal(mlx.FromValues([]int64{int64(i)}, 1))
@@ -88,7 +159,7 @@ func (p *PLE) lookup(globalIDs *mlx.Array) *mlx.Array {
 
 // Forward implements the published Engram dataflow against the checkpoint's
 // fused four-stream projections and split embedding table.
-func (p *PLE) Forward(hidden *mlx.Array, b *batch.Batch, tokens *engramCache, cfg *Config) *mlx.Array {
+func (p *PLE) Forward(hidden *mlx.Array, b *batch.Batch, tokens engramState, cfg *Config) *mlx.Array {
 	dims := hidden.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	streams := mlx.Reshape(hidden, B, L, cfg.HCCount, cfg.HiddenSize)

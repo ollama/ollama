@@ -2559,7 +2559,18 @@ func NewCLI() *cobra.Command {
 				versionHandler(cmd, args)
 				return nil
 			}
-			return cmd.Help()
+			if !isInteractiveTerminal() {
+				return cmd.Help()
+			}
+
+			if err := runWelcome(); err != nil {
+				if !errors.Is(err, launch.ErrCancelled) {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				}
+				return nil
+			}
+			runInteractiveTUI(cmd)
+			return nil
 		},
 	}
 

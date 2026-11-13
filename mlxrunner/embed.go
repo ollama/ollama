@@ -11,26 +11,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/model"
 )
 
-// EmbeddingRequest is a short-lived embedding request carried on the
-// runner's EmbedRequests channel from the HTTP handler to the runner
-// goroutine (same lifecycle shape as completions' Request/Requests).
-type EmbeddingRequest struct {
-	Content        string
-	Dimensions     int
-	Media          [][]byte
-	EmbedResponses chan EmbedResponse
-	Ctx            context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
-}
-
-// EmbedResponse carries one embedding, its prompt token count, or an error.
-type EmbedResponse struct {
-	Embedding       []float32
-	PromptEvalCount int
-	Error           *api.StatusError
+type embeddingRequest struct {
+	Content string
+	Media   [][]byte
 }
 
 // embedWireRequest / embedWireResponse are the HTTP wire shapes, matching the
@@ -47,10 +33,7 @@ type embedWireResponse struct {
 	PromptEvalCount int       `json:"prompt_eval_count"`
 }
 
-// handleEmbed serves POST /v1/embeddings. Requests flow to the runner
-// goroutine via EmbedRequests, which serializes with completions on the
-// single consumer of the MLX thread (the same lifecycle as the text
-// pipeline).
+// handleEmbed serves POST /v1/embeddings.
 func (r *Runner) handleEmbed(w http.ResponseWriter, req *http.Request) {
 	if r.Model == nil {
 		http.Error(w, "model not loaded", http.StatusServiceUnavailable)
@@ -99,12 +82,7 @@ func (r *Runner) handleEmbed(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	request := EmbeddingRequest{
-		Content:        wire.Content,
-		Dimensions:     wire.Dimensions,
-		EmbedResponses: make(chan EmbedResponse, 1),
-		Ctx:            req.Context(),
-	}
+	request := embeddingRequest{Content: wire.Content}
 
 	if len(wire.Media) > 0 {
 		request.Media = make([][]byte, len(wire.Media))
@@ -118,28 +96,20 @@ func (r *Runner) handleEmbed(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	select {
-	case <-req.Context().Done():
-		return
-	case r.EmbedRequests <- request:
-	}
-
-	var resp EmbedResponse
-	select {
-	case <-req.Context().Done():
-		return
-	case resp = <-request.EmbedResponses:
-	}
-
-	if resp.Error != nil {
-		http.Error(w, resp.Error.ErrorMessage, resp.Error.StatusCode)
+	resp, err := r.runEmbed(req.Context(), request)
+	if err != nil {
+		if req.Context().Err() == nil {
+			status := http.StatusInternalServerError
+			var statusErr api.StatusError
+			if errors.As(err, &statusErr) {
+				status = statusErr.StatusCode
+			}
+			http.Error(w, err.Error(), status)
+		}
 		return
 	}
 
-	if err := json.NewEncoder(w).Encode(embedWireResponse{
-		Embedding:       resp.Embedding,
-		PromptEvalCount: resp.PromptEvalCount,
-	}); err != nil {
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("failed to encode embedding response", "error", err)
 	}
 }
@@ -188,32 +158,29 @@ func embedHiddenSize(m any) int32 {
 	return 0
 }
 
-// runEmbed executes one embedding request on the runner goroutine (the MLX
-// thread): tokenize (+ media expansion if Media entries ride along) → single
-// bidirectional forward → masked mean pool → L2. Media kind sniffing happens
-// here because the runner has already dropped the original base64 framing;
-// deeper validation is the model's PrepareMedia.
-func (r *Runner) runEmbed(ctx context.Context, request EmbeddingRequest) error {
-	defer close(request.EmbedResponses)
+// runEmbed prepares the input on the caller, then schedules forward and pooling
+// together on the MLX worker. Only the CPU embedding crosses back to the caller.
+func (r *Runner) runEmbed(ctx context.Context, request embeddingRequest) (embedWireResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return embedWireResponse{}, err
+	}
 
-	fail := func(code int, err error) error {
-		request.EmbedResponses <- EmbedResponse{Error: &api.StatusError{StatusCode: code, ErrorMessage: err.Error()}}
-		return nil
+	fail := func(code int, err error) (embedWireResponse, error) {
+		return embedWireResponse{}, api.StatusError{StatusCode: code, ErrorMessage: err.Error()}
 	}
 
 	// EmbedMedia is the narrow surface gemma4embedding (and any future
 	// multimodal embedding arch) exposes to the runner. Text-only models
 	// don't implement it and media requests 501 here.
 	type embedMedia interface {
-		PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error)
-		EncodeMedia(prepared *model.PreparedRequest) ([]batch.MediaItem, error)
-		MediaTokenStrings() (boi, eoi, image, boa, eoa, audio string)
+		model.MediaModel
 		SupportsImages() bool
 		SupportsAudio() bool
 	}
 
 	var tokens []int32
 	var prepared *model.PreparedRequest
+	var segments []model.Segment
 
 	if len(request.Media) == 0 {
 		// Embedding encoders trained with the HF TemplateProcessing
@@ -238,7 +205,6 @@ func (r *Runner) runEmbed(ctx context.Context, request EmbeddingRequest) error {
 		// caller-text+appended-placeholders to the model. The bracketed
 		// expansions the model sees (BOI...EOI with the soft-token run) are
 		// produced by PrepareMedia per segment, not by rewriting the text.
-		var segments []model.Segment
 		if tt := r.Tokenizer.Encode(request.Content, false); len(tt) > 0 {
 			segments = append(segments, model.Segment{Tokens: tt})
 		}
@@ -273,6 +239,10 @@ func (r *Runner) runEmbed(ctx context.Context, request EmbeddingRequest) error {
 		bos := r.Tokenizer.BOS()
 		if bos >= 0 {
 			tokens = append([]int32{bos}, prepared.Tokens...)
+			for i := range prepared.Items {
+				prepared.Items[i].Range[0]++
+				prepared.Items[i].Range[1]++
+			}
 		} else {
 			tokens = prepared.Tokens
 		}
@@ -289,64 +259,35 @@ func (r *Runner) runEmbed(ctx context.Context, request EmbeddingRequest) error {
 			fmt.Errorf("the input length (%d tokens) exceeds the context length (%d)", len(tokens), maxLen))
 	}
 
-	// Pre-flight: reject before MLX panics at metal::malloc on a forward
-	// that cannot fit. 413, like the token-count gate, so the server's
-	// truncate retry applies.
-	if budget := EmbedCapacityBudget(); budget > 0 {
-		if need := PredictedEmbedAllocationBytes(len(tokens), embedHiddenSize(r.Model)); need > budget {
-			return fail(http.StatusRequestEntityTooLarge,
-				fmt.Errorf("embedding request would allocate %d bytes (budget %d); reduce input length or parallel load", need, budget))
-		}
+	if prepared == nil {
+		prepared = &model.PreparedRequest{}
 	}
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
+	prepared.Tokens = tokens
+	items, err := bindItems(prepared, segments)
+	if err != nil {
+		return fail(http.StatusBadRequest, err)
 	}
-
-	// Per-request hygiene, mirroring the completion pipeline (see
-	// TextGenerationPipeline): without the scope + ClearCache, freed
-	// buffers accumulate across embeds until metal::malloc panics.
-	// EncodeMedia runs inside the scope: its feature graphs are lazy
-	// and consumed by Forward, so they must share one scope lifetime.
-	mlx.ResetPeakMemory()
-	mlx.Scoped(func() {
-		var media []batch.MediaItem
-		if prepared != nil {
-			em := r.Model.(embedMedia)
-			mi, err := em.EncodeMedia(prepared)
-			if err != nil {
-				fail(http.StatusBadRequest, err)
-				return
-			}
-			// Re-base media Pos onto the final stream when a BOS was prepended
-			// after PrepareMedia computed them against a BOS-less token list.
-			if r.Tokenizer.BOS() >= 0 {
-				for i := range mi {
-					mi[i].Pos++
+	var embedding []float32
+	err = r.scheduleEvaluation(ctx, func(slot *batchSlot) (*evaluationState, error) {
+		// Device queries and array operations stay on the MLX worker.
+		if budget := EmbedCapacityBudget(); budget > 0 {
+			if need := PredictedEmbedAllocationBytes(len(tokens), embedHiddenSize(r.Model)); need > budget {
+				return nil, api.StatusError{
+					StatusCode:   http.StatusRequestEntityTooLarge,
+					ErrorMessage: fmt.Sprintf("embedding request would allocate %d bytes (budget %d); reduce input length or parallel load", need, budget),
 				}
 			}
-			media = mi
 		}
-		inputIDs := mlx.FromValues(tokens, 1, len(tokens))
-		hidden, _ := r.Model.Forward(&batch.Batch{
-			InputIDs:     inputIDs,
-			SeqOffsets:   []int32{0},
-			SeqQueryLens: []int32{int32(len(tokens))},
-			Media:        media,
-		}, nil)
-
-		L := int32(hidden.Dim(1))
-		D := int32(hidden.Dim(2))
-		rows := mlx.Reshape(hidden, L, D)
-		// The embedding is plain floats by now, so it escapes the
-		// scope as CPU data; every GPU intermediate is freed at exit.
-		embedding := meanPoolAndNormalize(rows, len(tokens))
-		request.EmbedResponses <- EmbedResponse{Embedding: embedding, PromptEvalCount: len(tokens)}
+		return r.openEvaluation(slot, prepared, items, func(hidden *mlx.Array) error {
+			rows := hidden.Reshape(hidden.Dim(1), hidden.Dim(2))
+			embedding = meanPoolAndNormalize(rows, len(tokens))
+			return nil
+		}), nil
 	})
-	mlx.ClearCache()
-	return nil
+	if err != nil {
+		return embedWireResponse{}, err
+	}
+	return embedWireResponse{Embedding: embedding, PromptEvalCount: len(tokens)}, nil
 }
 
 // looksLikeImage / looksLikeAudio sniff the container headers the runner
