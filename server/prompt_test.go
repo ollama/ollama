@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -176,10 +177,22 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
 			},
 			expect: expect{
-				prompt: "[img-0] I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
-				images: [][]byte{
-					[]byte("somethingelse"),
-				},
+				prompt: "I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
+			},
+		},
+		{
+			name:     "keep latest multipart pair together",
+			model:    visionModel,
+			limit:    1,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "old message"},
+				{Role: "user", Content: "describe image"},
+				{Role: "user", Images: []api.ImageData{[]byte("something")}},
+			},
+			expect: expect{
+				prompt: "describe image\n\n[img-0] ",
+				images: [][]byte{[]byte("something")},
 			},
 		},
 		{
@@ -273,6 +286,39 @@ func TestChatPrompt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMultipartImagePartsKeepPromptOrder(t *testing.T) {
+	const imageURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+	req, err := openai.FromChatRequest(openai.ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []openai.Message{{
+			Role: "user",
+			Content: []any{
+				map[string]any{"type": "text", "text": "Compare A"},
+				map[string]any{"type": "image_url", "image_url": map[string]any{"url": imageURL}},
+				map[string]any{"type": "text", "text": "with B"},
+				map[string]any{"type": "image_url", "image_url": map[string]any{"url": imageURL}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renderMsgs, _, err := imageTaggedMessages(&Model{}, req.Messages, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"Compare A", "[img-0]", "with B", "[img-1]"}
+	got := make([]string, len(renderMsgs))
+	for i := range renderMsgs {
+		got[i] = renderMsgs[i].Content
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("multipart content order mismatch (-want +got):\n%s", diff)
 	}
 }
 
