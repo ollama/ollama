@@ -35,6 +35,9 @@ type DeepSeek3Parser struct {
 	buffer             strings.Builder
 	callIndex          int
 	hasThinkingSupport bool
+	// set after </think> until content starts, so whitespace that arrives in
+	// later chunks is dropped like whitespace in the same chunk as the tag
+	skipLeadingWhitespace bool
 }
 
 func (p *DeepSeek3Parser) HasToolSupport() bool {
@@ -111,6 +114,10 @@ func (deepseekEventContent) isDeepSeekEvent()         {}
 func (deepseekEventToolCall) isDeepSeekEvent()        {}
 
 func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
+	if p.skipLeadingWhitespace {
+		s = strings.TrimLeftFunc(s, unicode.IsSpace)
+		p.skipLeadingWhitespace = s == ""
+	}
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
 
@@ -171,6 +178,7 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = DeepSeekCollectingContent
+			p.skipLeadingWhitespace = remaining == ""
 
 			if len(thinking) > 0 {
 				events = append(events, deepseekEventThinkingContent{content: thinking})

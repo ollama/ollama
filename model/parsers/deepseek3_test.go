@@ -308,6 +308,13 @@ func TestDeepSeekParser_Streaming(t *testing.T) {
 			hasThinking:      true,
 		},
 		{
+			name:             "streaming_whitespace_after_thinking_in_own_chunks",
+			chunks:           []string{"I need to think", "</think>", "\n\n", " ", "The answer is 42."},
+			expectedThinking: "I need to think",
+			expectedContent:  "The answer is 42.",
+			hasThinking:      true,
+		},
+		{
 			name:            "streaming_tool_call",
 			chunks:          []string{"I'll check weather.", "<｜tool▁calls▁begin｜>", "<｜tool▁call▁begin｜>get_weather", "<｜tool▁sep｜>{\"location\":\"Paris\"}", "<｜tool▁call▁end｜><｜tool▁calls▁end｜>"},
 			expectedContent: "I'll check weather.",
