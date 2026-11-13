@@ -398,6 +398,102 @@ func TestWriteWithBackup_SymlinkTarget(t *testing.T) {
 	}
 }
 
+func TestWriteWithBackup_SymlinkKeepsLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests may require admin on Windows")
+	}
+
+	for _, relative := range []bool{false, true} {
+		t.Run(fmt.Sprintf("relative=%v", relative), func(t *testing.T) {
+			tmpDir := isolatedTempDir(t)
+			dotfilesDir := filepath.Join(tmpDir, "dotfiles")
+			configDir := filepath.Join(tmpDir, "config")
+			for _, dir := range []string{dotfilesDir, configDir} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			realFile := filepath.Join(dotfilesDir, "settings.json")
+			symlink := filepath.Join(configDir, "settings.json")
+			if err := os.WriteFile(realFile, []byte(`{"v": 1}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			target := realFile
+			if relative {
+				target = filepath.Join("..", "dotfiles", "settings.json")
+			}
+			if err := os.Symlink(target, symlink); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := WriteWithBackup(symlink, []byte(`{"v": 2}`)); err != nil {
+				t.Fatalf("WriteWithBackup through symlink failed: %v", err)
+			}
+
+			info, err := os.Lstat(symlink)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				t.Error("symlink was replaced by a regular file")
+			}
+			content, err := os.ReadFile(realFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(content) != `{"v": 2}` {
+				t.Errorf("real file not updated: got %s", content)
+			}
+		})
+	}
+}
+
+func TestWriteWithBackup_SymlinkIntoReadOnlyDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink tests may require admin on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("directory permissions do not apply to root")
+	}
+
+	tmpDir := isolatedTempDir(t)
+	storeDir := filepath.Join(tmpDir, "store")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realFile := filepath.Join(storeDir, "settings.json")
+	symlink := filepath.Join(tmpDir, "settings.json")
+	if err := os.WriteFile(realFile, []byte(`{"v": 1}`), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realFile, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(storeDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(storeDir, 0o755) })
+
+	if err := WriteWithBackup(symlink, []byte(`{"v": 2}`)); err != nil {
+		t.Fatalf("WriteWithBackup failed: %v", err)
+	}
+
+	content, err := os.ReadFile(symlink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != `{"v": 2}` {
+		t.Errorf("got %s", content)
+	}
+	realContent, err := os.ReadFile(realFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(realContent) != `{"v": 1}` {
+		t.Errorf("read-only target was modified: got %s", realContent)
+	}
+}
+
 // TestBackupToTmp_SpecialCharsInFilename verifies backup works with special characters.
 // User may have config files with unusual names.
 func TestBackupToTmp_SpecialCharsInFilename(t *testing.T) {
