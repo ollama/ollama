@@ -337,6 +337,7 @@ console.log(response.message.content);
 - [MindsDB](https://docs.mindsdb.com/integrations/ai-engines/ollama) - Connect Ollama with 200+ data platforms
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) - Embeddable vector database for Go ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) - AI-powered SQL client
+- [SynapCores](https://github.com/SynapCores/synapcores-releases) - Self-hosted AI database (SQL, vector search, graph) that can use Ollama models and serves an Ollama-compatible API ([guide](https://synapcores.com/blog/ollama-runs-your-model))
 
 ### Infrastructure & Deployment
 
