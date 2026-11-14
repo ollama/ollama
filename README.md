@@ -189,6 +189,7 @@ console.log(response.message.content);
 - [Enchanted](https://github.com/AugustDev/enchanted) - Native macOS and iOS client
 - [RWKV-Runner](https://github.com/josStorer/RWKV-Runner) - Multi-model desktop runner
 - [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) - Evaluate and compare models
+- [RigMatch](https://github.com/DaveEuson/RigMatch) - Find the best model your hardware can run
 - [macai](https://github.com/Renset/macai) - macOS client for Ollama and ChatGPT
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio) - Multi-provider desktop IDE
 - [Reins](https://github.com/ibrahimcetin/reins) - Parameter tuning and reasoning model support
@@ -201,6 +202,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Netpals](https://github.com/DaveEuson/netpals) - Retro buddy list where AI personas IM you
 
 #### Mobile
 
