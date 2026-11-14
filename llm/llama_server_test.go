@@ -2160,9 +2160,15 @@ func TestAppendLoadModeArgs(t *testing.T) {
 	// Direct I/O is only selected on Linux, so the expectation depends on the host.
 	dio := []string{"base"}
 	dioWithMMapOff := []string{"base", "--load-mode", "none"}
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		dio = []string{"base", "--load-mode", "dio"}
 		dioWithMMapOff = []string{"base", "--load-mode", "dio"}
+	case "windows":
+		// Windows iGPUs keep CPU-side weights out of pinned host memory,
+		// which shares the GPU's WDDM shared-memory budget.
+		dio = []string{"base", "--no-host"}
+		dioWithMMapOff = []string{"base", "--no-host", "--load-mode", "none"}
 	}
 
 	tests := []struct {
