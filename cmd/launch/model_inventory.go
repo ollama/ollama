@@ -40,6 +40,9 @@ type LaunchModel struct {
 	EmbeddingLength int
 	Size            int64
 	Details         api.ModelDetails
+
+	// ServingContextLength is separate from the model architecture maximum.
+	ServingContextLength int
 }
 
 type modelInfo = LaunchModel

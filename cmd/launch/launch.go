@@ -1567,15 +1567,31 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 			resolved[i].Thinking = thinking.Clone()
 		}
 	}
-	if !slices.Contains([]string{"codex", "opencode", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
+	if !slices.Contains([]string{"claude", "codex", "opencode", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
 		return resolved
 	}
 	showCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	for i := range resolved {
+		if integration == "claude" {
+			resolved[i].ServingContextLength = 0
+			if resolved[i].Remote || isCloudModelName(resolved[i].Name) {
+				continue
+			}
+		}
 		if showCtx.Err() == nil {
-			if show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: resolved[i].Name}); err == nil && show.Thinking.Valid() {
-				resolved[i].Thinking = show.Thinking.Clone()
+			if show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: resolved[i].Name}); err == nil {
+				if show.Thinking.Valid() {
+					resolved[i].Thinking = show.Thinking.Clone()
+				}
+				// Serving limits must be fresh and come from this launch's server.
+				// Architecture metadata and automatic targets are not allocations.
+				if integration == "claude" && show.RemoteHost == "" && show.RemoteModel == "" && show.ServingContextLength > 0 {
+					maximum, known := modelInfoContextLength(show.ModelInfo)
+					if !known || show.ServingContextLength <= maximum {
+						resolved[i].ServingContextLength = show.ServingContextLength
+					}
+				}
 			}
 		}
 	}

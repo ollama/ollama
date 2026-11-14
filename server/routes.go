@@ -1846,6 +1846,15 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		return
 	}
 
+	// Serving configuration is not part of the cached architecture metadata.
+	// Resolve it afresh without scheduling or loading a runner.
+	resp.ServingContextLength = 0
+	if resp.RemoteHost == "" && resp.RemoteModel == "" {
+		if m, err := GetModelForRunner(req.Model, req.Runner); err == nil {
+			resp.ServingContextLength = s.localServingContextLength(m, req.Options)
+		}
+	}
+
 	userAgent := c.Request.UserAgent()
 	if strings.HasPrefix(userAgent, copilotChatUserAgentPrefix) {
 		if resp.ModelInfo == nil {
@@ -1857,6 +1866,20 @@ func (s *Server) ShowHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// An automatic context may be reduced when the model is loaded. Its target,
+// or an allocation made for a different request, is not a usable fixed limit.
+func (s *Server) localServingContextLength(m *Model, requestOpts map[string]any) int {
+	if m == nil || m.Config.RemoteHost != "" || m.Config.ModelFormat != "gguf" || usesAutomaticNumCtx(m, requestOpts) {
+		return 0
+	}
+	opts, err := s.modelOptions(m, requestOpts)
+	maximum := m.metadata.Int("context_length")
+	if err != nil || opts.NumCtx < 4 || maximum <= 0 {
+		return 0
+	}
+	return int(min(int64(opts.NumCtx), maximum))
 }
 
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {

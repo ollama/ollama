@@ -3896,7 +3896,7 @@ func TestLaunchIntegration_ClaudeModelOverrideDeprecatedDeclineOpensPicker(t *te
 	writeFakeBinary(t, binDir, "claude")
 	t.Setenv("PATH", binDir)
 
-	var showCalls atomic.Int32
+	var replacementShown atomic.Bool
 	var prompt string
 	var promptOptions ConfirmOptions
 	DefaultConfirmPrompt = func(p string, options ConfirmOptions) (bool, error) {
@@ -3907,6 +3907,9 @@ func TestLaunchIntegration_ClaudeModelOverrideDeprecatedDeclineOpensPicker(t *te
 	var selectorCalls int
 	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		selectorCalls++
+		if replacementShown.Load() {
+			t.Fatal("model readiness must wait for picker selection")
+		}
 		if title != "Select model for Claude Code:" {
 			t.Fatalf("picker title = %q, want Claude Code model picker", title)
 		}
@@ -3934,8 +3937,19 @@ func TestLaunchIntegration_ClaudeModelOverrideDeprecatedDeclineOpensPicker(t *te
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"best-local"}]}`)
 		case "/api/show":
-			showCalls.Add(1)
+			var req api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode show request: %v", err)
+				return
+			}
+			if req.Model != "best-local" {
+				t.Errorf("expected only the selected replacement to be shown, got %q", req.Model)
+			}
+			replacementShown.Store(true)
 			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		case "/api/pull":
+			t.Error("installed replacement must not trigger a download")
+			http.Error(w, "unexpected download", http.StatusBadRequest)
 		default:
 			http.NotFound(w, r)
 		}
@@ -3960,8 +3974,10 @@ func TestLaunchIntegration_ClaudeModelOverrideDeprecatedDeclineOpensPicker(t *te
 	if selectorCalls != 1 {
 		t.Fatalf("expected picker to open after declining override, got %d calls", selectorCalls)
 	}
-	if showCalls.Load() != 1 {
-		t.Fatalf("expected only replacement model readiness to call /api/show, got %d calls", showCalls.Load())
+	// Claude also refreshes context metadata after readiness. Both lookups must
+	// stay scoped to the selected replacement, not the rejected override.
+	if !replacementShown.Load() {
+		t.Fatal("expected replacement model readiness to call /api/show")
 	}
 	saved, err := config.LoadIntegration("claude")
 	if err != nil {
