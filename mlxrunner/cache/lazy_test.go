@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
@@ -343,5 +344,101 @@ func TestKVRestoreLiveLazySnapshotIsOffsetMove(t *testing.T) {
 			}
 		}
 		snap.Close()
+	})
+}
+
+func TestPeerRestoreKeepsDonorSnapshotLazy(t *testing.T) {
+	for _, heads := range []int{1, 2} {
+		for _, reuse := range []bool{false, true} {
+			mlxtest.RunSubtest(t, fmt.Sprintf("heads%d/reuse%t", heads, reuse), func(t *mlxtest.T) {
+				source, destination := NewKVCache(), NewKVCache()
+				defer source.Free()
+				defer destination.Free()
+				k, v := distinctKV(0, 8, heads, 3)
+				source.Update(nil, k, v)
+				mlx.Eval(source.State()...)
+				snap := source.lazySnapshot(0, 4)
+				defer snap.Close()
+				if reuse {
+					k, v = distinctKV(100, 8, heads, 3)
+					destination.Update(nil, k, v)
+					mlx.Eval(destination.State()...)
+					if !destination.Restore(nil, 0) {
+						t.Fatal("destination rewind failed")
+					}
+				}
+				if !destination.Restore(snap, 4) {
+					t.Fatal("peer restore failed")
+				}
+				if snap.Size() != 0 {
+					t.Fatalf("peer read allocated %d donor snapshot bytes", snap.Size())
+				}
+				// Overwrite and free the donor before evaluating the destination graph.
+				if !source.Restore(nil, 0) {
+					t.Fatal("donor rewind failed")
+				}
+				k, v = distinctKV(200, 8, heads, 3)
+				source.Update(nil, k, v)
+				mlx.Eval(source.State()...)
+				source.Free()
+				for field, a := range destination.State() {
+					got := mlx.Contiguous(a, false).Floats()
+					for i, value := range got {
+						want := float32((i / 3) % 4)
+						if field == 1 {
+							want = -want
+						}
+						if value != want {
+							t.Fatalf("state[%d][%d]=%v, want %v after donor overwrite", field, i, value, want)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPeerRestoreDoesNotRetainDonorAllocation(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const heads, dims, tokens = 2, 16, 4
+		mlx.DefaultStream().Synchronize()
+		baseline := settledActiveMemory()
+		destination := NewKVCache()
+		defer destination.Free()
+		mlx.Scoped(func() {
+			source := NewKVCache()
+			defer source.Free()
+			keys, values := distinctKV(0, 16384, heads, dims)
+			source.Update(nil, keys, values)
+			mlx.Eval(source.State()...)
+			snapshot := source.lazySnapshot(0, tokens)
+			defer snapshot.Close()
+			if !destination.Restore(snapshot, tokens) {
+				t.Fatal("peer restore failed")
+			}
+			mlx.Eval(destination.State()...)
+		})
+		mlx.DefaultStream().Synchronize()
+		// Measure before reading the arrays: materializing a view for an assertion
+		// must not accidentally detach the donor allocation and conceal retention.
+		owned := 2 * destination.step * heads * dims * 4 // One K/V reservation, not the donor's capacity.
+		if retained := settledActiveMemory() - baseline; retained > owned+64*1024 {
+			t.Fatalf("recipient owns %d bytes but retains %d after donor destruction", owned, retained)
+		}
+		for field, state := range destination.State() {
+			values := mlx.Contiguous(state, false).Floats()
+			if len(values) != heads*tokens*dims {
+				t.Fatalf("state[%d] contains %d values, want %d", field, len(values), heads*tokens*dims)
+			}
+			for i, value := range values {
+				want := float32((i / dims) % tokens)
+				if field == 1 {
+					want = -want
+				}
+				if value != want {
+					t.Fatalf("state[%d][%d]=%v, want %v", field, i, value, want)
+				}
+			}
+		}
 	})
 }

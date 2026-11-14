@@ -69,7 +69,7 @@ func completionStatusError(err error) *api.StatusError {
 // entering the token decode loop. Its callback runs on the MLX worker.
 type evaluationRequest struct {
 	ctx  context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
-	open func(*batchSlot) (*evaluationState, error)
+	open func(*batchSlot, []*prefixCache) (*evaluationState, error)
 	done chan error
 }
 

@@ -219,7 +219,13 @@ func (s *batchScheduler) admitGeneration(request request) {
 		s.slots[best] = slot
 	}
 	req := &batchRequest{request: request}
-	req.session = slot.cache.begin(request.Tokens, request.MediaItems)
+	var peers []*prefixCache
+	for _, other := range s.slots {
+		if other != nil && other != slot && other.cache != nil {
+			peers = append(peers, other.cache)
+		}
+	}
+	req.session = slot.cache.begin(request.Tokens, request.MediaItems, peers...)
 	req.media = s.r.openMedia(request)
 	req.spec = slot.speculation.open(request, req.media.rowLayout())
 	req.prefill = s.r.newPrefill(req.session, req.spec, req.media)
