@@ -315,12 +315,24 @@ export class InferenceComputeResponse {
 	    return a;
 	}
 }
+export class ThinkingInfo {
+    values: any[];
+    default: any;
+
+    constructor(source: any = {}) {
+        if ('string' === typeof source) source = JSON.parse(source);
+        this.values = source["values"];
+        this.default = source["default"];
+    }
+}
 export class ModelCapabilitiesResponse {
     capabilities: string[];
+    thinking?: ThinkingInfo;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.capabilities = source["capabilities"];
+        this.thinking = source["thinking"] && new ThinkingInfo(source["thinking"]);
     }
 }
 export class ChatEvent {

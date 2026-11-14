@@ -51,6 +51,7 @@ type InferenceComputeResponse struct {
 
 type ModelCapabilitiesResponse struct {
 	Capabilities []model.Capability `json:"capabilities"`
+	Thinking     *model.Thinking    `json:"thinking,omitempty"`
 }
 
 // ChatEvent is for regular chat messages and assistant interactions
