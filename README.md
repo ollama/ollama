@@ -321,6 +321,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [DoSync](https://dosync.dev/app) - Android smart home app that finds Ollama on your Wi-Fi and uses it for free-form commands
 
 ### Observability & Monitoring
 
