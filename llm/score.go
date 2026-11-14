@@ -3,12 +3,22 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 
 	"github.com/ollama/ollama/api"
 )
 
+// MaxScorePromptBytes is the shared budget for decision paths that render
+// scoring prompts from request text.
+const MaxScorePromptBytes = 32 << 20
+
+// ErrScorePromptTooLarge identifies a rendered decision prompt over the shared
+// byte budget. Producers return this error for a consistent HTTP 413 response.
+var ErrScorePromptTooLarge = api.StatusError{StatusCode: http.StatusRequestEntityTooLarge, ErrorMessage: "decision request is too large"}
+
 // Scorer is an optional runner capability for bounded decision scoring.
-// Inputs are already encoded; no chat template or generation options apply.
+// Inputs contain compiled decision fields; the scorer may render a model-native
+// prompt, but chat generation options do not apply.
 type Scorer interface {
 	Score(context.Context, ScoreRequest) (ScoreResponse, error)
 }

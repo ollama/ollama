@@ -97,38 +97,61 @@ func (m *Model) prompt(input llm.ScoreRequest, q *llm.ScoreQuestion) (string, st
 	return full, prefix, ids, bias, nil
 }
 
-func (m *Model) prepareRow(input llm.ScoreRequest, q *llm.ScoreQuestion) (*model.PreparedRequest, []model.Segment, []int32, []float32, error) {
-	full, prefix, ids, bias, err := m.prompt(input, q)
-	if err != nil {
-		return nil, nil, nil, nil, err
+type scorePrompt struct {
+	full   string
+	prefix string
+	ids    []int32
+	bias   []float32
+}
+
+func (m *Model) renderScore(ctx context.Context, input llm.ScoreRequest) ([]scorePrompt, error) {
+	rows := make([]scorePrompt, len(input.Rows))
+	var promptBytes int
+	for i, row := range input.Rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		full, prefix, ids, bias, err := m.prompt(input, row.Question)
+		if err != nil {
+			return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("question %d: %v", i, err)}
+		}
+		if len(full) > llm.MaxScorePromptBytes-promptBytes {
+			return nil, llm.ErrScorePromptTooLarge
+		}
+		promptBytes += len(full)
+		rows[i] = scorePrompt{full: full, prefix: prefix, ids: ids, bias: bias}
 	}
+	return rows, nil
+}
+
+func (m *Model) prepareRow(input llm.ScoreRequest, q *llm.ScoreQuestion, row scorePrompt) (*model.PreparedRequest, []model.Segment, error) {
 	tok := m.Tokenizer()
 	if len(input.Images) == 0 {
-		prepared, err := m.PrepareMedia([]model.Segment{{Tokens: tok.Encode(full, false)}})
+		prepared, err := m.PrepareMedia([]model.Segment{{Tokens: tok.Encode(row.full, false)}})
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, err
 		}
-		want := tok.Encode(prefix, false)
+		want := tok.Encode(row.prefix, false)
 		for prepared.ScorePrefix < len(want) && prepared.ScorePrefix < len(prepared.Tokens) && want[prepared.ScorePrefix] == prepared.Tokens[prepared.ScorePrefix] {
 			prepared.ScorePrefix++
 		}
-		return prepared, nil, ids, bias, nil
+		return prepared, nil, nil
 	}
 	before := fmt.Sprintf("[kind] %s\n[state] ", q.Type)
 	segments := []model.Segment{{Tokens: tok.Encode(before, false)}}
 	for _, data := range input.Images {
 		segments = append(segments, model.Segment{Kind: "image", Data: data})
 	}
-	after := full[len(before)+len(input.Images)*len(imageMarker):]
+	after := row.full[len(before)+len(input.Images)*len(imageMarker):]
 	segments = append(segments, model.Segment{Tokens: tok.Encode(after, false)})
 	prepared, err := m.PrepareMedia(segments)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, err
 	}
 	// The cache still recognizes identical media requests and safe boundaries.
 	// The text-only prefix boundary is omitted here because multimodal token
 	// expansion changes it and the caller's images are separate from state.
-	return prepared, segments, ids, bias, nil
+	return prepared, segments, nil
 }
 
 func (m *Model) finishScore(hidden *mlx.Array, n int, ids []int32, bias []float32, kind string) []float32 {
@@ -149,11 +172,15 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model
 	if len(input.Rows) < 1 || len(input.Rows) > 64 || input.MaxTokens < 1 || input.MaxTokens > m.MaxContextLength() {
 		return badRequest(fmt.Errorf("invalid AutoTrust decision question count or context limit"))
 	}
-	for i, row := range input.Rows {
+	rows, err := m.renderScore(ctx, input)
+	if err != nil {
+		return result, err
+	}
+	for i, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		prepared, segments, ids, bias, err := m.prepareRow(input, row.Question)
+		prepared, segments, err := m.prepareRow(input, input.Rows[i].Question, row)
 		if err != nil {
 			return badRequest(fmt.Errorf("question %d: %w", i, err))
 		}
@@ -161,7 +188,7 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model
 			return badRequest(fmt.Errorf("question %d needs %d tokens; limit is %d", i, len(prepared.Tokens), input.MaxTokens))
 		}
 		restored, err := forward(ctx, prepared, segments, func(hidden *mlx.Array) error {
-			result.Logits = append(result.Logits, m.finishScore(hidden, len(prepared.Tokens), ids, bias, row.Question.Type))
+			result.Logits = append(result.Logits, m.finishScore(hidden, len(prepared.Tokens), row.ids, row.bias, input.Rows[i].Question.Type))
 			return nil
 		})
 		cached += restored
