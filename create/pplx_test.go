@@ -56,7 +56,7 @@ func TestPplxBareBackboneRejectedBeforeImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := inferSafetensorsConfig(dir, cfg, "", ""); err == nil || !strings.Contains(err.Error(), "requires decision sidecars") {
+	if _, _, err := inferSafetensorsConfig(dir, cfg, "", ""); err == nil || !strings.Contains(err.Error(), "requires decision sidecars") {
 		t.Fatalf("bare backbone import error = %v", err)
 	}
 }
