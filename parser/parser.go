@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
 	"os/user"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -187,13 +189,57 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	return req, nil
 }
 
+// globRootFS permits Unix filenames that contain arbitrary bytes. io/fs's
+// standard DirFS rejects non-UTF-8 names even though they are legal on Unix.
+// Keep its path-element validation while leaving the original bytes intact.
+type globRootFS string
+
+func (root globRootFS) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(strings.ToValidUTF8(name, "_")) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+	return os.Open(filepath.Join(string(root), filepath.FromSlash(name)))
+}
+
 func expandPaths(path, relativeDir string) ([]string, error) {
+	pattern := path
 	path, err := expandPath(path, relativeDir)
 	if err != nil {
 		return nil, err
 	}
 
-	matches, err := filepath.Glob(path)
+	var matches []string
+	// relativeDir comes from the Modelfile location and is a literal path, not
+	// part of the pattern supplied by the user. Match inside that directory so
+	// glob metacharacters in its name cannot redirect the search elsewhere.
+	if !filepath.IsAbs(pattern) && filepath.VolumeName(pattern) == "" && !strings.HasPrefix(pattern, "~") && !strings.HasPrefix(pattern, `\`) {
+		root := filepath.Clean(relativeDir)
+		pattern = filepath.Clean(pattern)
+		for pattern == ".." || strings.HasPrefix(pattern, ".."+string(filepath.Separator)) {
+			root = filepath.Join(root, "..")
+			pattern = strings.TrimPrefix(pattern, "..")
+			pattern = strings.TrimPrefix(pattern, string(filepath.Separator))
+			if pattern == "" {
+				pattern = "."
+			}
+		}
+		var rootFS fs.FS = os.DirFS(root)
+		if runtime.GOOS != "windows" {
+			rootFS = globRootFS(root)
+		}
+		matches, err = fs.Glob(rootFS, filepath.ToSlash(pattern))
+		if errors.Is(err, pathpkg.ErrBadPattern) {
+			return nil, filepath.ErrBadPattern
+		}
+		for i, match := range matches {
+			matches[i], err = filepath.Abs(filepath.Join(root, filepath.FromSlash(match)))
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		matches, err = filepath.Glob(path)
+	}
 	if err != nil {
 		return nil, err
 	}
