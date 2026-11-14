@@ -100,7 +100,7 @@ func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, i
 		if len(cs) > 0 {
 			slot.scoreHidden = cache.NewHiddenCache()
 			slot.scoreCache = newPrefixCache(append(cs, slot.scoreHidden))
-			slot.scoreCache.limitBytes = maxPagedOutBytes / int64(max(1, r.parallel))
+			slot.scoreCache.limitBytes = r.snapshotLimit()
 		}
 	}
 	if slot.scoreCache != nil {

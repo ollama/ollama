@@ -167,3 +167,57 @@ func (p *pendingSnapshots) scheduledIn(start, end int) []int {
 	}
 	return boundaries
 }
+
+// PendingCopyBytes bounds the additional storage a lazy snapshot may need before
+// its live buffers can be reused. It does not evaluate or materialize the snapshot.
+func PendingCopyBytes(s Snapshot) int {
+	if s == nil {
+		return 0
+	}
+	if lazy, ok := s.(interface{ pendingBytes() int }); ok {
+		return lazy.pendingBytes()
+	}
+	return 0
+}
+
+// CopyBytes measures the buffers a write may need to copy. Attention caches can
+// keep capacity beyond their current offset, including after a rewind. State
+// only exposes the live prefix and would undercount that copy.
+func CopyBytes(c Cache) int {
+	if c == nil {
+		return 0
+	}
+	var state []*mlx.Array
+	switch c := c.(type) {
+	case *KVCache:
+		state = []*mlx.Array{c.keys, c.values}
+	case *RotatingKVCache:
+		state = []*mlx.Array{c.keys, c.values}
+	default:
+		state = c.State()
+	}
+	var size int
+	for _, a := range state {
+		if a != nil {
+			size += a.NumBytes()
+		}
+	}
+	return size
+}
+
+// CanMergeWithoutCopy reports whether Merge can compact these snapshots without
+// allocating native storage. Unknown cache implementations remain conservative.
+func CanMergeWithoutCopy(c Cache, parent, child Snapshot) bool {
+	switch c.(type) {
+	case *RecurrentCache, *RotatingKVCache:
+		return child != nil // Keep the last valid state if the child has no capture.
+	case *KVCache:
+		if parent == nil || child == nil {
+			return false // Do not merge across a missing part of sliceable history.
+		}
+		p, next := parent.(*kvSnapshot), child.(*kvSnapshot)
+		return p.keys == nil && next.keys == nil && p.cache == next.cache && p.toOffset == next.fromOffset
+	default:
+		return c == nil
+	}
+}

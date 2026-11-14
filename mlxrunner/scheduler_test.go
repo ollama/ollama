@@ -73,8 +73,9 @@ func TestBatchSchedulerLifecycle(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		// Keep history available while checking scheduling and prefix reuse.
 		a := request(ctx, 1, 20)
-		mlx.Scoped(func() { s.admit(a) })
+		mlx.Scoped(func() { s.admitGeneration(a) })
 		step()
 		step()
 		step()
@@ -84,7 +85,7 @@ func TestBatchSchedulerLifecycle(t *testing.T) {
 		}
 		b := request(context.Background(), 2, 4)
 		b.Tokens = slices.Repeat([]int32{2}, prefillChunkSize()+3)
-		mlx.Scoped(func() { s.admit(b) })
+		mlx.Scoped(func() { s.admitGeneration(b) })
 		text := ""
 		var final CompletionResponse
 		for i := 0; i < 30 && !final.Done; i++ {
@@ -125,7 +126,7 @@ func TestBatchSchedulerLifecycle(t *testing.T) {
 		step()
 		// Reuse the cancelled slot for a different conversation; no token history leaks.
 		c := request(context.Background(), 3, 2)
-		mlx.Scoped(func() { s.admit(c) })
+		mlx.Scoped(func() { s.admitGeneration(c) })
 		text = ""
 		final = CompletionResponse{}
 		for i := 0; i < 20 && !final.Done; i++ {
@@ -148,7 +149,7 @@ func TestBatchSchedulerLifecycle(t *testing.T) {
 		step()
 		// An idle slot still retains ordinary prefix reuse.
 		again := request(context.Background(), 2, 1)
-		mlx.Scoped(func() { s.admit(again) })
+		mlx.Scoped(func() { s.admitGeneration(again) })
 		final = CompletionResponse{}
 		for i := 0; i < 20 && !final.Done; i++ {
 			step()
@@ -389,9 +390,10 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 						}
 					})
 				}
+				// Handoffs must restore saved state regardless of host pressure.
 				admit := func(req request) {
 					mlx.Scoped(func() {
-						s.admit(req)
+						s.admitGeneration(req)
 						for _, slot := range s.slots {
 							if slot != nil && slot.request != nil && !slot.request.spec.fixedDepth {
 								pinDraftLimit(slot.request.spec, 3)
