@@ -103,6 +103,7 @@ type speculationSession struct {
 
 	// fixedDepth holds limit for the whole request, bypassing the depth controller.
 	fixedDepth bool
+	ignoreEOS  bool
 
 	// Cost sampling: each round's wall time (start to next start, spanning the
 	// next emit's sync) is attributed to its draft depth only when the depth
@@ -125,7 +126,7 @@ func (s *speculation) open(request request, layout []any) *speculationSession {
 	opts := request.SamplerOpts
 	enabled := !opts.Logprobs && opts.TopLogprobs == 0
 
-	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1, ignoreEOS: request.IgnoreEOS}
 	if enabled {
 		spec.limit = s.depth.scheduled
 		if _, ok := s.draft.(model.BlockSelector); ok {
@@ -496,7 +497,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	done := false
 	for i, id := range draftIDs[:accepted] {
 		commitIDs = append(commitIDs, id)
-		if r.Tokenizer.IsEOS(id) {
+		if !s.ignoreEOS && r.Tokenizer.IsEOS(id) {
 			done = true
 			accepted = i + 1
 			observed = accepted
@@ -568,4 +569,8 @@ func draftResults(ids []int32) []sampler.Result {
 		results[i] = sampler.Result{Token: mlx.FromValues([]int32{id}, 1)}
 	}
 	return results
+}
+
+func (st *speculativeDecoder) draftCounts() (drafted, accepted int) {
+	return st.s.stats.drafted, st.s.stats.accepted
 }
