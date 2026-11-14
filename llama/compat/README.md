@@ -27,13 +27,21 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/mtmd-model.cpp`
   (the file upstream refactored and renamed from `tools/mtmd/clip.cpp`, first
   seen at b12257, upstream #31865).
+- `002-kv-shift-yarn-attn-factor.patch` - temporary numerical fix, not part of
+  the loading layer. A context shift re-ropes keys that are already roped, and
+  `build_rope_shift` was passing the forward-pass YaRN amplitude through again,
+  so every shift rescaled all cached keys (including the `--keep` prefix) and
+  degraded long sessions until the model was reloaded (ollama#19457). The patch
+  makes the shift amplitude-neutral. Drop it when the pinned llama.cpp carries
+  the upstream fix.
 - `compat.cmake` - CMake glue that invokes the shared
   `cmake/apply-git-patches.cmake` idempotent applier (used by
   `llama/server/CMakeLists.txt`) for every `*.patch` under
   this directory by numeric filename order.
 
 The compatibility source files stay in this directory and are linked into the
-fetched llama.cpp targets. The patch file only adds call sites.
+fetched llama.cpp targets. The hook patch only adds call sites; any other patch
+here is a temporary, self-contained fix to the pinned llama.cpp source.
 
 ## Load-Time Hooks
 
