@@ -16,6 +16,7 @@ func TestTemplateSupportsThinking(t *testing.T) {
 		{name: "double quoted split", tmpl: `content.split("</think>")`, want: true},
 		{name: "separate reasoning field", tmpl: "content.split('</think>') reasoning_content", want: false},
 		{name: "special token reasoning", tmpl: "content.split('</think>') <SPECIAL_12>", want: false},
+		{name: "harmony analysis channel", tmpl: `{{- "<|channel|>analysis<|message|>" + message.thinking + "<|end|>" }}`, want: true},
 		{name: "plain template", tmpl: "{{ content }}", want: false},
 	}
 
