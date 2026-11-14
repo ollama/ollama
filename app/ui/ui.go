@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"slices"
@@ -1853,6 +1854,14 @@ func isImageAttachment(filename string) bool {
 	return strings.HasSuffix(ext, ".png") || strings.HasSuffix(ext, ".jpg") || strings.HasSuffix(ext, ".jpeg") || strings.HasSuffix(ext, ".webp")
 }
 
+func isVideoAttachment(filename string) bool {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".mp4", ".mov", ".webm", ".mkv", ".avi":
+		return true
+	}
+	return false
+}
+
 // ptr is a convenience function for &literal
 func ptr[T any](v T) *T { return &v }
 
@@ -1880,6 +1889,8 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 			for _, a := range m.Attachments {
 				if isImageAttachment(a.Filename) {
 					images = append(images, api.ImageData(a.Data))
+				} else if isVideoAttachment(a.Filename) {
+					apiMsg.Videos = append(apiMsg.Videos, api.VideoData(a.Data))
 				} else {
 					content := convertBytesToText(a.Data, a.Filename)
 					sb.WriteString(fmt.Sprintf("\n--- File: %s ---\n%s\n--- End of %s ---",

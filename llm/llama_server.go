@@ -2405,6 +2405,14 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 }
 
 func llamaServerChatMediaPart(media MediaData) (map[string]any, error) {
+	if media.Kind == MediaKindVideo {
+		return map[string]any{
+			"type": "video_url",
+			"video_url": map[string]any{
+				"url": "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(media.Data),
+			},
+		}, nil
+	}
 	if format, ok := AudioFormat(media.Data); ok {
 		return map[string]any{
 			"type": "input_audio",

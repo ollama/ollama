@@ -569,6 +569,12 @@ func cloneMessages(in []api.Message) []api.Message {
 				out[i].Images[j] = slices.Clone(image)
 			}
 		}
+		if msg.Videos != nil {
+			out[i].Videos = make([]api.VideoData, len(msg.Videos))
+			for j, video := range msg.Videos {
+				out[i].Videos[j] = slices.Clone(video)
+			}
+		}
 		out[i].ToolCalls = slices.Clone(msg.ToolCalls)
 	}
 	return out

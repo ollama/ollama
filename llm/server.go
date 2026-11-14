@@ -166,6 +166,7 @@ const (
 	MediaKindUnknown MediaKind = ""
 	MediaKindImage   MediaKind = "image"
 	MediaKindAudio   MediaKind = "audio"
+	MediaKindVideo   MediaKind = "video"
 )
 
 type MediaData struct {
@@ -185,9 +186,12 @@ type Message struct {
 }
 
 func MessageFromAPI(msg api.Message) Message {
-	media := make([]MediaData, len(msg.Images))
+	media := make([]MediaData, len(msg.Images), len(msg.Images)+len(msg.Videos))
 	for i, data := range msg.Images {
 		media[i] = NewMediaData(i, data)
+	}
+	for _, data := range msg.Videos {
+		media = append(media, MediaData{ID: len(media), Data: data, Kind: MediaKindVideo})
 	}
 
 	return Message{

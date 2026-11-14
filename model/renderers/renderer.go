@@ -2,6 +2,7 @@ package renderers
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
@@ -41,6 +42,32 @@ func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think
 	renderer := rendererForName(name)
 	if renderer == nil {
 		return "", fmt.Errorf("unknown renderer %q", name)
+	}
+	// Server renderers emit one generic [img-N] marker per media payload. The
+	// runner owns video expansion, so the rendering view only needs slot order.
+	if slices.ContainsFunc(msgs, func(m api.Message) bool { return len(m.Videos) > 0 }) {
+		if !RenderImgTags {
+			return "", fmt.Errorf("video input requires runner media markers")
+		}
+		msgs = slices.Clone(msgs)
+		mediaOffset := 0
+		for i := range msgs {
+			mediaCount := len(msgs[i].Images) + len(msgs[i].Videos)
+			if len(msgs[i].Videos) == 0 {
+				mediaOffset += mediaCount
+				continue
+			}
+			// Match native Chat: video-bearing messages put implicit media after
+			// the instruction. Numbered markers keep history and mixed slots aligned.
+			content, unplaced := PrepareMediaTags(msgs[i].Content, mediaCount, mediaOffset)
+			msgs[i].Content = content + unplaced
+			mediaOffset += mediaCount
+			msgs[i].Images = slices.Clone(msgs[i].Images)
+			for _, video := range msgs[i].Videos {
+				msgs[i].Images = append(msgs[i].Images, api.ImageData(video))
+			}
+			msgs[i].Videos = nil
+		}
 	}
 	return renderer.Render(msgs, tools, think)
 }
