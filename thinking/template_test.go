@@ -12,6 +12,10 @@ func TestTemplateSupportsThinking(t *testing.T) {
 		want bool
 	}{
 		{name: "paired tags", tmpl: "<think>{{ reasoning }}</think>", want: true},
+		{name: "k2 horizon paired tags", tmpl: "<ifm|think>{{ reasoning }}</ifm|think>", want: true},
+		{name: "k2 horizon tags with reasoning field", tmpl: "message.reasoning_content <ifm|think>\n</ifm|think>", want: true},
+		{name: "k2 horizon dynamic closing tag", tmpl: `{{- '<|ifm|im_start|>assistant\n<ifm|think>\n' }}{{- '</' + think_tag + '>' + content }}`, want: true},
+		{name: "k2 horizon think_fast tag only", tmpl: "<ifm|think_fast>{{ reasoning }}", want: false},
 		{name: "single quoted split", tmpl: "content.split('</think>')", want: true},
 		{name: "double quoted split", tmpl: `content.split("</think>")`, want: true},
 		{name: "separate reasoning field", tmpl: "content.split('</think>') reasoning_content", want: false},
