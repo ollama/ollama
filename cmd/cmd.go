@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -46,6 +47,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
@@ -1211,12 +1213,18 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
+	cloud, _ := cmd.Flags().GetBool("cloud")
+	var models *api.ListResponse
+	var err error
+	if cloud {
+		models, err = listCloudModels(cmd.Context())
+	} else {
+		var client *api.Client
+		client, err = api.ClientFromEnvironment()
+		if err == nil {
+			models, err = client.List(cmd.Context())
+		}
 	}
-
-	models, err := client.List(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1232,11 +1240,16 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 				size = format.HumanBytes(m.Size)
 			}
 
-			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
+			// Avoid a panic if a cloud model has a short or missing digest.
+			digest := m.Digest[:min(len(m.Digest), 12)]
+			if digest == "" {
+				digest = "-"
+			}
+			data = append(data, []string{m.Name, digest, size, format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
+	table := tablewriter.NewWriter(cmd.OutOrStdout())
 	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
@@ -1248,6 +1261,56 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	table.Render()
 
 	return nil
+}
+
+func listCloudModels(ctx context.Context) (*api.ListResponse, error) {
+	if internalcloud.Disabled() {
+		return nil, errors.New(internalcloud.DisabledMessagePrefix)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://ollama.com/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "ollama/"+version.Version)
+
+	// The catalog is public. api.Client would require a signing key for ollama.com.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list cloud models: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		apiErr := api.StatusError{StatusCode: resp.StatusCode, Status: resp.Status}
+		if err := json.Unmarshal(body, &apiErr); err != nil {
+			apiErr.ErrorMessage = strings.TrimSpace(string(body))
+		}
+		return nil, fmt.Errorf("list cloud models: %w", apiErr)
+	}
+
+	var models api.ListResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&models); err != nil {
+		return nil, fmt.Errorf("decode cloud models: %w", err)
+	}
+	for i := range models.Models {
+		m := &models.Models[i]
+		ref, err := modelref.ParseRef(cmp.Or(m.Model, m.Name))
+		if err != nil {
+			return nil, fmt.Errorf("invalid cloud model: %w", err)
+		}
+		m.Name = ref.Base + ":cloud"
+		m.Model = m.Name
+		m.RemoteModel = ref.Base
+		m.RemoteHost = "https://ollama.com"
+	}
+	slices.SortFunc(models.Models, func(a, b api.ListModelResponse) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return &models, nil
 }
 
 func ListRunningHandler(cmd *cobra.Command, args []string) error {
@@ -2720,9 +2783,15 @@ func NewCLI() *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List models",
-		PreRunE: checkServerHeartbeat,
-		RunE:    ListHandler,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if cloud, _ := cmd.Flags().GetBool("cloud"); cloud {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: ListHandler,
 	}
+	listCmd.Flags().Bool("cloud", false, "List cloud models from ollama.com")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
