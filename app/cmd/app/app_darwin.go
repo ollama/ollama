@@ -19,6 +19,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -1013,11 +1014,23 @@ func claudeLocalModels(
 
 	names := make([]string, 0, len(response.Models)*2)
 	for _, model := range response.Models {
-		// /api/tags can include cloud placeholders. Only models with local
-		// weights qualify as installed local choices for Claude Desktop.
-		if model.RemoteModel != "" || model.RemoteHost != "" ||
-			modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) {
+		// Keep Ollama cloud placeholders on the account-verified catalog path.
+		// A complete self-hosted remote manifest is usable through the local
+		// server, which still enforces its remote-host allowlist.
+		if modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) ||
+			modelref.HasExplicitCloudSource(model.RemoteModel) {
 			continue
+		}
+		if model.RemoteModel != "" || model.RemoteHost != "" {
+			remote, err := url.Parse(model.RemoteHost)
+			if err != nil || remote.Hostname() == "" || model.RemoteModel == "" ||
+				(remote.Scheme != "http" && remote.Scheme != "https") {
+				continue
+			}
+			host := strings.TrimSuffix(strings.ToLower(remote.Hostname()), ".")
+			if host == "ollama.com" || strings.HasSuffix(host, ".ollama.com") {
+				continue
+			}
 		}
 		if model.Name != "" {
 			names = append(names, model.Name)
