@@ -524,8 +524,8 @@ func TestLlamaServerForwardsRepeatLastN(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if chat["repeat_last_n"] != tt.want {
-				t.Errorf("chat repeat_last_n = %v, want %d", chat["repeat_last_n"], tt.want)
+			if chat.RepeatLastN != tt.want {
+				t.Errorf("chat repeat_last_n = %v, want %d", chat.RepeatLastN, tt.want)
 			}
 		})
 	}
@@ -3864,9 +3864,9 @@ func TestLlamaServerChatMessageConvertsToolCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	toolCalls, ok := msg["tool_calls"].([]llamaServerChatToolCall)
-	if !ok || len(toolCalls) != 1 {
-		t.Fatalf("expected one llama-server tool call, got %#v", msg["tool_calls"])
+	toolCalls := msg.ToolCalls
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected one llama-server tool call, got %#v", msg.ToolCalls)
 	}
 	if toolCalls[0].Index != 2 || toolCalls[0].Type != "function" || toolCalls[0].Function.Name != "bash" {
 		t.Fatalf("unexpected tool call metadata: %#v", toolCalls[0])
@@ -3894,9 +3894,9 @@ func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parts, ok := msg["content"].([]map[string]any)
+	parts, ok := msg.Content.([]map[string]any)
 	if !ok || len(parts) != 5 {
-		t.Fatalf("expected five content parts, got %#v", msg["content"])
+		t.Fatalf("expected five content parts, got %#v", msg.Content)
 	}
 	if parts[1]["type"] != "image_url" {
 		t.Fatalf("expected image_url for PNG, got %#v", parts[1])
@@ -4094,5 +4094,121 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 	if got := conversions.Load(); got != 1 {
 		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+}
+
+func TestLlamaServerChatRequestGoldenJSON(t *testing.T) {
+	runner := &llamaServerRunner{options: api.Options{Runner: api.Runner{NumCtx: 2048}}}
+	newOpts := func() *api.Options {
+		opts := api.DefaultOptions()
+		return &opts
+	}
+	toolArgs := api.NewToolCallFunctionArguments()
+	toolArgs.Set("command", "ls")
+
+	fullOpts := newOpts()
+	fullOpts.Stop = []string{"<end>", "STOP"}
+
+	tests := []struct {
+		name         string
+		req          ChatRequest
+		stream       bool
+		want         string
+		wantNoEscape string
+	}{
+		{
+			name: "minimal",
+			req: ChatRequest{
+				Messages: []api.Message{{Role: "user", Content: "hello"}},
+				Options:  newOpts(),
+			},
+			want: `{"cache_prompt":true,"frequency_penalty":0,"messages":[{"content":"hello","role":"user"}],"min_p":0,"n_keep":4,"n_predict":-1,"presence_penalty":0,"repeat_last_n":64,"repeat_penalty":1,"seed":-1,"stop":null,"stream":false,"temperature":0.8,"top_k":40,"top_p":0.9,"typical_p":1}`,
+		},
+		{
+			name:   "no messages",
+			req:    ChatRequest{Options: newOpts()},
+			stream: true,
+			want:   `{"cache_prompt":true,"frequency_penalty":0,"messages":[],"min_p":0,"n_keep":4,"n_predict":-1,"presence_penalty":0,"repeat_last_n":64,"repeat_penalty":1,"seed":-1,"stop":null,"stream":true,"temperature":0.8,"top_k":40,"top_p":0.9,"typical_p":1}`,
+		},
+		{
+			name: "full",
+			req: ChatRequest{
+				Messages: []api.Message{
+					{Role: "system", Content: "You are helpful."},
+					{Role: "user", Content: "list files <here> & \"now\"", Images: []api.ImageData{[]byte("\x89PNG\r\n\x1a\n")}},
+					{Role: "assistant", ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Index: 2, Name: "bash", Arguments: toolArgs}}}},
+					{Role: "tool", Content: "file1\nfile2", ToolCallID: "call_1", ToolName: "bash"},
+				},
+				Tools:       api.Tools{{Type: "function", Function: api.ToolFunction{Name: "bash", Description: "run <commands> & stuff"}}},
+				Format:      json.RawMessage(`"json"`),
+				Options:     fullOpts,
+				Think:       &api.ThinkValue{Value: true},
+				Logprobs:    true,
+				TopLogprobs: 5,
+			},
+			stream: true,
+			want:   `{"cache_prompt":true,"chat_template_kwargs":{"enable_thinking":true},"frequency_penalty":0,"logprobs":true,"messages":[{"content":"You are helpful.","role":"system"},{"content":[{"text":"list files \u003chere\u003e \u0026 \"now\"","type":"text"},{"image_url":{"url":"data:image/png;base64,iVBORw0KGgo="},"type":"image_url"}],"role":"user"},{"content":"","role":"assistant","tool_calls":[{"id":"call_1","index":2,"type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},{"content":"file1\nfile2","name":"bash","role":"tool","tool_call_id":"call_1"}],"min_p":0,"n_keep":4,"n_predict":-1,"presence_penalty":0,"repeat_last_n":64,"repeat_penalty":1,"response_format":{"type":"json_object"},"seed":-1,"stop":["\u003cend\u003e","STOP"],"stream":true,"temperature":0.8,"tools":[{"type":"function","function":{"name":"bash","description":"run \u003ccommands\u003e \u0026 stuff","parameters":{"type":"","properties":null}}}],"top_k":40,"top_logprobs":5,"top_p":0.9,"typical_p":1}`,
+			// Chat encodes with SetEscapeHTML(false); lock that output too.
+			wantNoEscape: `{"cache_prompt":true,"chat_template_kwargs":{"enable_thinking":true},"frequency_penalty":0,"logprobs":true,"messages":[{"content":"You are helpful.","role":"system"},{"content":[{"text":"list files <here> & \"now\"","type":"text"},{"image_url":{"url":"data:image/png;base64,iVBORw0KGgo="},"type":"image_url"}],"role":"user"},{"content":"","role":"assistant","tool_calls":[{"id":"call_1","index":2,"type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},{"content":"file1\nfile2","name":"bash","role":"tool","tool_call_id":"call_1"}],"min_p":0,"n_keep":4,"n_predict":-1,"presence_penalty":0,"repeat_last_n":64,"repeat_penalty":1,"response_format":{"type":"json_object"},"seed":-1,"stop":["<end>","STOP"],"stream":true,"temperature":0.8,"tools":[{"type":"function","function":{"name":"bash","description":"run <commands> & stuff","parameters":{"type":"","properties":null}}}],"top_k":40,"top_logprobs":5,"top_p":0.9,"typical_p":1}`,
+		},
+		{
+			name: "schema format think effort",
+			req: ChatRequest{
+				Messages: []api.Message{{Role: "user", Content: ""}},
+				Format:   json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`),
+				Options:  newOpts(),
+				Think:    &api.ThinkValue{Value: "high"},
+			},
+			want: `{"cache_prompt":true,"chat_template_kwargs":{"enable_thinking":true,"reasoning_effort":"high"},"frequency_penalty":0,"messages":[{"content":"","role":"user"}],"min_p":0,"n_keep":4,"n_predict":-1,"presence_penalty":0,"repeat_last_n":64,"repeat_penalty":1,"response_format":{"json_schema":{"name":"schema","schema":{"properties":{"city":{"type":"string"}},"type":"object"}},"type":"json_schema"},"seed":-1,"stop":null,"stream":false,"temperature":0.8,"top_k":40,"top_p":0.9,"typical_p":1}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := runner.llamaServerChatRequest(tt.req, tt.stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("JSON mismatch:\n got: %s\nwant: %s", got, tt.want)
+			}
+			if tt.wantNoEscape != "" {
+				var buf bytes.Buffer
+				enc := json.NewEncoder(&buf)
+				enc.SetEscapeHTML(false)
+				if err := enc.Encode(body); err != nil {
+					t.Fatal(err)
+				}
+				if got := strings.TrimSuffix(buf.String(), "\n"); got != tt.wantNoEscape {
+					t.Fatalf("no-escape JSON mismatch:\n got: %s\nwant: %s", got, tt.wantNoEscape)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkLlamaServerChatRequestMarshal(b *testing.B) {
+	runner := &llamaServerRunner{options: api.Options{Runner: api.Runner{NumCtx: 2048}}}
+	opts := api.DefaultOptions()
+	req := ChatRequest{
+		Messages: []api.Message{
+			{Role: "system", Content: "You are a helpful assistant."},
+			{Role: "user", Content: "What is the weather like?"},
+		},
+		Options: &opts,
+	}
+	b.ReportAllocs()
+	for range b.N {
+		body, err := runner.llamaServerChatRequest(req, true)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, err := json.Marshal(body); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
