@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -129,6 +130,53 @@ func TestToolParameterToTypeScriptType(t *testing.T) {
 			},
 			expected: "string | any[] | null",
 		},
+		{
+			name: "string enum renders as literal union",
+			param: ToolProperty{
+				Type: PropertyType{"string"},
+				Enum: []any{"celsius", "fahrenheit"},
+			},
+			expected: `"celsius" | "fahrenheit"`,
+		},
+		{
+			name: "enum escapes quotes in string values",
+			param: ToolProperty{
+				Type: PropertyType{"string"},
+				Enum: []any{`a"b`},
+			},
+			expected: `"a\"b"`,
+		},
+		{
+			name: "number and boolean enum values are not quoted",
+			param: ToolProperty{
+				Enum: []any{float64(1), 2.5, true, nil},
+			},
+			expected: "1 | 2.5 | true | null",
+		},
+		{
+			name: "enum with a non-scalar value falls back to the declared type",
+			param: ToolProperty{
+				Type: PropertyType{"object"},
+				Enum: []any{map[string]any{"a": 1}},
+			},
+			expected: "Record<string, any>",
+		},
+		{
+			name: "array of enum items renders as a parenthesized union array",
+			param: ToolProperty{
+				Type:  PropertyType{"array"},
+				Items: map[string]any{"type": "string", "enum": []any{"a", "b"}},
+			},
+			expected: `("a" | "b")[]`,
+		},
+		{
+			name: "array without enum items stays any[]",
+			param: ToolProperty{
+				Type:  PropertyType{"array"},
+				Items: map[string]any{"type": "string"},
+			},
+			expected: "any[]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -138,5 +186,32 @@ func TestToolParameterToTypeScriptType(t *testing.T) {
 				t.Errorf("ToTypeScriptType() = %q, want %q", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestToolPropertyEnumFromJSONToTypeScriptType(t *testing.T) {
+	var tools Tools
+	body := `[{"type":"function","function":{"name":"get_current_weather","parameters":{"type":"object","properties":{
+		"format":{"type":"string","enum":["celsius","fahrenheit"]},
+		"days":{"type":"array","items":{"type":"string","enum":["mon","tue"]}},
+		"count":{"type":"integer","enum":[1,2]}}}}}]`
+	if err := json.Unmarshal([]byte(body), &tools); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		"format": `"celsius" | "fahrenheit"`,
+		"days":   `("mon" | "tue")[]`,
+		"count":  "1 | 2",
+	}
+	props := tools[0].Function.Parameters.Properties
+	for name, expected := range want {
+		prop, ok := props.Get(name)
+		if !ok {
+			t.Fatalf("missing property %q", name)
+		}
+		if got := prop.ToTypeScriptType(); got != expected {
+			t.Errorf("%s: ToTypeScriptType() = %q, want %q", name, got, expected)
+		}
 	}
 }
