@@ -90,9 +90,9 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 	// Message content is always a string, API tools and calls always have a
 	// function wrapper, and Render always appends a generation prompt. The
 	// template's other branches for those shapes have no Go API counterpart.
-	// The public tool types also discard source JSON number spelling, unknown
-	// schema fields, and the distinction between absent and empty descriptions;
-	// compare exact output only for values those types can represent.
+	// The public tool types discard unknown schema fields and the distinction
+	// between absent and empty descriptions; compare exact output only for
+	// values those types can represent.
 	for _, tc := range []struct {
 		name     string
 		messages []api.Message
@@ -162,6 +162,25 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 			}
 		})
 	}
+	t.Run("decoded numeric tool arguments", func(t *testing.T) {
+		// Give both implementations the same JSON. Marshaling the API object
+		// here would erase the source distinction between 1 and 1.0.
+		const payload = `{"messages":[{"role":"user","content":"Weather in Paris?"},{"role":"assistant","content":"","tool_calls":[{"function":{"name":"details","arguments":{"integer":1,"decimal":1.0,"nested":{"decimal":1.0,"integer":1}}}}]}],"tools":[]}`
+		var input struct {
+			Messages []api.Message `json:"messages"`
+		}
+		if err := json.Unmarshal([]byte(payload), &input); err != nil {
+			t.Fatal(err)
+		}
+		got, err := (&FlintRenderer{}).Render(input.Messages, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := renderFlintPublisherJinjaPayload(t, templatePath, []byte(payload))
+		if got != want {
+			t.Errorf("renderer differs from publisher Jinja\n got: %q\nwant: %q", got, want)
+		}
+	})
 	t.Run("programmatic schema float types", func(t *testing.T) {
 		tool := api.Tool{Type: "function", Function: api.ToolFunction{
 			Name: "score", Parameters: api.ToolFunctionParameters{

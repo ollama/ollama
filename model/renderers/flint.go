@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -73,7 +74,7 @@ func (*FlintRenderer) Render(messages []api.Message, tools []api.Tool, think *ap
 			for _, call := range message.ToolCalls {
 				out.WriteString("<tool_call>")
 				out.WriteString(call.Function.Name)
-				for name, value := range call.Function.Arguments.All() {
+				for name, value := range toolargs.RenderValues(&call.Function.Arguments) {
 					out.WriteString("<arg_key>")
 					out.WriteString(name)
 					out.WriteString("</arg_key><arg_value>")

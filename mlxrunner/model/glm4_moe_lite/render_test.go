@@ -1,11 +1,32 @@
 package glm4_moe_lite
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestRendererDecodedToolArgumentNumbers(t *testing.T) {
+	var message api.Message
+	if err := json.Unmarshal([]byte(`{"role":"assistant","tool_calls":[{"function":{"name":"calculate","arguments":{"count":1,"ratio":1.0,"large":9007199254740993}}}]}`), &message); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&Renderer{}).Render([]api.Message{{Role: "user", Content: "Calculate."}, message}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"<arg_key>count</arg_key><arg_value>1</arg_value>",
+		"<arg_key>ratio</arg_key><arg_value>1.0</arg_value>",
+		"<arg_key>large</arg_key><arg_value>9007199254740993</arg_value>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered tool call lacks %q: %q", want, got)
+		}
+	}
+}
 
 func TestRendererSimple(t *testing.T) {
 	r := &Renderer{}
