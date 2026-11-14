@@ -2302,3 +2302,22 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }
+
+func TestLoadRequiredFullFailureClosesRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	gpu := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0", TotalMemory: 24 * format.GibiByte, FreeMemory: 20 * format.GibiByte}
+	s.loaded = map[string]*runnerRef{"a": {llama: &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}}}
+	scenario := newScenarioRequest(t, ctx, "new", 10, nil, nil)
+	scenario.srv.loadErr = llm.ErrLoadRequiredFull
+	s.newServerFn = scenario.newServer
+
+	// llama-server moved weights off the GPU while another model is loaded:
+	// ask for eviction and drop this runner so the retry respawns it.
+	require.True(t, s.load(scenario.req, ml.SystemInfo{}, []ml.DeviceInfo{gpu}, true))
+	require.True(t, scenario.srv.closeCalled.Load())
+	require.Nil(t, s.activeLoading)
+	require.Empty(t, scenario.req.errCh)
+}

@@ -4096,3 +4096,201 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 		t.Errorf("json format converted a schema, %d conversions", got)
 	}
 }
+
+func TestVRAMByGPUFilteredSingleDevice(t *testing.T) {
+	// CUDA1 alone under CUDA_VISIBLE_DEVICES logs as CUDA0.
+	gpus := []ml.DeviceInfo{{
+		DeviceID:    ml.DeviceID{ID: "1", Library: "CUDA"},
+		FilterID:    "GPU-c0d3444b",
+		Name:        "CUDA1",
+		TotalMemory: 24000 * 1024 * 1024,
+	}}
+	runner := &llamaServerRunner{
+		vramByDevice:     map[string]uint64{"CUDA0": 17000 * 1024 * 1024},
+		systemFreeAtLoad: map[string]uint64{"CUDA0": 23500 * 1024 * 1024},
+		gpus:             gpus,
+		deviceLogNames:   runnerDeviceLogNames(gpus, ml.GetDevicesEnv(gpus)),
+	}
+
+	if got := runner.VRAMByGPU(gpus[0].DeviceID); got != 17000*1024*1024 {
+		t.Errorf("VRAMByGPU(CUDA1) = %d, want %d", got, 17000*1024*1024)
+	}
+	infos := runner.GetDeviceInfos(context.Background())
+	if want := uint64((23500 - 17000) * 1024 * 1024); infos[0].FreeMemory != want {
+		t.Errorf("FreeMemory = %d, want %d", infos[0].FreeMemory, want)
+	}
+}
+
+func TestRunnerDeviceLogNames(t *testing.T) {
+	cuda0 := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"}
+	cuda1 := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, Name: "CUDA1"}
+	metal := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: "0", Library: "Metal"}, Name: "MTL0"}
+
+	tests := []struct {
+		name string
+		gpus []ml.DeviceInfo
+		env  map[string]string
+		want map[ml.DeviceID]string
+	}{
+		{"filtered second device", []ml.DeviceInfo{cuda1}, map[string]string{"CUDA_VISIBLE_DEVICES": "1"}, map[ml.DeviceID]string{cuda1.DeviceID: "CUDA0"}},
+		{"filtered both devices", []ml.DeviceInfo{cuda0, cuda1}, map[string]string{"CUDA_VISIBLE_DEVICES": "0,1"}, map[ml.DeviceID]string{cuda0.DeviceID: "CUDA0", cuda1.DeviceID: "CUDA1"}},
+		{"unfiltered keeps discovery name", []ml.DeviceInfo{cuda1}, nil, map[ml.DeviceID]string{cuda1.DeviceID: "CUDA1"}},
+		{"unfiltered library", []ml.DeviceInfo{metal}, map[string]string{"CUDA_VISIBLE_DEVICES": "0"}, map[ml.DeviceID]string{metal.DeviceID: "MTL0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runnerDeviceLogNames(tt.gpus, tt.env)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for id, name := range tt.want {
+				if got[id] != name {
+					t.Errorf("name for %v = %q, want %q", id, got[id], name)
+				}
+			}
+		})
+	}
+}
+
+// TestRunnerDeviceLogNamesFromDevicesEnv uses the env GetDevicesEnv builds,
+// so the mapping follows the child's real numbering per backend.
+func TestRunnerDeviceLogNamesFromDevicesEnv(t *testing.T) {
+	dev := func(lib, id, name string) ml.DeviceInfo {
+		return ml.DeviceInfo{DeviceID: ml.DeviceID{ID: id, Library: lib}, FilterID: "f-" + id, Name: name}
+	}
+	cuda0, cuda1 := dev("CUDA", "0", "CUDA0"), dev("CUDA", "1", "CUDA1")
+	rocm1 := dev("ROCm", "1", "ROCm1")
+	vk1 := dev("Vulkan", "1", "Vulkan1")
+
+	tests := []struct {
+		name string
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{"cuda second card alone", []ml.DeviceInfo{cuda1}, []string{"CUDA0"}},
+		{"cuda group in reverse order", []ml.DeviceInfo{cuda1, cuda0}, []string{"CUDA0", "CUDA1"}},
+		{"rocm second card alone", []ml.DeviceInfo{rocm1}, []string{"ROCm0"}},
+		{"vulkan second card alone", []ml.DeviceInfo{vk1}, []string{"Vulkan0"}},
+		// Mixed vendors: CUDA is left unfiltered, ROCm is always filtered.
+		{"mixed cuda and rocm", []ml.DeviceInfo{cuda1, rocm1}, []string{"CUDA1", "ROCm0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if runtime.GOOS != "linux" && slices.ContainsFunc(tt.gpus, func(g ml.DeviceInfo) bool { return g.Library == "ROCm" }) {
+				t.Skip("ROCm filter variable is platform dependent")
+			}
+			env := ml.GetDevicesEnv(tt.gpus)
+			got := runnerDeviceLogNames(tt.gpus, env)
+			for i, gpu := range tt.gpus {
+				if got[gpu.DeviceID] != tt.want[i] {
+					t.Errorf("%s (env %v) = %q, want %q", gpu.Name, env, got[gpu.DeviceID], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestIncompleteGPUOffload(t *testing.T) {
+	base := func() *llamaServerRunner {
+		opts := api.DefaultOptions()
+		return &llamaServerRunner{
+			options:           opts,
+			gpus:              []ml.DeviceInfo{{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0"}},
+			vramByDevice:      map[string]uint64{"CUDA0": 15 << 30},
+			totalLayers:       31,
+			gpuLayers:         31,
+			expectedHostModel: 577 << 20,
+			memHostModel:      577 << 20,
+		}
+	}
+
+	if r := base(); r.incompleteGPUOffload() != "" {
+		t.Fatalf("full offload reported incomplete: %q", r.incompleteGPUOffload())
+	}
+
+	cases := map[string]func(*llamaServerRunner){
+		"layers on CPU":         func(r *llamaServerRunner) { r.gpuLayers = 20 },
+		"fit overflow":          func(r *llamaServerRunner) { r.gpuLayerOverflow = 2 },
+		"experts moved to host": func(r *llamaServerRunner) { r.memHostModel = 11203 << 20 }, // 2026-11-03 22:35 gemma4 load
+		"fit shortfall":         func(r *llamaServerRunner) { r.fitShortfall = true },
+	}
+	for name, mutate := range cases {
+		r := base()
+		mutate(r)
+		if r.incompleteGPUOffload() == "" {
+			t.Errorf("%s: not reported", name)
+		}
+	}
+
+	r := base()
+	r.gpuLayers = 20
+	r.options.NumGPU = 20
+	if got := r.incompleteGPUOffload(); got != "" {
+		t.Errorf("explicit partial num_gpu reported: %q", got)
+	}
+
+	r = base()
+	r.vramByDevice = map[string]uint64{}
+	r.gpuLayers = 0
+	if got := r.incompleteGPUOffload(); got != "" {
+		t.Errorf("unparsed logs reported: %q", got)
+	}
+}
+
+// TestMemorySizeWeightsMovedToHost: "offloaded 31/31 layers" with 11 GiB of
+// weights in CUDA_Host must not be reported as 100% GPU.
+func TestMemorySizeWeightsMovedToHost(t *testing.T) {
+	r := &llamaServerRunner{
+		memTotal:          (3130 + 11203 + 552) << 20,
+		memGPU:            (3130 + 552) << 20,
+		totalLayers:       31,
+		gpuLayers:         31,
+		memHostModel:      11203 << 20,
+		expectedHostModel: 577 << 20,
+	}
+	total, vram := r.MemorySize()
+	if total == vram {
+		t.Fatalf("MemorySize total == vram (%d) with weights in host memory", total)
+	}
+
+	r.memHostModel = 577 << 20
+	r.memTotal = r.memGPU + r.memHostModel
+	if total, vram := r.MemorySize(); total != vram {
+		t.Errorf("full offload: total %d != vram %d", total, vram)
+	}
+}
+
+// TestParseC3OffloadLog feeds the 2026-11-03 22:35 gemma4 load (scheduler
+// placed it on an occupied GPU; --fit moved the experts to host) through the
+// log parser.
+func TestParseC3OffloadLog(t *testing.T) {
+	r := &llamaServerRunner{
+		vramByDevice:      map[string]uint64{},
+		systemFreeAtLoad:  map[string]uint64{},
+		totalLayers:       31,
+		expectedHostModel: 577 << 20,
+		options:           api.DefaultOptions(),
+		gpus:              []ml.DeviceInfo{{DeviceID: ml.DeviceID{ID: "1", Library: "CUDA"}, Name: "CUDA1"}},
+	}
+	w := &memoryParsingWriter{inner: io.Discard, runner: r}
+	for _, line := range []string{
+		"common_params_fit_impl: projected to use 14663 MiB of device memory vs. 6428 MiB of free device memory\n",
+		"common_params_fit_impl: cannot meet free memory target of 2170 MiB, need to reduce device memory by 10405 MiB\n",
+		"load_tensors: offloaded 31/31 layers to GPU\n",
+		"load_tensors:        CUDA0 model buffer size =  3129.88 MiB\n",
+		"load_tensors:    CUDA_Host model buffer size = 11203.03 MiB\n",
+	} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !r.fitShortfall {
+		t.Error("fit shortfall not parsed")
+	}
+	if r.memHostModel < 11000<<20 {
+		t.Errorf("host model bytes = %d", r.memHostModel)
+	}
+	if r.incompleteGPUOffload() == "" {
+		t.Error("C3 load not reported as incomplete")
+	}
+}
