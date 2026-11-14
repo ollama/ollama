@@ -247,3 +247,59 @@ func driveTestDecoder(ctx context.Context, r *Runner, request request, session *
 	}
 	return err
 }
+
+// releasingModel attaches a request-scoped Release to every preparation.
+type releasingModel struct {
+	stubMediaModel
+	releases *int
+}
+
+func (m releasingModel) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
+	prepared, err := m.stubMediaModel.PrepareMedia(segments)
+	if err == nil {
+		prepared.Release = func() { *m.releases++ }
+	}
+	return prepared, err
+}
+
+func TestPrepareReleasesMediaOnError(t *testing.T) {
+	media := []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}}
+	releases := 0
+	r := mediaTestRunner(t)
+
+	// Binding fails: the expansion produced no tokens.
+	r.Model = releasingModel{releases: &releases}
+	if err := r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "[img-0]", Media: media}}); err == nil {
+		t.Fatal("Prepare succeeded with an empty expansion")
+	}
+	if releases != 1 {
+		t.Fatalf("bind failure released %d times, want 1", releases)
+	}
+
+	// Binding succeeds but the prompt exceeds the context.
+	releases = 0
+	r.Model = releasingModel{stubMediaModel: stubMediaModel{expansion: []int32{70, 500, 71}}, releases: &releases}
+	r.contextLength = 3
+	if err := r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "01[img-0]", Media: media}}); err == nil {
+		t.Fatal("Prepare accepted a prompt longer than the context")
+	}
+	if releases != 1 {
+		t.Fatalf("context failure released %d times, want 1", releases)
+	}
+
+	// Success hands the release to the request, to run once.
+	releases = 0
+	r.contextLength = 4096
+	req := &request{CompletionRequest: CompletionRequest{Prompt: "01[img-0]", Media: media}}
+	if err := r.Prepare(req); err != nil {
+		t.Fatal(err)
+	}
+	if releases != 0 || req.Release == nil {
+		t.Fatalf("prepared request: releases=%d, Release set=%v", releases, req.Release != nil)
+	}
+	req.releaseMedia()
+	req.releaseMedia()
+	if releases != 1 {
+		t.Fatalf("releaseMedia ran %d times, want 1", releases)
+	}
+}

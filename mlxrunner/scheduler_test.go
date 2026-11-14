@@ -242,6 +242,51 @@ func TestBatchSchedulerWaitingGrammarDoesNotBlockDecode(t *testing.T) {
 	})
 }
 
+// TestBatchSchedulerReleasesMedia checks that each way a generation ends —
+// completion, rejection at admission, cancellation while active — releases
+// its media exactly once.
+func TestBatchSchedulerReleasesMedia(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		tok := newTestTokenizer(t, []int32{7})
+		m := &schedulingModel{fakeMTPModel: fakeMTPModel{tok: tok}}
+		r := &Runner{Model: m, Tokenizer: tok, Sampler: sample.New(4096), parallel: 3}
+		defer r.Sampler.Free()
+		s := &batchScheduler{r: r, slots: make([]*batchSlot, 3)}
+		queued, cancelQueued := context.WithCancel(context.Background())
+		cancelQueued()
+		active, cancelActive := context.WithCancel(context.Background())
+		defer cancelActive()
+		releases := make([]int, 3)
+		newRequest := func(i int, ctx context.Context) request {
+			return request{
+				Ctx: ctx, Tokens: []int32{int32(i + 1)}, Responses: make(chan CompletionResponse, 8),
+				Release:           func() { releases[i]++ },
+				CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 2}},
+			}
+		}
+		mlx.Scoped(func() {
+			s.admit(newRequest(0, context.Background()))
+			s.admit(newRequest(1, queued))
+			s.admit(newRequest(2, active))
+		})
+		cancelActive()
+		for range 10 {
+			mlx.Scoped(func() { s.step() })
+		}
+		for _, slot := range s.slots {
+			if slot != nil {
+				if slot.request != nil {
+					t.Fatalf("slot %d still holds a request", slot.id)
+				}
+				slot.cache.close()
+			}
+		}
+		if !slices.Equal(releases, []int{1, 1, 1}) {
+			t.Fatalf("releases = %v, want one each", releases)
+		}
+	})
+}
+
 func TestBatchSchedulerGrammarWaitPromptTiming(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		tok := newTestTokenizer(t, []int32{7})

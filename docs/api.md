@@ -44,7 +44,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
-- `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
+- `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`; models with the `video` capability also take MP4 or MOV videos)
 - `think`: (for thinking models) should the model think before responding? Can be a boolean or a thinking level (`"low"`, `"medium"`, `"high"`, or `"max"`).
 
 Advanced parameters (optional):
@@ -503,7 +503,7 @@ The `message` object has the following fields:
 - `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
 - `thinking`: (for thinking models) the model's thinking process
-- `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
+- `images` (optional): a list of images to include in the message (for multimodal models such as `llava`; models with the `video` capability also take MP4 or MOV videos)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
 - `tool_name` (optional): add the name of the tool that was executed to inform the model of the result
 

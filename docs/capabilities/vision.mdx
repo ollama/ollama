@@ -82,3 +82,13 @@ Provide an `images` array. SDKs accept file paths, URLs or raw bytes while the R
     ```
   </Tab>
 </Tabs>
+
+## Video
+
+Models with the `video` capability (shown by `ollama show`) also accept MP4 and MOV clips. Send the clip in `images` like an image; the model samples its frames and, if it takes audio, listens to the soundtrack. Like audio input, a soundtrack can be up to 10 minutes long.
+
+```shell
+ollama run qwen3.5 ./clip.mp4 what happens in this video?
+```
+
+Video input is currently available on macOS.
