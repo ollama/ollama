@@ -33,6 +33,10 @@ type depthController struct {
 	acc    *acceptanceModel
 	probed bool // the previous round drafted a probe
 
+	// plainTokens is the number of plain-row tokens per drafting row in a
+	// mixed batch. Include them when comparing whole-batch throughput.
+	plainTokens float64
+
 	// drafterLimit is the deepest draft this model's drafter can produce, 0 when
 	// nothing bounds it. A depth the drafter never produces is never measured,
 	// and an unmeasured depth would always look best, pinning the search there.
@@ -125,9 +129,9 @@ func (c *depthController) selected() int {
 		return 0
 	}
 	limit := c.limit()
-	best, bestEV := 0, c.acc.expectedCommitted(0)/c.cost.cost(0)
+	best, bestEV := 0, (c.acc.expectedCommitted(0)+c.plainTokens)/c.cost.cost(0)
 	for n := 1; n <= limit; n++ {
-		if ev := c.acc.expectedCommitted(n) / c.cost.cost(n); ev > bestEV {
+		if ev := (c.acc.expectedCommitted(n) + c.plainTokens) / c.cost.cost(n); ev > bestEV {
 			best, bestEV = n, ev
 		}
 	}
