@@ -1,11 +1,13 @@
 package create
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/ollama/ollama/fs/safetensors"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlx/quant"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -298,6 +301,109 @@ type sourceQuantization struct {
 			Type           string  `json:"type"`
 		} `json:"weights"`
 	} `json:"config_groups"`
+	// Modules holds mlx-lm's per-module entries, keyed by module path, which
+	// mixed-precision recipes write next to the defaults. Other producers'
+	// objects can land here too; it is only meaningful when quantType names
+	// an MLX type.
+	Modules map[string]moduleQuantization `json:"-"`
+}
+
+// moduleQuantization is one mlx-lm per-module entry. mlx.nn passes it to
+// to_quantized as keyword arguments, so a field it omits or nulls takes MLX's
+// default for the mode, not the config's.
+type moduleQuantization struct {
+	Bits      int    `json:"bits"`
+	GroupSize int    `json:"group_size"`
+	Mode      string `json:"mode"`
+	// Unreadable marks an entry whose fields aren't the integers and string
+	// mlx.nn expects, so its settings are unknown.
+	Unreadable bool `json:"-"`
+}
+
+func (q *sourceQuantization) UnmarshalJSON(data []byte) error {
+	// Named so decode errors read "quantization.<field>" whichever block
+	// holds the field. Decoding through this method drops the path above it,
+	// such as text_config or compression_config.
+	type quantization sourceQuantization
+	if err := json.Unmarshal(data, (*quantization)(q)); err != nil {
+		return err
+	}
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+	for path, raw := range entries {
+		// mlx.nn quantizes a module whose entry is a non-empty object. true takes
+		// the config's defaults, and null, false and {} leave the module
+		// unquantized, so none of those are entries.
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) != nil || len(fields) == 0 {
+			continue
+		}
+		var m moduleQuantization
+		if json.Unmarshal(raw, &m) != nil {
+			m = moduleQuantization{Unreadable: true}
+		}
+		if q.Modules == nil {
+			q.Modules = make(map[string]moduleQuantization)
+		}
+		q.Modules[path] = m
+	}
+	return nil
+}
+
+// mixedPrecision reports whether any per-module entry quantizes its module
+// differently from the default. QuantMetadata calls it for every weight, so it
+// stops at the first such entry.
+func (q sourceQuantization) mixedPrecision() bool {
+	for _, m := range q.Modules {
+		if q.overrides(m) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstMixedModule returns, in path order, the first module whose entry
+// quantizes it differently from the default, or "" if none does.
+func (q sourceQuantization) firstMixedModule() string {
+	for _, path := range slices.Sorted(maps.Keys(q.Modules)) {
+		if q.overrides(q.Modules[path]) {
+			return path
+		}
+	}
+	return ""
+}
+
+// overrides reports whether m quantizes its module differently from the
+// default. An entry that restates the default field for field needs no
+// resolving.
+func (q sourceQuantization) overrides(m moduleQuantization) bool {
+	defaults := q.defaults()
+	if m == defaults {
+		return false
+	}
+	quantType, groupSize := m.settings()
+	wantType, wantGroupSize := defaults.settings()
+	return quantType != wantType || groupSize != wantGroupSize
+}
+
+// defaults returns the entry that restates the config's default quantization,
+// which MLX gives modules without an entry.
+func (q sourceQuantization) defaults() moduleQuantization {
+	return moduleQuantization{Bits: q.Bits, GroupSize: q.GroupSize, Mode: q.Mode}
+}
+
+// settings returns the quantization type and group size MLX gives the module,
+// with "" for a type the engine does not recognize.
+func (m moduleQuantization) settings() (quantType string, groupSize int) {
+	if m.Unreadable {
+		return "", 0
+	}
+	// MLX's affine default is 4 bits; the other modes fix their width.
+	quantType = sourceQuantization{Bits: cmp.Or(m.Bits, 4), Mode: m.Mode}.quantType()
+	defaultGroupSize, _, _ := quant.Params(quantType)
+	return quantType, cmp.Or(m.GroupSize, defaultGroupSize)
 }
 
 type sourceModelConfig struct {
@@ -353,37 +459,49 @@ func (cfg sourceModelConfig) Architecture() string {
 	return cfg.TextConfig.ModelType
 }
 
-func sourceQuantType(mode string, bits int) string {
-	switch strings.ToLower(mode) {
-	case "affine":
-		switch bits {
-		case 4:
-			return "int4"
-		case 8:
-			return "int8"
+// quantType returns the canonical quantization type the config declares, or
+// "" if it declares none the engine recognizes.
+func (q sourceQuantization) quantType() string {
+	switch mode := strings.ToLower(q.Mode); mode {
+	case "":
+		// mlx-lm omits the mode for its default, affine. Other producers
+		// identify themselves with a quant_method instead.
+		if q.QuantMethod != "" {
+			return ""
 		}
-	case "nvfp4":
-		return "nvfp4"
-	case "mxfp8":
-		return "mxfp8"
-	case "mxfp4":
-		return "mxfp4"
+		fallthrough
+	case "affine":
+		return quant.Canonical(fmt.Sprintf("int%d", q.Bits))
+	case "nvfp4", "mxfp8", "mxfp4":
+		return mode
 	}
 	return ""
 }
 
-func (cfg sourceModelConfig) QuantMetadata() map[string]string {
-	// Use the first non-empty quantization config found
-	var q sourceQuantization
-	for _, candidate := range cfg.quantizationConfigs() {
-		if candidate.Bits != 0 {
-			q = candidate
-			break
+// declaredQuantization returns the first quantization config that names a bit
+// width.
+func (cfg sourceModelConfig) declaredQuantization() sourceQuantization {
+	for _, q := range cfg.quantizationConfigs() {
+		if q.Bits != 0 {
+			return q
 		}
 	}
+	return sourceQuantization{}
+}
 
-	quantType := sourceQuantType(q.Mode, q.Bits)
+func (cfg sourceModelConfig) QuantMetadata() map[string]string {
+	q := cfg.declaredQuantization()
+	quantType := q.quantType()
 	if quantType == "" {
+		return nil
+	}
+	// The loader trusts the recorded type over tensor shapes, so recording the
+	// default would mislabel modules whose entries differ from it. Such a config
+	// without a mode records nothing, and the loader infers each weight from its
+	// shapes as it always has; checkModuleQuantization refuses the ones whose
+	// layouts it can't read that way. Configs that state a mode still record the
+	// default, pending support for per-module entries.
+	if q.Mode == "" && q.mixedPrecision() {
 		return nil
 	}
 
