@@ -3,10 +3,27 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func writeTestJPEG(t *testing.T, path string) {
+	t.Helper()
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+}
 
 func TestExtractFilenames(t *testing.T) {
 	// Unix style paths
@@ -64,19 +81,109 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+// Dragging a file into a terminal pastes its path with shell escaping:
+// spaces arrive as "\ ", and in some drops (notably macOS iCloud paths)
+// tildes arrive as "\~". Such paths must still resolve to the real file
+// and be stripped from the prompt.
+//
+// The apostrophe cases below regress the remaining half of
+// https://github.com/ollama/ollama/issues/10333 reported in
+// https://github.com/ollama/ollama/issues/10333#issuecomment-2817135734
+// (a Linux single-quoted drop silently keeps the path in the prompt).
+// The other cases are guards pinning the #10339 behavior for spaces,
+// tildes, and backslash escapes.
+func TestExtractFileDataShellEscapedPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Every drag shape below is Unix shell output, including the
+		// plain control which shares the same harness.
+		t.Skip("shell drop shapes are Unix-specific")
+	}
+	dir := t.TempDir()
+
+	tests := []struct {
+		name string
+		// rel is the real file location under dir; drag is how the
+		// shell pastes it, with escapes, joined to the same dir.
+		// quoted wraps the pasted path in outer single quotes, as a
+		// real quoted drop arrives.
+		rel    string
+		drag   string
+		quoted bool
+	}{
+		{
+			name: "plain path",
+			rel:  "plain.jpg",
+			drag: "plain.jpg",
+		},
+		{
+			name: "escaped spaces",
+			rel:  "my dir/my image.jpg",
+			drag: `my\ dir/my\ image.jpg`,
+		},
+		{
+			// Guards the CleanShot iCloud example from issue #10333,
+			// already fixed at HEAD via #10339.
+			name: "escaped spaces and tildes",
+			rel:  "Mobile Documents/com~apple~CloudDocs/CleanShot 2025-04-17 at 21.26.40.jpg",
+			drag: `Mobile\ Documents/com\~apple\~CloudDocs/CleanShot\ 2025-04-17\ at\ 21.26.40.jpg`,
+		},
+		{
+			// Linux terminals single-quote the drop, so an apostrophe
+			// in the name is spelled '\'' (close, escape, reopen).
+			name: "shell-quoted apostrophe",
+			rel:  "jdoe's photo.jpg",
+			drag: `jdoe'\''s photo.jpg`,
+		},
+		{
+			// The exact reported form: the whole drop wrapped in
+			// single quotes, exercising the quoted-strip path.
+			name:   "single-quoted drop with apostrophe",
+			rel:    "jdoe's photo.jpg",
+			drag:   `jdoe'\''s photo.jpg`,
+			quoted: true,
+		},
+		{
+			// Stresses the new entry repeatedly in one path.
+			name:   "single-quoted drop with multiple apostrophes",
+			rel:    "it's ol' jack's.jpg",
+			drag:   `it'\''s ol'\'' jack'\''s.jpg`,
+			quoted: true,
+		},
+		{
+			name: "backslash-escaped apostrophe",
+			rel:  "bob's.jpg",
+			drag: `bob\'s.jpg`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := filepath.Join(dir, tt.rel)
+			writeTestJPEG(t, fp)
+
+			drag := filepath.Join(dir, tt.drag)
+			if tt.quoted {
+				drag = "'" + drag + "'"
+			}
+			input := "describe this " + drag + " please"
+			cleaned, imgs, err := extractFileData(input)
+			assert.NoError(t, err)
+			assert.Len(t, imgs, 1)
+			assert.Equal(t, "describe this  please", cleaned)
+			if len(imgs) == 1 {
+				want, err := os.ReadFile(fp)
+				assert.NoError(t, err)
+				assert.Equal(t, want, []byte(imgs[0]))
+			}
+		})
+	}
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "img.jpg")
-	data := make([]byte, 600)
-	copy(data, []byte{
-		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
-		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0xff, 0xd9,
-	})
-	if err := os.WriteFile(fp, data, 0o600); err != nil {
-		t.Fatalf("failed to write test image: %v", err)
-	}
+	writeTestJPEG(t, fp)
 
 	input := "before '" + fp + "' after"
 	cleaned, imgs, err := extractFileData(input)

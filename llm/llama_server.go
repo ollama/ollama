@@ -2164,11 +2164,11 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 					acc = &llamaServerToolCallAccumulator{index: tc.Index}
 					toolCalls[tc.Index] = acc
 				}
-				acc.id += tc.ID
+				acc.id.WriteString(tc.ID)
 				if tc.Function.Name != "" {
-					acc.name += tc.Function.Name
+					acc.name.WriteString(tc.Function.Name)
 				}
-				acc.arguments += tc.Function.Arguments
+				acc.arguments.WriteString(tc.Function.Arguments)
 			}
 
 			if choice.FinishReason != nil {
@@ -2243,9 +2243,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 
 type llamaServerToolCallAccumulator struct {
 	index     int
-	id        string
-	name      string
-	arguments string
+	id        strings.Builder
+	name      strings.Builder
+	arguments strings.Builder
 }
 
 type llamaServerChatToolCall struct {
@@ -2275,18 +2275,33 @@ func accumulatedToolCalls(accs map[int]*llamaServerToolCallAccumulator) ([]api.T
 			continue
 		}
 
+		// Materialize each accumulated string once.
+		id := acc.id.String()
+		name := acc.name.String()
+		arguments := acc.arguments.String()
+
 		var args api.ToolCallFunctionArguments
-		if strings.TrimSpace(acc.arguments) != "" {
-			if err := json.Unmarshal([]byte(acc.arguments), &args); err != nil {
-				return nil, fmt.Errorf("llama-server returned invalid tool call arguments for %q: %w", acc.name, err)
+		if strings.TrimSpace(arguments) != "" {
+			// Decode from a strings.Reader to avoid copying the
+			// accumulated arguments through []byte.
+			dec := json.NewDecoder(strings.NewReader(arguments))
+			if err := dec.Decode(&args); err != nil {
+				return nil, fmt.Errorf("llama-server returned invalid tool call arguments for %q: %w", name, err)
+			}
+			var extra any
+			if err := dec.Decode(&extra); err != io.EOF {
+				if err == nil {
+					err = errors.New("unexpected data after top-level value")
+				}
+				return nil, fmt.Errorf("llama-server returned invalid tool call arguments for %q: %w", name, err)
 			}
 		}
 
 		toolCalls = append(toolCalls, api.ToolCall{
-			ID: acc.id,
+			ID: id,
 			Function: api.ToolCallFunction{
 				Index:     acc.index,
-				Name:      acc.name,
+				Name:      name,
 				Arguments: args,
 			},
 		})
