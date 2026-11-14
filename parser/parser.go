@@ -36,6 +36,11 @@ type Modelfile struct {
 func (f Modelfile) String() string {
 	var sb strings.Builder
 	for _, cmd := range f.Commands {
+		if endsLineWithTripleQuote(cmd.Args) {
+			fmt.Fprintf(&sb, "# %s omitted: a line of its value ends in \"\"\", which a Modelfile cannot represent\n", cmd.keyword())
+			continue
+		}
+
 		fmt.Fprintln(&sb, cmd.String())
 	}
 
@@ -438,6 +443,21 @@ type Command struct {
 	Args string
 }
 
+// keyword is the instruction that String writes for c, without its value.
+func (c Command) keyword() string {
+	switch c.Name {
+	case "model":
+		return "FROM"
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "draft", "capability":
+		return strings.ToUpper(c.Name)
+	case "message":
+		role, _, _ := strings.Cut(c.Args, ": ")
+		return "MESSAGE " + role
+	default:
+		return "PARAMETER " + c.Name
+	}
+}
+
 func (c Command) String() string {
 	var sb strings.Builder
 	switch c.Name {
@@ -672,6 +692,27 @@ func parseRuneForState(r rune, cs state) (state, rune, error) {
 	default:
 		return stateNil, 0, errors.New("")
 	}
+}
+
+// endsLineWithTripleQuote reports whether a line of s ends in a triple quote,
+// ignoring whitespace after it. ParseFile ends a quoted value at the first line
+// break after a triple quote and the format has no escape, so quote cannot
+// write such a value in a way that parses back to s. It follows ParseFile: runes
+// that are not printable are dropped and the text before the line break is
+// trimmed.
+func endsLineWithTripleQuote(s string) bool {
+	var buffered strings.Builder
+	for _, r := range s {
+		if isNewline(r) && strings.HasSuffix(strings.TrimSpace(buffered.String()), `"""`) {
+			return true
+		}
+
+		if strconv.IsPrint(r) || isSpace(r) || isNewline(r) {
+			buffered.WriteRune(r)
+		}
+	}
+
+	return false
 }
 
 func quote(s string) string {

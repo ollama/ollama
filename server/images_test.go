@@ -22,6 +22,7 @@ import (
 	"github.com/ollama/ollama/api"
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -1612,5 +1613,56 @@ func TestCheckPullRequiresUsesRunningVersion(t *testing.T) {
 	version.Version = "0.33.3"
 	if err := checkPullRequires("0.35.0", version.Version); err == nil {
 		t.Fatal("expected stamped client below requires to fail")
+	}
+}
+
+func TestModelStringUnrepresentableValues(t *testing.T) {
+	system := "Summarize the text between the triple quotes:\n\"\"\"\n{text}\n\"\"\"\nRespond in one sentence."
+
+	m := &Model{
+		ModelPath: "/models/blob",
+		System:    system,
+		License:   []string{"MIT"},
+		Messages:  []api.Message{{Role: "user", Content: "say \"\"\"hi\"\"\"\nplease"}},
+	}
+
+	got := m.String()
+	for _, want := range []string{"# SYSTEM omitted", "# MESSAGE user omitted", "LICENSE MIT"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Modelfile = %q, missing %q", got, want)
+		}
+	}
+
+	modelfile, err := parser.ParseFile(strings.NewReader(got))
+	if err != nil {
+		t.Fatalf("the exported Modelfile does not parse: %v", err)
+	}
+
+	for _, c := range modelfile.Commands {
+		if c.Name == "system" || c.Name == "message" {
+			t.Errorf("unexpected %s command %q in the exported Modelfile", c.Name, c.Args)
+		}
+	}
+
+	// the same prompt without a line ending in a triple quote is kept
+	m.System = "Text: \"\"\"{input}\"\"\" and then\nRespond in one sentence."
+	m.Messages = nil
+
+	modelfile, err = parser.ParseFile(strings.NewReader(m.String()))
+	if err != nil {
+		t.Fatalf("the exported Modelfile does not parse: %v", err)
+	}
+
+	var found bool
+	for _, c := range modelfile.Commands {
+		if c.Name == "system" {
+			found = true
+			if c.Args != m.System {
+				t.Errorf("system = %q, want %q", c.Args, m.System)
+			}
+		}
+	}
+	if !found {
+		t.Error("system command missing from the exported Modelfile")
 	}
 }
