@@ -11,6 +11,12 @@ import (
 // semantics for explicit [img] tokens: replace placeholders in order, and
 // only prepend tags for any remaining images without placeholders.
 func renderContentWithImageTags(content string, imageCount int, imageOffset int) (string, int) {
+	return renderContentWithImageTagSeparator(content, imageCount, imageOffset, "")
+}
+
+// renderContentWithImageTagSeparator behaves like renderContentWithImageTags,
+// but places separator between automatically prepended image tags.
+func renderContentWithImageTagSeparator(content string, imageCount int, imageOffset int, separator string) (string, int) {
 	if imageCount == 0 {
 		return content, imageOffset
 	}
@@ -25,6 +31,9 @@ func renderContentWithImageTags(content string, imageCount int, imageOffset int)
 		if strings.Contains(content, "[img]") {
 			content = strings.Replace(content, "[img]", imgTag, 1)
 		} else {
+			if prefix.Len() > 0 {
+				prefix.WriteString(separator)
+			}
 			prefix.WriteString(imgTag)
 		}
 	}
