@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/transfer"
 )
 
@@ -288,5 +289,193 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 	}
 	if elapsed >= 5*downloadStallTimeout {
 		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*downloadStallTimeout)
+	}
+}
+
+func TestDownloadChunkStatusErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		status          int
+		body            string
+		offset          int64
+		wantStatusCode  int
+		wantErrorSubstr string
+	}{
+		{
+			name:            "403 forbidden with html body",
+			status:          http.StatusForbidden,
+			body:            "<html><body>Blocked by corporate proxy</body></html>",
+			wantStatusCode:  http.StatusForbidden,
+			wantErrorSubstr: "Blocked by corporate proxy",
+		},
+		{
+			name:            "401 unauthorized with json body",
+			status:          http.StatusUnauthorized,
+			body:            `{"error": "unauthorized access"}`,
+			wantStatusCode:  http.StatusUnauthorized,
+			wantErrorSubstr: "unauthorized access",
+		},
+		{
+			name:            "404 not found",
+			status:          http.StatusNotFound,
+			body:            "blob not found",
+			wantStatusCode:  http.StatusNotFound,
+			wantErrorSubstr: "404",
+		},
+		{
+			name:            "502 bad gateway",
+			status:          http.StatusBadGateway,
+			body:            "bad gateway",
+			wantStatusCode:  http.StatusBadGateway,
+			wantErrorSubstr: "502",
+		},
+		{
+			name:            "200 ok for non-zero range",
+			status:          http.StatusOK,
+			body:            "some data",
+			offset:          100,
+			wantStatusCode:  http.StatusOK,
+			wantErrorSubstr: "range request not supported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+
+			requestURL, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			download := &blobDownload{
+				Name:   filepath.Join(t.TempDir(), "blob"),
+				Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+				Total:  200,
+			}
+			part := &blobDownloadPart{
+				Offset:       tc.offset,
+				Size:         100,
+				blobDownload: download,
+			}
+
+			var buf bytes.Buffer
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+
+			err = download.downloadChunk(ctx, server.Client(), requestURL, &buf, part)
+			if err == nil {
+				t.Fatalf("downloadChunk() expected error, got nil")
+			}
+
+			var statusErr api.StatusError
+			if !errors.As(err, &statusErr) {
+				t.Fatalf("downloadChunk() error = %T (%v), want api.StatusError", err, err)
+			}
+			if statusErr.StatusCode != tc.wantStatusCode {
+				t.Errorf("StatusCode = %d, want %d", statusErr.StatusCode, tc.wantStatusCode)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrorSubstr) {
+				t.Errorf("error %q does not contain %q", err.Error(), tc.wantErrorSubstr)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("downloadChunk() wrote %d bytes to writer on error, want 0", buf.Len())
+			}
+			if part.Completed.Load() != 0 {
+				t.Errorf("part.Completed = %d, want 0", part.Completed.Load())
+			}
+		})
+	}
+}
+
+func TestIsRetryable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "400", err: api.StatusError{StatusCode: http.StatusBadRequest}, want: false},
+		{name: "401", err: api.StatusError{StatusCode: http.StatusUnauthorized}, want: false},
+		{name: "403", err: api.StatusError{StatusCode: http.StatusForbidden}, want: false},
+		{name: "404", err: api.StatusError{StatusCode: http.StatusNotFound}, want: false},
+		{name: "408", err: api.StatusError{StatusCode: http.StatusRequestTimeout}, want: true},
+		{name: "429", err: api.StatusError{StatusCode: http.StatusTooManyRequests}, want: true},
+		{name: "500", err: api.StatusError{StatusCode: http.StatusInternalServerError}, want: true},
+		{name: "502", err: api.StatusError{StatusCode: http.StatusBadGateway}, want: true},
+		{name: "503", err: api.StatusError{StatusCode: http.StatusServiceUnavailable}, want: true},
+		{name: "generic io error", err: io.ErrUnexpectedEOF, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryable(tc.err); got != tc.want {
+				t.Errorf("isRetryable(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBlobDownloadRun403ForbiddenAbortsWithoutRetry(t *testing.T) {
+	var blobHits atomic.Int32
+	blobServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		blobHits.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("Blocked by proxy"))
+	}))
+	t.Cleanup(blobServer.Close)
+
+	registryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, blobServer.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(registryServer.Close)
+
+	registryURL, err := url.Parse(registryServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	downloadPath := filepath.Join(t.TempDir(), "blob")
+	download := &blobDownload{
+		Name:   downloadPath,
+		Digest: "sha256:1234567890123456789012345678901234567890123456789012345678901234",
+		Total:  100,
+	}
+	part := &blobDownloadPart{
+		N:            0,
+		Offset:       0,
+		Size:         100,
+		blobDownload: download,
+	}
+	download.Parts = []*blobDownloadPart{part}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err = download.run(ctx, registryURL, &registryOptions{Insecure: true})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if errors.Is(err, errMaxRetriesExceeded) {
+		t.Fatalf("expected immediate failure without retries, got errMaxRetriesExceeded: %v", err)
+	}
+
+	var statusErr api.StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("expected api.StatusError, got %T: %v", err, err)
+	}
+	if statusErr.StatusCode != http.StatusForbidden {
+		t.Errorf("StatusCode = %d, want %d", statusErr.StatusCode, http.StatusForbidden)
+	}
+	if !strings.Contains(err.Error(), "Blocked by proxy") {
+		t.Errorf("error %q does not contain proxy message", err.Error())
+	}
+	if got := blobHits.Load(); got != 1 {
+		t.Errorf("blob download attempts = %d, want 1 (should not retry 403)", got)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("download.run took %v, want < 2s", elapsed)
 	}
 }
