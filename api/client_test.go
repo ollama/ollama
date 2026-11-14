@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -49,6 +52,46 @@ func TestClientFromEnvironment(t *testing.T) {
 				t.Fatalf("expected %s, got %s", v.expect, client.base.String())
 			}
 		})
+	}
+}
+
+func TestClientFromEnvironmentUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix domain socket test")
+	}
+
+	socketPath := filepath.Join(t.TempDir(), "ollama.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/test" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := <-serveErr; !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("server exited with error: %v", err)
+		}
+	})
+
+	t.Setenv("OLLAMA_HOST", "unix://"+socketPath)
+	client, err := ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.do(t.Context(), http.MethodGet, "/api/test", nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }
 

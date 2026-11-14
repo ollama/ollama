@@ -37,6 +37,11 @@ type Answer struct {
 // Do measures the complete HTTP round trip, excluding request encoding and
 // response validation. The elapsed time includes network and server queueing.
 func Do(ctx context.Context, endpoint string, input decision.Request) (Response, time.Duration, error) {
+	return DoWithClient(ctx, endpoint, input, http.DefaultClient)
+}
+
+// DoWithClient measures an HTTP round trip using client.
+func DoWithClient(ctx context.Context, endpoint string, input decision.Request, client *http.Client) (Response, time.Duration, error) {
 	var result Response
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -48,7 +53,7 @@ func Do(ctx context.Context, endpoint string, input decision.Request) (Response,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	start := time.Now()
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return result, time.Since(start), err
 	}
