@@ -784,6 +784,82 @@ func TestGemma4Parser_StreamingSplitThinkingTag(t *testing.T) {
 	}
 }
 
+// Whitespace around <|channel>/<channel|> must be dropped regardless of where
+// the chunk boundaries fall. Leaking it into the answer changes how the client
+// renders the markdown that follows, e.g. indenting the first line turns it
+// into a code block.
+func TestGemma4Parser_StreamingChannelBoundaryWhitespace(t *testing.T) {
+	tests := []struct {
+		name             string
+		chunks           []string
+		expectedContent  string
+		expectedThinking string
+	}{
+		{
+			name: "newlines_after_close_tag_in_later_chunk",
+			chunks: []string{
+				"<|channel>thought\nreason\n<channel|>",
+				"\n\n",
+				"**bold** -> arrow",
+			},
+			expectedContent:  "**bold** -> arrow",
+			expectedThinking: "reason",
+		},
+		{
+			name: "indentation_after_close_tag_in_later_chunk",
+			chunks: []string{
+				"<|channel>thought\nreason<channel|>",
+				"\t",
+				"answer",
+			},
+			expectedContent:  "answer",
+			expectedThinking: "reason",
+		},
+		{
+			name: "whitespace_before_open_tag_in_earlier_chunk",
+			chunks: []string{
+				"answer\n\n",
+				"<|channel>thought\nmore reasoning<channel|>",
+				"rest",
+			},
+			expectedContent:  "answerrest",
+			expectedThinking: "more reasoning",
+		},
+		{
+			name:   "one_byte_at_a_time",
+			chunks: strings.Split("<|channel>thought\nreason\n<channel|>\n\nanswer", ""),
+
+			expectedContent:  "answer",
+			expectedThinking: "reason",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			var finalContent, finalThinking strings.Builder
+			for i, chunk := range tt.chunks {
+				done := i == len(tt.chunks)-1
+				content, thinking, _, err := parser.Add(chunk, done)
+				if err != nil {
+					t.Fatalf("Add() error on chunk %d: %v", i, err)
+				}
+				finalContent.WriteString(content)
+				finalThinking.WriteString(thinking)
+			}
+
+			if diff := cmp.Diff(tt.expectedContent, finalContent.String()); diff != "" {
+				t.Errorf("content mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.expectedThinking, finalThinking.String()); diff != "" {
+				t.Errorf("thinking mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4ArgsToJSON(t *testing.T) {
 	tests := []struct {
 		name     string
