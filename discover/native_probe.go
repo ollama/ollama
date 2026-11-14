@@ -89,6 +89,7 @@ func discoverNativeDevices(ctx context.Context, llamaServer string, libDirs []st
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	cmd.SysProcAttr = discoverSysProcAttr()
 	stdout, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {
