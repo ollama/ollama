@@ -44,6 +44,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/middleware"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/template"
@@ -113,6 +114,7 @@ type Server struct {
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
 	modelCaches   *modelCaches
+	mlxTokenizers mlxrunner.Tokenizers
 }
 
 func init() {
@@ -381,22 +383,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
-		if disabled, _ := internalcloud.Status(); disabled {
-			c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)})
-			return
-		}
-
 		origModel := req.Model
 
-		remoteURL, err := url.Parse(m.Config.RemoteHost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
-			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
-			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+		remoteURL := remoteModelURL(c, m, cloudErrRemoteInferenceUnavailable)
+		if remoteURL == nil {
 			return
 		}
 
@@ -2429,6 +2419,8 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.withInferenceRequestLogging("/api/generate", s.GenerateHandler)...)
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
+	r.POST("/api/tokenize", s.TokenizeHandler)
+	r.POST("/api/detokenize", s.DetokenizeHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 	r.POST("/v1/systemone", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), s.SystemOneHandler)
@@ -3112,22 +3104,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
-		if disabled, _ := internalcloud.Status(); disabled {
-			c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)})
-			return
-		}
-
 		origModel := req.Model
 
-		remoteURL, err := url.Parse(m.Config.RemoteHost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
-			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
-			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+		remoteURL := remoteModelURL(c, m, cloudErrRemoteInferenceUnavailable)
+		if remoteURL == nil {
 			return
 		}
 
@@ -3628,6 +3608,28 @@ func countChatImages(msgs []api.Message) int {
 		count += len(msg.Images)
 	}
 	return count
+}
+
+// remoteModelURL returns the host of remote model m if this server may use
+// it, and otherwise writes an error response and returns nil.
+func remoteModelURL(c *gin.Context, m *Model, disabledOperation string) *url.URL {
+	if disabled, _ := internalcloud.Status(); disabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(disabledOperation)})
+		return nil
+	}
+
+	remoteURL, err := url.Parse(m.Config.RemoteHost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return nil
+	}
+
+	if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
+		slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+		return nil
+	}
+	return remoteURL
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {

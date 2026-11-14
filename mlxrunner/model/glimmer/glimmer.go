@@ -384,21 +384,9 @@ func newModel(root *model.Root) (model.Model, error) {
 	}
 	cfg.TensorQuant = root.AllTensorQuant()
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.Tokenizer()
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
-	}
-	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
-	if data, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = data
-	}
-	if data, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = data
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 	for _, token := range []string{"<|start|>", "<|message|>", "<|eom|>", "<|eot|>", "<|end_of_text|>"} {
 		if _, ok := tok.GetSpecialToken(token); !ok {

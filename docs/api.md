@@ -14,6 +14,8 @@
 - [Pull a Model](#pull-a-model)
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
+- [Tokenize](#tokenize)
+- [Detokenize](#detokenize)
 - [List Running Models](#list-running-models)
 - [Version](#version)
 
@@ -1758,6 +1760,74 @@ curl http://localhost:11434/api/embed -d '{
     {"audio": "UklGRiQAAABXQVZF..."}
   ]
 }'
+```
+
+## Tokenize
+
+```
+POST /api/tokenize
+```
+
+Convert text to the model's token IDs. No template is applied, and the request does not load the model.
+
+### Parameters
+
+- `model`: name of the model whose tokenizer to use
+- `prompt`: text to tokenize
+- `add_special_tokens`: return the tokens the model receives for `prompt` as a raw prompt, including any special tokens the model adds, such as a beginning-of-sequence token (default: `false`)
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/tokenize -d '{
+  "model": "qwen3:0.6b",
+  "prompt": "The capital of France is"
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "qwen3:0.6b",
+  "tokens": [785, 6722, 315, 9625, 374],
+  "count": 5
+}
+```
+
+## Detokenize
+
+```
+POST /api/detokenize
+```
+
+Convert the model's token IDs to text.
+
+### Parameters
+
+- `model`: name of the model whose tokenizer to use
+- `tokens`: token IDs to decode
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/detokenize -d '{
+  "model": "qwen3:0.6b",
+  "tokens": [785, 6722]
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "qwen3:0.6b",
+  "prompt": "The capital"
+}
 ```
 
 ## List Running Models

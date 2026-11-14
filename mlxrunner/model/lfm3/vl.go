@@ -37,7 +37,7 @@ func newVLModel(root *model.Root) (model.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	m, err := newModelFromConfig(root, textConfig, nil)
+	m, err := newModelFromConfig(root, textConfig)
 	if err != nil {
 		return nil, err
 	}
