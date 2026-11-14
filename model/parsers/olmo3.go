@@ -305,7 +305,7 @@ func splitArguments(s string) []string {
 	stringChar := byte(0)
 	escaped := false
 
-	for i := range s {
+	for i := 0; i < len(s); i++ {
 		c := s[i]
 
 		if escaped {
