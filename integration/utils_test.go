@@ -200,22 +200,54 @@ func skipIfRemote(t *testing.T) {
 var (
 	serverMutex sync.Mutex
 	serverReady bool
-	serverLog   bytes.Buffer
+	serverLog   serverLogBuffer
 	serverDone  chan int
 	serverCmd   *exec.Cmd
 )
 
-func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
-	// Make sure the server has been built
-	CLIName, err := filepath.Abs("../ollama")
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path: %w", err)
-	}
+// Tests inspect logs while the server is still writing to them.
+type serverLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
 
-	if runtime.GOOS == "windows" {
-		CLIName += ".exe"
+func (b *serverLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *serverLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *serverLogBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
+// ollamaBin selects the same binary for harness-owned servers and CLI operations.
+func ollamaBin() string {
+	if bin := os.Getenv("OLLAMA_BIN"); bin != "" {
+		return bin
 	}
-	_, err = os.Stat(CLIName)
+	name := "ollama"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if abs, err := filepath.Abs(filepath.Join("..", name)); err == nil {
+		if _, err := os.Stat(abs); err == nil {
+			return abs
+		}
+	}
+	return name
+}
+
+func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
+	CLIName, err := exec.LookPath(ollamaBin())
 	if err != nil {
 		return fmt.Errorf("CLI missing, did you forget to 'go build .' first?  %w", err)
 	}
@@ -236,7 +268,7 @@ func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	serverCmd.Stderr = &serverLog
 	serverCmd.Stdout = &serverLog
 	go func() {
-		slog.Info("starting server", "url", ollamaHost)
+		slog.Info("starting server", "url", ollamaHost, "binary", CLIName)
 		if err := serverCmd.Run(); err != nil {
 			// "signal: killed" expected during normal shutdown
 			if !strings.Contains(err.Error(), "signal") {
@@ -350,7 +382,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 
 			if t.Failed() || os.Getenv("OLLAMA_TEST_LOG_SERVER") != "" {
 				slog.Warn("SERVER LOG FOLLOWS")
-				io.Copy(os.Stderr, bytes.NewReader(serverLog.Bytes()))
+				io.WriteString(os.Stderr, serverLog.String())
 				slog.Warn("END OF SERVER")
 			}
 			slog.Info("cleanup complete", "failed", t.Failed())

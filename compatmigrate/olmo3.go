@@ -6,7 +6,6 @@ import (
 
 type olmo3Migrator struct{}
 
-// Mirrors the olmo3 arch gate for handle_olmo3 in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (olmo3Migrator) NeedsMigration(src *SourceModel) bool {
 	return src.GGUF.KeyValue("general.architecture").String() == "olmo3"
 }

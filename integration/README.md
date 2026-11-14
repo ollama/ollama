@@ -15,6 +15,7 @@ Tags:
 - `fast`: quick runner/model smoke coverage.
 - `release`: release regression coverage.
 - `library`: broad library coverage requiring about 2.5 TiB of disk space.
+- `migration`: legacy conversion, clean-model reload, and store lifecycle checks.
 
 Scope wiring and model selections live in `integration/reg_fast_test.go`, `integration/reg_release_test.go`, and `integration/reg_library_test.go`.
 
@@ -26,6 +27,14 @@ The integration tests have 2 modes of operating.
 Set `OLLAMA_TEST_LOG_SERVER=1` to print the managed server log after each test
 run, even when the tests pass. This only applies when the integration test
 harness starts the server.
+
+Migration tests require a harness-managed Unix server. Select a case with `-run`
+or override its model with `OLLAMA_TEST_MODEL`. Each model uses a temporary store,
+unless both `OLLAMA_TEST_MODEL` and `OLLAMA_MODELS` are explicitly set. An explicit
+store is modified by migration and is not cleaned up by the test.
+`TestCompatibilityStartupRetirement` additionally requires
+`OLLAMA_TEST_PHASE2_BIN` pointing to a Phase 2 release binary; `OLLAMA_BIN` selects
+the current server binary.
 
 > [!IMPORTANT]
 > Before running the tests locally without the "test existing" setting, compile ollama from the top of the source tree  `go build .` in addition to GPU support with cmake if applicable on your platform.  The integration tests expect to find an ollama binary at the top of the tree.

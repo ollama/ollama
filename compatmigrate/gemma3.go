@@ -8,7 +8,6 @@ const gemma3ChatTemplate = `{{ bos_token }}{% if messages[0]['role'] == 'system'
 
 type gemma3Migrator struct{}
 
-// Mirrors detect_ollama_gemma3 in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (gemma3Migrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "gemma3" {
 		return false
