@@ -28,6 +28,13 @@ type Parser interface {
 	HasThinkingSupport() bool
 }
 
+// ToolCallDelimiterParser describes parsers whose tool calls are enclosed in
+// explicit delimiters. A response format can then constrain assistant text
+// without excluding tool calls. The parser still validates each call's body.
+type ToolCallDelimiterParser interface {
+	ToolCallDelimiters() (open, close string)
+}
+
 type ParserConstructor func() Parser
 
 type ParserRegistry struct {

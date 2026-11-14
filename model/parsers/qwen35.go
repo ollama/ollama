@@ -41,6 +41,10 @@ func (p *Qwen35Parser) HasToolSupport() bool {
 	return true
 }
 
+func (p *Qwen35Parser) ToolCallDelimiters() (string, string) {
+	return p.toolParser.ToolCallDelimiters()
+}
+
 func (p *Qwen35Parser) HasThinkingSupport() bool {
 	return true
 }
