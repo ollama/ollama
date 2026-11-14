@@ -748,8 +748,15 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 }
 
 func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
-	pad, ok := launch.mmprojFitTargetMiB()
-	if !ok {
+	pad, hasPad := launch.mmprojFitTargetMiB()
+	// OLLAMA_GPU_OVERHEAD must reach llama.cpp --fit via LLAMA_ARG_FIT_TARGET;
+	// otherwise layer placement ignores the reserved VRAM margin.
+	overheadMiB := (envconfig.GpuOverhead() + bytesPerMiB - 1) / bytesPerMiB
+	add := overheadMiB
+	if hasPad {
+		add += pad
+	}
+	if add == 0 {
 		return launch.extraEnvs
 	}
 
@@ -761,7 +768,7 @@ func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
 		}
 
 		envs := cloneStringMap(launch.extraEnvs)
-		envs[llamaArgFitTargetEnv] = strconv.FormatUint(existingTarget+pad, 10)
+		envs[llamaArgFitTargetEnv] = strconv.FormatUint(existingTarget+add, 10)
 		return envs
 	}
 
@@ -772,7 +779,7 @@ func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
 	}
 
 	envs := cloneStringMap(launch.extraEnvs)
-	envs[llamaArgFitTargetEnv] = strconv.FormatUint(pad, 10)
+	envs[llamaArgFitTargetEnv] = strconv.FormatUint(add, 10)
 	return envs
 }
 
