@@ -801,6 +801,32 @@ func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	if result.Think == nil {
 		t.Fatal("expected Think to be set")
 	}
+	// budget_tokens is a bound: thinking is switched on, and the count goes
+	// where bounds go, never into the think value.
+	if v, ok := result.Think.Value.(bool); !ok || !v {
+		t.Errorf("expected Think.Value to be true, got %v", result.Think.Value)
+	}
+	if got := result.Options["think_budget"]; got != 1000 {
+		t.Errorf("expected think_budget 1000, got %v", got)
+	}
+}
+
+func TestFromMessagesRequest_ThinkingWithoutBudget(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Thinking:  &ThinkingConfig{Type: "enabled"},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatal("expected Think to be set")
+	}
 	if v, ok := result.Think.Value.(bool); !ok || !v {
 		t.Errorf("expected Think.Value to be true, got %v", result.Think.Value)
 	}
