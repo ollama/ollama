@@ -2855,25 +2855,220 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
-// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
-	weights := modelFileSize(modelPath, f)
+// llamaServerMaxUbatch is the largest physical batch (-ub) the automatic
+// batch selection passes to llama-server. A sliding-window cache holds the
+// window plus one batch, so the window is sized with the larger of this and
+// an explicit num_batch, which appendBatchArgs passes through as -ub.
+const llamaServerMaxUbatch = 2048
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
+// Weights use the model file size, which also covers a projector stored in the
+// same file. The KV cache follows llama.cpp's per-layer allocation. The compute
+// graph and the recurrent state of hybrid models are not counted; the
+// scheduler's headroom absorbs them. opts is the request's options: an
+// explicit num_batch widens a sliding window (the automatic batch, chosen
+// later, never exceeds llamaServerMaxUbatch), and draft_num_predict turns on
+// the MTP draft context, which holds the cache of a model's MTP layers.
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel int, opts api.Options) uint64 {
+	weights := modelFileSize(modelPath, f)
+	kvCache := predictKVCache(f.KV(), numCtx, numParallel, opts.NumBatch, opts.DraftNumPredict > 0, envconfig.KvCacheType())
 
 	return weights + kvCache
+}
+
+// predictKVCache mirrors llama.cpp's KV cache allocation. Each layer stores
+// key_length and value_length values per KV head for every cell. Layers with
+// no KV heads (recurrent layers in hybrid models) store nothing, as do the
+// layers kvCacheLayers rules out. Layers marked in sliding_window_pattern
+// store only the window, and non-causal models (embedding encoders) keep no
+// cache at all.
+func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, mtpDraft bool, cacheType string) uint64 {
+	if !kv.Bool("attention.causal", true) {
+		return 0
+	}
+
+	layers := int(kv.BlockCount())
+	headCount := layerValues(kv, "attention.head_count", layers, nil)
+	if len(headCount) == 0 || headCount[0] == 0 {
+		return 0
+	}
+	headCountKV := layerValues(kv, "attention.head_count_kv", layers, headCount)
+	ownCache := kvCacheLayers(kv, layers, mtpDraft)
+	keysOnly := kvCacheKeysOnly(kv)
+
+	headK := kv.Uint("attention.key_length", kv.EmbeddingLength()/headCount[0])
+	headV := kv.Uint("attention.value_length", kv.EmbeddingLength()/headCount[0])
+	headKSWA := kv.Uint("attention.key_length_swa", headK)
+	headVSWA := kv.Uint("attention.value_length_swa", headV)
+
+	// Only the per-layer array form is read. A scalar pattern's meaning depends
+	// on the architecture, so those models are sized as if every layer were full.
+	swa := kv.KeyValue("attention.sliding_window_pattern").Bools()
+	window := kv.Uint("attention.sliding_window")
+	if len(swa) != layers || window == 0 {
+		swa = nil
+	}
+
+	cells := uint64(max(numCtx, 0))
+	ubatch := uint64(max(llamaServerMaxUbatch, numBatch))
+	swaCells := min(cells, uint64(max(numParallel, 1))*(window+ubatch))
+	swaCells = (swaCells + 255) / 256 * 256
+
+	widthK := make([]uint64, layers)
+	widthV := make([]uint64, layers)
+	var widestV uint64
+	for il := range layers {
+		k, v := headK, headV
+		if swa != nil && swa[il] {
+			k, v = headKSWA, headVSWA
+		}
+		if keysOnly {
+			v = 0
+		}
+		widthK[il] = headCountKV[il] * k
+		widthV[il] = headCountKV[il] * v
+		widestV = max(widestV, widthV[il])
+	}
+
+	// A quantized V cache requires flash attention, which stores V as is.
+	// Without flash attention llama.cpp transposes V and pads every layer to
+	// the widest one, counting layers with no cache of their own, so
+	// unquantized caches are sized that way.
+	bytesPer32 := kvCacheBytesPer32(cacheType)
+	quantized := bytesPer32 < kvCacheBytesPer32("f16")
+
+	var values uint64
+	for il := range layers {
+		if widthK[il] == 0 || !ownCache[il] {
+			continue
+		}
+
+		v := widthV[il]
+		if !quantized {
+			v = widestV
+		}
+
+		layerCells := cells
+		if swa != nil && swa[il] {
+			layerCells = swaCells
+		}
+
+		values += (widthK[il] + v) * layerCells
+	}
+
+	return values * bytesPer32 / 32
+}
+
+// kvCacheLayers reports which layers get a KV cache of their own in the main
+// context. Beyond layers with no KV heads, llama.cpp gives none to:
+//
+//   - MTP layers, the last nextn_predict_layers blocks. Their cache lives in
+//     the MTP draft context, which exists only when drafting is on. A
+//     graniteswitch model reuses the key for a router layer the trunk
+//     attends, so it keeps its cache.
+//   - recurrent layers of qwen3next, qwen35 and qwen35moe, which are marked
+//     by attention.recurrent_layers, or else are every layer but each
+//     full_attention_interval-th (4 when the key is missing).
+//   - the gemma layers that read an earlier layer's cache: the last
+//     attention.shared_kv_layers of gemma4, and layer 20 onward of gemma3n.
+//
+// These rules are per architecture in llama.cpp, so only the architectures
+// checked there are listed. Any other is sized as if every layer had a
+// cache, which can only overestimate.
+func kvCacheLayers(kv *gguf.Metadata, layers int, mtpDraft bool) []bool {
+	own := slices.Repeat([]bool{true}, layers)
+	arch := kv.Architecture()
+
+	trunk := layers
+	if nextn := int(kv.Uint("nextn_predict_layers")); nextn > 0 && nextn < layers && arch != "graniteswitch" {
+		trunk = layers - nextn
+		for il := trunk; il < layers; il++ {
+			own[il] = mtpDraft
+		}
+	}
+
+	shared := trunk
+	switch arch {
+	case "qwen3next", "qwen35", "qwen35moe":
+		recurrent := kv.KeyValue("attention.recurrent_layers").Bools()
+		interval := int(kv.Uint("full_attention_interval", 4))
+		for il := range trunk {
+			if len(recurrent) == layers {
+				own[il] = !recurrent[il]
+			} else if interval > 0 {
+				own[il] = (il+1)%interval == 0
+			}
+		}
+	case "gemma4":
+		if n := int(kv.Uint("attention.shared_kv_layers")); n > 0 && n < layers {
+			shared = layers - n
+		}
+	case "gemma3n":
+		shared = min(20, layers)
+	}
+	for il := shared; il < trunk; il++ {
+		own[il] = false
+	}
+
+	return own
+}
+
+// kvCacheKeysOnly reports a multi-head latent attention cache, which stores K
+// and no V. Other architectures with the MLA keys also allocate an indexer
+// cache that is not estimated here, so they keep the V term as cover.
+func kvCacheKeysOnly(kv *gguf.Metadata) bool {
+	return kv.Architecture() == "deepseek2" &&
+		kv.Uint("attention.key_length_mla") > 0 &&
+		kv.Uint("attention.value_length_mla") > 0
+}
+
+// layerValues returns one value per layer for key. GGUF stores these either as
+// a single number shared by every layer or as an array with one entry per
+// layer. An array of the wrong length is read as its largest entry everywhere,
+// which can only overestimate.
+func layerValues(kv *gguf.Metadata, key string, layers int, fallback []uint64) []uint64 {
+	value := kv.KeyValue(key)
+	values := value.Uints()
+	if len(values) == 0 {
+		for _, n := range value.Ints() {
+			if n < 0 {
+				return fallback
+			}
+			values = append(values, uint64(n))
+		}
+	}
+
+	if len(values) == layers {
+		return values
+	}
+	if len(values) > 0 {
+		return slices.Repeat([]uint64{slices.Max(values)}, layers)
+	}
+	if n, ok := kv.UintOK(key); ok {
+		return slices.Repeat([]uint64{n}, layers)
+	}
+	return fallback
+}
+
+// kvCacheBytesPer32 returns the bytes llama.cpp uses to store 32 cache values
+// of the given type. Unknown and unset types count as f16, llama.cpp's default.
+func kvCacheBytesPer32(cacheType string) uint64 {
+	switch strings.ToLower(cacheType) {
+	case "f32":
+		return 128
+	case "q8_0":
+		return 34
+	case "q5_1":
+		return 24
+	case "q5_0":
+		return 22
+	case "q4_1":
+		return 20
+	case "q4_0", "iq4_nl":
+		return 18
+	default:
+		return 64
+	}
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output

@@ -1402,6 +1402,8 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 	t.Setenv("OLLAMA_NUM_PARALLEL", "2")
+	// The prediction sizes the KV cache by type; pin the default f16.
+	t.Setenv("OLLAMA_KV_CACHE_TYPE", "")
 
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
