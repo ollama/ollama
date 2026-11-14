@@ -556,6 +556,47 @@ func TestFromMessagesRequest_WithToolResultFollowedByUserText(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_ToolResultNamesItsToolUse(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{Role: "user", Content: textContent("Weather in Paris and Rome?")},
+			{
+				Role: "assistant",
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "call_1", Name: "get_weather", Input: makeArgs("location", "Paris")},
+					{Type: "tool_use", ID: "call_2", Name: "get_time", Input: makeArgs("location", "Rome")},
+				},
+			},
+			{
+				Role: "user",
+				Content: []ContentBlock{
+					{Type: "tool_result", ToolUseID: "call_2", Content: "14:00"},
+					{Type: "tool_result", ToolUseID: "call_1", Content: "sunny"},
+					{Type: "tool_result", ToolUseID: "call_unknown", Content: "?"},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got [][2]string
+	for _, msg := range result.Messages {
+		if msg.Role == "tool" {
+			got = append(got, [2]string{msg.ToolCallID, msg.ToolName})
+		}
+	}
+	want := [][2]string{{"call_2", "get_time"}, {"call_1", "get_weather"}, {"call_unknown", ""}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("tool results (id, name) mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestFromMessagesRequest_WithOutputConfigEffort(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "gemma4",
