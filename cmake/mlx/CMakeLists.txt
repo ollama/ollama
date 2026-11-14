@@ -102,31 +102,33 @@ if(UNIX AND NOT APPLE)
     endforeach()
 endif()
 
-include(FetchContent)
-set(XGRAMMAR_VERSION v0.2.7)
-FetchContent_Declare(xgrammar
-    GIT_REPOSITORY "https://github.com/mlc-ai/xgrammar.git"
-    GIT_TAG ${XGRAMMAR_VERSION}
-    GIT_SHALLOW TRUE
-    GIT_SUBMODULES 3rdparty/dlpack
-    # Do not add XGrammar's Python-oriented CMake project.
-    SOURCE_SUBDIR cmake/ollama)
-FetchContent_MakeAvailable(xgrammar)
+if(NOT OLLAMA_BINARY_XGRAMMAR_LIBRARY)
+    include(FetchContent)
+    set(XGRAMMAR_VERSION v0.2.7)
+    FetchContent_Declare(xgrammar
+        GIT_REPOSITORY "https://github.com/mlc-ai/xgrammar.git"
+        GIT_TAG ${XGRAMMAR_VERSION}
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES 3rdparty/dlpack
+        # Do not add XGrammar's Python-oriented CMake project.
+        SOURCE_SUBDIR cmake/ollama)
+    FetchContent_MakeAvailable(xgrammar)
 
-file(GLOB_RECURSE XGRAMMAR_SOURCES CONFIGURE_DEPENDS "${xgrammar_SOURCE_DIR}/cpp/*.cc")
-list(FILTER XGRAMMAR_SOURCES EXCLUDE REGEX "/cpp/tvm_ffi/.*\\.cc$")
-add_library(xgrammar STATIC ${XGRAMMAR_SOURCES})
-set_target_properties(xgrammar PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON)
-target_include_directories(xgrammar PUBLIC "${xgrammar_SOURCE_DIR}/include")
-target_include_directories(xgrammar SYSTEM PUBLIC
-    "${xgrammar_SOURCE_DIR}/3rdparty/picojson"
-    "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/include")
-target_compile_definitions(xgrammar PUBLIC
-    XGRAMMAR_ENABLE_CPPTRACE=0
-    XGRAMMAR_ENABLE_INTERNAL_CHECK=0)
+    file(GLOB_RECURSE XGRAMMAR_SOURCES CONFIGURE_DEPENDS "${xgrammar_SOURCE_DIR}/cpp/*.cc")
+    list(FILTER XGRAMMAR_SOURCES EXCLUDE REGEX "/cpp/tvm_ffi/.*\\.cc$")
+    add_library(xgrammar STATIC ${XGRAMMAR_SOURCES})
+    set_target_properties(xgrammar PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON)
+    target_include_directories(xgrammar PUBLIC "${xgrammar_SOURCE_DIR}/include")
+    target_include_directories(xgrammar SYSTEM PUBLIC
+        "${xgrammar_SOURCE_DIR}/3rdparty/picojson"
+        "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/include")
+    target_compile_definitions(xgrammar PUBLIC
+        XGRAMMAR_ENABLE_CPPTRACE=0
+        XGRAMMAR_ENABLE_INTERNAL_CHECK=0)
+endif()
 
 add_subdirectory(${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native ${CMAKE_BINARY_DIR}/xgrammar)
 
@@ -211,33 +213,35 @@ install(TARGETS mlx mlxc ollama_xgrammar
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
 )
-install(FILES
-    "${xgrammar_SOURCE_DIR}/LICENSE"
-    DESTINATION ${OLLAMA_LIB_DIR}
-    RENAME XGRAMMAR_LICENSE
-    COMPONENT MLX)
-install(FILES
-    "${xgrammar_SOURCE_DIR}/NOTICE"
-    DESTINATION ${OLLAMA_LIB_DIR}
-    RENAME XGRAMMAR_NOTICE
-    COMPONENT MLX)
-install(FILES
-    "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/LICENSE"
-    DESTINATION ${OLLAMA_LIB_DIR}
-    RENAME DLPACK_LICENSE
-    COMPONENT MLX)
-file(READ "${xgrammar_SOURCE_DIR}/3rdparty/picojson/picojson.h" _picojson_header LIMIT 4096)
-string(FIND "${_picojson_header}" "*/" _picojson_license_end)
-if(_picojson_license_end EQUAL -1)
-    message(FATAL_ERROR "picojson license header not found")
+if(NOT OLLAMA_BINARY_XGRAMMAR_LIBRARY)
+    install(FILES
+        "${xgrammar_SOURCE_DIR}/LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        RENAME XGRAMMAR_LICENSE
+        COMPONENT MLX)
+    install(FILES
+        "${xgrammar_SOURCE_DIR}/NOTICE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        RENAME XGRAMMAR_NOTICE
+        COMPONENT MLX)
+    install(FILES
+        "${xgrammar_SOURCE_DIR}/3rdparty/dlpack/LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        RENAME DLPACK_LICENSE
+        COMPONENT MLX)
+    file(READ "${xgrammar_SOURCE_DIR}/3rdparty/picojson/picojson.h" _picojson_header LIMIT 4096)
+    string(FIND "${_picojson_header}" "*/" _picojson_license_end)
+    if(_picojson_license_end EQUAL -1)
+        message(FATAL_ERROR "picojson license header not found")
+    endif()
+    math(EXPR _picojson_license_end "${_picojson_license_end} + 2")
+    string(SUBSTRING "${_picojson_header}" 0 ${_picojson_license_end} _picojson_license)
+    file(WRITE "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE" "${_picojson_license}\n")
+    install(FILES
+        "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        COMPONENT MLX)
 endif()
-math(EXPR _picojson_license_end "${_picojson_license_end} + 2")
-string(SUBSTRING "${_picojson_header}" 0 ${_picojson_license_end} _picojson_license)
-file(WRITE "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE" "${_picojson_license}\n")
-install(FILES
-    "${CMAKE_BINARY_DIR}/PICOJSON_LICENSE"
-    DESTINATION ${OLLAMA_LIB_DIR}
-    COMPONENT MLX)
 get_target_property(_mlx_license_source mlx SOURCE_DIR)
 if(NOT _mlx_license_source OR _mlx_license_source MATCHES "-NOTFOUND$")
     message(FATAL_ERROR "MLX source directory not found for license install")

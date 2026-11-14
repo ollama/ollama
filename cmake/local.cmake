@@ -10,10 +10,20 @@ set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
     "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
+set(OLLAMA_GO_EXTRA_LDFLAGS "" CACHE STRING "Additional flags for the Ollama Go linker")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
     "Build-time staging prefix for nested Ollama native payloads")
 set(OLLAMA_MLX_PAYLOAD_INSTALL_PREFIX "" CACHE PATH
     "Optional separate staging prefix for the MLX overlay payload")
+# Packagers may use compatible binaries in place of the pinned sources.
+set(OLLAMA_BINARY_MLX_C_LIBRARY "" CACHE FILEPATH
+    "Path to a compatible MLX-C binary")
+set(OLLAMA_BINARY_XGRAMMAR_LIBRARY "" CACHE FILEPATH
+    "Path to a compatible XGrammar binary")
+set(OLLAMA_BINARY_MLX_RUNNER_DIR "" CACHE STRING
+    "Runtime variant directory for the MLX-C binary")
+mark_as_advanced(OLLAMA_BINARY_MLX_C_LIBRARY OLLAMA_BINARY_XGRAMMAR_LIBRARY
+    OLLAMA_BINARY_MLX_RUNNER_DIR)
 
 get_filename_component(_ollama_mlx_base_install_prefix
     "${OLLAMA_PAYLOAD_INSTALL_PREFIX}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
@@ -109,7 +119,27 @@ function(ollama_default_mlx_backends output)
     set(${output} "${_backends}" PARENT_SCOPE)
 endfunction()
 
-if(NOT DEFINED OLLAMA_MLX_BACKENDS)
+if(OLLAMA_BINARY_XGRAMMAR_LIBRARY)
+    if(NOT EXISTS "${OLLAMA_BINARY_XGRAMMAR_LIBRARY}")
+        message(FATAL_ERROR "XGrammar binary not found: ${OLLAMA_BINARY_XGRAMMAR_LIBRARY}")
+    endif()
+    if(NOT XGRAMMAR_VERSION OR XGRAMMAR_VERSION STREQUAL "unknown")
+        message(FATAL_ERROR "Set XGRAMMAR_VERSION to the supplied XGrammar library's version")
+    endif()
+endif()
+
+if(OLLAMA_BINARY_MLX_C_LIBRARY)
+    if(NOT OLLAMA_BINARY_MLX_RUNNER_DIR MATCHES "^mlx_(metal|cuda)_v[0-9]+$")
+        message(FATAL_ERROR "OLLAMA_BINARY_MLX_RUNNER_DIR must be an mlx_metal_v* or mlx_cuda_v* variant")
+    endif()
+    if(NOT EXISTS "${OLLAMA_BINARY_MLX_C_LIBRARY}")
+        message(FATAL_ERROR "MLX-C binary not found: ${OLLAMA_BINARY_MLX_C_LIBRARY}")
+    endif()
+    if(OLLAMA_MLX_BACKENDS)
+        message(FATAL_ERROR "OLLAMA_MLX_BACKENDS cannot be set with OLLAMA_BINARY_MLX_C_LIBRARY")
+    endif()
+    set(OLLAMA_MLX_BACKENDS "" CACHE STRING "${_ollama_mlx_backends_doc}")
+elseif(NOT DEFINED OLLAMA_MLX_BACKENDS)
     ollama_default_mlx_backends(_ollama_default_mlx_backends)
     set(OLLAMA_MLX_BACKENDS "${_ollama_default_mlx_backends}" CACHE STRING "${_ollama_mlx_backends_doc}")
 else()
@@ -259,11 +289,11 @@ if(OLLAMA_MLX_BACKENDS)
     endif()
     # XGrammar has no pre-fetch: without an override each variant's build
     # clones it via FetchContent.
-    if(DEFINED FETCHCONTENT_SOURCE_DIR_XGRAMMAR AND NOT "${FETCHCONTENT_SOURCE_DIR_XGRAMMAR}" STREQUAL "")
+    if(NOT OLLAMA_BINARY_XGRAMMAR_LIBRARY AND DEFINED FETCHCONTENT_SOURCE_DIR_XGRAMMAR AND NOT "${FETCHCONTENT_SOURCE_DIR_XGRAMMAR}" STREQUAL "")
         get_filename_component(OLLAMA_XGRAMMAR_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_XGRAMMAR}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using XGrammar source override: ${OLLAMA_XGRAMMAR_SOURCE_DIR}")
-    elseif(DEFINED ENV{OLLAMA_XGRAMMAR_SOURCE})
+    elseif(NOT OLLAMA_BINARY_XGRAMMAR_LIBRARY AND DEFINED ENV{OLLAMA_XGRAMMAR_SOURCE})
         get_filename_component(OLLAMA_XGRAMMAR_SOURCE_DIR
             "$ENV{OLLAMA_XGRAMMAR_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using local XGrammar source: ${OLLAMA_XGRAMMAR_SOURCE_DIR}")
@@ -563,6 +593,9 @@ function(ollama_add_mlx_build name)
         list(APPEND _cmake_args
             -DFETCHCONTENT_SOURCE_DIR_XGRAMMAR=${OLLAMA_XGRAMMAR_SOURCE_DIR})
     endif()
+    foreach(_arg IN ITEMS OLLAMA_BINARY_XGRAMMAR_LIBRARY XGRAMMAR_INCLUDE_DIR DLPACK_INCLUDE_DIR XGRAMMAR_VERSION)
+        ollama_append_cache_arg_if_set(_cmake_args ${_arg})
+    endforeach()
     foreach(_arg IN ITEMS
             BLAS_INCLUDE_DIRS
             LAPACK_INCLUDE_DIRS
@@ -710,6 +743,9 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
 
     set(OLLAMA_GO_LDFLAGS
         "-s -w -X=github.com/ollama/ollama/version.Version=${OLLAMA_VERSION} -X=github.com/ollama/ollama/server.mode=release")
+    if(OLLAMA_GO_EXTRA_LDFLAGS)
+        string(APPEND OLLAMA_GO_LDFLAGS " ${OLLAMA_GO_EXTRA_LDFLAGS}")
+    endif()
     if(GO_EXECUTABLE)
         add_custom_target(ollama-go ALL
             COMMAND ${CMAKE_COMMAND} -E make_directory "${OLLAMA_GO_OUTPUT_DIR}"
@@ -753,8 +789,45 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
         TARGETS llama-server llama-quantize
         CMAKE_ARGS ${_cpu_args})
 
+    set(_ollama_local_deps ollama-go ollama-llama-server-local)
+    if(OLLAMA_BINARY_MLX_C_LIBRARY)
+        set(_binary_mlx_dir
+            "${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/${OLLAMA_BINARY_MLX_RUNNER_DIR}")
+        if(WIN32)
+            set(_binary_mlxc_name mlxc.dll)
+        else()
+            set(_binary_mlxc_name "libmlxc${CMAKE_SHARED_LIBRARY_SUFFIX}")
+        endif()
+        file(MAKE_DIRECTORY "${_binary_mlx_dir}")
+        file(REMOVE "${_binary_mlx_dir}/${_binary_mlxc_name}")
+        if(WIN32)
+            file(COPY_FILE "${OLLAMA_BINARY_MLX_C_LIBRARY}"
+                "${_binary_mlx_dir}/${_binary_mlxc_name}")
+        else()
+            file(CREATE_LINK "${OLLAMA_BINARY_MLX_C_LIBRARY}"
+                "${_binary_mlx_dir}/${_binary_mlxc_name}" SYMBOLIC)
+        endif()
+
+        if(OLLAMA_BINARY_XGRAMMAR_LIBRARY)
+            add_subdirectory(${CMAKE_SOURCE_DIR}/mlxrunner/xgrammar/native
+                ${CMAKE_BINARY_DIR}/binary-xgrammar)
+            set_target_properties(ollama_xgrammar PROPERTIES
+                LIBRARY_OUTPUT_DIRECTORY "${_binary_mlx_dir}"
+                LIBRARY_OUTPUT_DIRECTORY_DEBUG "${_binary_mlx_dir}"
+                LIBRARY_OUTPUT_DIRECTORY_RELEASE "${_binary_mlx_dir}"
+                LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_binary_mlx_dir}"
+                LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL "${_binary_mlx_dir}"
+                RUNTIME_OUTPUT_DIRECTORY "${_binary_mlx_dir}"
+                RUNTIME_OUTPUT_DIRECTORY_DEBUG "${_binary_mlx_dir}"
+                RUNTIME_OUTPUT_DIRECTORY_RELEASE "${_binary_mlx_dir}"
+                RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${_binary_mlx_dir}"
+                RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${_binary_mlx_dir}")
+            list(APPEND _ollama_local_deps ollama_xgrammar)
+        endif()
+    endif()
+
     add_custom_target(ollama-local ALL
-        DEPENDS ollama-go ollama-llama-server-local
+        DEPENDS ${_ollama_local_deps}
         COMMENT "Building local Ollama payload")
 
     install(PROGRAMS "${OLLAMA_GO_OUTPUT}"

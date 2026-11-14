@@ -4,6 +4,9 @@ project(OllamaXGrammar CXX)
 
 # cmake/mlx provides the pinned xgrammar target and XGRAMMAR_VERSION.
 if(NOT TARGET xgrammar)
+    if(OLLAMA_BINARY_XGRAMMAR_LIBRARY)
+        set(XGRAMMAR_LIBRARY "${OLLAMA_BINARY_XGRAMMAR_LIBRARY}")
+    endif()
     set(XGRAMMAR_VERSION "unknown" CACHE STRING "XGrammar release reported by the library")
     find_path(XGRAMMAR_INCLUDE_DIR xgrammar/xgrammar.h REQUIRED)
     find_path(DLPACK_INCLUDE_DIR dlpack/dlpack.h REQUIRED)
