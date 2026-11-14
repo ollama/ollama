@@ -357,7 +357,9 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 				newRequest := func(ctx context.Context, seed int32, budget int) request {
 					return request{
 						Ctx: ctx, Tokens: []int32{0, 0, seed}, Responses: make(chan CompletionResponse, 128),
-						CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: budget}},
+						// Drafting is opt-in per request; allow the selector its trained
+						// depth so this test exercises handoffs, not the depth cap.
+						CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: budget, Runner: api.Runner{DraftNumPredict: dflash2Depth}}},
 						SamplerOpts:       sample.Options{Temperature: 0.7, UseSeed: true, Seed: int(seed), RepeatPenalty: 1.1, RepeatLastN: 8},
 					}
 				}

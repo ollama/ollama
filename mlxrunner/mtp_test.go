@@ -391,7 +391,7 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{0},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		d := testDecoder(t, r, req, caches, []int32{1}, position)
@@ -452,7 +452,7 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{0},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{Temperature: 1, Seed: 42, UseSeed: true},
 		}
 		spec := r.spec.open(req, nil)
@@ -496,7 +496,7 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{0},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
@@ -557,7 +557,7 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{0},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
@@ -671,7 +671,7 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{1},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		d := testDecoder(t, r, req, caches, []int32{1}, position)
@@ -714,7 +714,7 @@ func TestLayoutRidesEveryForward(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{0},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, []any{"layout"})
@@ -789,7 +789,7 @@ func TestDecodeKVDraft(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{1},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
@@ -873,7 +873,7 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{1},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
@@ -1126,7 +1126,7 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{1},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
@@ -1179,7 +1179,7 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		req := request{
 			Tokens:            []int32{1},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
