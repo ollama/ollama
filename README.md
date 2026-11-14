@@ -1,7 +1,7 @@
 <p align="center">
-  <a href="https://ollama.com">
-    <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
-  </a>
+ <a href="https://ollama.com">
+ <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
+ </a>
 </p>
 
 # Ollama
@@ -312,6 +312,7 @@ console.log(response.message.content);
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
+- [SelectTranslate](https://selecttranslate.com/en/docs/service/ollama) - AI browser extension for translating web pages with local Ollama models. 
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
 - [1Panel](https://github.com/1Panel-dev/1Panel/) - Web-based Linux server management
 - [Writeopia](https://github.com/Writeopia/Writeopia) - Text editor with Ollama integration
