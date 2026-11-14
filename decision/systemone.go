@@ -66,7 +66,7 @@ func validateImages(images []api.ImageData) error {
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands", "kev", "pplx", "d3", "autotrust-decision", "d1":
+	case "", "tev1", "clef", "strands", "kev", "pplx", "d3", "autotrust-decision", "d1", "hindsight":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
@@ -99,6 +99,13 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		c := &Compiled{encoding: encoding}
 		if err := encodePPLX(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if encoding == "hindsight" {
+		c := &Compiled{encoding: encoding}
+		if err := encodeHindsight(req, c); err != nil {
 			return nil, err
 		}
 		return c, nil
@@ -363,7 +370,7 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 			confidence = kevConfidence(p, f.typ)
 			confidence = roundKev(confidence)
 			score = roundKev(score)
-		} else if c.encoding == "pplx" {
+		} else if c.encoding == "pplx" || c.encoding == "hindsight" {
 			winner := slices.Index(p, slices.Max(p))
 			if f.typ == "choice" {
 				confidence = 1

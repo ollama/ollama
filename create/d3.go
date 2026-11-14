@@ -27,7 +27,7 @@ func qwenDecisionFormat(dir string) (string, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return "", fmt.Errorf("parse decision_config.json: %w", err)
 	}
-	if cfg.FormatID != "" && cfg.FormatID != d3FormatID {
+	if cfg.FormatID != "" && cfg.FormatID != d3FormatID && cfg.FormatID != hindsightFormatID {
 		return "", fmt.Errorf("unsupported Qwen decision format %q", cfg.FormatID)
 	}
 	return cfg.FormatID, nil

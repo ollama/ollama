@@ -7,6 +7,7 @@ import (
 
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/model/d3"
+	"github.com/ollama/ollama/mlxrunner/model/hindsight"
 	"github.com/ollama/ollama/mlxrunner/model/pplxdecider"
 )
 
@@ -22,6 +23,8 @@ func newModel(root *model.Root) (model.Model, error) {
 	switch cfg.FormatID {
 	case "d3-code-readout-v1":
 		return d3.NewModel(root)
+	case "hindsight-decision-v1":
+		return hindsight.NewModel(root)
 	case "":
 		return pplxdecider.NewModel(root)
 	default:
