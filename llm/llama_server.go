@@ -2752,22 +2752,46 @@ func (s *llamaServerRunner) Close() error {
 	return errors.Join(s.stopProcess(), s.removeSplitDirs())
 }
 
+// How long to wait for llama-server to disappear after it has been signalled.
+// A SIGKILL is normally reaped within milliseconds; the timeout only matters
+// when the kill itself was silently refused (AppArmor, a stuck parent, ...).
+const llamaServerExitTimeout = 10 * time.Second
+
 func (s *llamaServerRunner) stopProcess() error {
-	if s.cmd != nil && s.cmd.Process != nil {
-		if s.cmd.ProcessState != nil {
-			return nil
-		}
-		slog.Debug("stopping llama-server", "pid", s.Pid())
-		if err := s.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return err
-		}
-		if s.done != nil {
-			slog.Debug("waiting for llama-server to exit", "pid", s.Pid())
-			<-s.done
-		}
-		slog.Debug("llama-server stopped", "pid", s.Pid())
+	if s.cmd == nil || s.cmd.Process == nil {
+		return nil
 	}
+	if s.cmd.ProcessState != nil {
+		return nil
+	}
+	slog.Debug("stopping llama-server", "pid", s.Pid())
+	if err := s.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		// Make sure it still goes away: we're about to tell the scheduler the
+		// runner is unusable, and a forever-hanging process would leak its VRAM.
+		s.forceKill()
+		return fmt.Errorf("stop llama-server pid %d: %w", s.Pid(), err)
+	}
+	if s.done != nil {
+		slog.Debug("waiting for llama-server to exit", "pid", s.Pid())
+		select {
+		case <-s.done:
+		case <-time.After(llamaServerExitTimeout):
+			// The kill was accepted but nothing came back. As far as we know
+			// the process is still holding its memory, so don't report it gone.
+			return fmt.Errorf("llama-server pid %d did not exit within %s", s.Pid(), llamaServerExitTimeout)
+		}
+	}
+	slog.Debug("llama-server stopped", "pid", s.Pid())
 	return nil
+}
+
+// forceKill sends SIGKILL straight to the process, bypassing exec.Cmd so that
+// the ErrProcessDone bookkeeping in the stdlib still works afterwards.
+func (s *llamaServerRunner) forceKill() {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return
+	}
+	killProcess(s.cmd.Process.Pid)
 }
 
 // GetDeviceInfos returns device info for GPUs used by this runner, with FreeMemory

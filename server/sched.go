@@ -489,7 +489,9 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				// do not delete the mismatched loaded runner, or wait for VRAM
 				// convergence.
 				slog.Debug("orphaned runner shutting down", "orphan", runner, "loaded", runnerToUnload)
-				runner.unload()
+				if err := runner.unload(); err != nil {
+					slog.Error("failed to shut down orphaned runner", "model", runner.modelKey, "pid", runner.pid, "error", err)
+				}
 				s.loadedMu.Unlock()
 				runner.refMu.Unlock()
 			} else {
@@ -499,7 +501,17 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 					runnersSnapshot = append(runnersSnapshot, r)
 				}
 				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
-				runner.unload()
+				if err := runner.unload(); err != nil {
+					// Still alive and still holding its VRAM. Keep it in
+					// s.loaded so the next load accounts for that memory
+					// instead of starting a second runner next to this one.
+					slog.Error("failed to unload runner, keeping it loaded",
+						"model", runner.modelKey, "pid", runner.pid, "error", err)
+					s.loadedMu.Unlock()
+					<-finished
+					runner.refMu.Unlock()
+					continue
+				}
 				delete(s.loaded, runner.modelKey)
 				s.loadedMu.Unlock()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
@@ -768,7 +780,9 @@ iGPUScan:
 		// Shouldn't happen, but safeguard against leaking a runner
 		slog.Warn("model was still loaded", "old_runner", oldRunner, "new_runner", runner)
 		oldRunner.refMu.Lock()
-		oldRunner.unload()
+		if err := oldRunner.unload(); err != nil {
+			slog.Error("failed to unload previous runner", "model", oldRunner.modelKey, "pid", oldRunner.pid, "error", err)
+		}
 		oldRunner.refMu.Unlock()
 	}
 	s.activeLoading = nil
@@ -1386,6 +1400,11 @@ type runnerRef struct {
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
+	// unloadFailed is set when we couldn't confirm the process is gone. The
+	// runner stays in s.loaded so its memory is still accounted for, but it
+	// can't be handed to another request.
+	unloadFailed bool
+
 	// model is atomic so lookups can read it without contending on refMu.
 	model        atomic.Pointer[Model]
 	modelPath    string
@@ -1399,25 +1418,41 @@ type runnerRef struct {
 	*api.Options
 }
 
-// The refMu must already be held when calling unload
-func (runner *runnerRef) unload() {
+// The refMu must already be held when calling unload. A non-nil error means the
+// runner's process could not be confirmed dead, and the scheduler must keep
+// accounting for it.
+func (runner *runnerRef) unload() error {
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
 	}
 	if runner.llama != nil {
-		runner.llama.Close()
+		if err := runner.llama.Close(); err != nil {
+			// Part of the process may still be around holding its memory, so
+			// don't clear the bookkeeping: needsReload() should keep answering
+			// for this runner rather than handing it back as usable.
+			runner.unloadFailed = true
+			return err
+		}
 	}
+	runner.unloadFailed = false
 	runner.model.Store(nil)
 	runner.Options = nil
 	runner.gpus = nil
 	runner.contextShift = false
+	return nil
 }
 
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
 	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+
+	// A runner we failed to unload is still up but its bookkeeping is stale, so
+	// it can't serve this request. It still counts towards loaded memory.
+	if runner.unloadFailed {
+		return true
+	}
 
 	timeout := 10 * time.Second
 	if runner.loading {
@@ -1749,7 +1784,9 @@ func (s *Scheduler) unloadAllRunners() {
 	for model, runner := range s.loaded {
 		if runner.llama != nil {
 			slog.Debug("shutting down runner", "model", model)
-			runner.llama.Close()
+			if err := runner.llama.Close(); err != nil {
+				slog.Warn("failed to shut down runner", "model", model, "error", err)
+			}
 		}
 	}
 }
