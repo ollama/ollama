@@ -204,6 +204,7 @@ console.log(response.message.content);
 
 #### Mobile
 
+- [ForgeMind](https://github.com/DIIIUA/ForgeMind) - Android AI agent workspace with Ollama LAN discovery, shell, files, and MCP
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
 - [Quock](https://github.com/matteocelani/quock) - Native iOS client for Ollama Cloud
 
