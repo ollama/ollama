@@ -52,3 +52,34 @@ func TestMiMoCompactToolCallParser(t *testing.T) {
 		})
 	}
 }
+
+func TestMiMoJSONArgumentsInFunctionBody(t *testing.T) {
+	props := api.NewToolPropertiesMap()
+	props.Set("path", api.ToolProperty{Type: api.PropertyType{"string"}})
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{
+		Name: "read_file", Parameters: api.ToolFunctionParameters{Properties: props},
+	}}}
+
+	const output = `<tool_call><function=read_file>{"path": "src/main.py"}</function></tool_call>`
+	for _, chunkSize := range []int{1, 3, len(output)} {
+		t.Run(fmt.Sprintf("chunk_%d", chunkSize), func(t *testing.T) {
+			parser := ParserForName("qwen3.5")
+			parser.Init(tools, nil, &api.ThinkValue{Value: false})
+			var calls []api.ToolCall
+			for i := 0; i < len(output); i += chunkSize {
+				end := min(i+chunkSize, len(output))
+				_, _, nextCalls, err := parser.Add(output[i:end], end == len(output))
+				if err != nil {
+					t.Fatal(err)
+				}
+				calls = append(calls, nextCalls...)
+			}
+			if len(calls) != 1 || calls[0].Function.Name != "read_file" {
+				t.Fatalf("calls=%+v", calls)
+			}
+			if v, ok := calls[0].Function.Arguments.Get("path"); !ok || v != "src/main.py" {
+				t.Fatalf("path=%v present=%v", v, ok)
+			}
+		})
+	}
+}
