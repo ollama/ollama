@@ -942,6 +942,11 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			input:    `{meta:{title:<|"|>t "1"<|"|>,note:"n \"2\""},items:[<|"|>x "3"<|"|>,"y \"4\""]}`,
 			expected: `{"meta":{"title":"t \"1\"","note":"n \"2\""},"items":["x \"3\"","y \"4\""]}`,
 		},
+		{
+			name:     "bare_key_with_spaces",
+			input:    `{Basic LLM Chain:<|"|>value<|"|>}`,
+			expected: `{"Basic LLM Chain":"value"}`,
+		},
 	}
 
 	for _, tt := range tests {
