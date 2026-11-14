@@ -268,6 +268,7 @@ console.log(response.message.content);
 - [Cheshire Cat](https://github.com/cheshire-cat-ai/core) - AI assistant framework
 - [any-agent](https://github.com/mozilla-ai/any-agent) - Unified agent framework interface by Mozilla
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
+- [Akmatori](https://github.com/akmatori/akmatori) - Self-hosted AI SRE agent that investigates infrastructure alerts ([Ollama setup](https://akmatori.com/docs/local-models))
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
 
