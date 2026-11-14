@@ -335,8 +335,10 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 }
 
 // forward runs the model one step over token, shaped [B, L], and returns the
-// final position's [B, 1, V] logits, still lazy.
+// final position's [B, 1, V] logits, still lazy. This is the request's target
+// forward for the step, whether priming the decoder or advancing a token.
 func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
+	t.spec.countForward()
 	return mlx.ScopedArrays(func() []*mlx.Array {
 		hidden, auxHidden := t.r.Model.Forward(&batch.Batch{
 			InputIDs:     token,

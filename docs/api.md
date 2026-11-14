@@ -104,10 +104,28 @@ The final response in the stream also includes additional data about the generat
 - `prompt_eval_duration`: time spent in nanoseconds evaluating uncached prompt tokens
 - `eval_count`: number of tokens in the response
 - `eval_duration`: time in nanoseconds spent generating the response
+- `draft_count`: tokens proposed by speculative decoding (see below)
+- `draft_accepted_count`: draft tokens the model accepted
+- `draft_step_count`: target forward passes that drafted
+- `step_count`: all target forward passes during decode
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
 
 To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration` \* `10^9`.
+
+#### Speculative decoding metrics
+
+When a request drafted, the final response reports these counts. A field is
+absent when the runner did not report it: the model cannot draft, the request
+disabled drafting (e.g. logprobs), or the runner does not track it — some
+runners report draft counts without step counts. Zero means drafting was
+available but proposed nothing.
+
+Derived metrics: tokens per step is `eval_count` / `step_count`, time per
+step is `eval_duration` / `step_count`, and draft acceptance is
+`draft_accepted_count` / `draft_count`. Acceptance depends on draft depth,
+sampling settings, grammar constraints, and warm-up after model load, so it
+is not comparable across drafting methods; use the eval rate to compare.
 
 ```json
 {

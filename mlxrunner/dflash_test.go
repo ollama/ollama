@@ -331,6 +331,21 @@ func TestDecodeBlockDraft(t *testing.T) {
 			t.Fatalf("target forwards = %v, want %v", model.forwards, wantForwards)
 		}
 
+		// Steps count every decode forward, plain or drafting — including the
+		// drain when resuming — and draft steps only the fused round above.
+		if got := final.StepCount; got == nil || *got != 3 {
+			t.Errorf("final.StepCount = %v, want 3", final.StepCount)
+		}
+		if got := final.DraftStepCount; got == nil || *got != 1 {
+			t.Errorf("final.DraftStepCount = %v, want 1", final.DraftStepCount)
+		}
+		if got := final.DraftCount; got == nil || *got != 2 {
+			t.Errorf("final.DraftCount = %v, want 2 (blockSize-1 drafts)", final.DraftCount)
+		}
+		if got := final.DraftAcceptedCount; got == nil || *got != 2 {
+			t.Errorf("final.DraftAcceptedCount = %v, want 2 (every draft accepted)", final.DraftAcceptedCount)
+		}
+
 		// Ending the parked stretch settles the buffered context through, so the
 		// proposal runs block-only; close's flush then writes the accepted rows
 		// after rewinding the block.

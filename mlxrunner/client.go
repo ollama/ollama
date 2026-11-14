@@ -135,6 +135,10 @@ type CompletionResponse struct {
 	PromptEvalDuration    time.Duration
 	EvalCount             int
 	EvalDuration          time.Duration
+	DraftCount            *int
+	DraftAcceptedCount    *int
+	DraftStepCount        *int
+	StepCount             *int
 
 	Logprobs []llm.Logprob
 
@@ -256,6 +260,10 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			PromptEvalDuration:    raw.PromptEvalDuration,
 			EvalCount:             raw.EvalCount,
 			EvalDuration:          raw.EvalDuration,
+			DraftCount:            raw.DraftCount,
+			DraftAcceptedCount:    raw.DraftAcceptedCount,
+			DraftStepCount:        raw.DraftStepCount,
+			StepCount:             raw.StepCount,
 			Logprobs:              raw.Logprobs,
 		}
 
