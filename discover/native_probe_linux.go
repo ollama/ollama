@@ -110,6 +110,33 @@ static int ollama_call_nvml_system_get_driver_version(void * fn, char * version,
 	return ((ollama_nvml_system_get_driver_version_fn) fn)(version, len);
 }
 
+typedef struct {
+	unsigned long long total;
+	unsigned long long free;
+	unsigned long long used;
+} ollama_nvml_memory;
+
+typedef int (*ollama_nvml_device_get_count_fn)(unsigned int *);
+typedef int (*ollama_nvml_device_get_handle_by_index_fn)(unsigned int, void **);
+typedef int (*ollama_nvml_device_get_handle_by_pci_bus_id_fn)(const char *, void **);
+typedef int (*ollama_nvml_device_get_memory_info_fn)(void *, ollama_nvml_memory *);
+
+static int ollama_call_nvml_device_get_count(void * fn, unsigned int * count) {
+	return ((ollama_nvml_device_get_count_fn) fn)(count);
+}
+
+static int ollama_call_nvml_device_get_handle_by_index(void * fn, unsigned int index, void ** device) {
+	return ((ollama_nvml_device_get_handle_by_index_fn) fn)(index, device);
+}
+
+static int ollama_call_nvml_device_get_handle_by_pci_bus_id(void * fn, const char * pci, void ** device) {
+	return ((ollama_nvml_device_get_handle_by_pci_bus_id_fn) fn)(pci, device);
+}
+
+static int ollama_call_nvml_device_get_memory_info(void * fn, void * device, ollama_nvml_memory * memory) {
+	return ((ollama_nvml_device_get_memory_info_fn) fn)(device, memory);
+}
+
 */
 import "C"
 
@@ -388,33 +415,74 @@ func rocmVisibleDevicesEnvSet() bool {
 	return false
 }
 
-func probeNVIDIADriverMajorLinux() (int, error) {
+// openNVML loads and initializes NVML and resolves the named symbols. The
+// caller must call shutdown.
+func openNVML(names ...string) (fns map[string]unsafe.Pointer, shutdown func(), err error) {
 	nvml, err := dlopenFirst([]string{"libnvidia-ml.so.1", "libnvidia-ml.so"}, false)
 	if err != nil {
-		return 0, err
+		return nil, nil, err
 	}
-	initFn, err := dlsym(nvml, "nvmlInit_v2")
+	fns = make(map[string]unsafe.Pointer, len(names)+2)
+	for _, name := range append([]string{"nvmlInit_v2", "nvmlShutdown"}, names...) {
+		if fns[name], err = dlsym(nvml, name); err != nil {
+			return nil, nil, err
+		}
+	}
+	if ret := C.ollama_call_nvml_init(fns["nvmlInit_v2"]); ret != 0 {
+		return nil, nil, fmt.Errorf("nvmlInit_v2 failed: %d", int(ret))
+	}
+	return fns, func() { C.ollama_call_nvml_shutdown(fns["nvmlShutdown"]) }, nil
+}
+
+func probeNVIDIADriverMajorLinux() (int, error) {
+	fns, shutdown, err := openNVML("nvmlSystemGetDriverVersion")
 	if err != nil {
 		return 0, err
 	}
-	shutdownFn, err := dlsym(nvml, "nvmlShutdown")
-	if err != nil {
-		return 0, err
-	}
-	driverFn, err := dlsym(nvml, "nvmlSystemGetDriverVersion")
-	if err != nil {
-		return 0, err
-	}
-	if ret := C.ollama_call_nvml_init(initFn); ret != 0 {
-		return 0, fmt.Errorf("nvmlInit_v2 failed: %d", int(ret))
-	}
-	defer C.ollama_call_nvml_shutdown(shutdownFn)
+	defer shutdown()
 
 	var version [80]C.char
-	if ret := C.ollama_call_nvml_system_get_driver_version(driverFn, &version[0], C.uint(len(version))); ret != 0 {
+	if ret := C.ollama_call_nvml_system_get_driver_version(fns["nvmlSystemGetDriverVersion"], &version[0], C.uint(len(version))); ret != 0 {
 		return 0, fmt.Errorf("nvmlSystemGetDriverVersion failed: %d", int(ret))
 	}
 	return parseNVIDIADriverMajor(C.GoString(&version[0]))
+}
+
+func init() {
+	nvmlDeviceMemory = probeNVMLMemoryLinux
+}
+
+// probeNVMLMemoryLinux returns NVML's total and used memory for the device at
+// pciBusID, falling back to the only device when NVML does not know that ID.
+func probeNVMLMemoryLinux(pciBusID string) (total, used uint64, err error) {
+	fns, shutdown, err := openNVML("nvmlDeviceGetCount_v2", "nvmlDeviceGetHandleByIndex_v2", "nvmlDeviceGetHandleByPciBusId_v2", "nvmlDeviceGetMemoryInfo")
+	if err != nil {
+		return 0, 0, err
+	}
+	defer shutdown()
+
+	var device unsafe.Pointer
+	ret := C.int(-1)
+	if pciBusID != "" {
+		cpci := C.CString(pciBusID)
+		defer C.free(unsafe.Pointer(cpci))
+		ret = C.ollama_call_nvml_device_get_handle_by_pci_bus_id(fns["nvmlDeviceGetHandleByPciBusId_v2"], cpci, &device)
+	}
+	if ret != 0 {
+		var count C.uint
+		if ret := C.ollama_call_nvml_device_get_count(fns["nvmlDeviceGetCount_v2"], &count); ret != 0 || count != 1 {
+			return 0, 0, fmt.Errorf("no NVML device for PCI bus ID %q", pciBusID)
+		}
+		if ret := C.ollama_call_nvml_device_get_handle_by_index(fns["nvmlDeviceGetHandleByIndex_v2"], 0, &device); ret != 0 {
+			return 0, 0, fmt.Errorf("nvmlDeviceGetHandleByIndex_v2 failed: %d", int(ret))
+		}
+	}
+
+	var memory C.ollama_nvml_memory
+	if ret := C.ollama_call_nvml_device_get_memory_info(fns["nvmlDeviceGetMemoryInfo"], device, &memory); ret != 0 {
+		return 0, 0, fmt.Errorf("nvmlDeviceGetMemoryInfo failed: %d", int(ret))
+	}
+	return uint64(memory.total), uint64(memory.used), nil
 }
 
 func cudaDeviceAttribute(fn unsafe.Pointer, attr int, device C.int) int {

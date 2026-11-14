@@ -85,6 +85,9 @@ const (
 	llamaArgFitTargetEnv = "LLAMA_ARG_FIT_TARGET"
 	bytesPerMiB          = 1 << 20
 
+	// Keep in sync with common_params::fit_params_target (1024 MiB) in llama.cpp common/common.h.
+	llamaServerDefaultFitTargetMiB = 1024
+
 	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
 	mmprojOffloadHeadroom = 1 << 30
 )
@@ -211,6 +214,7 @@ type llamaServerLaunchConfig struct {
 	decision             bool
 	config               LlamaServerConfig
 	gpus                 []ml.DeviceInfo
+	systemFree           uint64
 	gpuLibs              []string
 	extraEnvs            map[string]string
 	forceNoMMProjOffload bool
@@ -748,32 +752,79 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 }
 
 func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
-	pad, ok := launch.mmprojFitTargetMiB()
-	if !ok {
+	pad, hasPad := launch.mmprojFitTargetMiB()
+	margin := launch.backendFreeMarginMiB()
+	if !hasPad && margin == 0 {
 		return launch.extraEnvs
 	}
 
-	if existing, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
-		existingTarget, err := strconv.ParseUint(existing, 10, 64)
-		if err != nil {
-			slog.Warn("invalid llama-server fit target", "env", llamaArgFitTargetEnv, "value", existing, "error", err)
+	withTarget := func(base string, add uint64) map[string]string {
+		if strings.ContainsAny(base, ",/") {
+			if margin > 0 {
+				slog.Warn("WSL margin not applied to a list fit target", "env", llamaArgFitTargetEnv, "value", base)
+			} else {
+				slog.Warn("invalid llama-server fit target", "env", llamaArgFitTargetEnv, "value", base)
+			}
 			return launch.extraEnvs
 		}
-
+		n, err := parseFitTarget(base)
+		if err != nil {
+			slog.Warn("invalid llama-server fit target", "env", llamaArgFitTargetEnv, "value", base, "error", err)
+			return launch.extraEnvs
+		}
 		envs := cloneStringMap(launch.extraEnvs)
-		envs[llamaArgFitTargetEnv] = strconv.FormatUint(existingTarget+pad, 10)
+		envs[llamaArgFitTargetEnv] = strconv.FormatUint(n+add+margin, 10)
 		return envs
 	}
 
-	if _, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
-		// Preserve an inherited user override. SetupLlamaServerCommandEnv
-		// will pass it through unless extraEnvs overrides it.
-		return launch.extraEnvs
+	if existing, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+		return withTarget(existing, pad)
 	}
 
-	envs := cloneStringMap(launch.extraEnvs)
-	envs[llamaArgFitTargetEnv] = strconv.FormatUint(pad, 10)
-	return envs
+	if inherited, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
+		// Preserve an inherited user override, but still add the margin: the
+		// override is relative to the backend's free figure, not Ollama's.
+		if margin == 0 {
+			return launch.extraEnvs
+		}
+		return withTarget(inherited, 0)
+	}
+
+	if !hasPad {
+		// Setting the target replaces llama-server's default, so keep it.
+		pad = llamaServerDefaultFitTargetMiB
+	}
+	return withTarget(strconv.FormatUint(pad, 10), 0)
+}
+
+// parseFitTarget reads a single fit target value like std::stoull: leading
+// whitespace and '+', then decimal digits, ignoring trailing text. A leading
+// '-' is rejected where stoull would wrap.
+func parseFitTarget(s string) (uint64, error) {
+	s = strings.TrimPrefix(strings.TrimLeft(s, " \t\n\v\f\r"), "+")
+	end := 0
+	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, fmt.Errorf("invalid fit target %q", s)
+	}
+	return strconv.ParseUint(s[:end], 10, 64)
+}
+
+// backendFreeMarginMiB returns the gap between the backend's free figure,
+// which llama-server fits against, and the scheduler's. Only single-GPU
+// launches get one: llama.cpp drops integrated GPUs next to a discrete GPU.
+func (launch llamaServerLaunchConfig) backendFreeMarginMiB() uint64 {
+	if len(launch.gpus) != 1 {
+		return 0
+	}
+	gpu := launch.gpus[0]
+	available := gpu.AvailableMemory(launch.systemFree)
+	if gpu.BackendFreeMemory <= available {
+		return 0
+	}
+	return (gpu.BackendFreeMemory - available + bytesPerMiB - 1) / bytesPerMiB
 }
 
 func (launch llamaServerLaunchConfig) mmprojFitTargetMiB() (uint64, bool) {
@@ -900,6 +951,7 @@ func hasLegacyQwenMTPDraft(arch string, tensors []gguf.TensorInfo) bool {
 
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
 func NewLlamaServerRunner(
+	systemInfo ml.SystemInfo,
 	gpus []ml.DeviceInfo,
 	modelPath string,
 	f *gguf.Model,
@@ -996,6 +1048,7 @@ func NewLlamaServerRunner(
 		decision:     decisionType != "",
 		config:       config,
 		gpus:         slices.Clone(gpus),
+		systemFree:   systemInfo.FreeMemory,
 		gpuLibs:      slices.Clone(gpuLibs),
 		extraEnvs:    cloneStringMap(serverEnvs),
 	}
