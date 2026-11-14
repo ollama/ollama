@@ -74,6 +74,7 @@ type LlamaServer interface {
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
 	ContextLength() int
+	RunnerOptions() map[string]any
 }
 
 type LlamaServerConfig struct {
