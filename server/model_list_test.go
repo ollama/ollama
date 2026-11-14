@@ -65,6 +65,32 @@ func TestListModelsDescribesModel(t *testing.T) {
 	}
 }
 
+// OLLAMA_CONTEXT_LENGTH caps the context the server allocates, so the model
+// list must report the length a client can actually use rather than the
+// model's native one.
+func TestListModelsReportsContextLengthCap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	createListedModelFromKV(t, "list-cap", map[string]any{"test.context_length": uint32(8192)}, "")
+
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	if got := listedModel(t, "list-cap:latest").Details.ContextLength; got != 4096 {
+		t.Errorf("context length = %d, want 4096", got)
+	}
+
+	// A cap larger than the model supports leaves the native length alone.
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "16384")
+	if got := listedModel(t, "list-cap:latest").Details.ContextLength; got != 8192 {
+		t.Errorf("context length = %d, want 8192", got)
+	}
+
+	// Without a cap the native length is reported.
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+	if got := listedModel(t, "list-cap:latest").Details.ContextLength; got != 8192 {
+		t.Errorf("context length = %d, want 8192", got)
+	}
+}
+
 // Listing reads the manifests every time, so a model created or deleted after
 // the last call shows up without anything needing to be told about it.
 func TestListModelsFollowsManifestChanges(t *testing.T) {
