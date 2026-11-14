@@ -229,6 +229,106 @@ func TestLoadFusedExpertsDense(t *testing.T) {
 	})
 }
 
+// variedLike creates a deterministic, non-constant tensor of the given shape so
+// that quantization and expert selection have something to distinguish.
+func variedLike(freq float32, shape ...int) *mlx.Array {
+	n := 1
+	dims := make([]int32, len(shape))
+	for i, d := range shape {
+		n *= d
+		dims[i] = int32(d)
+	}
+	a := mlx.Sin(mlx.MulScalar(mlx.Arange(0, float64(n), 1, mlx.DTypeFloat32), freq))
+	return mlx.Reshape(a, dims...)
+}
+
+// TestLoadStackedExpertsSwitchGLU verifies that the unfused, pre-stacked
+// experts mlx-lm and mlx-vlm write (experts.switch_glu.{gate,up,down}_proj)
+// load onto the GatherQMM path and produce the same output as the dense
+// GatherMM path over the dequantized weights.
+func TestLoadStackedExpertsSwitchGLU(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const groupSize, bits = 64, 4
+		cfg := tinyMoEConfig()
+		cfg.HiddenSize = 128
+		cfg.ExpertIntermediateSize = 64
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = groupSize, bits, "affine"
+		E, I, H := int(cfg.NumExperts), int(cfg.ExpertIntermediateSize), int(cfg.HiddenSize)
+
+		layer := "language_model.model.layers.0"
+		prefixes := []string{layer + ".experts", layer + ".moe", layer + ".experts.switch_glu"}
+
+		quantized := make(map[string]*mlx.Array)
+		dense := make(map[string]*mlx.Array)
+		for i, p := range []struct {
+			name       string
+			rows, cols int
+		}{
+			{"gate_proj", I, H},
+			{"up_proj", I, H},
+			{"down_proj", H, I},
+		} {
+			key := layer + ".experts.switch_glu." + p.name + ".weight"
+			w, scales, biases := mlx.Quantize(variedLike(float32(i+1)*0.37, E, p.rows, p.cols), groupSize, bits, "affine")
+			quantized[key] = w
+			quantized[key+"_scale"] = scales
+			quantized[key+"_qbias"] = biases
+			dense[key] = mlx.Dequantize(w, scales, biases, groupSize, bits, "affine", nil)
+		}
+
+		gate, up, down := loadStackedExpertProjections(quantized, cfg, prefixes...)
+		if gate == nil || up == nil || down == nil {
+			t.Fatal("switch_glu experts not found")
+		}
+		qMoE := &MoEBlock{PerExpertScale: onesLike(E)}
+		setUnfusedExperts(qMoE, gate, up, down)
+		if !qMoE.UseQuantized || qMoE.UseFusedGateUp {
+			t.Fatalf("UseQuantized = %v, UseFusedGateUp = %v, want true, false", qMoE.UseQuantized, qMoE.UseFusedGateUp)
+		}
+		if qMoE.GateWeight != nil || qMoE.UpWeight != nil || qMoE.DownWeight != nil {
+			t.Fatal("dense weights set on a quantized block")
+		}
+		for name, got := range map[string][2]int{
+			"gate": {qMoE.GateGroupSize, qMoE.GateBits},
+			"up":   {qMoE.UpGroupSize, qMoE.UpBits},
+			"down": {qMoE.DownGroupSize, qMoE.DownBits},
+		} {
+			if got != [2]int{groupSize, bits} {
+				t.Errorf("%s group size, bits = %v, want [%d %d]", name, got, groupSize, bits)
+			}
+		}
+
+		gate, up, down = loadStackedExpertProjections(dense, cfg, prefixes...)
+		if gate == nil || up == nil || down == nil {
+			t.Fatal("dense switch_glu experts not found")
+		}
+		dMoE := &MoEBlock{PerExpertScale: onesLike(E)}
+		setUnfusedExperts(dMoE, gate, up, down)
+		if dMoE.UseQuantized {
+			t.Fatal("UseQuantized = true for dense experts")
+		}
+		if got := dMoE.GateWeight.Dims(); len(got) != 3 || got[0] != E || got[1] != H || got[2] != I {
+			t.Fatalf("dense gate shape = %v, want [%d %d %d]", got, E, H, I)
+		}
+
+		x := variedLike(0.11, 1, 5, H)
+		scores, inds := newRouter(cfg).Forward(x, cfg)
+		qOut := qMoE.Forward(x, scores, inds, cfg).AsType(mlx.DTypeFloat32)
+		dOut := dMoE.Forward(x, scores, inds, cfg).AsType(mlx.DTypeFloat32)
+		diff := mlx.Sub(qOut, dOut).Abs().MaxAxis(-1, false).MaxAxis(-1, false)
+		scale := dOut.Abs().MaxAxis(-1, false).MaxAxis(-1, false)
+		mlx.Eval(diff, scale)
+		if d, s := diff.Floats()[0], scale.Floats()[0]; s == 0 || d > 1e-4*s {
+			t.Fatalf("quantized output differs from dense: max |diff| = %g, max |dense| = %g", d, s)
+		}
+
+		delete(quantized, layer+".experts.switch_glu.up_proj.weight")
+		if gate, up, _ := loadStackedExpertProjections(quantized, cfg, prefixes...); gate == nil || up != nil {
+			t.Fatal("incomplete switch_glu experts not reported as incomplete")
+		}
+	})
+}
+
 func TestCollectExpertProjectionsPrefixes(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		const experts, intermediate, hidden = 2, 16, 32

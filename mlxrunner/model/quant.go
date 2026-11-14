@@ -236,7 +236,17 @@ func ResolveLinearQuantParams(
 
 	if mode == "affine" {
 		if inferredGroupSize, inferredBits, ok := InferAffineQuantParamsFromShapes(weight, scales, bits); ok {
-			if !fromTensor || groupSize == 0 || bits == 0 {
+			// Per-tensor metadata can carry the checkpoint-wide type for a tensor
+			// a per-module override quantized differently, so the shapes decide
+			// its bits. Inferring both is the fallback: 4-bit/64 and 8-bit/32
+			// pack alike, and only the metadata's group size tells them apart.
+			shapeBits := 0
+			if fromTensor && groupSize != 0 && bits != 0 {
+				shapeBits = affineBitsForGroupSize(weight, scales, groupSize)
+			}
+			if shapeBits != 0 {
+				bits = shapeBits
+			} else {
 				groupSize = inferredGroupSize
 				bits = inferredBits
 			}
@@ -244,6 +254,19 @@ func ResolveLinearQuantParams(
 	}
 
 	return groupSize, bits, mode
+}
+
+// affineBitsForGroupSize returns the bit width that packed weight and scale
+// shapes imply for groupSize, or 0 if they imply none.
+func affineBitsForGroupSize(weight, scales *mlx.Array, groupSize int) int {
+	weightShape := weight.Dims()
+	scaleShape := scales.Dims()
+	packedBits := weightShape[len(weightShape)-1] * 32
+	groupedInputs := scaleShape[len(scaleShape)-1] * groupSize
+	if packedBits%groupedInputs != 0 || packedBits/groupedInputs > 8 {
+		return 0
+	}
+	return packedBits / groupedInputs
 }
 
 // InferAffineQuantParamsFromShapes infers (groupSize,bits) for affine quantized
