@@ -75,6 +75,8 @@ type Config struct {
 	ConvKernelSize int
 	SelectorRank   int
 	SelectorTopK   int
+
+	contextNormFP32 bool
 }
 
 // draftTarget is what dflash requires of its target beyond model.Model.
@@ -130,7 +132,7 @@ type Layer struct {
 	MLP          *MLP
 	IsSliding    bool
 	IsCausal     bool
-	// DFlash2's convolutions around each sublayer; nil for DFlash, where they pass through.
+	// Block-local convolutions; nil for ordinary DFlash.
 	AttentionConv *convolution
 	MLPConv       *convolution
 }
@@ -146,6 +148,7 @@ type Attention struct {
 	QNorm  *nn.RMSNorm
 	KNorm  *nn.RMSNorm
 	NoRoPE bool
+	Sinks  *mlx.Array
 
 	// ctxInputNorm applies the layer's input norm to context rows (laguna).
 	ctxInputNorm *nn.RMSNorm
@@ -627,22 +630,35 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 // call just extends the context, with no context the block drafts from
 // whatever is already cached.
 func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
-	kv := draftCaches
+	return m.forward(b, draftCaches, m.projectContext(b.Hidden))
+}
 
-	var hctx *mlx.Array
-	nCtx := int32(0)
-	if b.Hidden != nil {
-		features := b.Hidden
-		if len(m.AuxNorms) > 0 {
-			slices := make([]*mlx.Array, len(m.AuxNorms))
-			for i, norm := range m.AuxNorms {
-				lo := int32(i) * m.HiddenSize
-				slices[i] = norm.Forward(features.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(int(lo), int(lo+m.HiddenSize))), m.RMSNormEps)
-			}
-			features = mlx.Concatenate(slices, -1)
+func (m *Model) projectContext(features *mlx.Array) *mlx.Array {
+	if features == nil {
+		return nil
+	}
+	if len(m.AuxNorms) > 0 {
+		slices := make([]*mlx.Array, len(m.AuxNorms))
+		for i, norm := range m.AuxNorms {
+			lo := i * int(m.HiddenSize)
+			slices[i] = norm.Forward(features.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(lo, lo+int(m.HiddenSize))), m.RMSNormEps)
 		}
-		hctx = m.HiddenNorm.Forward(m.FC.Forward(features), m.RMSNormEps)
-		nCtx = int32(b.Hidden.Dim(1))
+		features = mlx.Concatenate(slices, -1)
+	}
+	return m.normalizeContext(m.FC.Forward(features), m.HiddenNorm)
+}
+
+func (c *Config) normalizeContext(x *mlx.Array, norm *nn.RMSNorm) *mlx.Array {
+	if c.contextNormFP32 {
+		return rmsNormFP32(x, norm)
+	}
+	return norm.Forward(x, c.RMSNormEps)
+}
+
+func (m *Model) forward(b *batch.Batch, kv []cache.Layer, hctx *mlx.Array) (hidden, auxHidden *mlx.Array) {
+	nCtx := int32(0)
+	if hctx != nil {
+		nCtx = int32(hctx.Dim(1))
 	}
 	ctxPositions := mlx.FromValues([]int32{b.SeqOffsets[0]}, 1)
 
@@ -699,7 +715,7 @@ func (a *Attention) contextKV(hctx *mlx.Array, positions *mlx.Array, cfg *Config
 	dims := hctx.Dims()
 	B, S := int32(dims[0]), int32(dims[1])
 	k, v = a.splitKV(a.KVProj.Forward(hctx), B, S, cfg)
-	k = a.KNorm.Forward(k, cfg.RMSNormEps)
+	k = cfg.normalizeContext(k, a.KNorm)
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 	if !a.NoRoPE {
@@ -740,7 +756,7 @@ func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Layer, bb *batch.B
 	// writes would force a wrapped rotating cache to copy its window out.
 	hist := c.(cache.Attention).Update(bb, k, v)
 
-	out := nn.ScaledDotProductAttention(bb, q, cfg.Scale, nn.WithKVHistory(hist), nn.WithMask(mask))
+	out := nn.ScaledDotProductAttention(bb, q, cfg.Scale, nn.WithKVHistory(hist), nn.WithMask(mask), nn.WithSinks(a.Sinks))
 	if a.GProj != nil {
 		// Per-head softplus output gate, applied before the head merge.
 		gate := mlx.ExpandDims(mlx.SoftplusF32(a.GProj.Forward(x)), -1)
