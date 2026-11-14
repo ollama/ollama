@@ -916,6 +916,165 @@ func TestSchedFindRunnerToUnload(t *testing.T) {
 	require.Equal(t, r1, resp)
 }
 
+func TestSchedFindRunnerToUnloadBestFitSize(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	// Both runners have equal sessionDuration (e.g. 5m keep_alive).
+	// gemma4 has a blob hash that sorts alphabetically before phi4-mini ("280af..." < "3c168...").
+	gemma4 := &runnerRef{
+		modelPath:       "/models/sha256-280af00000000000000000000000000000000000000000000000000000000000",
+		vramSize:        33 * format.GigaByte,
+		sessionDuration: 5 * time.Minute,
+		numParallel:     1,
+	}
+	phi4 := &runnerRef{
+		modelPath:       "/models/sha256-3c16800000000000000000000000000000000000000000000000000000000000",
+		vramSize:        12 * format.GigaByte,
+		sessionDuration: 5 * time.Minute,
+		numParallel:     1,
+	}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["gemma"] = gemma4
+	s.loaded["phi4"] = phi4
+	s.loadedMu.Unlock()
+
+	// Request needs 10 GiB. Both 12 GiB (phi4) and 33 GiB (gemma4) are sufficient alone.
+	// Best-fit should pick phi4 (12 GiB) instead of evicting gemma4 (33 GiB).
+	resp := s.findRunnerToUnload(10 * format.GigaByte)
+	require.Equal(t, phi4, resp)
+}
+
+func TestSchedFindRunnerToUnloadSufficientVsInsufficient(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	rSmall := &runnerRef{
+		modelPath:       "/models/small",
+		vramSize:        4 * format.GigaByte,
+		sessionDuration: 5 * time.Minute,
+		numParallel:     1,
+	}
+	rMedium := &runnerRef{
+		modelPath:       "/models/medium",
+		vramSize:        12 * format.GigaByte,
+		sessionDuration: 5 * time.Minute,
+		numParallel:     1,
+	}
+	rLarge := &runnerRef{
+		modelPath:       "/models/large",
+		vramSize:        32 * format.GigaByte,
+		sessionDuration: 5 * time.Minute,
+		numParallel:     1,
+	}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["small"] = rSmall
+	s.loaded["medium"] = rMedium
+	s.loaded["large"] = rLarge
+	s.loadedMu.Unlock()
+
+	// Request needs 10 GiB. rSmall (4 GiB) is insufficient alone.
+	// rMedium (12 GiB) and rLarge (32 GiB) are sufficient.
+	// Best-fit should pick rMedium.
+	resp := s.findRunnerToUnload(10 * format.GigaByte)
+	require.Equal(t, rMedium, resp)
+}
+
+func TestSchedFindRunnerToUnloadLRUWhenTies(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	now := time.Now()
+	rOld := &runnerRef{
+		modelPath:       "z_model",
+		sessionDuration: 5 * time.Minute,
+		lastUsed:        now.Add(-10 * time.Minute),
+		numParallel:     1,
+	}
+	rRecent := &runnerRef{
+		modelPath:       "a_model",
+		sessionDuration: 5 * time.Minute,
+		lastUsed:        now.Add(-2 * time.Minute),
+		numParallel:     1,
+	}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["z"] = rOld
+	s.loaded["a"] = rRecent
+	s.loadedMu.Unlock()
+
+	// rRecent is named "a_model" (lexicographically first), but rOld was last used earlier.
+	// Scheduler must evict rOld by LRU order.
+	resp := s.findRunnerToUnload()
+	require.Equal(t, rOld, resp)
+}
+
+func TestSchedFindRunnerToUnloadLRUWhenNoneSufficient(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	now := time.Now()
+	rOld := &runnerRef{
+		modelPath:       "z_model",
+		vramSize:        12 * format.GigaByte,
+		sessionDuration: 5 * time.Minute,
+		lastUsed:        now.Add(-10 * time.Minute),
+		numParallel:     1,
+	}
+	rRecent := &runnerRef{
+		modelPath:       "a_model",
+		vramSize:        12 * format.GigaByte,
+		sessionDuration: 5 * time.Minute,
+		lastUsed:        now.Add(-2 * time.Minute),
+		numParallel:     1,
+	}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["z"] = rOld
+	s.loaded["a"] = rRecent
+	s.loadedMu.Unlock()
+
+	// Request needs 50 GiB, which neither model alone can satisfy.
+	// Falling back to LRU should pick rOld first.
+	resp := s.findRunnerToUnload(50 * format.GigaByte)
+	require.Equal(t, rOld, resp)
+}
+
+func TestSchedFindRunnerToUnloadExplicitSessionDurationPriority(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	rShort := &runnerRef{
+		modelPath:       "/models/short",
+		vramSize:        20 * format.GigaByte,
+		sessionDuration: 1 * time.Minute,
+		numParallel:     1,
+	}
+	rLong := &runnerRef{
+		modelPath:       "/models/long",
+		vramSize:        10 * format.GigaByte,
+		sessionDuration: 1 * time.Hour,
+		numParallel:     1,
+	}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["short"] = rShort
+	s.loaded["long"] = rLong
+	s.loadedMu.Unlock()
+
+	// Both models are >= 5 GiB, but rShort has explicit 1m keep_alive while rLong has 1h.
+	// Session duration priority must pick rShort.
+	resp := s.findRunnerToUnload(5 * format.GigaByte)
+	require.Equal(t, rShort, resp)
+}
+
 func TestSchedNeedsReload(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
