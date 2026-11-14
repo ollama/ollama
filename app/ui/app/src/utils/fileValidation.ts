@@ -39,6 +39,8 @@ export const TEXT_FILE_EXTENSIONS = [
   "conf",
   "log",
   "rtf",
+  "asm",
+  "s",
 ];
 
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
