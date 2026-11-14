@@ -330,6 +330,7 @@ console.log(response.message.content);
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) - Open source LLM observability
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) - AI observability and evaluation for agents
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) - Open source LLM observability
+- [inference-vitals](https://github.com/urbanmorph/inference-vitals) - Local dashboard for tokens per second, memory, swap, heat and power while models run, on Apple Silicon (NVIDIA on Linux experimental)
 
 ### Database & Embeddings
 
