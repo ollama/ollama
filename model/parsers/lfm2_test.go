@@ -554,6 +554,9 @@ func TestLFM2Parser_Init(t *testing.T) {
 	if parser.state != LFM2LookingForThinking {
 		t.Errorf("Expected initial state to be LFM2LookingForThinking, got %v", parser.state)
 	}
+	if got := parser.ThinkingOpen(); len(got) != 1 || got[0] != lfm2ThinkingOpenTag {
+		t.Errorf("ThinkingOpen() = %q, want %q", got, lfm2ThinkingOpenTag)
+	}
 }
 
 func TestLFM2Parser_parseToolCallContent(t *testing.T) {

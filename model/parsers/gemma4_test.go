@@ -525,6 +525,27 @@ func TestGemma4Parser_Streaming(t *testing.T) {
 	}
 }
 
+func TestGemma4ParserThinkingOpen(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+	if diff := cmp.Diff([]string{gemma4ThinkingOpenTag}, parser.ThinkingOpen()); diff != "" {
+		t.Fatalf("ThinkingOpen() mismatch (-want +got):\n%s", diff)
+	}
+
+	parser.Init(nil, &api.Message{Role: "tool"}, &api.ThinkValue{Value: true})
+	if got := parser.ThinkingOpen(); len(got) != 0 {
+		t.Fatalf("ThinkingOpen() = %q after tool response, want none", got)
+	}
+}
+
+func TestGemma4ParserThinkingOpenRequiresThinking(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+	if got := parser.ThinkingOpen(); len(got) != 0 {
+		t.Fatalf("ThinkingOpen() = %q with thinking disabled, want none", got)
+	}
+}
+
 func TestGemma4Parser_ToolResponseContinuationStartsInThinking(t *testing.T) {
 	parser := &Gemma4Parser{hasThinkingSupport: true}
 	parser.Init(nil, &api.Message{Role: "tool", Content: "go.mod\ngo.sum\n"}, &api.ThinkValue{Value: true})
