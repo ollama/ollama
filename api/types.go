@@ -1262,11 +1262,21 @@ func (opts *Options) FromMap(m map[string]any) error {
 			switch field.Kind() {
 			case reflect.Int:
 				switch t := val.(type) {
+				case int:
+					field.SetInt(int64(t))
+				case int32:
+					field.SetInt(int64(t))
 				case int64:
 					field.SetInt(t)
 				case float64:
 					// when JSON unmarshals numbers, it uses float64, not int
 					field.SetInt(int64(t))
+				case json.Number:
+					n, err := t.Int64()
+					if err != nil {
+						return fmt.Errorf("option %q must be of type integer", key)
+					}
+					field.SetInt(n)
 				default:
 					return fmt.Errorf("option %q must be of type integer", key)
 				}
@@ -1277,12 +1287,26 @@ func (opts *Options) FromMap(m map[string]any) error {
 				}
 				field.SetBool(val)
 			case reflect.Float32:
-				// JSON unmarshals to float64
-				val, ok := val.(float64)
-				if !ok {
+				switch t := val.(type) {
+				case float32:
+					field.SetFloat(float64(t))
+				case float64:
+					field.SetFloat(t)
+				case int:
+					field.SetFloat(float64(t))
+				case int32:
+					field.SetFloat(float64(t))
+				case int64:
+					field.SetFloat(float64(t))
+				case json.Number:
+					f, err := t.Float64()
+					if err != nil {
+						return fmt.Errorf("option %q must be of type float32", key)
+					}
+					field.SetFloat(f)
+				default:
 					return fmt.Errorf("option %q must be of type float32", key)
 				}
-				field.SetFloat(val)
 			case reflect.String:
 				val, ok := val.(string)
 				if !ok {
@@ -1316,10 +1340,20 @@ func (opts *Options) FromMap(m map[string]any) error {
 				case reflect.Int:
 					var i int
 					switch t := val.(type) {
+					case int:
+						i = t
+					case int32:
+						i = int(t)
 					case int64:
 						i = int(t)
 					case float64:
 						i = int(t)
+					case json.Number:
+						n, err := t.Int64()
+						if err != nil {
+							return fmt.Errorf("option %q must be of type integer", key)
+						}
+						i = int(n)
 					default:
 						return fmt.Errorf("option %q must be of type integer", key)
 					}
