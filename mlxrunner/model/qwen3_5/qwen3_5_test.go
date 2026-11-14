@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
@@ -119,7 +120,7 @@ func TestSupportsGatherQMM(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := supportsGatherQMM(tt.mode, tt.bits); got != tt.want {
+		if got := model.SupportsGatherQMM(tt.mode, tt.bits); got != tt.want {
 			t.Fatalf("supportsGatherQMM(%q, %d) = %v, want %v", tt.mode, tt.bits, got, tt.want)
 		}
 	}

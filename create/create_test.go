@@ -345,73 +345,46 @@ func TestShouldQuantizePredicate(t *testing.T) {
 	}
 }
 
-func TestExpertGroupPrefix(t *testing.T) {
+func TestPerExpertGroup(t *testing.T) {
 	tests := []struct {
 		name string
 		want string
 	}{
-		// Expert tensors should return the group prefix
 		{"model.layers.1.mlp.experts.0.down_proj.weight", "model.layers.1.mlp.experts"},
 		{"model.layers.1.mlp.experts.63.gate_proj.weight", "model.layers.1.mlp.experts"},
-		{"model.layers.0.mlp.experts.0.up_proj.weight", "model.layers.0.mlp.experts"},
-
-		// MoE expert tensors (Gemma-style .moe.experts.)
 		{"model.layers.0.moe.experts.0.gate_proj.weight", "model.layers.0.moe.experts"},
-		{"model.layers.1.moe.experts.42.down_proj.weight", "model.layers.1.moe.experts"},
 		{"language_model.model.layers.2.moe.experts.127.up_proj.weight", "language_model.model.layers.2.moe.experts"},
-
-		// Expert tensors with language_model prefix should also match
-		{"language_model.model.layers.0.mlp.experts.0.gate_proj.weight", "language_model.model.layers.0.mlp.experts"},
 		{"language_model.model.layers.1.mlp.experts.255.down_proj.weight", "language_model.model.layers.1.mlp.experts"},
-
-		// Shared expert tensors should return their own group prefix
-		{"model.layers.1.mlp.shared_experts.down_proj.weight", "model.layers.1.mlp.shared_experts"},
-		{"model.layers.2.mlp.shared_experts.gate_proj.weight", "model.layers.2.mlp.shared_experts"},
-
-		// Rewritten Qwen switch_mlp tensors should also be packed per-layer.
-		{"model.layers.1.mlp.switch_mlp.down_proj.weight", "model.layers.1.mlp.switch_mlp"},
-		{"language_model.layers.2.mlp.switch_mlp.gate_proj.weight", "language_model.layers.2.mlp.switch_mlp"},
-		{"language_model.model.layers.3.mlp.switch_mlp.up_proj.weight", "language_model.model.layers.3.mlp.switch_mlp"},
-		{"model.language_model.layers.4.mlp.switch_mlp.gate_proj.weight", "model.language_model.layers.4.mlp.switch_mlp"},
-
-		// Nemotron-style expert tensors (backbone.layers.N.mixer.experts.M)
 		{"backbone.layers.1.mixer.experts.0.down_proj.weight", "backbone.layers.1.mixer.experts"},
-		{"backbone.layers.2.mixer.experts.127.up_proj.weight", "backbone.layers.2.mixer.experts"},
 		{"language_model.backbone.layers.3.mixer.experts.42.down_proj.weight", "language_model.backbone.layers.3.mixer.experts"},
 		{"model.language_model.backbone.layers.4.mixer.experts.7.up_proj.weight", "model.language_model.backbone.layers.4.mixer.experts"},
-
-		// Nemotron-style shared expert tensors
-		{"backbone.layers.1.mixer.shared_experts.down_proj.weight", "backbone.layers.1.mixer.shared_experts"},
-		{"backbone.layers.2.mixer.shared_experts.up_proj.weight", "backbone.layers.2.mixer.shared_experts"},
-
-		// Nemotron routing gate is not an expert
-		{"backbone.layers.1.mixer.gate.weight", ""},
-
-		// MTP expert tensors (mtp.layers.N.mixer.experts.M)
-		{"mtp.layers.1.mixer.experts.0.up_proj.weight", "mtp.layers.1.mixer.experts"},
 		{"mtp.layers.1.mixer.experts.127.down_proj.weight", "mtp.layers.1.mixer.experts"},
+		{"model.language_model.layers.3.mlp.experts.9.gate_proj.weight", "model.language_model.layers.3.mlp.experts"},
+		// No parent module between the layer and its experts (re-split Gemma 4 exports).
+		{"model.language_model.layers.3.experts.9.gate_proj.weight", "model.language_model.layers.3.experts"},
+		// Numbered shared experts are their own group.
+		{"model.layers.2.mlp.shared_experts.1.up_proj.weight", "model.layers.2.mlp.shared_experts"},
 
-		// MTP shared expert tensors
-		{"mtp.layers.1.mixer.shared_experts.up_proj.weight", "mtp.layers.1.mixer.shared_experts"},
-		{"mtp.layers.1.mixer.shared_experts.down_proj.weight", "mtp.layers.1.mixer.shared_experts"},
-
-		// MTP routing gate is not an expert
-		{"mtp.layers.1.mixer.gate.weight", ""},
-
-		// Non-expert tensors should return empty string
-		{"model.layers.0.mlp.down_proj.weight", ""},    // dense layer, no experts
-		{"model.layers.1.mlp.gate.weight", ""},         // routing gate, not an expert
-		{"model.embed_tokens.weight", ""},              // embedding
-		{"model.layers.0.self_attn.q_proj.weight", ""}, // attention
-		{"model.norm.weight", ""},                      // norm
-		{"lm_head.weight", ""},                         // output head
+		// Not per-expert: unnumbered shared experts, stacked banks, routers, dense
+		// layers, experts outside a layer block, non-canonical indices.
+		{"model.layers.1.mlp.shared_experts.down_proj.weight", ""},
+		{"backbone.layers.1.mixer.shared_experts.up_proj.weight", ""},
+		{"model.layers.1.mlp.switch_mlp.down_proj.weight", ""},
+		{"model.layers.1.mlp.experts.gate_up_proj.weight", ""},
+		{"backbone.layers.1.mixer.gate.weight", ""},
+		{"model.layers.0.mlp.down_proj.weight", ""},
+		{"model.embed_tokens.weight", ""},
+		{"experts.0.up_proj.weight", ""},
+		{"model.layers.1.mlp.experts.01.up_proj.weight", "model.layers.1.mlp.experts"}, // rejected later by parseExpertTensor
+		{"model.layers.1.mlp.experts.0.up_proj.weight_scale", ""},
+		{"lm_head.weight", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ExpertGroupPrefix(tt.name)
-			if got != tt.want {
-				t.Errorf("ExpertGroupPrefix(%q) = %q, want %q", tt.name, got, tt.want)
+			got, ok := perExpertGroup(tt.name)
+			if got != tt.want || ok != (tt.want != "") {
+				t.Errorf("perExpertGroup(%q) = %q, %v; want %q", tt.name, got, ok, tt.want)
 			}
 		})
 	}

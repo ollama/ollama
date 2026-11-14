@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -245,59 +244,11 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	return quantNorm
 }
 
-var expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.backbone\.|model\.language_model\.|language_model(?:\.model)?\.|language_model\.backbone\.|model\.|backbone\.|mtp\.)?layers\.\d+$`)
-
-// ExpertGroupPrefix returns the group prefix for expert tensors that should be packed together.
-// For example:
-//   - "model.layers.1.mlp.experts.0.down_proj.weight" -> "model.layers.1.mlp.experts"
-//   - "model.layers.1.mlp.shared_experts.down_proj.weight" -> "model.layers.1.mlp.shared_experts"
-//   - "language_model.model.layers.1.mlp.switch_mlp.down_proj.weight" -> "language_model.model.layers.1.mlp.switch_mlp"
-//   - "model.layers.0.mlp.down_proj.weight" -> "" (dense layer, no experts)
-//   - "model.layers.1.mlp.gate.weight" -> "" (routing gate, not an expert)
-func ExpertGroupPrefix(tensorName string) string {
-	if !strings.HasSuffix(tensorName, ".weight") {
-		return ""
-	}
-
-	for _, marker := range []string{
-		".mlp.experts.",
-		".mlp.shared_experts.",
-		".mlp.switch_mlp.",
-		".moe.experts.",
-		".mixer.experts.",
-		".mixer.shared_experts.",
-	} {
-		idx := strings.Index(tensorName, marker)
-		if idx == -1 {
-			continue
-		}
-
-		layerPrefix := tensorName[:idx]
-		if !expertLayerPrefixRegexp.MatchString(layerPrefix) {
-			continue
-		}
-
-		return layerPrefix + strings.TrimSuffix(marker, ".")
-	}
-
-	return ""
-}
-
 type sourceQuantization struct {
-	Bits            int     `json:"bits"`
-	GroupSize       int     `json:"group_size"`
-	Mode            string  `json:"mode"`
-	Format          string  `json:"format"`
-	QuantMethod     string  `json:"quant_method"`
-	WeightBlockSize []int32 `json:"weight_block_size"`
-	ConfigGroups    map[string]struct {
-		Format  string `json:"format"`
-		Weights struct {
-			BlockStructure []int32 `json:"block_structure"`
-			NumBits        int     `json:"num_bits"`
-			Type           string  `json:"type"`
-		} `json:"weights"`
-	} `json:"config_groups"`
+	Bits        int    `json:"bits"`
+	GroupSize   int    `json:"group_size"`
+	Mode        string `json:"mode"`
+	QuantMethod string `json:"quant_method"`
 }
 
 type sourceModelConfig struct {
@@ -403,25 +354,6 @@ func (cfg sourceModelConfig) quantizationConfigs() []sourceQuantization {
 		cfg.TextConfig.QuantizationConfig,
 		cfg.TextConfig.CompressionConfig,
 	}
-}
-
-func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) {
-	for _, q := range cfg.quantizationConfigs() {
-		if !strings.EqualFold(q.QuantMethod, "fp8") || len(q.WeightBlockSize) != 2 {
-			if !strings.EqualFold(q.QuantMethod, "compressed-tensors") && !strings.EqualFold(q.Format, "float-quantized") {
-				continue
-			}
-			for _, group := range q.ConfigGroups {
-				if !strings.EqualFold(group.Format, "float-quantized") || group.Weights.NumBits != 8 || !strings.EqualFold(group.Weights.Type, "float") || len(group.Weights.BlockStructure) != 2 {
-					continue
-				}
-				return group.Weights.BlockStructure[0], group.Weights.BlockStructure[1], true
-			}
-			continue
-		}
-		return q.WeightBlockSize[0], q.WeightBlockSize[1], true
-	}
-	return 0, 0, false
 }
 
 type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolicy, error)

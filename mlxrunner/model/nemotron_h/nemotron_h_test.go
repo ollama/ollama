@@ -394,48 +394,6 @@ func TestHasMTPHeadTensors(t *testing.T) {
 	}
 }
 
-func TestSupportsGatherQMM(t *testing.T) {
-	for _, tt := range []struct {
-		mode string
-		bits int
-		want bool
-	}{
-		{mode: "affine", bits: 4, want: true},
-		{mode: "mxfp4", bits: 4, want: true},
-		{mode: "nvfp4", bits: 4, want: true},
-		{mode: "mxfp8", bits: 8, want: true},
-		{mode: "mxfp8", bits: 4, want: false},
-		{mode: "unknown", bits: 4, want: false},
-	} {
-		if got := supportsGatherQMM(tt.mode, tt.bits); got != tt.want {
-			t.Fatalf("supportsGatherQMM(%q, %d) = %v, want %v", tt.mode, tt.bits, got, tt.want)
-		}
-	}
-}
-
-func TestApplyExpertWeightGlobalScale(t *testing.T) {
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		weight := mlx.FromValues([]float32{
-			1, 2,
-			3, 4,
-			5, 6,
-			7, 8,
-		}, 2, 2, 2)
-		// Scales reach this function already in MLX's representation.
-		scale := mlx.FromValues([]float32{2 * mlx.Nvfp4MaxProduct, 3 * mlx.Nvfp4MaxProduct}, 2)
-
-		got := applyExpertWeightGlobalScale(weight, scale)
-		mlx.Eval(got)
-
-		assertAllClose(t, "scaled expert weight", got.Floats(), []float32{
-			2, 4,
-			6, 8,
-			15, 18,
-			21, 24,
-		}, 1e-5)
-	})
-}
-
 // The production form leans on MLX's fused fast RMS norm, so check it against
 // a reference that spells out every step.
 func TestGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {

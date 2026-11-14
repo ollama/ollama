@@ -158,6 +158,9 @@ func quantizeInputReader(ts TensorSpec, sources []*safetensors.TensorData) (io.R
 		}
 		return safetensors.BuildPackedSafetensorsReader([]*safetensors.TensorData{stackedWeight, stackedScale}), nil
 	case TransformStackExperts:
+		if ts.Each != TransformNone {
+			return nil, fmt.Errorf("transform %q with per-source %q is not supported for a quantized tensor", ts.Transform, ts.Each)
+		}
 		stacked, err := stackExpertTensors(ts.Name, ts.OutDtype, ts.OutShape, sources)
 		if err != nil {
 			return nil, err
@@ -168,8 +171,8 @@ func quantizeInputReader(ts TensorSpec, sources []*safetensors.TensorData) (io.R
 	}
 }
 
-// needsFP8Decode reports whether a transform dequantizes block-FP8 weights on
-// the MLX thread (a single tensor or a stacked per-expert group).
+// needsFP8Decode reports whether a transform widens FP8 weights on the MLX
+// thread (a single tensor or a stacked per-expert group).
 func needsFP8Decode(t Transform) bool {
 	return t == TransformDecodeFP8 || t == TransformDecodeStackFP8
 }

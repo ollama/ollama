@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 
 	"github.com/ollama/ollama/mlx"
@@ -16,7 +15,7 @@ import (
 // quantizeItem is one tensor going into a (possibly multi-tensor) quantized
 // blob: its output name, the quantization to apply (or "" to decode/keep at
 // source precision), a safetensors-wrapped reader for its input bytes (keyed by
-// name), and whether the input is a block-FP8 weight to decode before use.
+// name), and whether the input is an FP8 weight to widen to BF16 first.
 type quantizeItem struct {
 	name      string
 	quantize  string
@@ -115,8 +114,8 @@ func quantizeItemArrays(it quantizeItem, arrays map[string]*mlx.Array, tmpDir st
 }
 
 // loadAndQuantizeArray writes a safetensors reader to a temp file, loads it
-// with MLX, decodes a block-FP8 source tensor if present, optionally
-// quantizes, and adds the resulting arrays (weight, scale, optional bias) to
+// with MLX, widens an FP8 source tensor if present, optionally quantizes, and
+// adds the resulting arrays (weight, scale, optional bias) to
 // arrays keyed by name. With quantize == "" the (decoded) tensor is kept as-is.
 // It must be called on the MLX thread.
 //
@@ -153,8 +152,6 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 			return nil
 		}
 
-		// Decode an FP8 source tensor (using its block scale) before quantizing,
-		// so a decode-only request (quantize == "") still yields usable float data.
 		if decodeFP8 {
 			scaleKey := name + ".scale_inv"
 			scaleInv := st.Get(scaleKey)
@@ -213,63 +210,30 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 	return tmpPath, toEval, st, nil
 }
 
-// decodeSourceFP8Tensor dequantizes a 128x128 block-FP8 weight using its block
-// scale, returning a BF16 tensor. The weight is either 2D [rows, cols] with a 2D
-// scale [ceil(rows/128), ceil(cols/128)], or a stacked 3D expert tensor
-// [experts, rows, cols] with a 3D scale [experts, ceil(rows/128), ceil(cols/128)];
-// the leading expert axis (if present) is decoded block-wise per expert.
+// decodeSourceFP8Tensor widens an FP8 weight with its float scale to a BF16
+// tensor. The weight is 2D [rows, cols] or a stacked expert bank [experts,
+// rows, cols]. The scale holds one value per tensor, per expert for a bank.
 func decodeSourceFP8Tensor(weight, scale *mlx.Array) (*mlx.Array, error) {
 	if weight == nil || scale == nil {
 		return nil, fmt.Errorf("fp8 weight and scale tensors are required")
 	}
 	weightShape := weight.Dims()
-	scaleShape := scale.Dims()
 	rank := len(weightShape)
-	if (rank != 2 && rank != 3) || len(scaleShape) != rank {
-		return nil, fmt.Errorf("expected matching 2D or 3D fp8 weight and scale tensors, got %v and %v", weightShape, scaleShape)
+	if rank != 2 && rank != 3 {
+		return nil, fmt.Errorf("expected a 2D or 3D fp8 weight, got %v", weightShape)
 	}
-
-	const blockRows = 128
-	const blockCols = 128
-
-	// The 128x128 blocks tile the trailing [rows, cols]; a 3D weight carries a
-	// leading expert axis that broadcasts over those blocks one expert at a time.
-	lead := weightShape[:rank-2]
-	rows, cols := weightShape[rank-2], weightShape[rank-1]
-	sr := (rows + blockRows - 1) / blockRows
-	sc := (cols + blockCols - 1) / blockCols
-	wantScale := append(append([]int(nil), lead...), sr, sc)
-	if !slices.Equal(scaleShape, wantScale) {
-		return nil, fmt.Errorf("unexpected fp8 scale shape %v for weight shape %v; want %v", scaleShape, weightShape, wantScale)
+	// The scales broadcast over the trailing [rows, cols] once reshaped to [..., 1, 1].
+	shape := []int32{1, 1}
+	experts := 1
+	if rank == 3 {
+		experts = weightShape[0]
+		shape = []int32{int32(experts), 1, 1}
 	}
-
-	leadI32 := make([]int32, len(lead))
-	for i, d := range lead {
-		leadI32[i] = int32(d)
+	if scale.Size() != experts {
+		return nil, fmt.Errorf("unexpected fp8 scale shape %v for weight shape %v", scale.Dims(), weightShape)
 	}
 
 	decoded := mlx.FromFP8(weight, mlx.DTypeBFloat16)
-	dtype := decoded.DType()
-	padBottom := blockRows*sr - rows
-	padSide := blockCols*sc - cols
-	if padBottom > 0 || padSide > 0 {
-		// Pad the bottom/right of the trailing [rows, cols] only.
-		decoded = mlx.PadConstant(decoded, []int{rank - 2, rank - 1}, []int{0, 0}, []int{padBottom, padSide})
-	}
-
-	// Split each 128x128 block into its own axis pair, scale every block by its
-	// per-block factor (broadcast across the block interior), then restore.
-	blocked := append(append([]int32(nil), leadI32...), int32(sr), blockRows, int32(sc), blockCols)
-	decoded = mlx.Reshape(decoded, blocked...)
-	// scale [..., sr, sc] -> [..., sr, 1, sc, 1]
-	scaleB := mlx.ExpandDims(mlx.ExpandDims(scale, len(lead)+1), len(lead)+3)
 	// Multiplying by an F32 scale promotes the result; keep the decoded dtype.
-	decoded = mlx.Mul(decoded, scaleB).AsType(dtype)
-	padded := append(append([]int32(nil), leadI32...), int32(rows+padBottom), int32(cols+padSide))
-	decoded = mlx.Reshape(decoded, padded...)
-	if padBottom > 0 || padSide > 0 {
-		stops := append(append([]int32(nil), leadI32...), int32(rows), int32(cols))
-		decoded = mlx.SliceStartStop(decoded, make([]int32, rank), stops)
-	}
-	return decoded, nil
+	return mlx.Mul(decoded, mlx.Reshape(scale, shape...)).AsType(decoded.DType()), nil
 }

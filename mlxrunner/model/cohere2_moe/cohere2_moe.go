@@ -161,17 +161,6 @@ type SwitchMLP struct {
 	UseQuantized bool
 }
 
-type stackedExpertWeights struct {
-	Weight          *mlx.Array
-	Scales          *mlx.Array
-	Biases          *mlx.Array
-	GlobalScales    *mlx.Array
-	Bits            int
-	GroupSize       int
-	Mode            string
-	SourceQuantized bool
-}
-
 func parseConfig(configData []byte) (Config, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(configData, &raw); err != nil {
@@ -383,190 +372,21 @@ func NewModel(root *model.Root) (model.Model, error) {
 	return m, nil
 }
 
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
+// readExperts reads one routed-expert projection from the layer's experts or
+// switch_mlp banks, stacked or per expert. A quantized bank stays quantized
+// for GatherQMM when the kernel supports its mode and is dequantized
+// otherwise.
+func readExperts(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix, proj string) (*model.ExpertBank, error) {
+	quant := model.QuantDefaults{GroupSize: cfg.QuantGroupSize, Bits: cfg.QuantBits, Mode: cfg.QuantMode, TensorQuant: cfg.TensorQuant}
+	bank, err := model.ReadExpertBank(tensors, quant, int(cfg.NumExperts), proj, layerPrefix+".mlp.experts", layerPrefix+".mlp.switch_mlp")
+	if err != nil || bank == nil {
+		return nil, err
 	}
-}
-
-// transposeExpertWeightForGatherMM converts stacked [E, out, in] expert
-// weights to the [E, in, out] layout GatherMM consumes, materialized once at
-// load so the forward path avoids per-call transposes.
-func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || w.NumDims() != 3 {
-		return w
+	defer bank.Release(tensors)
+	if bank.Quantized() && useQuantized && model.SupportsGatherQMM(bank.Mode, bank.Bits) {
+		return bank, nil
 	}
-	return mlx.Transpose(w, 0, 2, 1).Clone()
-}
-
-// loadStackedProjection returns expert weights already stacked as a single 3D
-// tensor (layers.N.mlp.switch_mlp.<proj>.weight) — the layout `ollama create`
-// writes when it packs per-expert tensors at import.
-func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, base string) *stackedExpertWeights {
-	key := base + ".weight"
-	w := tensors[key]
-	if w == nil {
-		return nil
-	}
-
-	scales := tensors[key+"_scale"]
-	if scales == nil {
-		return &stackedExpertWeights{Weight: w}
-	}
-
-	qbiases := tensors[key+"_qbias"]
-	globalScale, _ := model.ReadGlobalScale(tensors, key, key+".weight")
-	groupSize, bits, mode := model.ResolveLinearQuantParams(
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
-		key, w, scales,
-	)
-	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) {
-		return &stackedExpertWeights{
-			Weight:          w,
-			Scales:          scales,
-			Biases:          qbiases,
-			GlobalScales:    globalScale,
-			Bits:            bits,
-			GroupSize:       groupSize,
-			Mode:            mode,
-			SourceQuantized: true,
-		}
-	}
-
-	return &stackedExpertWeights{
-		Weight:          mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, globalScale),
-		Biases:          qbiases,
-		Bits:            bits,
-		GroupSize:       groupSize,
-		Mode:            mode,
-		SourceQuantized: true,
-	}
-}
-
-func denseExpertWeight(w *stackedExpertWeights) *mlx.Array {
-	if w.Scales == nil {
-		return w.Weight
-	}
-	return mlx.Dequantize(
-		w.Weight, w.Scales, w.Biases, w.GroupSize, w.Bits, w.Mode, w.GlobalScales,
-	)
-}
-
-func loadExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, base string) *stackedExpertWeights {
-	key := base + ".weight"
-	w := tensors[key]
-	if w == nil {
-		return nil
-	}
-
-	scales := tensors[key+"_scale"]
-	if scales == nil {
-		return &stackedExpertWeights{Weight: w}
-	}
-
-	qbiases := tensors[key+"_qbias"]
-	globalScale, _ := model.ReadGlobalScale(tensors, key, key+".weight")
-	groupSize, bits, mode := model.ResolveLinearQuantParams(
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
-		key, w, scales,
-	)
-	if useQuantized && supportsGatherQMM(mode, bits) {
-		return &stackedExpertWeights{
-			Weight:          w,
-			Scales:          scales,
-			Biases:          qbiases,
-			GlobalScales:    globalScale,
-			Bits:            bits,
-			GroupSize:       groupSize,
-			Mode:            mode,
-			SourceQuantized: true,
-		}
-	}
-
-	return &stackedExpertWeights{
-		Weight:          mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, globalScale),
-		Biases:          qbiases,
-		Bits:            bits,
-		GroupSize:       groupSize,
-		Mode:            mode,
-		SourceQuantized: true,
-	}
-}
-
-func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix, proj string) *stackedExpertWeights {
-	var weights, scales, biases, globalScales []*mlx.Array
-	var bits, groupSize int
-	var mode string
-	var quantized bool
-	var sourceQuantized bool
-
-	for e := range cfg.NumExperts {
-		base := fmt.Sprintf("%s.mlp.experts.%d.%s", layerPrefix, e, proj)
-		part := loadExpertProjection(tensors, cfg, useQuantized, base)
-		if part == nil {
-			return nil
-		}
-		if e == 0 {
-			bits, groupSize, mode = part.Bits, part.GroupSize, part.Mode
-			quantized = part.Scales != nil
-			sourceQuantized = part.SourceQuantized
-		} else if quantized != (part.Scales != nil) ||
-			sourceQuantized != part.SourceQuantized ||
-			(sourceQuantized && (part.Bits != bits || part.GroupSize != groupSize || part.Mode != mode)) {
-			return nil
-		}
-
-		weights = append(weights, part.Weight)
-		if part.Scales != nil {
-			scales = append(scales, part.Scales)
-		}
-		if part.Biases != nil {
-			biases = append(biases, part.Biases)
-		}
-		if part.GlobalScales != nil {
-			globalScales = append(globalScales, part.GlobalScales)
-		}
-	}
-
-	result := &stackedExpertWeights{
-		Weight:    mlx.Stack(weights, 0),
-		Bits:      bits,
-		GroupSize: groupSize,
-		Mode:      mode,
-	}
-	if (len(biases) != 0 && len(biases) != len(weights)) ||
-		(len(globalScales) != 0 && len(globalScales) != len(weights)) {
-		return nil
-	}
-	if quantized {
-		result.Scales = mlx.Stack(scales, 0)
-		if len(biases) == len(weights) {
-			result.Biases = mlx.Stack(biases, 0)
-		}
-		if len(globalScales) == len(weights) {
-			result.GlobalScales = mlx.Reshape(mlx.Stack(globalScales, 0), cfg.NumExperts)
-		}
-	}
-	return result
-}
-
-// loadStackedExperts resolves both packed and per-expert checkpoint layouts.
-func loadStackedExperts(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix, proj string) *stackedExpertWeights {
-	if w := loadStackedProjection(tensors, cfg, useQuantized, layerPrefix+".mlp.experts."+proj); w != nil {
-		return w
-	}
-	if w := loadStackedProjection(tensors, cfg, useQuantized, layerPrefix+".mlp.switch_mlp."+proj); w != nil {
-		return w
-	}
-	return collectExpertProjection(tensors, cfg, useQuantized, layerPrefix, proj)
+	return &model.ExpertBank{Weight: bank.Dense(), Bits: bank.Bits, GroupSize: bank.GroupSize, Mode: bank.Mode}, nil
 }
 
 // LoadWeights assigns tensors to model fields.
@@ -595,14 +415,14 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
-	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantizedExperts := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantizedExperts && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantizedExperts = true
 				break
 			}
@@ -650,41 +470,47 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				return fmt.Errorf("layer %d: missing moe router gate", i)
 			}
 
-			gateW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "gate_proj")
-			upW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj")
-			downW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj")
+			var banks [3]*model.ExpertBank
+			for j, proj := range []string{"gate_proj", "up_proj", "down_proj"} {
+				bank, err := readExperts(tensors, cfg, useQuantizedExperts, layerPrefix, proj)
+				if err != nil {
+					return fmt.Errorf("layer %d: %w", i, err)
+				}
+				banks[j] = bank
+			}
+			gateW, upW, downW := banks[0], banks[1], banks[2]
 			if gateW == nil || upW == nil || downW == nil {
 				return fmt.Errorf("layer %d: missing expert weights", i)
 			}
 
 			switchMLP := &SwitchMLP{}
-			if gateW.Scales != nil && upW.Scales != nil && downW.Scales != nil {
+			if gateW.Quantized() && upW.Quantized() && downW.Quantized() {
 				switchMLP.UseQuantized = true
 				switchMLP.GateWeightQ = gateW.Weight
 				switchMLP.GateScales = gateW.Scales
 				switchMLP.GateBiases = gateW.Biases
-				switchMLP.GateGlobalScales = gateW.GlobalScales
+				switchMLP.GateGlobalScales = gateW.GlobalScale
 				switchMLP.GateBits = gateW.Bits
 				switchMLP.GateGroupSize = gateW.GroupSize
 				switchMLP.GateMode = gateW.Mode
 				switchMLP.UpWeightQ = upW.Weight
 				switchMLP.UpScales = upW.Scales
 				switchMLP.UpBiases = upW.Biases
-				switchMLP.UpGlobalScales = upW.GlobalScales
+				switchMLP.UpGlobalScales = upW.GlobalScale
 				switchMLP.UpBits = upW.Bits
 				switchMLP.UpGroupSize = upW.GroupSize
 				switchMLP.UpMode = upW.Mode
 				switchMLP.DownWeightQ = downW.Weight
 				switchMLP.DownScales = downW.Scales
 				switchMLP.DownBiases = downW.Biases
-				switchMLP.DownGlobalScales = downW.GlobalScales
+				switchMLP.DownGlobalScales = downW.GlobalScale
 				switchMLP.DownBits = downW.Bits
 				switchMLP.DownGroupSize = downW.GroupSize
 				switchMLP.DownMode = downW.Mode
 			} else {
-				switchMLP.GateWeight = transposeExpertWeightForGatherMM(denseExpertWeight(gateW))
-				switchMLP.UpWeight = transposeExpertWeightForGatherMM(denseExpertWeight(upW))
-				switchMLP.DownWeight = transposeExpertWeightForGatherMM(denseExpertWeight(downW))
+				switchMLP.GateWeight = model.TransposeForGatherMM(gateW.Dense())
+				switchMLP.UpWeight = model.TransposeForGatherMM(upW.Dense())
+				switchMLP.DownWeight = model.TransposeForGatherMM(downW.Dense())
 			}
 			moe.SwitchMLP = switchMLP
 
