@@ -75,6 +75,22 @@ func (c *modelRecommendationsCache) GetSWR(ctx context.Context) []api.ModelRecom
 	return recs
 }
 
+// GetFresh refreshes from ollama.com, bounded by the fetch timeout and the
+// read-refresh cooldown, before returning recommendations. It falls back to
+// the cached list when the refresh fails or is skipped.
+func (c *modelRecommendationsCache) GetFresh(ctx context.Context) []api.ModelRecommendation {
+	if c.beginReadRefresh() {
+		// Detached so a disconnecting client cannot fail a refresh the timer
+		// skipped in its favor.
+		err := c.refresh(context.WithoutCancel(ctx))
+		c.endReadRefresh()
+		if err != nil && !errors.Is(err, errModelRecommendationsNoCloud) {
+			slog.Debug("model recommendations refresh failed, using cached list", "error", err)
+		}
+	}
+	return c.Get()
+}
+
 func (c *modelRecommendationsCache) set(recs []api.ModelRecommendation) {
 	c.mu.Lock()
 	c.recommendations = cloneModelRecommendations(recs)
