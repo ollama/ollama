@@ -3,9 +3,39 @@ package llm
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 )
+
+// toolGrammar allows either formatted content or a tool call whose body is
+// unconstrained once one of the model's tool-call opening strings is emitted.
+func toolGrammar(starts []string, format string) string {
+	if len(starts) == 0 {
+		return format
+	}
+
+	prefix := "ollama-"
+	for grammarHasRulePrefix(format, prefix) {
+		prefix += "ollama-"
+	}
+	formatted, tool := prefix+"format", prefix+"tool"
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "root ::= %s", formatted)
+	seen := map[string]bool{}
+	for _, start := range starts {
+		if start == "" || seen[start] {
+			continue
+		}
+		seen[start] = true
+		fmt.Fprintf(&b, " | %s %s", strconv.Quote(start), tool)
+	}
+	b.WriteByte('\n')
+	fmt.Fprintf(&b, "%s ::= [\\U00000000-\\U0010FFFF]*\n", tool)
+	b.WriteString(renameGrammarRule(format, "root", formatted))
+	return b.String()
+}
 
 // thinkingGrammar returns a grammar that leaves the text before any of the
 // closings unconstrained, then constrains what follows the first complete

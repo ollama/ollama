@@ -28,6 +28,19 @@ type Parser interface {
 	HasThinkingSupport() bool
 }
 
+// ToolCallStartProvider exposes strings that can begin a native tool call.
+type ToolCallStartProvider interface {
+	ToolCallStarts() []string
+}
+
+// ToolCallStarts returns the native tool-call opening strings exposed by p.
+func ToolCallStarts(p Parser) []string {
+	if p, ok := p.(ToolCallStartProvider); ok {
+		return p.ToolCallStarts()
+	}
+	return nil
+}
+
 type ParserConstructor func() Parser
 
 type ParserRegistry struct {
