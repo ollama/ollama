@@ -590,7 +590,7 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 	var out io.Writer = os.Stdout
 	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
-		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: cannot open output file %s: %v\n", *fOpt.outputFile, err)
 			return err
@@ -630,6 +630,7 @@ func BenchmarkModel(fOpt flagOptions) error {
 		return err
 	}
 
+	var incomplete []string
 	for _, model := range models {
 		// Fetch model info
 		infoCtx, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -685,6 +686,7 @@ func BenchmarkModel(fOpt flagOptions) error {
 		outputModelInfo(out, *fOpt.format, info)
 
 		// Timed epoch loop
+		completedEpochs := 0
 		shortCount := 0
 		offTargetCount, offTargetExample := 0, 0
 		for epoch := range *fOpt.epochs {
@@ -805,6 +807,7 @@ func BenchmarkModel(fOpt flagOptions) error {
 			}
 
 			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
+			completedEpochs++
 
 			if *fOpt.debug && *fOpt.promptTokens > 0 {
 				if responseMetrics.PromptEvalCachedCount == nil {
@@ -838,10 +841,17 @@ func BenchmarkModel(fOpt flagOptions) error {
 				offTargetCount, *fOpt.epochs, model, *fOpt.promptTokens, offTargetExample)
 		}
 
+		if completedEpochs != *fOpt.epochs {
+			incomplete = append(incomplete, fmt.Sprintf("%s: %d/%d epochs completed", model, completedEpochs, *fOpt.epochs))
+		}
+
 		// Unload model before moving to the next one
 		unloadModel(client, model, *fOpt.timeout)
 	}
 
+	if len(incomplete) > 0 {
+		return fmt.Errorf("incomplete benchmark: %s", strings.Join(incomplete, "; "))
+	}
 	return nil
 }
 
@@ -1075,6 +1085,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 	keepAliveForever := float64(-1)
 	keepAliveUnload := float64(0)
 
+	var incomplete []string
 	for _, model := range models {
 		// Size the generated prompt against this server, over the same API the
 		// timed requests use, so no Ollama endpoint is required.
@@ -1111,6 +1122,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 		}
 
 		hasTimings := false
+		completedEpochs := 0
 		shortCount := 0
 		for epoch := range *fOpt.epochs {
 			var oaiMetrics *openaiMetrics
@@ -1207,6 +1219,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 			)
 
 			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
+			completedEpochs++
 
 			if *fOpt.debug && *fOpt.promptTokens > 0 {
 				fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual prompt_tokens: %d)\n",
@@ -1222,8 +1235,14 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 			fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' had short responses (<%d tokens). Generation metrics may be unreliable.\n",
 				shortCount, *fOpt.epochs, model, *fOpt.maxTokens)
 		}
+		if completedEpochs != *fOpt.epochs {
+			incomplete = append(incomplete, fmt.Sprintf("%s: %d/%d epochs completed", model, completedEpochs, *fOpt.epochs))
+		}
 	}
 
+	if len(incomplete) > 0 {
+		return fmt.Errorf("incomplete benchmark: %s", strings.Join(incomplete, "; "))
+	}
 	return nil
 }
 

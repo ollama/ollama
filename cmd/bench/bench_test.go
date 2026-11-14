@@ -259,8 +259,8 @@ func TestBenchmarkModel_ServerError(t *testing.T) {
 
 	output := captureOutput(func() {
 		err := BenchmarkModel(fOpt)
-		if err != nil {
-			t.Errorf("Expected error to be handled internally, got returned error: %v", err)
+		if err == nil {
+			t.Error("Expected failed benchmark to return an error")
 		}
 	})
 
@@ -304,8 +304,8 @@ func TestBenchmarkModel_Timeout(t *testing.T) {
 
 	output := captureOutput(func() {
 		err := BenchmarkModel(fOpt)
-		if err != nil {
-			t.Errorf("Expected timeout to be handled internally, got returned error: %v", err)
+		if err == nil {
+			t.Error("Expected incomplete benchmark to return an error")
 		}
 	})
 
@@ -332,8 +332,8 @@ func TestBenchmarkModel_NoMetrics(t *testing.T) {
 
 	output := captureOutput(func() {
 		err := BenchmarkModel(fOpt)
-		if err != nil {
-			t.Errorf("Expected no error, got %v", err)
+		if err == nil {
+			t.Error("Expected missing metrics to return an error")
 		}
 	})
 
