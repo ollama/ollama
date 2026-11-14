@@ -589,6 +589,43 @@ func TestGemma4Parser_StreamingToolCall(t *testing.T) {
 	}
 }
 
+func TestGemma4Parser_SpacedObjectKeys(t *testing.T) {
+	input := `<|tool_call>call:create_workflow{connections:{Basic LLM Chain:{main:[{node:<|"|>Ollama Chat Model<|"|>}]}, Ollama Chat Model:{main:[]}}}<tool_call|>`
+	expected := []api.ToolCall{{
+		Function: api.ToolCallFunction{
+			Name: "create_workflow",
+			Arguments: testArgs(map[string]any{
+				"connections": map[string]any{
+					"Basic LLM Chain": map[string]any{
+						"main": []any{map[string]any{"node": "Ollama Chat Model"}},
+					},
+					"Ollama Chat Model": map[string]any{"main": []any{}},
+				},
+			}),
+		},
+	}}
+
+	// Include complete input and every possible two-chunk streaming boundary.
+	for split := 0; split <= len(input); split++ {
+		parser := &Gemma4Parser{}
+		parser.Init(nil, nil, nil)
+		var calls []api.ToolCall
+		for i, chunk := range []string{input[:split], input[split:]} {
+			content, _, got, err := parser.Add(chunk, i == 1)
+			if err != nil {
+				t.Fatalf("split %d: Add() error = %v", split, err)
+			}
+			if content != "" {
+				t.Fatalf("split %d: unexpected content %q", split, content)
+			}
+			calls = append(calls, got...)
+		}
+		if diff := cmp.Diff(expected, calls, argsComparer); diff != "" {
+			t.Fatalf("split %d: tool calls mismatch (-want +got):\n%s", split, diff)
+		}
+	}
+}
+
 func TestGemma4Parser_IgnoresExtraToolCallCloseTags(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -814,6 +851,36 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			name:     "nested_object",
 			input:    `{config:{enabled:true,name:<|"|>test<|"|>}}`,
 			expected: `{"config":{"enabled":true,"name":"test"}}`,
+		},
+		{
+			name:     "bare_keys_with_spaces",
+			input:    `{connections:{Basic LLM Chain:{main:[]}, Ollama Chat Model:{main:[]}}}`,
+			expected: `{"connections":{"Basic LLM Chain":{"main":[]}, "Ollama Chat Model":{"main":[]}}}`,
+		},
+		{
+			name:     "bare_key_with_space_before_colon",
+			input:    "{ display name \t :<|\"|>Demo<|\"|>}",
+			expected: `{ "display name":"Demo"}`,
+		},
+		{
+			name:     "bare_key_with_unicode_words",
+			input:    `{节点 名称:<|"|>Demo<|"|>}`,
+			expected: `{"节点 名称":"Demo"}`,
+		},
+		{
+			name:     "bare_key_with_internal_tab",
+			input:    "{display\tname:1}",
+			expected: `{"display\tname":1}`,
+		},
+		{
+			name:     "quoted_keys_with_spaces",
+			input:    `{<|"|>Basic LLM Chain<|"|>:1,"Ollama Chat Model":2}`,
+			expected: `{"Basic LLM Chain":1,"Ollama Chat Model":2}`,
+		},
+		{
+			name:     "whitespace_is_not_an_empty_bare_key",
+			input:    "{ \t :1}",
+			expected: "{ \t :1}",
 		},
 		{
 			name:     "nested_object_with_space_after_object_open_and_before_bare_key",
