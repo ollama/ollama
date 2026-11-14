@@ -234,6 +234,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			opts.LoadedMessages = nil
+			opts.System = ""
 			fmt.Printf("Loading model '%s'\n", opts.Model)
 			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model, Runner: opts.Runner})
 			if err != nil {
