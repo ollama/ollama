@@ -2184,7 +2184,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
 				resp.EvalCount = lsResp.Timings.PredictN
 				resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
-				toolCalls, err := accumulatedToolCalls(toolCalls)
+				toolCalls, err := accumulatedToolCalls(toolCalls, doneReason == DoneReasonLength)
 				if err != nil {
 					return err
 				}
@@ -2258,7 +2258,7 @@ type llamaServerChatToolCall struct {
 	} `json:"function"`
 }
 
-func accumulatedToolCalls(accs map[int]*llamaServerToolCallAccumulator) ([]api.ToolCall, error) {
+func accumulatedToolCalls(accs map[int]*llamaServerToolCallAccumulator, truncated bool) ([]api.ToolCall, error) {
 	if len(accs) == 0 {
 		return nil, nil
 	}
@@ -2272,6 +2272,11 @@ func accumulatedToolCalls(accs map[int]*llamaServerToolCallAccumulator) ([]api.T
 	for index := 0; index <= maxIndex; index++ {
 		acc := accs[index]
 		if acc == nil {
+			continue
+		}
+
+		// A call cut off by the token limit is incomplete, so drop it
+		if truncated && !json.Valid([]byte(acc.arguments)) {
 			continue
 		}
 
