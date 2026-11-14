@@ -3,6 +3,7 @@ package mlxrunner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -110,8 +111,10 @@ type Runner struct {
 	spec *speculation
 }
 
-func (r *Runner) Load(modelName string) error {
-	weights, err := r.loadModel(modelName)
+// Load reads the model's weights. progress, which may be nil, reports the
+// fraction of safetensors bytes read.
+func (r *Runner) Load(modelName string, progress func(float32)) error {
+	weights, err := r.loadModel(modelName, progress)
 	if err != nil {
 		return err
 	}
@@ -123,7 +126,7 @@ func (r *Runner) Load(modelName string) error {
 	return nil
 }
 
-func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
+func (r *Runner) loadModel(modelName string, progress func(float32)) (weights []*mlx.Array, err error) {
 	weights = mlx.ScopedArrays(func() []*mlx.Array {
 		root, e := model.Open(modelName)
 		if e != nil {
@@ -141,7 +144,7 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		if s, ok := m.(model.SkippedTensorsModel); ok {
 			skippedTensors = s.SkippedTensorNames()
 		}
-		tensors, e := loadTensorsFromManifest(root, skippedTensors)
+		tensors, e := loadTensorsFromManifest(root, skippedTensors, progress)
 		if e != nil {
 			err = e
 			return nil
@@ -300,12 +303,14 @@ func configureWiredMemory() {
 // .bias → _qbias with complete knowledge of which base names have .scale
 // entries. This avoids a race condition where Go map iteration order could
 // cause .bias to be processed before .scale within the same blob.
-func loadTensorsFromManifest(root *model.Root, skippedTensors []string) (map[string]*mlx.Array, error) {
+func loadTensorsFromManifest(root *model.Root, skippedTensors []string, progress func(float32)) (map[string]*mlx.Array, error) {
 	skip := make(map[string]bool, len(skippedTensors))
 	for _, name := range skippedTensors {
 		skip[name] = true
 	}
 	skipped, skippedBytes := 0, 0
+	reportBytes := newLoadProgressReporter(root, progress)
+
 	// Phase 1: Load all tensors raw from all blobs
 	rawTensors := make(map[string]*mlx.Array)
 	seen := make(map[string]bool)
@@ -318,17 +323,30 @@ func loadTensorsFromManifest(root *model.Root, skippedTensors []string) (map[str
 		if err != nil {
 			return nil, err
 		}
-		for name, arr := range mlx.Load(blobPath) {
+		reader, err := newParallelFileReader(blobPath, reportBytes)
+		if err != nil {
+			return nil, err
+		}
+		safetensors, err := mlx.LoadSafetensors(reader)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", blobPath, err)
+		}
+		for name, arr := range safetensors.Arrays() {
 			// Native safetensors loads are lazy. Filter excluded arrays before
 			// the Metal pre-pass materializes their payloads, including when a
 			// blob also contains tensors needed by the target or draft model.
 			if skip[name] {
 				skipped++
 				skippedBytes += arr.NumBytes()
+				// These bytes are read outside MLX, so count them as accounted
+				// for or the fraction stalls below 1 for models that skip much
+				// of their manifest.
+				reportBytes(int64(arr.NumBytes()))
 				continue
 			}
 			rawTensors[name] = arr
 		}
+		safetensors.Free()
 	}
 
 	// Phase 2: Identify all base names that have .scale tensors and remap them
@@ -366,14 +384,37 @@ func loadTensorsFromManifest(root *model.Root, skippedTensors []string) (map[str
 	return allTensors, nil
 }
 
-func (r *Runner) Run(host, port string, mux http.Handler) error {
+// Run serves HTTP and processes requests. The listener is bound before load
+// runs so the parent can poll /v1/status for load progress; load reports its
+// own status through the handlers' loadState.
+func (r *Runner) Run(host, port string, mux http.Handler, load func(context.Context) error) error {
 	g, ctx := errgroup.WithContext(context.Background())
+
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, port))
+	if err != nil {
+		return err
+	}
+
+	slog.Info("Starting HTTP server", "host", host, "port", port)
+	srv := &http.Server{Handler: mux}
+
+	g.Go(func() error {
+		if err := load(ctx); err != nil {
+			// Wake up Serve so Wait returns the load failure rather than
+			// blocking forever on a runner that has no model.
+			_ = srv.Close()
+			return err
+		}
+		return nil
+	})
 
 	g.Go(func() error { return r.runBatchRequests(ctx) })
 
 	g.Go(func() error {
-		slog.Info("Starting HTTP server", "host", host, "port", port)
-		return http.ListenAndServe(net.JoinHostPort(host, port), mux)
+		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	})
 
 	return g.Wait()
