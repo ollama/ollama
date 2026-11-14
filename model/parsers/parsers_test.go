@@ -1,6 +1,8 @@
 package parsers
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -391,5 +393,35 @@ func TestSplitAtTag(t *testing.T) {
 				t.Errorf("strings.Builder after split = %q, want %q", sb.String(), tt.wantSB)
 			}
 		})
+	}
+}
+
+func TestNonFiniteToolArguments(t *testing.T) {
+	props := api.NewToolPropertiesMap()
+	props.Set("value", api.ToolProperty{Type: api.PropertyType{"number"}})
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{
+		Name: "record", Parameters: api.ToolFunctionParameters{Properties: props},
+	}}}
+	for name, format := range map[string]string{
+		"qwen3-coder": "<tool_call><function=record><parameter=value>%s</parameter></function></tool_call>",
+		"olmo3":       "<function_calls>record(value=%s)</function_calls>",
+		"lfm2":        "<|tool_call_start|>[record(value=%s)]<|tool_call_end|>",
+	} {
+		for _, raw := range []string{"NaN", "+Inf", "-Infinity"} {
+			t.Run(name+"/"+raw, func(t *testing.T) {
+				p := ParserForName(name)
+				p.Init(tools, nil, &api.ThinkValue{Value: false})
+				_, _, calls, err := p.Add(fmt.Sprintf(format, raw), false)
+				if err != nil || len(calls) != 1 {
+					t.Fatalf("expected one tool call, got %v, %v", calls, err)
+				}
+				if _, err := json.Marshal(calls); err != nil {
+					t.Fatalf("cannot encode tool calls: %v", err)
+				}
+				if got, _ := calls[0].Function.Arguments.Get("value"); got != raw {
+					t.Errorf("value = %v, want %q", got, raw)
+				}
+			})
+		}
 	}
 }

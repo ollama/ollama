@@ -1,6 +1,8 @@
 package parsers
 
 import (
+	"math"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -192,4 +194,10 @@ func trailingWhitespaceLen(s string) int {
 		remaining = remaining[:len(remaining)-size]
 	}
 	return total
+}
+
+// parseFiniteFloat accepts only values that can be sent in JSON tool arguments.
+func parseFiniteFloat(raw string) (float64, bool) {
+	value, err := strconv.ParseFloat(raw, 64)
+	return value, err == nil && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
