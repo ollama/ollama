@@ -564,11 +564,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// load the model
 	if req.Prompt == "" {
+		loadDuration := checkpointLoaded.Sub(checkpointStart)
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
 			CreatedAt:  time.Now().UTC(),
 			Done:       true,
 			DoneReason: "load",
+			Metrics: api.Metrics{
+				TotalDuration: time.Since(checkpointStart),
+				LoadDuration:  loadDuration,
+			},
 		})
 		return
 	}
@@ -3245,12 +3250,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointLoaded := time.Now()
 
 	if len(req.Messages) == 0 {
+		loadDuration := checkpointLoaded.Sub(checkpointStart)
 		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:      req.Model,
 			CreatedAt:  time.Now().UTC(),
 			Message:    api.Message{Role: "assistant"},
 			Done:       true,
 			DoneReason: "load",
+			Metrics: api.Metrics{
+				TotalDuration: time.Since(checkpointStart),
+				LoadDuration:  loadDuration,
+			},
 		})
 		return
 	}
