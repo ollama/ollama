@@ -1440,6 +1440,7 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 	tests := []struct {
 		name              string
+		systemTotal       uint64
 		systemFree        uint64
 		gpus              []ml.DeviceInfo
 		wantAvailable     uint64
@@ -1519,14 +1520,81 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 			wantAvailable: 12 * format.GigaByte,
 			wantGPUFree:   12 * format.GigaByte,
 		},
+		{
+			name:        "integrated gpu with carve-out larger than system memory ignores system free",
+			systemTotal: 30 * format.GigaByte,
+			systemFree:  23 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{Library: "ROCm"},
+				Integrated:  true,
+				TotalMemory: 96 * format.GigaByte,
+				FreeMemory:  95 * format.GigaByte,
+			}},
+			wantAvailable: 95 * format.GigaByte,
+			wantGPUFree:   95 * format.GigaByte,
+		},
+		{
+			name:        "integrated gpu smaller than system memory uses lower system free",
+			systemTotal: 128 * format.GigaByte,
+			systemFree:  6 * format.GigaByte,
+			gpus: []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{Library: "ROCm"},
+				Integrated:  true,
+				TotalMemory: 96 * format.GigaByte,
+				FreeMemory:  12 * format.GigaByte,
+			}},
+			wantAvailable:     6 * format.GigaByte,
+			wantGPUFree:       12 * format.GigaByte,
+			wantSystemLimited: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			available, gpuFree, systemLimited := availableMemoryForLoad(ml.SystemInfo{FreeMemory: tt.systemFree}, tt.gpus)
+			available, gpuFree, systemLimited := availableMemoryForLoad(ml.SystemInfo{TotalMemory: tt.systemTotal, FreeMemory: tt.systemFree}, tt.gpus)
 			require.Equal(t, tt.wantAvailable, available)
 			require.Equal(t, tt.wantGPUFree, gpuFree)
 			require.Equal(t, tt.wantSystemLimited, systemLimited)
+		})
+	}
+}
+
+func TestAvailableMemoryForGPU(t *testing.T) {
+	tests := []struct {
+		name       string
+		systemInfo ml.SystemInfo
+		gpu        ml.DeviceInfo
+		want       uint64
+	}{
+		{
+			name:       "integrated gpu uses lower system free",
+			systemInfo: ml.SystemInfo{TotalMemory: 64 * format.GigaByte, FreeMemory: 6 * format.GigaByte},
+			gpu:        ml.DeviceInfo{Integrated: true, TotalMemory: 32 * format.GigaByte, FreeMemory: 12 * format.GigaByte},
+			want:       6 * format.GigaByte,
+		},
+		{
+			name:       "integrated gpu with carve-out larger than system memory ignores system free",
+			systemInfo: ml.SystemInfo{TotalMemory: 30 * format.GigaByte, FreeMemory: 23 * format.GigaByte},
+			gpu:        ml.DeviceInfo{Integrated: true, TotalMemory: 96 * format.GigaByte, FreeMemory: 95 * format.GigaByte},
+			want:       95 * format.GigaByte,
+		},
+		{
+			name:       "integrated gpu with unknown system total uses lower system free",
+			systemInfo: ml.SystemInfo{FreeMemory: 23 * format.GigaByte},
+			gpu:        ml.DeviceInfo{Integrated: true, TotalMemory: 96 * format.GigaByte, FreeMemory: 95 * format.GigaByte},
+			want:       23 * format.GigaByte,
+		},
+		{
+			name:       "discrete gpu ignores lower system free",
+			systemInfo: ml.SystemInfo{TotalMemory: 30 * format.GigaByte, FreeMemory: 6 * format.GigaByte},
+			gpu:        ml.DeviceInfo{TotalMemory: 24 * format.GigaByte, FreeMemory: 12 * format.GigaByte},
+			want:       12 * format.GigaByte,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, availableMemoryForGPU(tt.systemInfo, tt.gpu))
 		})
 	}
 }
