@@ -194,6 +194,7 @@ func TestPplxQuantizationPreservesReadout(t *testing.T) {
 		want string
 	}{
 		{"weight", ""},
+		{"lm_head.weight", "mxfp8"},
 		{"language_model.layers.0.mlp.up_proj.weight", "nvfp4"},
 		{"language_model.layers.0.linear_attn.in_proj_a.weight", ""},
 		{"visual.blocks.0.mlp.fc1.weight", ""},
