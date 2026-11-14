@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -45,6 +46,9 @@ func parseMultimodalConfig(configData []byte) (multimodalConfig, error) {
 	if v := mm.VisionConfig; v != nil {
 		if len(v.DeepstackVisualIndexes) > 0 {
 			return multimodalConfig{}, fmt.Errorf("unsupported deepstack_visual_indexes %v", v.DeepstackVisualIndexes)
+		}
+		if v.InChannels == 0 {
+			v.InChannels = 3
 		}
 		if v.PatchSize == 0 {
 			v.PatchSize = 16
@@ -166,6 +170,27 @@ func visionWeightRoot(tensors map[string]*mlx.Array) string {
 	return ""
 }
 
+// patchEmbedWeight flattens the patch-embedding Conv3d kernel into the linear
+// over patch rows, whose features run channel, then temporal, then spatial.
+// Reference checkpoints store the kernel as [out, C, T, P, P], MLX
+// conversions store it channels-last as [out, T, P, P, C], and a kernel
+// already flattened to [out, C*T*P*P] passes through.
+func patchEmbedWeight(w *mlx.Array, v *VisionConfig) (*mlx.Array, error) {
+	out, c, t, p := int(v.HiddenSize), int(v.InChannels), int(v.TemporalPatchSize), int(v.PatchSize)
+	rowLen := c * t * p * p
+	switch dims := w.Dims(); {
+	case slices.Equal(dims, []int{out, c, t, p, p}):
+		return w.Reshape(out, rowLen), nil
+	case slices.Equal(dims, []int{out, t, p, p, c}):
+		return w.Transpose(0, 4, 1, 2, 3).Reshape(out, rowLen), nil
+	case slices.Equal(dims, []int{out, rowLen}):
+		return w, nil
+	default:
+		return nil, fmt.Errorf("vision patch embedding has shape %v, want [%d %d %d %d %d], channels-last [%d %d %d %d %d], or [%d %d]",
+			dims, out, c, t, p, p, out, t, p, p, c, out, rowLen)
+	}
+}
+
 func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.LinearFactory) error {
 	root := visionWeightRoot(tensors)
 	v := m.Vision
@@ -217,8 +242,11 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 	if err != nil {
 		return err
 	}
-	rowLen := v.InChannels * v.TemporalPatchSize * v.PatchSize * v.PatchSize
-	tower.PatchEmbed = nn.NewLinear(mlx.Reshape(convW, v.HiddenSize, rowLen), convB)
+	patchWeight, err := patchEmbedWeight(convW, v)
+	if err != nil {
+		return err
+	}
+	tower.PatchEmbed = nn.NewLinear(patchWeight, convB)
 
 	if tower.PosEmbed, err = required("pos_embed.weight"); err != nil {
 		return err
