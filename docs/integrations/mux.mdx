@@ -1,0 +1,39 @@
+---
+title: Mux
+---
+
+[Mux](https://github.com/jchristn/Mux) is an open-source coding agent for the terminal, desktop, and web.
+
+## Install
+
+Install the `mux` executable using the [Mux installation instructions](https://github.com/jchristn/Mux#installation), and make sure it is on your `PATH`.
+
+## Quick setup
+
+```shell
+ollama launch mux
+```
+
+Ollama creates or updates a dedicated `ollama-launch` endpoint in Mux's `endpoints.json`. Your other endpoints and default selection are preserved. `MUX_CONFIG_DIR` is respected when set.
+
+To choose a model explicitly:
+
+```shell
+ollama launch mux --model deepseek-v4.1-flash:cloud
+```
+
+Sign in to Ollama to use cloud models. Mux connects through the Ollama service, which handles cloud authentication.
+
+To configure without launching:
+
+```shell
+ollama launch mux --model deepseek-v4.1-flash:cloud --config
+```
+
+To pass arguments to Mux, place them after `--`:
+
+```shell
+ollama launch mux --model deepseek-v4.1-flash:cloud -- -p "Explain this project"
+```
+
+Use a model with tool calling and a context window of at least 32K tokens for coding tasks.
