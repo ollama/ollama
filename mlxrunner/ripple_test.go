@@ -191,7 +191,10 @@ func rippleRunnerMemory(t *testing.T) (active int) {
 func rippleRunnerRequest(t *testing.T, r *Runner, prompt string, count int) request {
 	t.Helper()
 	request := request{
-		CompletionRequest: CompletionRequest{Prompt: prompt, Options: api.Options{NumPredict: count}},
+		// Drafting is opt-in per request: draft_num_predict is resolved by the
+		// server, so a runner-level test that clears logprobs must allow enough
+		// depth for the selector's trained block to be scheduled.
+		CompletionRequest: CompletionRequest{Prompt: prompt, Options: api.Options{NumPredict: count, Runner: api.Runner{DraftNumPredict: dflash2Depth}}},
 		SamplerOpts: sample.Options{
 			Temperature: 0, RepeatLastN: 8, RepeatPenalty: 1.1,
 			Seed: 1, UseSeed: true, Logprobs: true, TopLogprobs: 3,
