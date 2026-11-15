@@ -74,6 +74,11 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 
 			digestMap, err := fileDigestMapForPaths(paths)
 			if errors.Is(err, os.ErrNotExist) {
+				if isLocalPath(c.Args) {
+					// a model name cannot start like a path, so report the
+					// missing file instead of sending the path as a model name
+					return nil, fmt.Errorf("FROM %s: %w", c.Args, err)
+				}
 				req.From = c.Args
 				continue
 			} else if err != nil {
@@ -734,6 +739,13 @@ func isValidCommand(cmd string) bool {
 	default:
 		return false
 	}
+}
+
+// isLocalPath reports whether s is written as a filesystem path (absolute,
+// relative to the current directory, or under a home directory) rather than
+// as a model name.
+func isLocalPath(s string) bool {
+	return filepath.IsAbs(s) || strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || strings.HasPrefix(s, "\\") || strings.HasPrefix(s, "~")
 }
 
 func expandPathImpl(path, relativeDir string, currentUserFunc func() (*user.User, error), lookupUserFunc func(string) (*user.User, error)) (string, error) {
