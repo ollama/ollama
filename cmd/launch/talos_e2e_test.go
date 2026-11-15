@@ -34,8 +34,8 @@ func TestTalosReleasedInstaller(t *testing.T) {
 	}
 	// Keep the evidence tied to the reviewed release, even after the public
 	// installer advances. Its own checksum and signature checks still run.
-	const version = "0.20.0-beta.5"
-	const archiveSHA256 = "ddd24ce4d26f79640fe7ce9e9770a9aa770e8c73700895212fa253772cd63059"
+	const version = "0.20.3"
+	const archiveSHA256 = "3159c10f0cfa7d981f82351d14cb86ac760e9a09f0f5d81cf8e13c307129aca4"
 	archive, err := exec.Command("curl", "-fsSL", "--max-time", "120", "https://talos-agent.ch/dist/talos-"+version+".tar.gz").Output()
 	if err != nil {
 		t.Fatalf("download reviewed release: %v", err)

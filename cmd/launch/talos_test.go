@@ -53,7 +53,7 @@ func TestTalosHomebrewProfile(t *testing.T) {
 			home := t.TempDir()
 			clearTalosEnvVars(t)
 			withTalosUserHome(t, home)
-			keg := filepath.Join(home, "Cellar", "talos", "0.20.0-beta.5_1")
+			keg := filepath.Join(home, "Cellar", "talos", "0.20.3")
 			for _, name := range []string{"bin/talos", "libexec/bin/talos", "libexec/.venv/bin/python", "libexec/talos/__main__.py"} {
 				if name == tc.missing {
 					continue
