@@ -63,7 +63,7 @@ func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thin
 func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.acc.WriteString(s)
 
-	events := p.parseEvents()
+	events := p.parseEvents(done)
 	if done {
 		switch p.state {
 		case qwenParserState_LookingForToolStart:
@@ -101,13 +101,13 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 	return sb.String(), "", toolCalls, nil
 }
 
-func (p *Qwen3CoderParser) parseEvents() []qwenEvent {
+func (p *Qwen3CoderParser) parseEvents(done bool) []qwenEvent {
 	var all []qwenEvent
 
 	keepLooping := true
 	for keepLooping {
 		var events []qwenEvent
-		events, keepLooping = eat(p)
+		events, keepLooping = eat(p, done)
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -146,7 +146,7 @@ func (qwenEventRawToolCall) isQwenEvent() {}
 // events from the current parser state. If the parser transitions to another
 // state, it may have additional events to emit on the next call, which is what
 // the second return value indicates
-func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
+func eat(p *Qwen3CoderParser, done bool) ([]qwenEvent, bool) {
 	var events []qwenEvent
 
 	switch p.state {
@@ -196,6 +196,34 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 		}
 	case qwenParserState_CollectingToolContent:
 		if strings.Contains(p.acc.String(), toolCloseTag) {
+			// A literal </tool_call> can appear inside a parameter value,
+			// so the first close tag is not necessarily the end of the
+			// call. That ambiguity only exists for a real call shape
+			// (the content starts a <function= tag): raw text without
+			// one keeps today's immediate split at the first close tag,
+			// which the streaming event tests rely on.
+			if strings.Contains(p.acc.String(), "<function=") {
+				// Prefer a candidate that is structurally a complete
+				// call.
+				if raw, after, ok := selectToolCallTerminator(p.acc.String()); ok {
+					p.acc.Reset()
+					p.acc.WriteString(after)
+					events = append(events, qwenEventRawToolCall{raw: raw})
+					p.state = qwenParserState_LookingForToolStart
+					return events, true
+				}
+				if !done {
+					// No valid terminator yet; a later chunk may bring
+					// the real close tag. Hold the whole call rather
+					// than splitting at a literal tag inside a
+					// parameter value.
+					return events, false
+				}
+				// End of stream with no valid terminator: fall through
+				// to the first close tag below, so a genuinely malformed
+				// call still produces today's XML parsing error instead
+				// of silently becoming ordinary content.
+			}
 			split := strings.SplitN(p.acc.String(), toolCloseTag, 2)
 			before := split[0]
 			if len(before) == 0 {
@@ -418,9 +446,53 @@ func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 }
 
 var (
-	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
+	// Only the two structural opening tags of the Qwen tool-call grammar
+	// are rewritten. Other <Name=value> text (generics, JSX, C++ templates)
+	// is ordinary parameter content and must be left untouched; rewriting
+	// it silently corrupts the value (issue #19694, case 1).
+	qwenTagRegex    = regexp.MustCompile(`<(function|parameter)=([^>]+)>`)
 	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
 )
+
+// selectToolCallTerminator scans the accumulated tool content for the
+// </tool_call> that genuinely closes the call, in order. A candidate counts
+// only if the text before it ends with a function-level </function> (ignoring
+// trailing whitespace) and parses as a tool call. A literal </tool_call>
+// inside a parameter value fails both checks, so it is skipped. It returns
+// the raw call text and the content after the selected terminator.
+func selectToolCallTerminator(acc string) (raw, after string, ok bool) {
+	for start := 0; ; {
+		idx := strings.Index(acc[start:], toolCloseTag)
+		if idx < 0 {
+			return "", "", false
+		}
+		end := start + idx
+		before := acc[:end]
+		if endsWithFunctionClose(before) && isValidToolCall(before) {
+			after := strings.TrimLeftFunc(acc[end+len(toolCloseTag):], unicode.IsSpace)
+			return before, after, true
+		}
+		start = end + len(toolCloseTag)
+	}
+}
+
+// endsWithFunctionClose reports whether s ends with a </function> tag,
+// ignoring trailing whitespace between it and a following </tool_call>.
+func endsWithFunctionClose(s string) bool {
+	trimmed := strings.TrimRightFunc(s, unicode.IsSpace)
+	return strings.HasSuffix(trimmed, "</function>")
+}
+
+// isValidToolCall reports whether raw parses as a Qwen tool call, using the
+// same transformation and XML decoding as parseToolCall. It only checks
+// structure (a function with a name), not whether the tool exists.
+func isValidToolCall(raw string) bool {
+	var functionCall XMLFunctionCall
+	if err := xml.Unmarshal([]byte(transformToXML(raw)), &functionCall); err != nil {
+		return false
+	}
+	return functionCall.Name != ""
+}
 
 // transformToXML transforms a raw qwen tool call with xml-like tags into valid
 // xml so that it can be parsed by any xml parser
