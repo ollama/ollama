@@ -57,6 +57,8 @@ Advanced parameters (optional):
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
+- `logprobs`: if `true`, return log probabilities of the output tokens
+- `top_logprobs`: the number of most likely tokens to return at each token position, each with an associated log probability (valid values are 0-20, default: `0`). Only applies when `logprobs` is `true`
 
 #### Structured outputs
 
@@ -513,6 +515,8 @@ Advanced parameters (optional):
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `logprobs`: if `true`, return log probabilities of the output tokens
+- `top_logprobs`: the number of most likely tokens to return at each token position, each with an associated log probability (valid values are 0-20, default: `0`). Only applies when `logprobs` is `true`
 
 ### Tool calling
 
