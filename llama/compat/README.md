@@ -32,8 +32,15 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   `build_rope_shift` was passing the forward-pass YaRN amplitude through again,
   so every shift rescaled all cached keys (including the `--keep` prefix) and
   degraded long sessions until the model was reloaded (ollama#19457). The patch
-  makes the shift amplitude-neutral. Drop it when the pinned llama.cpp carries
-  the upstream fix.
+  makes the shift amplitude-neutral. Remove it once the pinned llama.cpp carries
+  an equivalent upstream fix; a version bump on its own is not the trigger.
+- `tests/` - regression tests for the patches above. They are built when
+  `OLLAMA_COMPAT_TESTS=ON` and run from the `patches` CI job, against the pinned
+  llama.cpp with the patches applied. `tests/kv-shift-rope-test.cpp` synthesizes
+  a small model, forces YaRN scaling on it, drives a real context shift through
+  `llama_memory_seq_add()` and asserts the cached keys keep their magnitude. It
+  fails against an unpatched tree, so it also guards against dropping `002`
+  before upstream has the fix.
 - `compat.cmake` - CMake glue that invokes the shared
   `cmake/apply-git-patches.cmake` idempotent applier (used by
   `llama/server/CMakeLists.txt`) for every `*.patch` under
