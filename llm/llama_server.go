@@ -663,8 +663,9 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 
 // appendLoadModeArgs selects llama-server's single model loading mode. Integrated
 // GPUs share memory with the CPU: Linux CUDA/ROCm use direct I/O to skip the page
-// cache, while Vulkan uses mmap because non-mmap loads place CPU-resident tensors
-// in a host buffer drawn from the same device budget as the weights.
+// cache, Windows CUDA/ROCm skip the pinned host buffer, and Vulkan uses mmap
+// because non-mmap loads place CPU-resident tensors in a host buffer drawn from
+// the same device budget as the weights.
 func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
 	for _, g := range gpus {
 		if !g.Integrated {
@@ -673,8 +674,22 @@ func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo)
 		if strings.EqualFold(g.Library, "Vulkan") {
 			return append(params, "--load-mode", "mmap")
 		}
-		if runtime.GOOS == "linux" && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
-			return append(params, "--load-mode", "dio")
+		if strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm") {
+			if runtime.GOOS == "linux" {
+				return append(params, "--load-mode", "dio")
+			}
+			// On Windows an iGPU's device buffers and pinned host buffers
+			// (cudaMallocHost/hipHostMalloc) both come out of the same WDDM
+			// shared-memory budget (about half of system RAM). llama-server
+			// disables mmap for iGPUs and places CPU-side weights in pinned
+			// host memory, which --fit does not count, so a partially
+			// offloaded model overflows the budget and the KV cache or
+			// compute buffer allocation fails ("unable to allocate ROCm0
+			// buffer"). Keep CPU-side weights in ordinary pageable memory.
+			if runtime.GOOS == "windows" {
+				params = append(params, "--no-host")
+			}
+			break
 		}
 	}
 
