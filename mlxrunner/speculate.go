@@ -159,17 +159,25 @@ func (s *speculationSession) beginRound() {
 // positions past it (a terminator, not a target rejection).
 func (s *speculationSession) endRound(drafted, accepted, observed int) {
 	s.roundDrafts = drafted
+	s.recordRound(drafted, accepted)
+	// A positive depth can produce no drafts when the request has no draft budget
+	// left or its drafter is not primed yet. Keep that choice for the next
+	// eligible round, including across requests, instead of consuming a probe.
+	if !s.enabled || s.fixedDepth || (s.limit > 0 && drafted == 0) {
+		return
+	}
+	if observed > 0 {
+		s.spec.depth.acc.observe(observed, accepted)
+	}
+	s.limit = s.spec.depth.next()
+}
+
+func (s *speculationSession) recordRound(drafted, accepted int) {
 	s.stats.maxDraft = max(s.stats.maxDraft, drafted)
 	s.stats.recordRound(drafted)
 	s.stats.iterations++
 	s.stats.drafted += drafted
 	s.stats.accepted += accepted
-	if s.enabled && !s.fixedDepth {
-		if observed > 0 {
-			s.spec.depth.acc.observe(observed, accepted)
-		}
-		s.limit = s.spec.depth.next()
-	}
 }
 
 func (s *speculationSession) committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem) {
@@ -411,142 +419,190 @@ func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
 // rejection). NumPredict is the decode loop's to enforce, so a token past the
 // budget is left for decode to drop, not cut here.
 func (s *speculationSession) accept(position *int, current sampler.Result, candidates *draftCandidates, g *grammar) (results []sampler.Result, accepted, observed int, err error) {
-	r := s.spec.r
-	before := *position
-	draftCount := candidates.tokens.Dim(1)
-	scheduleSpeculation(s.spec.targets, before+1, draftCount)
+	out := s.spec.r.acceptDrafts([]draftRound{{s, position, current, candidates, g}})[0]
+	return out.results, out.accepted, out.observed, out.err
+}
 
-	// Every exit between schedule and commit must drain the snapshot
-	// schedule and roll the speculative writes back out of the live caches:
-	// an undrained schedule panics the next PrepareSnapshots, and
-	// uncommitted speculative tokens reach the trie through session.close.
-	committed := false
-	commit := func(keep int) {
-		if committed {
-			return
-		}
-		committed = true
-		commitSpeculation(s.spec.targets, keep, draftCount, before+1)
+// draftRound keeps verification state attached to the request that owns it.
+// Equal-length rounds can share the target forward without sharing acceptance,
+// sampling history, or rollback positions.
+type draftRound struct {
+	s          *speculationSession
+	position   *int
+	current    sampler.Result
+	candidates *draftCandidates
+	grammar    *grammar
+}
+
+type draftOutcome struct {
+	results            []sampler.Result
+	accepted, observed int
+	err                error
+}
+
+func (r *Runner) acceptDrafts(rounds []draftRound) []draftOutcome {
+	outcomes := make([]draftOutcome, len(rounds))
+	if len(rounds) == 0 {
+		return outcomes
 	}
-	defer commit(0)
+	draftCount := rounds[0].candidates.tokens.Dim(1)
+	owners := make([][]cache.Cache, len(rounds))
+	ids := make([]*mlx.Array, len(rounds))
+	offsets, lengths := make([]int32, len(rounds)), make([]int32, len(rounds))
+	var layout []any
+	for i, round := range rounds {
+		if round.candidates.tokens.Dim(1) != draftCount {
+			for j := range outcomes {
+				outcomes[j].err = fmt.Errorf("speculation: verification rows have different lengths")
+			}
+			return outcomes
+		}
+		owners[i] = round.s.spec.targets
+		ids[i] = round.current.Token.ExpandDims(-1).Concatenate(1, round.candidates.tokens)
+		offsets[i], lengths[i] = int32(*round.position), int32(draftCount+1)
+		if len(round.s.layout) > 0 {
+			if layout == nil {
+				layout = make([]any, len(rounds))
+			}
+			layout[i] = round.s.layout[0]
+		}
+	}
+	layers, err := cache.Batch(owners)
+	if err != nil {
+		for i := range outcomes {
+			outcomes[i].err = err
+		}
+		return outcomes
+	}
 
-	var auxHiddenSeq, acceptedMask, residualTokens, bonusToken *mlx.Array
-	var draftIDs []int32
-	var constrained bool
-	var maskErr error
+	committed := make([]bool, len(rounds))
+	for i, round := range rounds {
+		scheduleSpeculation(round.s.spec.targets, int(offsets[i])+1, draftCount)
+	}
+	defer func() {
+		for i, round := range rounds {
+			if !committed[i] {
+				commitSpeculation(round.s.spec.targets, 0, draftCount, int(offsets[i])+1)
+			}
+		}
+	}()
+
+	type verification struct {
+		acceptedMask, residualTokens, bonusToken *mlx.Array
+		draftIDs                                 []int32
+		constrained                              bool
+	}
+	verified := make([]verification, len(rounds))
+	var auxHiddenSeq *mlx.Array
+	var retainedFeatures []*mlx.Array
 	mlx.ScopedEval(func() []*mlx.Array {
-		var hiddenSeq *mlx.Array
-		hiddenSeq, auxHiddenSeq = r.Model.Forward(&batch.Batch{
-			InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
-			SeqOffsets:   []int32{int32(before)},
-			SeqQueryLens: []int32{int32(draftCount + 1)},
-			Layout:       s.layout,
-		}, cache.Layers(s.spec.targets))
-
-		// Row i of the fused hidden is the state after the token at before+i, so
-		// the rows already line up with the drafts: row 0 (current's state)
-		// predicts draft 0, and the row after the last accepted draft is the
-		// bonus row. No separate base-logits forward exists on this path.
-		logits := r.Model.Unembed(hiddenSeq)
-
-		draftIDs = candidates.tokens.Ints()
-		constrained = g.constraining()
-		if constrained {
-			var errs []error
-			logits, errs = r.grammarEngine.mask([]*grammar{g}, logits, [][]int32{draftIDs})
-			if maskErr = errors.Join(errs...); maskErr != nil {
-				return nil
+		hidden, aux := r.Model.Forward(&batch.Batch{
+			InputIDs: mlx.Concatenate(ids, 0), SeqOffsets: offsets, SeqQueryLens: lengths, Layout: layout,
+		}, layers)
+		auxHiddenSeq = aux
+		logits := r.Model.Unembed(hidden)
+		arrays := []*mlx.Array{aux}
+		for i, round := range rounds {
+			v := &verified[i]
+			v.draftIDs = round.candidates.tokens.Ints()
+			v.constrained = round.grammar.constraining()
+			rowLogits := logits.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice())
+			if v.constrained {
+				var errs []error
+				rowLogits, errs = r.grammarEngine.mask([]*grammar{round.grammar}, rowLogits, [][]int32{v.draftIDs})
+				if outcomes[i].err = errors.Join(errs...); outcomes[i].err != nil {
+					continue
+				}
 			}
+			slot := round.s.spec.slotID
+			targetDist := r.Sampler.Distribution(slot, rowLogits, round.candidates.tokens)
+			draftDist := round.candidates.dist
+			v.acceptedMask = r.sampleAcceptedMask(slot, targetDist.SliceRows(0, draftCount), draftDist, round.candidates.tokens)
+			v.residualTokens = r.Sampler.SampleDistribution(slot, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
+			v.bonusToken = r.sampleTokenAt(slot, targetDist, draftCount)
+			arrays = append(arrays, v.acceptedMask, v.residualTokens, v.bonusToken)
 		}
-
-		targetDist := r.Sampler.Distribution(s.spec.slotID, logits, candidates.tokens)
-		draftDist := candidates.dist
-		acceptedMask = r.sampleAcceptedMask(s.spec.slotID, targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
-
-		// The next token is sampled for every possible outcome before anything
-		// is evaluated — the residual at each rejection point in one batched
-		// draw, plus the bonus row — so a single Eval covers acceptance and the
-		// next token instead of a second host round trip after the rejection
-		// point is known.
-		residualTokens = r.Sampler.SampleDistribution(s.spec.slotID, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
-		bonusToken = r.sampleTokenAt(s.spec.slotID, targetDist, draftCount)
-		return []*mlx.Array{auxHiddenSeq, acceptedMask, residualTokens, bonusToken}
+		return arrays
 	})
-	if maskErr != nil {
-		return nil, 0, 0, maskErr
-	}
 
-	acceptedFlags := acceptedMask.Ints()
-	for _, ok := range acceptedFlags {
-		if ok == 0 {
-			break
+	for i, round := range rounds {
+		out, v := &outcomes[i], &verified[i]
+		if out.err != nil {
+			continue
 		}
-		accepted++
-	}
-	if accepted > draftCount {
-		return nil, 0, 0, fmt.Errorf("speculation validation accepted %d tokens for %d draft tokens", accepted, draftCount)
-	}
-	observed = draftCount
-
-	// Find where an accepted EOS ends the run, before committing, so the cut
-	// is known while the per-token rollback snapshots still exist. The EOS also
-	// caps observed: positions past it are held out, not logged as rejections.
-	commitIDs := make([]int32, 0, accepted+1)
-	keep := accepted
-	done := false
-	for i, id := range draftIDs[:accepted] {
-		commitIDs = append(commitIDs, id)
-		if r.Tokenizer.IsEOS(id) {
-			done = true
-			accepted = i + 1
-			observed = accepted
-			// Leave the EOS's own state uncommitted: the next sequence won't
-			// contain this EOS, and recurrent state can't drop a folded-in
-			// token, so committing it would carry the caches past the
-			// reusable prefix and force the next sequence to recompute.
-			keep = i
-			break
+		for _, ok := range v.acceptedMask.Ints() {
+			if ok == 0 {
+				break
+			}
+			out.accepted++
 		}
-	}
-
-	var nextID int32
-	if !done {
-		if accepted < draftCount {
-			nextID = residualTokens.Ints()[accepted]
-		} else {
-			nextID = bonusToken.Int()
+		if out.accepted > draftCount {
+			out.err = fmt.Errorf("speculation validation accepted %d tokens for %d draft tokens", out.accepted, draftCount)
+			continue
 		}
-		commitIDs = append(commitIDs, nextID)
-	}
-	if constrained {
-		// The grammar accepts the run the way it accepts every emitted token,
-		// before the caches commit it: on a rejection the deferred rollback
-		// keeps them level with the tokens decode has recorded.
-		for _, id := range commitIDs {
-			if err := errors.Join(r.grammarEngine.accept([]*grammar{g}, []int32{id})...); err != nil {
-				return nil, 0, 0, err
+		out.observed = draftCount
+		commitIDs := make([]int32, 0, out.accepted+1)
+		keep := out.accepted
+		done := false
+		for j, id := range v.draftIDs[:out.accepted] {
+			commitIDs = append(commitIDs, id)
+			if r.Tokenizer.IsEOS(id) {
+				done = true
+				out.accepted, out.observed = j+1, j+1
+				// The terminating token is emitted but not part of the reusable cache.
+				keep = j
+				break
 			}
 		}
+		var nextID int32
+		if !done {
+			if out.accepted < draftCount {
+				nextID = v.residualTokens.Ints()[out.accepted]
+			} else {
+				nextID = v.bonusToken.Int()
+			}
+			commitIDs = append(commitIDs, nextID)
+		}
+		if v.constrained {
+			for _, id := range commitIDs {
+				if out.err = errors.Join(r.grammarEngine.accept([]*grammar{round.grammar}, []int32{id})...); out.err != nil {
+					break
+				}
+			}
+			if out.err != nil {
+				continue
+			}
+		}
+		before := int(offsets[i])
+		committed[i] = true
+		commitSpeculation(round.s.spec.targets, keep, draftCount, before+1)
+		*round.position = before + 1 + keep
+		runIDs := append([]int32{round.current.Token.Int()}, commitIDs[:keep]...)
+		features := auxHiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice())
+		if len(rounds) > 1 {
+			// Draft sessions retain these features between rounds. Own the row
+			// so a paused request cannot keep its peers' feature buffer alive.
+			features = features.TakeAxis(mlx.FromValues([]int32{int32(i)}, 1), 0)
+			retainedFeatures = append(retainedFeatures, features)
+		}
+		round.s.drafter.committed(mlx.FromValues(runIDs, 1, len(runIDs)), features, before, nil)
+		out.results = draftResults(v.draftIDs[:out.accepted])
+		if !done {
+			out.results = append(out.results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
+		}
+		r.Sampler.Commit(round.s.spec.slotID, commitIDs)
 	}
-
-	commit(keep)
-	*position = before + 1 + keep
-
-	// Report the validated run (current plus kept drafts) to the drafter before
-	// returning, so a cancelled emission still leaves it matching the caches. A
-	// done generation's final token is uncommitted; it reaches finish instead.
-	runIDs := append([]int32{current.Token.Int()}, commitIDs[:keep]...)
-	s.drafter.committed(
-		mlx.FromValues(runIDs, 1, len(runIDs)),
-		auxHiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice()),
-		before, nil)
-
-	results = draftResults(draftIDs[:accepted])
-	if !done {
-		results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
+	if len(rounds) > 1 {
+		// Materialize owned features and cache state before a reader can pause.
+		state := retainedFeatures
+		for _, layer := range layers {
+			if layer != nil {
+				state = append(state, layer.State()...)
+			}
+		}
+		mlx.AsyncEval(state...)
 	}
-	r.Sampler.Commit(s.spec.slotID, commitIDs)
-	return results, accepted, observed, nil
+	return outcomes
 }
 
 func (r *Runner) sampleAcceptedMask(slotID int, targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
