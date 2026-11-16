@@ -39,6 +39,13 @@ func TestHost(t *testing.T) {
 		"https":               {"https://1.2.3.4", "https://1.2.3.4:443"},
 		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
 		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
+		"proxy encoded space": {"https://example.com/team%20one", "https://example.com:443/team%20one"},
+		"proxy encoded slash": {"https://example.com/tenant%2Fblue", "https://example.com:443/tenant%2Fblue"},
+		"proxy unicode":       {"https://example.com/%E4%BD%A0%E5%A5%BD", "https://example.com:443/%E4%BD%A0%E5%A5%BD"},
+		"proxy reserved":      {"https://example.com/model%3Fv%23one", "https://example.com:443/model%3Fv%23one"},
+		"proxy no scheme":     {"example.com/team%20one", "http://example.com:11434/team%20one"},
+		"proxy space":         {"https://example.com/team one", "https://example.com:443/team%20one"},
+		"proxy percent":       {"https://example.com/100%", "https://example.com:443/100%25"},
 		"ollama.com":          {"ollama.com", "https://ollama.com:443"},
 	}
 
