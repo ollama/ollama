@@ -441,15 +441,7 @@ func (s *batchScheduler) step() bool {
 		s.drafting.reset()
 		return progressed
 	}
-	if active == 1 {
-		s.drafting.reset()
-		slot := ready[0]
-		req := slot.request
-		results, err := req.decoder.next(req.output.limit - req.output.generated)
-		s.emit(slot, results, err)
-		return true
-	}
-	if err := s.decode(ready); err != nil {
+	if err := s.decode(ready, active); err != nil {
 		// Cache compatibility is checked before a shared forward writes state.
 		// Fail this cohort without leaving an idle HTTP server waiting forever.
 		for _, slot := range ready {
@@ -475,10 +467,21 @@ func (s *batchScheduler) emit(slot *batchSlot, results []sample.Result, err erro
 	}
 }
 
-// decode groups equal-length speculative rounds for a shared target forward.
+// decode advances the ready requests, grouping equal-length speculative rounds
+// for a shared target forward when multiple requests are active.
 // Proposals, sampling and rollback still belong to each request. Plain rows keep
 // their pipelined forward; no request waits for a peer to choose the same depth.
-func (s *batchScheduler) decode(ready []*batchSlot) error {
+func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
+	// A prefilling or backpressured peer still affects decode costs. Only a
+	// request running alone may use and train its isolated depth controller.
+	if active == 1 {
+		s.drafting.reset()
+		slot := ready[0]
+		req := slot.request
+		results, err := req.decoder.next(req.output.limit - req.output.generated)
+		s.emit(slot, results, err)
+		return nil
+	}
 	if s.r.spec == nil {
 		return s.decodePlain(ready)
 	}

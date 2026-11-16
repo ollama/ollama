@@ -545,7 +545,7 @@ func TestBatchSchedulerLayouts(t *testing.T) {
 				ready = append(ready, s.slots[row])
 				want = append(want, layouts[row])
 			}
-			if err := s.decode(ready); err != nil {
+			if err := s.decode(ready, len(s.slots)); err != nil {
 				t.Fatal(err)
 			}
 			got := m.layouts[len(m.layouts)-1]
@@ -718,7 +718,7 @@ func TestBatchSchedulerMaterializesParkedState(t *testing.T) {
 				req := request{CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 100}}}
 				s.slots = append(s.slots, &batchSlot{id: id, targets: cs, request: &batchRequest{decoder: d, output: newGenerationOutput(r, req, &cacheSession{}, 0)}})
 			}
-			if err := s.decode(s.slots); err != nil {
+			if err := s.decode(s.slots, len(s.slots)); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -795,6 +795,9 @@ func TestBatchSchedulerLearnsDraftDepth(t *testing.T) {
 				if c == nil || !c.cost.sampled(0) || !c.cost.sampled(1) {
 					t.Fatal("concurrent controller did not sample plain and speculative costs")
 				}
+				if logprobs && c.plainTokens != 1 {
+					t.Fatalf("plain tokens per drafting row = %v, want 1", c.plainTokens)
+				}
 				shared := false
 				for i, rows := range m.batches {
 					shared = shared || rows == drafting && m.forwards[i].n > 1
@@ -831,6 +834,9 @@ func TestBatchSchedulerLearnsDraftDepth(t *testing.T) {
 				}
 				if b.output.generated <= before || !maps.Equal(costs, c.cost.ewma) {
 					t.Fatal("backpressure stalled the peer or contaminated two-row costs")
+				}
+				if len(s.slots[1].speculation.depth.cost.ewma) != 0 {
+					t.Fatal("only ready request learned contended costs as isolated costs")
 				}
 			})
 		})

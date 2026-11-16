@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,12 @@ func probeTestRunner(t *mlxtest.T, opts sampler.Options) (*Runner, *fakeMTPDraft
 	draft := &fakeMTPDraft{predict: predict}
 	r.cache.caches = caches
 	r.spec = newSpeculation(r, pipelineSlot, draft, caches, nil)
-	c := r.spec.depth
+	r.spec.depth = probeTestDepth()
+	return r, draft, snapshots
+}
+
+func probeTestDepth() *depthController {
+	c := newDepthController()
 	c.drafterLimit = 1
 	c.cost.observe(0, time.Millisecond)
 	c.cost.observe(1, 10*time.Millisecond)
@@ -34,7 +40,153 @@ func probeTestRunner(t *mlxtest.T, opts sampler.Options) (*Runner, *fakeMTPDraft
 	}
 	c.probeInterval = depthProbeIntervalMax
 	c.probeSince = depthProbeIntervalMax - 1
-	return r, draft, snapshots
+	return c
+}
+
+// The first request decodes once while its peer prefills. Their budgets leave
+// both with remaining tokens when the shared controller schedules its probe.
+func probeTestScheduler(t *mlxtest.T, ctx context.Context, remaining int) (*batchScheduler, *schedulingModel, *depthController) {
+	t.Helper()
+	tok := newTestTokenizer(t, []int32{7})
+	predict := map[int32]int32{1: 1, 2: 2}
+	m := &schedulingModel{fakeMTPModel: fakeMTPModel{tok: tok, predict: predict}}
+	r := &Runner{Model: m, Tokenizer: tok, Sampler: sampler.New(4096), parallel: 2}
+	r.cache = newPrefixCache(m.NewCaches())
+	r.spec = newSpeculation(r, pipelineSlot, &fakeMTPDraft{predict: predict}, r.cache.caches, nil)
+	c := probeTestDepth()
+	s := &batchScheduler{r: r, slots: make([]*batchSlot, 2), drafting: batchDrafting{
+		depths: map[draftBatchSize]*depthController{{rows: 2, drafting: 2}: c},
+	}}
+	t.Cleanup(func() {
+		for _, slot := range s.slots {
+			if slot == nil {
+				continue
+			}
+			if slot.request != nil {
+				s.finish(slot, context.Canceled)
+			}
+			slot.cache.close()
+		}
+		r.cache.close()
+		r.Sampler.Free()
+	})
+	mlx.Scoped(func() {
+		for i := range 2 {
+			requestCtx := context.Background()
+			if i == 0 {
+				requestCtx = ctx
+			}
+			s.admit(request{
+				Ctx: requestCtx, Tokens: []int32{int32(i + 1), int32(i + 1)}, Responses: make(chan CompletionResponse, 32),
+				CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: remaining + 2 - i}},
+			})
+		}
+	})
+	for range 2 {
+		mlx.Scoped(func() { s.step() })
+	}
+	if c.scheduled != 1 || !c.probed {
+		t.Fatalf("shared controller did not schedule a probe: depth=%d probed=%v", c.scheduled, c.probed)
+	}
+	for _, slot := range s.slots {
+		req := slot.request
+		if req == nil || req.finished || req.output.limit-req.output.generated != remaining {
+			t.Fatalf("slot %d did not reach the probe with %d tokens remaining", slot.id, remaining)
+		}
+	}
+	return s, m, c
+}
+
+func TestBatchSchedulerProbeSurvivesRequestBudget(t *testing.T) {
+	for _, remaining := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("remaining%d", remaining), func(t *testing.T) {
+			mlxtest.Run(t, func(t *mlxtest.T) {
+				s, m, c := probeTestScheduler(t, context.Background(), remaining)
+				requests := []request{s.slots[0].request.request, s.slots[1].request.request}
+				start := len(m.forwards)
+				for range 4 {
+					mlx.Scoped(func() { s.step() })
+				}
+				shared := false
+				for i := start; i < len(m.forwards); i++ {
+					shared = shared || m.batches[i] == 2 && m.forwards[i].n > 1
+				}
+				if shared != (remaining == 3) || c.probed != (remaining < 3) {
+					t.Fatalf("remaining %d: shared verification=%v probe pending=%v", remaining, shared, c.probed)
+				}
+				for i, req := range requests {
+					if s.slots[i].request != nil {
+						t.Fatalf("slot %d did not finish within its token budget", i)
+					}
+					got, final := collectResponses(req.Responses)
+					want := strings.Repeat(s.r.Tokenizer.Decode(req.Tokens[:1]), req.Options.NumPredict)
+					if !final.Done || final.EvalCount != req.Options.NumPredict || got != want {
+						t.Fatalf("slot %d output=%q final=%+v, want %q", i, got, final, want)
+					}
+				}
+				if remaining == 3 {
+					return
+				}
+				if c.scheduled != 1 || c.probeSince != 0 {
+					t.Fatalf("unexecuted probe changed: depth=%d since=%d", c.scheduled, c.probeSince)
+				}
+				// A fresh pair must execute the retained probe, rather than wait
+				// another 512 rounds for the controller to try drafting again.
+				mlx.Scoped(func() {
+					for _, req := range requests {
+						req.Responses = make(chan CompletionResponse, 32)
+						req.Options.NumPredict = 20
+						s.admit(req)
+					}
+				})
+				start = len(m.forwards)
+				for range 4 {
+					mlx.Scoped(func() { s.step() })
+				}
+				for i := start; i < len(m.forwards); i++ {
+					shared = shared || m.batches[i] == 2 && m.forwards[i].n > 1
+				}
+				if !shared || c.probed {
+					t.Fatalf("fresh pair did not consume retained probe: shared=%v pending=%v", shared, c.probed)
+				}
+			})
+		})
+	}
+}
+
+func TestBatchSchedulerProbeSurvivesCancellation(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		s, m, c := probeTestScheduler(t, ctx, 20)
+		req := s.slots[0].request.request
+		peer := s.slots[1].request
+		before := peer.output.generated
+		cancel()
+		mlx.Scoped(func() { s.step() })
+		if c.scheduled != 1 || !c.probed || c.probeSince != 0 {
+			t.Fatalf("cancellation consumed shared probe: depth=%d pending=%v since=%d", c.scheduled, c.probed, c.probeSince)
+		}
+		if s.slots[0].request != nil || peer.finished || peer.output.generated <= before {
+			t.Fatal("cancellation did not release its slot and let the peer progress")
+		}
+		req.Ctx = context.Background()
+		req.Responses = make(chan CompletionResponse, 32)
+		mlx.Scoped(func() {
+			s.admit(req)
+		})
+		start := len(m.forwards)
+		for range 4 {
+			mlx.Scoped(func() { s.step() })
+		}
+		shared := false
+		for i := start; i < len(m.forwards); i++ {
+			shared = shared || m.batches[i] == 2 && m.forwards[i].n > 1
+		}
+		if !shared || c.probed {
+			t.Fatalf("pair after cancellation did not consume retained probe: shared=%v pending=%v", shared, c.probed)
+		}
+	})
 }
 
 func TestSpeculativeProbeSurvivesRequestBudget(t *testing.T) {
