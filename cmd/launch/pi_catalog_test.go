@@ -23,6 +23,49 @@ import (
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
+func TestPiCatalogIncludesAvailableModels(t *testing.T) {
+	setLaunchTestHome(t, t.TempDir())
+	primary := LaunchModel{Name: "primary", ContextLength: 65536, Capabilities: []modelpkg.Capability{"completion", "tools"}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"primary","details":{"context_length":65536},"capabilities":["completion","tools"]},{"name":"installed-local","details":{"context_length":32768},"capabilities":["completion","tools"]}]}`)
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[{"model":"available:cloud","context_length":65536,"max_output_tokens":8192},{"model":"not-downloaded-local"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"capabilities":["completion","tools"],"model_info":{"fixture.context_length":65536}}`)
+		default:
+			t.Errorf("unexpected request (catalog discovery must not download models): %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+	client, err := newLauncherClient(defaultLaunchPolicy(true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := client.piModelCatalog(t.Context(), primary, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) == 0 || models[0].Name != primary.Name {
+		t.Fatalf("starting model changed: %v", models)
+	}
+	pi := &Pi{}
+	if err := pi.Edit(models); err != nil {
+		t.Fatal(err)
+	}
+	got := pi.Models()
+	slices.Sort(got)
+	want := []string{"available:cloud", "installed-local", "primary"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Pi catalog = %v, want %v", got, want)
+	}
+}
+
 func TestPiPrimaryMetadataBudget(t *testing.T) {
 	for _, complete := range []bool{false, true} {
 		t.Run(fmt.Sprint(complete), func(t *testing.T) {
@@ -1020,7 +1063,7 @@ func TestPiManualEquivalentPrimaryKeepsItsID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"providers":{"ollama":{"models":[{"id":"primary:latest","contextWindow":4096,"custom":true}]}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	primary, err := (&Pi{}).writeConfig([]LaunchModel{{Name: "primary", ContextLength: 32768}}, false)
+	primary, err := (&Pi{}).writeConfig([]LaunchModel{{Name: "primary", ContextLength: 32768}}, false, false)
 	if err != nil || primary != "primary:latest" {
 		t.Fatalf("configured primary = %q, %v", primary, err)
 	}

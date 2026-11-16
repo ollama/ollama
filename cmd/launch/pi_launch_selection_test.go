@@ -35,6 +35,9 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 		headless      bool
 		passthrough   bool
 		corruptConfig bool
+		provider      string
+		cloudDisabled bool
+		scoped        bool
 	}
 	cases := []testCase{
 		{name: "available saved model remains highlighted", saved: []string{"keep-model"}, wantPicker: 1, wantCurrent: "keep-model", wantModel: "chosen"},
@@ -48,9 +51,9 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 		{name: "configure replaces disabled cloud default", saved: []string{"remote:cloud", "keep-model"}, args: []string{"--config"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "configure replaces disabled explicit cloud target", saved: []string{"keep-model"}, args: []string{"--config", "--model", "remote:cloud"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "saved embedding model requires a chat model", saved: []string{"embeddings", "keep-model"}, wantPicker: 1, wantModel: "chosen"},
-		{name: "short model flag", saved: []string{"keep-model"}, args: []string{"-m", "chosen"}, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen"}},
-		{name: "model flag after Pi separator is prompt text", saved: []string{"keep-model"}, args: []string{"--model", "chosen", "--", "--", "--model", "example"}, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--", "--model", "example"}},
-		{name: "provider flag after Pi separator is prompt text", saved: []string{"keep-model"}, args: []string{"--model", "chosen", "--", "--", "--provider", "example"}, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--", "--provider", "example"}},
+		{name: "short model flag", saved: []string{"keep-model"}, args: []string{"-m", "chosen"}, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--models", "ollama/*"}},
+		{name: "model flag after Pi separator is prompt text", saved: []string{"keep-model"}, args: []string{"--model", "chosen", "--", "--", "--model", "example"}, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--models", "ollama/*", "--", "--model", "example"}},
+		{name: "provider flag after Pi separator is prompt text", saved: []string{"keep-model"}, args: []string{"--model", "chosen", "--", "--", "--provider", "example"}, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--models", "ollama/*", "--", "--provider", "example"}},
 		{name: "explicit embedding model is rejected", saved: []string{"keep-model"}, args: []string{"--model", "embeddings"}, wantError: "does not support chat"},
 		{name: "legacy saved embedding model requires a chat model", saved: []string{"legacy-embedding"}, wantPicker: 1, wantModel: "chosen"},
 		{name: "picker replaces disabled saved cloud alias", saved: []string{"remote-alias", "keep-model"}, wantPicker: 1, wantModel: "chosen"},
@@ -62,10 +65,14 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 		{name: "native override ignores unused malformed launch config", passthrough: true, corruptConfig: true, saved: []string{"keep-model"}, args: []string{"--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
 		{name: "forwarded provider and model", passthrough: true, saved: []string{"remote:cloud", "keep-model"}, args: []string{"--", "--provider", "fixture-user", "--model", "user-choice"}, wantPiArgs: []string{"--provider", "fixture-user", "--model", "user-choice"}},
 		{name: "forwarded model replaces explicit cloud target", passthrough: true, saved: []string{"keep-model"}, args: []string{"--model", "remote:cloud", "--", "--model", "fixture-user/user-choice"}, wantPiArgs: []string{"--model", "fixture-user/user-choice"}},
-		{name: "prompt after Pi separator keeps startup picker", saved: []string{"keep-model"}, args: []string{"--", "--", "--model", "example"}, wantPicker: 1, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--", "--model", "example"}},
+		{name: "prompt after Pi separator keeps startup picker", saved: []string{"keep-model"}, args: []string{"--", "--", "--model", "example"}, wantPicker: 1, wantModel: "chosen", wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--models", "ollama/*", "--", "--model", "example"}},
 		{name: "headless native help with yes", passthrough: true, headless: true, args: []string{"--yes", "--", "--help"}, wantPiArgs: []string{"--help"}},
-		{name: "text mode remains interactive", saved: []string{"keep-model"}, wantPicker: 1, wantModel: "chosen", args: []string{"--", "--mode", "text"}, wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--mode", "text"}},
-		{name: "model flag inside a prompt is not an override", wantPicker: 1, wantModel: "chosen", saved: []string{"keep-model"}, args: []string{"--", "--system-prompt", "--model", "probe"}, wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--system-prompt", "--model", "probe"}},
+		{name: "headless provider ignores missing launcher model", passthrough: true, headless: true, provider: "fixture-provider", saved: []string{"missing"}, wantPiArgs: []string{}},
+		{name: "headless provider ignores disabled cloud launcher model", passthrough: true, headless: true, provider: "fixture-provider", saved: []string{"remote:cloud"}, cloudDisabled: true, wantPiArgs: []string{}},
+		{name: "headless provider ignores transient launcher failure", passthrough: true, headless: true, provider: "fixture-provider", saved: []string{"transient"}, wantPiArgs: []string{}},
+		{name: "headless saved scope ignores unrelated launcher model", passthrough: true, headless: true, scoped: true, saved: []string{"missing"}, wantPiArgs: []string{}},
+		{name: "text mode remains interactive", saved: []string{"keep-model"}, wantPicker: 1, wantModel: "chosen", args: []string{"--", "--mode", "text"}, wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--models", "ollama/*", "--mode", "text"}},
+		{name: "model flag inside a prompt is not an override", wantPicker: 1, wantModel: "chosen", saved: []string{"keep-model"}, args: []string{"--", "--system-prompt", "--model", "probe"}, wantPiArgs: []string{"--provider", "ollama", "--model", "chosen", "--models", "ollama/*", "--system-prompt", "--model", "probe"}},
 	}
 	for _, args := range [][]string{
 		{"--continue"},
@@ -110,8 +117,16 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 			}
 			preserved := map[string]string{}
 			if tc.passthrough && tc.saved != nil {
+				provider := tc.provider
+				if provider == "" {
+					provider = "ollama"
+				}
+				scope := ""
+				if tc.scoped {
+					scope = `,"enabledModels":["fixture-user/*"]`
+				}
 				preserved = map[string]string{
-					filepath.Join(home, ".pi", "agent", "settings.json"):             `{"defaultProvider":"ollama","defaultModel":"missing","editorPaddingX":3}`,
+					filepath.Join(home, ".pi", "agent", "settings.json"):             fmt.Sprintf(`{"defaultProvider":%q,"defaultModel":"missing","editorPaddingX":3%s}`, provider, scope),
 					filepath.Join(home, ".pi", "agent", "models.json"):               `{"providers":{"ollama":{"models":[{"id":"missing","_launch":true}]},"fixture-user":{"apiKey":"synthetic"}}}`,
 					filepath.Join(home, ".pi", "agent", "sessions", "history.jsonl"): "existing history\n",
 				}
@@ -165,7 +180,7 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/api/status":
-					fmt.Fprintf(w, `{"cloud":{"disabled":%t}}`, !tc.passthrough)
+					fmt.Fprintf(w, `{"cloud":{"disabled":%t}}`, !tc.passthrough || tc.cloudDisabled)
 				case "/api/experimental/model-recommendations":
 					fmt.Fprint(w, `{"recommendations":[{"model":"chosen"}]}`)
 				case "/api/tags":
@@ -253,7 +268,7 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 			}
 
 			data, err := os.ReadFile(argsPath)
-			want := []string{}
+			want := []string{"--models", "ollama/*"}
 			if tc.wantPicker > 0 {
 				want = append([]string{"--provider", "ollama", "--model", tc.wantModel}, want...)
 			}
@@ -377,17 +392,19 @@ func TestLaunchIntegrationPiPreservesModelChoice(t *testing.T) {
 		provider     string
 		project      string
 	}{
-		{name: "saved Pi default", current: "model-b", want: "model-b", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-b"}},
-		{name: "project Ollama model is highlighted", current: "model-b", project: `{"defaultProvider":"ollama","defaultModel":"model-a"}`, want: "model-a", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
+		{name: "saved Pi default", current: "model-b", want: "model-b", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-b", "--models", "ollama/*"}},
+		{name: "project Ollama model is highlighted", current: "model-b", project: `{"defaultProvider":"ollama","defaultModel":"model-a"}`, want: "model-a", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-a", "--models", "ollama/*"}},
 		{name: "project provider wins over global preference", current: "model-b", project: `{"defaultProvider":"fixture-provider","defaultModel":"external-model"}`, want: "model-a", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
 		{name: "malformed project settings are left to Pi", current: "model-b", project: `{invalid`, want: "model-b", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-b"}},
-		{name: "custom Pi profile", customAgent: "absolute", current: "model-b", want: "model-b", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-b"}},
-		{name: "tilde Pi profile", customAgent: "tilde", current: "model-b", want: "model-b", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-b"}},
-		{name: "explicit configuration changes provider preference", configure: true, provider: "fixture-provider", current: "external-model", want: "model-a", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
+		{name: "custom Pi profile", customAgent: "absolute", current: "model-b", want: "model-b", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-b", "--models", "ollama/*"}},
+		{name: "tilde Pi profile", customAgent: "tilde", current: "model-b", want: "model-b", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-b", "--models", "ollama/*"}},
+		{name: "saved provider preference", provider: "fixture-provider", current: "external-model", want: "external-model", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
+		{name: "custom profile provider preference", customAgent: "absolute", provider: "fixture-provider", current: "external-model", want: "external-model", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
+		{name: "explicit configuration changes provider preference", configure: true, provider: "fixture-provider", current: "external-model", want: "model-a", wantPicker: true, wantArgs: []string{"--provider", "ollama", "--model", "model-a", "--models", "ollama/*"}},
 		{name: "resume restores its own model", current: "model-a", extra: []string{"--continue"}, want: "model-a", wantArgs: []string{"--continue"}},
 		{name: "explicit override wins", current: "model-b", override: "model-a", extra: []string{"--continue"}, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a", "--continue"}},
-		{name: "explicit lookup precedes timed out catalog", current: "model-b", override: "model-a", stallCatalog: true, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
-		{name: "explicit configuration wins", current: "model-b", configure: true, wantPicker: true, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a"}},
+		{name: "explicit lookup precedes timed out catalog", current: "model-b", override: "model-a", stallCatalog: true, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a", "--models", "ollama/*"}},
+		{name: "explicit configuration wins", current: "model-b", configure: true, wantPicker: true, want: "model-a", wantArgs: []string{"--provider", "ollama", "--model", "model-a", "--models", "ollama/*"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
