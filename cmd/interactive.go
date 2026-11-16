@@ -159,6 +159,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 
 			scanner.Prompt.UseAlt = false
+			// Ctrl+C drops whatever was being typed, including an unfinished
+			// """ block; otherwise the next line is taken as a continuation.
+			multiline = MultilineNone
 			sb.Reset()
 
 			continue
