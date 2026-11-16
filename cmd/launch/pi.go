@@ -222,7 +222,8 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 		break
 	}
 
-	configured, err := pi.writeConfig(models, discoveryCtx.Err() != nil)
+	configure := req.ForceConfigure || req.ConfigureOnly || req.ModelOverride != ""
+	configured, err := pi.writeConfig(models, discoveryCtx.Err() != nil, configure)
 	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -466,6 +467,9 @@ func (p *Pi) Run(model string, models []LaunchModel, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "\n%sLaunching Pi...%s\n\n", ansiGray, ansiReset)
 
+	if piUseDefaultModelScope(args) {
+		args = append([]string{"--models", "ollama/*"}, args...)
+	}
 	if model != "" && !piHasModelArgs(args) && !piHasSubcommand(args) {
 		args = append([]string{"--provider", "ollama", "--model", model}, args...)
 	}
@@ -955,11 +959,11 @@ func piBaseURL() string {
 }
 
 func (p *Pi) Edit(models []LaunchModel) error {
-	_, err := p.writeConfig(models, false)
+	_, err := p.writeConfig(models, false, true)
 	return err
 }
 
-func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, error) {
+func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog, forceDefault bool) (string, error) {
 	if len(models) == 0 {
 		return "", nil
 	}
@@ -1077,8 +1081,10 @@ func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, er
 
 	// The first catalog entry is the separately selected starting model.
 
-	settings["defaultProvider"] = "ollama"
-	settings["defaultModel"] = primary
+	if provider, _ := settings["defaultProvider"].(string); forceDefault || provider == "" || provider == "ollama" {
+		settings["defaultProvider"] = "ollama"
+		settings["defaultModel"] = primary
+	}
 
 	settingsData, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
