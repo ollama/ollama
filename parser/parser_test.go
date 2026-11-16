@@ -736,6 +736,22 @@ SYSTEM ""
 	}
 }
 
+func TestModelfileRoundTripBoundaryTabs(t *testing.T) {
+	for _, directive := range []string{"SYSTEM", "TEMPLATE", "LICENSE", "PARAMETER stop", "MESSAGE user"} {
+		for _, value := range []string{"\tleading", "trailing\t", "\tboth\t", "\t", "\t\"quoted\"\t"} {
+			t.Run(directive+"/"+value, func(t *testing.T) {
+				input := fmt.Sprintf("FROM foo\n%s \"\"\"%s\"\"\"\n", directive, value)
+				original, err := ParseFile(strings.NewReader(input))
+				require.NoError(t, err)
+
+				roundtrip, err := ParseFile(strings.NewReader(original.String()))
+				require.NoError(t, err)
+				assert.Equal(t, original, roundtrip)
+			})
+		}
+	}
+}
+
 func TestParseFileUTF16ParseFile(t *testing.T) {
 	data := `FROM bob
 PARAMETER param1 1
