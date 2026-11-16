@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlxrunner/wire"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -116,30 +117,13 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
-type CompletionRequest struct {
-	Prompt      string
-	Media       []llm.MediaData
-	Format      json.RawMessage
-	Options     api.Options
-	Logprobs    bool
-	TopLogprobs int
-}
-
-type CompletionResponse struct {
-	Content    string
-	Done       bool
-	DoneReason int
-
-	PromptEvalCount       int
-	PromptEvalCachedCount *int
-	PromptEvalDuration    time.Duration
-	EvalCount             int
-	EvalDuration          time.Duration
-
-	Logprobs []llm.Logprob
-
-	Error *api.StatusError
-}
+// CompletionRequest and CompletionResponse are the runner's HTTP wire types.
+// They live in the cgo-free wire package so tools like cmd/bench can import
+// them without pulling in the MLX runtime.
+type (
+	CompletionRequest  = wire.CompletionRequest
+	CompletionResponse = wire.CompletionResponse
+)
 
 // Close terminates the subprocess.
 func (c *Client) Close() error {
@@ -549,6 +533,13 @@ type statusResponse struct {
 	// EmbeddingDimensions lists the model's trained matryoshka truncation
 	// sizes, when it declares any.
 	EmbeddingDimensions []int
+
+	// Parallel is the number of request slots the runner serves at once.
+	// ParallelExplicit reports whether the operator set it, rather than it
+	// coming from a default: callers that need a single slot must require
+	// ParallelExplicit as well, since the default is free to become automatic.
+	Parallel         int
+	ParallelExplicit bool
 }
 
 // EmbeddingDimensions returns the runner's declared matryoshka set, cached

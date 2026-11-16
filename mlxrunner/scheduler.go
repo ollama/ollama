@@ -241,7 +241,7 @@ func (s *batchScheduler) finish(slot *batchSlot, err error) {
 		p := req.prefill
 		req.spec.settle(mlx.FromValues(p.session.remaining[p.processed:p.processed+1], 1))
 	}
-	if req.output != nil {
+	if req.output != nil && req.decoder != nil {
 		s.r.Sampler.Remove(slot.id)
 	}
 	req.spec.close()
@@ -255,7 +255,11 @@ func (s *batchScheduler) finish(slot *batchSlot, err error) {
 	if err != nil {
 		req.responses = append(req.responses, CompletionResponse{Error: completionStatusError(err)})
 	} else {
-		req.responses = append(req.responses, req.output.finish())
+		final := req.output.finish()
+		if req.request.Stats {
+			final.Stats = s.r.requestStats(req.session, req.decoder)
+		}
+		req.responses = append(req.responses, final)
 	}
 	slog.Debug("MLX batch request finished", "slot", slot.id, "memory", mlx.Memory{})
 }
@@ -322,6 +326,13 @@ func (s *batchScheduler) step() bool {
 			if req.promptEval == 0 {
 				req.promptEval = time.Since(req.prefill.started)
 			}
+			// A prefill-only request ends with the prompt evaluated: it never
+			// compiles a grammar, registers a sampler, or builds a decoder.
+			if req.request.PrefillOnly {
+				req.output = newGenerationOutput(s.r, req.request, req.session, req.promptEval)
+				s.finish(slot, nil)
+				break
+			}
 			// Compilation runs concurrently; do not block the MLX worker waiting on it.
 			compiled := true
 			if c := req.request.Grammar; c != nil {
@@ -370,6 +381,8 @@ func (s *batchScheduler) step() bool {
 	if len(ready) == 0 {
 		return progressed
 	}
+	mlx.ProfileRangePush("decode")
+	defer mlx.ProfileRangePop()
 	if active == 1 {
 		slot := ready[0]
 		req := slot.request

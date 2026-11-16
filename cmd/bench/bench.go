@@ -47,6 +47,20 @@ type flagOptions struct {
 	decisionMode *string
 	decisionURL  *string
 	concurrency  *int
+
+	// Direct runner targets bypass ollama serve. -runner connects to a running
+	// MLX runner or llama-server (auto-detected); -spawn launches one.
+	runner    *string
+	spawn     *bool
+	ollamaBin *string
+	mode      *string // prefill | decode | both (direct targets only)
+	ignoreEOS *bool   // generate exactly -max-tokens (direct targets only)
+	scenario  *string // cache scenarios to run (direct targets only)
+	stream    streamOptions
+}
+
+func (f flagOptions) direct() bool {
+	return (f.runner != nil && *f.runner != "") || (f.spawn != nil && *f.spawn)
 }
 
 type Metrics struct {
@@ -232,9 +246,9 @@ func codePromptBody(wordCount, variation int) string {
 
 // generateCodePrompt renders a plan into a request-unique prompt. The pad
 // letters ride in the header nonce, where they read as digest material and
-// leave the coding request itself made only of whole problems.
+// keep calibration padding separate from the code body.
 func generateCodePrompt(plan promptPlan, variation int) string {
-	return nonceHeader(promptNonce(nonceLetters+plan.pad)) + codePromptBody(plan.words, variation)
+	return nonceHeader(promptNonce(nonceLetters+plan.pad)) + longCodeBody(plan.words, variation)
 }
 
 // benchmarkPromptVariation maps each epoch and retry to a unique prompt.
@@ -340,15 +354,16 @@ func measurePromptTokens(ctx context.Context, client *api.Client, model string, 
 // caller asked for. Whole problems get within a handful of tokens of the target;
 // pad letters, which cost exactly one token each, cover the remainder.
 //
-// TODO: Replace this chat-based calibration with the token-count API when
-// cmd/bench can depend on it. Keep the replacement behind this function so
-// sizing remains outside warmups and timed requests.
-//
-// measurePlan is the only transport-specific step, so the OpenAI path
-// calibrates without an Ollama client.
+// measurePlan is the transport-specific step: direct MLX uses its tokenizer,
+// while API and OpenAI targets still probe with a one-token completion.
+// Sizing remains outside warmups and timed requests.
 func calibratePrompt(measurePlan func(promptPlan) (int, error), model string, fOpt flagOptions) (promptPlan, error) {
 	targetTokens := *fOpt.promptTokens
 	maxWords := fullCodePromptWords()
+	if fOpt.direct() {
+		// Generated code extends the finite corpus for long-context runs.
+		maxWords = max(maxWords, targetTokens)
+	}
 
 	measured := make(map[int]int)
 	measure := func(words int) (int, error) {
@@ -584,6 +599,16 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 func BenchmarkModel(fOpt flagOptions) error {
 	models := strings.Split(*fOpt.models, ",")
 	useOpenAI := fOpt.openaiURL != nil && *fOpt.openaiURL != ""
+	if err := checkFlagCombinations(fOpt, useOpenAI); err != nil {
+		return err
+	}
+	if err := fOpt.stream.validate(); err != nil {
+		return err
+	}
+	useScenarios := fOpt.scenario != nil && *fOpt.scenario != ""
+	if fOpt.stream.enabled() && (!fOpt.direct() || useScenarios || useOpenAI) {
+		return errors.New("stream sampling and abort options require -runner or -spawn without -scenario or -openai")
+	}
 	if fOpt.decisionFile != nil && *fOpt.decisionFile != "" {
 		return benchmarkDecision(fOpt, models, os.Stdout)
 	}
@@ -608,6 +633,17 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 	if useOpenAI {
 		return benchmarkOpenAI(fOpt, models, out)
+	}
+
+	if fOpt.scenario != nil && *fOpt.scenario != "" {
+		if !fOpt.direct() {
+			return errors.New("-scenario requires -runner or -spawn")
+		}
+		return benchmarkScenarios(fOpt, out)
+	}
+
+	if fOpt.direct() {
+		return benchmarkDirect(fOpt, out)
 	}
 
 	var imgData api.ImageData
@@ -842,6 +878,24 @@ func BenchmarkModel(fOpt flagOptions) error {
 		unloadModel(client, model, *fOpt.timeout)
 	}
 
+	return nil
+}
+
+// checkFlagCombinations rejects flags that a target would otherwise ignore.
+func checkFlagCombinations(fOpt flagOptions, useOpenAI bool) error {
+	scenario := fOpt.scenario != nil && *fOpt.scenario != ""
+	runner := fOpt.runner != nil && *fOpt.runner != ""
+	spawn := fOpt.spawn != nil && *fOpt.spawn
+	switch {
+	case fOpt.decisionFile != nil && *fOpt.decisionFile != "" && (useOpenAI || fOpt.direct() || scenario):
+		return errors.New("-decision cannot be combined with -openai, -runner, -spawn or -scenario")
+	case useOpenAI && (fOpt.direct() || scenario):
+		return errors.New("-openai cannot be combined with -runner, -spawn or -scenario")
+	case runner && spawn:
+		return errors.New("-runner and -spawn are mutually exclusive")
+	case !fOpt.direct() && ((fOpt.mode != nil && *fOpt.mode != modeBoth) || (fOpt.ignoreEOS != nil && *fOpt.ignoreEOS)):
+		return errors.New("-mode and -ignore-eos require -runner or -spawn")
+	}
 	return nil
 }
 
@@ -1266,7 +1320,19 @@ func main() {
 		decisionFile: flag.String("decision", "", "Decision JSONL corpus for /v1/systemone (instead of chat)"),
 		decisionMode: flag.String("decision-mode", "score", "Decision label policy: score reports accuracy; regression requires 100%"),
 		concurrency:  flag.Int("concurrency", 1, "Maximum in-flight requests (currently requires -decision; 1 = serial)"),
+
+		runner:    flag.String("runner", "", "Drive a runner directly at host:port, bypassing ollama serve (auto-detects MLX runner vs llama-server)"),
+		spawn:     flag.Bool("spawn", false, "Spawn the runner: MLX runner for an MLX model, llama-server for a GGUF model or path"),
+		ollamaBin: flag.String("ollama", "", "Path to the ollama binary for -spawn (default: next to this executable, then ./ollama, then PATH)"),
+		mode:      flag.String("mode", modeBoth, "Direct runner mode [prefill|decode|both]"),
+		ignoreEOS: flag.Bool("ignore-eos", false, "Disable stop tokens so generation runs exactly -max-tokens (direct runners only)"),
+		scenario:  flag.String("scenario", "", "Run prefix-cache scenarios instead of epochs: all or a comma list of "+strings.Join(scenarioNames(), ",")+" (direct runners only)"),
 	}
+
+	flag.StringVar(&fOpt.stream.output, "stream-output", "", "Append one-second stream delivery samples as JSONL (direct runners only; rates are chunks, not tokens)")
+	flag.Float64Var(&fOpt.stream.drop, "abort-drop", 0, "Abort when five-second stream delivery rate falls this percent below its initial baseline (0 disables)")
+	flag.DurationVar(&fOpt.stream.hold, "abort-after", 10*time.Second, "How long a stream rate drop must persist before cancellation")
+	flag.DurationVar(&fOpt.stream.stall, "stream-stall", 0, "Abort after this long without output once generation starts (0 disables)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS]\n\n", os.Args[0])
@@ -1277,7 +1343,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3,llama3 -epochs 6\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -epochs 6 -prompt-tokens 512 -format csv\n")
-		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -openai http://localhost:11434/v1\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -openai http://localhost:11434/v1\n\n")
+		fmt.Fprintf(os.Stderr, "  # Drive an MLX runner directly. Start it under a profiler first, e.g.\n")
+		fmt.Fprintf(os.Stderr, "  #   ollama runner --model gemma3 --port 8081 --profile\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -runner 127.0.0.1:8081 -mode prefill -prompt-tokens 2048\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -runner 127.0.0.1:8081 -mode decode -prompt-tokens 2048 -max-tokens 128 -ignore-eos\n\n")
+		fmt.Fprintf(os.Stderr, "  # Spawn the runner for a quick direct benchmark\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -spawn -mode decode -ignore-eos            # MLX model -> MLX runner\n")
+		fmt.Fprintf(os.Stderr, "  bench -model llama3.2:latest -spawn -mode decode -ignore-eos   # GGUF model -> llama-server\n")
 	}
 	flag.Parse()
 	if *fOpt.decisionFile != "" {

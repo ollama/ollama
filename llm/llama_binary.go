@@ -36,6 +36,12 @@ func defaultLlamaCppBinarySearch() llamaCppBinarySearch {
 	}
 }
 
+// FindLlamaCppBinary locates a llama.cpp helper binary the same way the server does.
+func FindLlamaCppBinary(name string) (string, error) {
+	path, _, err := findLlamaCppBinary(name, defaultLlamaCppBinarySearch())
+	return path, err
+}
+
 func findLlamaCppBinary(name string, search llamaCppBinarySearch) (string, []string, error) {
 	candidates := llamaCppBinaryCandidates(name, search)
 	for _, path := range candidates {

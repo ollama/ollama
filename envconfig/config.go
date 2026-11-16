@@ -272,6 +272,14 @@ func Uint(key string, defaultValue uint) func() uint {
 	}
 }
 
+// NumParallelExplicit reports whether OLLAMA_NUM_PARALLEL is set, so a caller
+// can tell a deliberate request parallelism from a defaulted one. Tools that
+// depend on a single request slot use this rather than reading NumParallel,
+// whose default is free to become an automatic value.
+func NumParallelExplicit() bool {
+	return Var("OLLAMA_NUM_PARALLEL") != ""
+}
+
 var (
 	// NumParallel sets the number of parallel model requests. NumParallel can be configured via the OLLAMA_NUM_PARALLEL environment variable.
 	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 1)

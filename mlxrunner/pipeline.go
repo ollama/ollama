@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
+	"github.com/ollama/ollama/mlxrunner/wire"
 )
 
 func prefillChunkSize() int {
@@ -144,6 +145,8 @@ func (p *prefillCursor) step(ctx context.Context) (bool, error) {
 	if len(tokens)-p.processed <= 1 {
 		return true, nil
 	}
+	mlx.ProfileRangePush("prefill")
+	defer mlx.ProfileRangePop()
 	n := p.media.extendChunk(p.position, min(prefillChunkSize(), len(tokens)-p.processed-1), len(p.session.inputs)-1)
 	mlx.Scoped(func() {
 		chunkIDs := mlx.FromValues(tokens[p.processed:p.processed+n], 1, n)
@@ -209,6 +212,7 @@ type generationOutput struct {
 	r                *Runner
 	session          *cacheSession
 	detok            detokenizer
+	ignoreEOS        bool // run to the full budget instead of stopping at a stop token
 	limit, generated int
 	started          time.Time
 	final            CompletionResponse
@@ -217,7 +221,7 @@ type generationOutput struct {
 func newGenerationOutput(r *Runner, request request, session *cacheSession, promptEval time.Duration) *generationOutput {
 	cached := len(session.inputs) - len(session.remaining)
 	return &generationOutput{
-		r: r, session: session, limit: request.Options.NumPredict, started: time.Now(),
+		r: r, session: session, limit: request.Options.NumPredict, started: time.Now(), ignoreEOS: request.IgnoreEOS,
 		detok: detokenizer{tokenizer: r.Tokenizer, wantLogprobs: request.SamplerOpts.Logprobs, wantTopLogprobs: request.SamplerOpts.TopLogprobs},
 		final: CompletionResponse{Done: true, DoneReason: 1, PromptEvalCount: len(request.Tokens), PromptEvalCachedCount: &cached, PromptEvalDuration: promptEval},
 	}
@@ -232,7 +236,7 @@ func (o *generationOutput) consume(results []sampler.Result) ([]CompletionRespon
 		if done {
 			continue
 		}
-		if o.r.Tokenizer.IsEOS(id) {
+		if !o.ignoreEOS && o.r.Tokenizer.IsEOS(id) {
 			o.final.DoneReason = 0
 			done = true
 			stream = i
@@ -257,6 +261,32 @@ func (o *generationOutput) finish() CompletionResponse {
 	o.final.EvalCount = o.generated
 	o.final.EvalDuration = time.Since(o.started)
 	return o.final
+}
+
+// requestStats reports how this request was served. Runner-wide readings come from
+// the request's own prefix cache, so concurrent slots do not mask them.
+func (r *Runner) requestStats(session *cacheSession, d decoder) *wire.Stats {
+	c := session.cache
+	if c == nil {
+		c = &prefixCache{}
+	}
+	limit := c.limitBytes
+	if limit == 0 {
+		limit = maxPagedOutBytes
+	}
+	s := &wire.Stats{
+		MatchedTokens: session.matched,
+		ActiveBytes:   int64(mlx.ActiveMemory()),
+		PeakBytes:     int64(mlx.PeakMemory()),
+		CacheBytes:    int64(mlx.CacheMemory()),
+		ColdBytes:     c.pagedOutBytes,
+		ColdLimit:     limit,
+		ColdEvicted:   c.evictedBytes,
+	}
+	if sd, ok := d.(interface{ draftCounts() (int, int) }); ok {
+		s.DraftTokens, s.AcceptedDraft = sd.draftCounts()
+	}
+	return s
 }
 
 // pipelinedDecoder decodes one token per row per call, one call ahead of

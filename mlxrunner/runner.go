@@ -93,15 +93,16 @@ type queuedRequest interface {
 }
 
 type Runner struct {
-	parallel      int
-	Model         model.Model
-	weights       *mlx.Scope
-	Tokenizer     *tokenizer.Tokenizer
-	Requests      chan queuedRequest
-	Sampler       *sample.Sampler
-	cache         *prefixCache
-	contextLength int
-	mlxThread     *mlxthread.Thread
+	parallel         int
+	parallelExplicit bool // OLLAMA_NUM_PARALLEL was set, so parallel is not a defaulted value
+	Model            model.Model
+	weights          *mlx.Scope
+	Tokenizer        *tokenizer.Tokenizer
+	Requests         chan queuedRequest
+	Sampler          *sample.Sampler
+	cache            *prefixCache
+	contextLength    int
+	mlxThread        *mlxthread.Thread
 	// grammarEngine is the structured-output subsystem; nil when the grammar
 	// library or vocabulary failed to load.
 	grammarEngine *grammarEngine

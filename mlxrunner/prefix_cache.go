@@ -38,9 +38,10 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/wire"
 )
 
-const prefillSnapshotInterval = 8192
+const prefillSnapshotInterval = wire.PrefillSnapshotInterval
 
 const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
 
@@ -50,6 +51,7 @@ type prefixCache struct {
 	caches        []cache.Cache
 	limitBytes    int64 // zero uses the default snapshot budget
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
+	evictedBytes  int64 // cumulative snapshot bytes freed by eviction
 
 	// draftLookahead is how far the draft caches' entries reference past
 	// their own slot; trie keys pack each token with its look-ahead (see key).
@@ -74,6 +76,7 @@ type cacheSession struct {
 
 	caches    []cache.Cache
 	remaining []int32
+	matched   int // prompt tokens the trie matched, before the seed back-off
 
 	// pendingSnapshots lists offsets where snapshots should be captured
 	// during prefill, sorted by offset. Entries are scheduled on the caches
@@ -137,6 +140,7 @@ func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int) *
 		items:     items,
 		caches:    c.caches,
 		remaining: remaining,
+		matched:   originalMatched,
 	}
 
 	// Schedule a snapshot at the branch point during prefill so future
@@ -665,6 +669,8 @@ func (c *prefixCache) enforceEvictionPolicy() {
 	if c.pagedOutBytes <= limit {
 		return
 	}
+	start := c.pagedOutBytes
+	defer func() { c.evictedBytes += max(0, start-c.pagedOutBytes) }()
 
 	for c.pagedOutBytes > limit {
 		// Evicting the frontier's parent merges the frontier into it, so
