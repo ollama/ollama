@@ -4,6 +4,7 @@
 package parsers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -317,5 +318,70 @@ func TestQwen35ParserEmptyFinalChunkKeepsOrdinaryContent(t *testing.T) {
 	}
 	if content != "" {
 		t.Fatalf("expected no content from the empty final chunk, got %q", content)
+	}
+}
+
+// Follow-up on #19705 (review by mercant1982, 2026-11-16): a literal
+// `</think>` inside an implicit Qwen3.5 tool argument must stay inside the
+// argument regardless of stream chunking. The reviewer supplied a native
+// fixture testing every two-chunk cut, with and without an empty final
+// done call; it is retained here in the repo's test style. The plain,
+// UTF-8, literal-`</tool_call>` and explicitly-closed cases are the
+// controls: they passed on the candidate head already and must keep
+// passing.
+func TestQwen35ParserLiteralThinkCloseInValueSurvivesChunking(t *testing.T) {
+	cases := []struct {
+		name     string
+		value    string
+		explicit bool
+	}{
+		{"implicit_plain", "hello world", false},
+		{"implicit_utf8", "Grüße 東京 🧪", false},
+		{"implicit_tool_close", "literal </tool_call> here", false},
+		{"implicit_think_close", "literal </think> here", false},
+		{"explicit_think_close", "literal </think> here", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lead := "plan "
+			if tc.explicit {
+				lead = "plan</think>"
+			}
+			input := lead + "<tool_call><function=write_file><parameter=content>\n" + tc.value + "\n</parameter></function></tool_call>"
+			for cut := 0; cut <= len(input); cut++ {
+				for _, emptyDone := range []bool{false, true} {
+					t.Run(fmt.Sprintf("cut%d_empty%t", cut, emptyDone), func(t *testing.T) {
+						parser := ParserForName("qwen3.5")
+						if parser == nil {
+							t.Fatal("expected qwen3.5 parser")
+						}
+						parser.Init(issue19694Tools(), nil, nil)
+						var contentSb, thinkingSb strings.Builder
+						var calls []api.ToolCall
+						feed := func(s string, done bool) {
+							c, th, cs, err := parser.Add(s, done)
+							if err != nil {
+								t.Fatalf("Add failed: %v", err)
+							}
+							contentSb.WriteString(c)
+							thinkingSb.WriteString(th)
+							calls = append(calls, cs...)
+						}
+						feed(input[:cut], false)
+						feed(input[cut:], !emptyDone)
+						if emptyDone {
+							feed("", true)
+						}
+						if contentSb.String() != "" || thinkingSb.String() != "plan" || len(calls) != 1 {
+							t.Fatalf("cut %d emptyDone %t: want content empty, thinking plan, one call; got content=%q thinking=%q calls=%d", cut, emptyDone, contentSb.String(), thinkingSb.String(), len(calls))
+						}
+						v, ok := calls[0].Function.Arguments.Get("content")
+						if !ok || v != tc.value {
+							t.Fatalf("cut %d emptyDone %t: argument changed: want %q got %#v", cut, emptyDone, tc.value, v)
+						}
+					})
+				}
+			}
+		})
 	}
 }

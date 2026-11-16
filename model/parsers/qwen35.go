@@ -375,18 +375,26 @@ func (p *Qwen35Parser) eatThinkingCandidate(done bool) ([]qwen35Event, bool) {
 	// The terminator is the structural one (the text before it ends with
 	// </function> and parses as a tool call), so a literal </tool_call>
 	// inside a parameter value does not end the call early. Likewise, a
-	// </think> inside a parameter value is only known to be inside the
-	// call once the structural terminator is found, so it is ignored here;
-	// it only ends thinking if it arrives before any structural terminator
-	// is known.
+	// </think> in the buffer may sit inside a parameter value (a literal
+	// </think> in the argument), so while the stream continues it stays
+	// ambiguous: it is only acted on once the call can be classified —
+	// either the structural terminator arrives, or the stream ends and no
+	// terminator can. Acting on it earlier would make the result depend
+	// on where chunks happen to end (issue #19694, follow-up on #19705).
 	idxClose := findCallTerminator(acc[p.candidateStart:])
 	if idxClose < 0 {
+		if !done {
+			// No terminator yet and more input may still arrive: hold
+			// the whole candidate, including any </think> in it.
+			return events, false
+		}
+		// The stream ended with no structural terminator: the
+		// candidate never became a call, so a </think> in the buffer
+		// is the real end of thinking. Release everything up to it as
+		// thinking and let the next iteration close thinking normally.
+		// The released text ends thinking, so trim its trailing
+		// whitespace exactly as the </think> split does.
 		if idxThink := strings.Index(acc, qwen35ThinkingCloseTag); idxThink >= 0 {
-			// </think> arrives before the call closes: the candidate is
-			// literal thinking. Release everything up to it as thinking
-			// and let the next iteration close thinking normally. The
-			// released text ends thinking, so trim its trailing
-			// whitespace exactly as the </think> split does.
 			thinking := strings.TrimRightFunc(acc[:idxThink], unicode.IsSpace)
 			p.buffer.Reset()
 			p.buffer.WriteString(acc[idxThink:])
@@ -397,11 +405,8 @@ func (p *Qwen35Parser) eatThinkingCandidate(done bool) ([]qwen35Event, bool) {
 			}
 			return events, true
 		}
-		if done {
-			// Incomplete call at end of stream: literal thinking.
-			return p.releaseCandidateAsThinking(len(acc))
-		}
-		return events, false
+		// Incomplete call at end of stream: literal thinking.
+		return p.releaseCandidateAsThinking(len(acc))
 	}
 
 	// Stage 3: after the call, the stream must end or another call must
