@@ -580,3 +580,33 @@ ggml_vulkan: 1 = Intel(R) RaptorLake-S Mobile Graphics Controller (Intel Corpora
 		}
 	})
 }
+
+// A zero-memory pseudo-device (the BLAS/Accelerate backend on macOS) listed
+// ahead of a GPU must not shift the GPU's ID: that ID is exported to the
+// backend as its own device index (for example GGML_VK_VISIBLE_DEVICES).
+func TestLlamaServerDiscoveryPseudoDeviceKeepsBackendIndex(t *testing.T) {
+	originalProbe := probeLlamaServerVulkanDevices
+	probeLlamaServerVulkanDevices = func(_ []string) ([]vulkanPhysicalDevice, error) {
+		return nil, errWindowsVulkanProbeUnsupported
+	}
+	t.Cleanup(func() {
+		probeLlamaServerVulkanDevices = originalProbe
+	})
+
+	output := `load_backend: loaded BLAS backend from /lib/ollama/libggml-blas.so
+load_backend: loaded Vulkan backend from /lib/ollama/vulkan/libggml-vulkan.so
+Available devices:
+  BLAS: Accelerate (0 MiB, 0 MiB free)
+  Vulkan0: AMD Radeon PRO W6900X (32752 MiB, 32751 MiB free)
+`
+	devices := parseLlamaServerDevicesWithNative(output, "", []string{"/lib/ollama", "/lib/ollama/vulkan"}, nil)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1: %+v", len(devices), devices)
+	}
+	if devices[0].Name != "Vulkan0" || devices[0].Library != "Vulkan" {
+		t.Fatalf("got device %q library %q, want Vulkan0 / Vulkan", devices[0].Name, devices[0].Library)
+	}
+	if devices[0].ID != "0" {
+		t.Fatalf("got device ID %q, want \"0\" (the pseudo-device must not take an index)", devices[0].ID)
+	}
+}
