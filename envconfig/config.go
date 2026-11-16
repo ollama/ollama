@@ -52,11 +52,16 @@ func Host() *url.URL {
 		port = defaultPort
 	}
 
-	return &url.URL{
+	u := &url.URL{
 		Scheme: scheme,
 		Host:   net.JoinHostPort(host, port),
 		Path:   path,
 	}
+	if decodedPath, err := url.PathUnescape(path); err == nil {
+		u.Path = decodedPath
+		u.RawPath = path
+	}
+	return u
 }
 
 // ConnectableHost returns Host() with unspecified bind addresses (0.0.0.0, ::)

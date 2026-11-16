@@ -52,6 +52,35 @@ func TestClientFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestClientFromEnvironmentEscapedProxyPath(t *testing.T) {
+	t.Setenv("OLLAMA_AUTH", "false")
+	for _, prefix := range []string{"/ollama", "/team%20one", "/tenant%2Fblue", "/%E4%BD%A0%E5%A5%BD", "/model%3Fv%23one"} {
+		t.Run(prefix, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if want := prefix + "/api/version"; r.RequestURI != want {
+					http.Error(w, fmt.Sprintf("request URI = %q, want %q", r.RequestURI, want), http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"version":"test"}`)
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL+prefix)
+			client, err := ClientFromEnvironment()
+			if err != nil {
+				t.Fatal(err)
+			}
+			version, err := client.Version(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if version != "test" {
+				t.Fatalf("version = %q, want test", version)
+			}
+		})
+	}
+}
+
 // testError represents an internal error type with status code and message
 // this is used since the error response from the server is not a standard error struct
 type testError struct {
