@@ -59,7 +59,7 @@ func prepareD3Inventory(inv Inventory) (Inventory, error) {
 	if err := json.Unmarshal(data, &decision); err != nil {
 		return Inventory{}, fmt.Errorf("parse d3 decision config: %w", err)
 	}
-	if backbone.TextConfig.HiddenSize <= 0 || decision.FormatVersion != 1 || decision.FormatID != d3FormatID || decision.Prompt != "d3" || len(decision.Codes) != 255 || len(decision.TokenIDs) != 255 || decision.AttentionMode != "noncausal_full_attention" || decision.Pooling != "last" || decision.ReadoutDType != "float32" {
+	if backbone.TextConfig.HiddenSize <= 0 || decision.FormatVersion != 1 || decision.FormatID != d3FormatID || decision.Prompt != "d3" || len(decision.Codes) != 255 || len(decision.TokenIDs) != 255 || (decision.AttentionMode != "noncausal_full_attention" && decision.AttentionMode != "prefix_bidir") || decision.Pooling != "last" || decision.ReadoutDType != "float32" {
 		return Inventory{}, fmt.Errorf("unsupported d3 decision config (format %q, attention %q)", decision.FormatID, decision.AttentionMode)
 	}
 	reader, err := safetensors.OpenForExtraction(filepath.Join(inv.Dir, "readout.safetensors"))
