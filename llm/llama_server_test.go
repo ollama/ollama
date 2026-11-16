@@ -2098,6 +2098,11 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 			gpus: oldGPU,
 			want: []string{"base", "--flash-attn", "on"},
 		},
+		{
+			name: "cann delegates flash attention to llama-server",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CANN"}, Description: "Ascend310P3"}},
+			want: []string{"base", "--flash-attn", "auto"},
+		},
 	}
 
 	for _, tt := range tests {

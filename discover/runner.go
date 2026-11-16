@@ -625,6 +625,8 @@ func visibleDeviceFilterTokens(goos, library string) []string {
 		}
 	case "Vulkan":
 		return splitVisibleDeviceList(envconfig.VkVisibleDevices())
+	case "CANN":
+		return splitVisibleDeviceList(envconfig.AscendVisibleDevices())
 	}
 
 	return nil

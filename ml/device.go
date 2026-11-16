@@ -278,7 +278,8 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 			gpu.Name == "Metal" || gpu.Library == "Metal" ||
 			cudaFlashAttentionSupported(gpu) ||
 			gpu.Library == "ROCm" ||
-			gpu.Library == "Vulkan"
+			gpu.Library == "Vulkan" ||
+			gpu.Library == "CANN"
 
 		if !supportsFA {
 			return false
@@ -413,6 +414,8 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 			return
 		}
 		envVar = "GGML_VK_VISIBLE_DEVICES"
+	case "CANN":
+		envVar = "ASCEND_RT_VISIBLE_DEVICES"
 	default:
 		return
 	}

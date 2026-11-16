@@ -84,6 +84,21 @@ func TestGetDevicesEnvFiltersVisibleDevices(t *testing.T) {
 			want: "0,2",
 		},
 		{
+			name: "single remapped CANN",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CANN", ID: "1"}, FilterID: "5"}},
+			key:  "ASCEND_RT_VISIBLE_DEVICES",
+			want: "5",
+		},
+		{
+			name: "multiple remapped CANN",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CANN", ID: "0"}, FilterID: "2"},
+				{DeviceID: DeviceID{Library: "CANN", ID: "1"}, FilterID: "5"},
+			},
+			key:  "ASCEND_RT_VISIBLE_DEVICES",
+			want: "2,5",
+		},
+		{
 			name: "single Vulkan",
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "Vulkan", ID: "0"}, FilterID: "1"}},
 			key:  "GGML_VK_VISIBLE_DEVICES",
