@@ -76,3 +76,28 @@ func TestParseHFGenerationDefaultsSkipsInvalidValues(t *testing.T) {
 		t.Fatalf("top_p = %#v, want %#v", got, float64(0.8))
 	}
 }
+
+func TestParseHFGenerationDefaultsSkipsNullValues(t *testing.T) {
+	defaults, err := ParseHFGenerationDefaults([]byte(`{
+		"top_k": null,
+		"temperature": null,
+		"repetition_penalty": null,
+		"penalty_repeat": 1.4,
+		"top_p": 0.8
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"top_k", "temperature"} {
+		if got, ok := defaults[key]; ok {
+			t.Fatalf("%s = %#v, want it unset for a null value", key, got)
+		}
+	}
+	if got := defaults["repeat_penalty"]; got != float64(1.4) {
+		t.Fatalf("repeat_penalty = %#v, want %#v from the next key after a null", got, float64(1.4))
+	}
+	if got := defaults["top_p"]; got != float64(0.8) {
+		t.Fatalf("top_p = %#v, want %#v", got, float64(0.8))
+	}
+}
