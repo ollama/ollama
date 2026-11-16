@@ -112,6 +112,7 @@ type Server struct {
 	sched         *Scheduler
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
+	metricsLogger *metricsLogger
 	modelCaches   *modelCaches
 }
 
@@ -561,6 +562,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// load the model
 	if req.Prompt == "" {
+		loadDuration := time.Since(checkpointLoaded)
+		s.metricsLogger.Log(req.Model, "generate", api.Metrics{
+			TotalDuration: loadDuration,
+			LoadDuration:  loadDuration,
+		})
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
 			CreatedAt:  time.Now().UTC(),
@@ -811,6 +817,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					res.Context = tokens
 				}
+
+				s.metricsLogger.Log(req.Model, "generate", res.Metrics)
 			}
 
 			if builtinParser != nil {
@@ -2515,6 +2523,9 @@ func Serve(ln net.Listener) error {
 	if err := s.initRequestLogging(); err != nil {
 		return err
 	}
+	if err := s.initMetricsLogging(); err != nil {
+		return err
+	}
 
 	if useClient2 {
 		slog.Warn("OLLAMA_EXPERIMENT=client2 is no longer available. Please remove this environment.")
@@ -3372,6 +3383,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+				s.metricsLogger.Log(req.Model, "chat", res.Metrics)
 			}
 
 			if builtinParser != nil {
@@ -3539,6 +3552,8 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+				s.metricsLogger.Log(req.Model, "chat", res.Metrics)
 			}
 
 			ch <- res
