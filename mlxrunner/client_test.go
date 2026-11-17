@@ -2,10 +2,58 @@ package mlxrunner
 
 import (
 	"encoding/json"
+	"flag"
+	"io"
+	"os"
+	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/llm"
 )
+
+func TestClientCloseHelper(t *testing.T) {
+	args := flag.Args()
+	if len(args) != 1 {
+		return
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	if args[0] == "stuck" {
+		// Model a native operation which does not return after shutdown.
+		time.Sleep(2 * runnerShutdownTimeout)
+	}
+}
+
+func TestClientClose(t *testing.T) {
+	for _, mode := range []string{"graceful", "stuck"} {
+		t.Run(mode, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestClientCloseHelper$", "--", mode)
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stdin.Close()
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			c := &Client{cmd: cmd, stdin: stdin, done: make(chan struct{})}
+			go func() { c.doneErr = cmd.Wait(); close(c.done) }()
+			defer func() { _ = cmd.Process.Kill(); <-c.done }()
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if (c.doneErr == nil) != (mode == "graceful") {
+				t.Fatalf("unexpected process exit: %v", c.doneErr)
+			}
+			if !c.closed || c.cmd != nil || c.stdin != nil {
+				t.Fatalf("incomplete close: closed=%v, command=%v, stdin=%v", c.closed, c.cmd, c.stdin)
+			}
+			if err := c.Close(); err != nil {
+				t.Fatalf("repeat close: %v", err)
+			}
+		})
+	}
+}
 
 func TestRequestGrammar(t *testing.T) {
 	schema := `{"type":"object","properties":{"answer":{"type":"string"}}}`

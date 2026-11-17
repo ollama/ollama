@@ -1,11 +1,15 @@
 package mlxrunner
 
 import (
+	"context"
 	"encoding/binary"
 	"maps"
 	"math"
+	"net"
+	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/fs/safetensors"
 	"github.com/ollama/ollama/manifest"
@@ -15,6 +19,84 @@ import (
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 )
+
+func TestRunnerShutdownWaitsForHandlers(t *testing.T) {
+	worker := mlxtest.Worker(t)
+	r := &Runner{mlxThread: worker}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	defer close(release)
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Run(ctx, host, port, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			close(entered)
+			<-req.Context().Done()
+			close(canceled)
+			// Preparation can still use model state after cancellation.
+			<-release
+		}))
+	}()
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		client := http.Client{Timeout: 5 * time.Second}
+		for {
+			resp, err := client.Get("http://" + addr)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+			select {
+			case <-entered:
+				return
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not start")
+	}
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not cancel the handler")
+	}
+	// Close has returned to the client, but the handler still owns model state.
+	<-clientDone
+	select {
+	case err := <-done:
+		t.Fatalf("runner returned before handler cleanup: %v", err)
+	case <-time.After(50 * time.Millisecond):
+		// Give Run a chance to return if its handler barrier is missing.
+	}
+	release <- struct{}{}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not finish shutdown")
+	}
+}
 
 func TestLoadTensorsSkipsNamedTensors(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -433,15 +434,45 @@ func loadTensorsFromManifest(root *model.Root, skippedTensors []string) (map[str
 	return allTensors, nil
 }
 
-func (r *Runner) Run(host, port string, mux http.Handler) error {
-	g, ctx := errgroup.WithContext(context.Background())
+func (r *Runner) Run(ctx context.Context, host, port string, mux http.Handler) error {
+	g, ctx := errgroup.WithContext(ctx)
+	var handlers sync.RWMutex // keeps model state alive until admitted handlers finish
+	server := &http.Server{
+		Addr: net.JoinHostPort(host, port),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			handlers.RLock()
+			defer handlers.RUnlock()
+			if ctx.Err() == nil {
+				mux.ServeHTTP(w, req)
+			}
+		}),
+		BaseContext: func(net.Listener) context.Context { return ctx },
+	}
 
 	g.Go(func() error { return r.runBatchRequests(ctx) })
 
 	g.Go(func() error {
 		slog.Info("Starting HTTP server", "host", host, "port", port)
-		return http.ListenAndServe(net.JoinHostPort(host, port), mux)
+		err := server.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
 	})
-
-	return g.Wait()
+	g.Go(func() error {
+		<-ctx.Done()
+		slog.Info("stopping MLX runner")
+		// Cancel stalled body reads as well as inference. Close alone does not
+		// wait for handlers; preparation can still hold model/grammar state.
+		err := server.Close()
+		handlers.Lock()
+		defer handlers.Unlock()
+		slog.Debug("MLX request handlers stopped")
+		return err
+	})
+	err := g.Wait()
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
