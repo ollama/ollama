@@ -96,17 +96,18 @@ func (c *prefixCache) ensureRoot() {
 }
 
 // begin prepares caches for a new request. It finds the nearest
-// matching cache or creates new caches if none match.
-func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
-	return c.beginAt(inputs, items, max(0, len(inputs)-1))
+// matching cache or creates new caches if none match. Peers belong to the same
+// runner and request kind, with identical cache layouts and draft lookahead.
+func (c *prefixCache) begin(inputs []int32, items []mediaItem, peers ...*prefixCache) *cacheSession {
+	return c.beginAt(inputs, items, max(0, len(inputs)-1), peers...)
 }
 
 // Scoring retains backbone outputs, so an exact hit needs no decode seed.
-func (c *prefixCache) beginScore(inputs []int32, items []mediaItem) *cacheSession {
-	return c.beginAt(inputs, items, len(inputs))
+func (c *prefixCache) beginScore(inputs []int32, items []mediaItem, peers ...*prefixCache) *cacheSession {
+	return c.beginAt(inputs, items, len(inputs), peers...)
 }
 
-func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int) *cacheSession {
+func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, peers ...*prefixCache) *cacheSession {
 	c.ensureRoot()
 
 	effInputs := effectiveKeyTokens(inputs, items)
@@ -128,6 +129,30 @@ func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int) *
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
+	var source *prefixCache
+	var shared []*trieNode
+	for _, peer := range peers {
+		path, end := peer.sharedPrefix(keys, min(maxReuse, len(keys)), items)
+		if end > prefix {
+			source, shared, prefix = peer, path, end
+		}
+	}
+	if source != nil {
+		c.rewind(0)
+		c.restoreSnapshots(shared, prefix, 0)
+		prefix = c.alignCaches()
+		// The destination owns its trie and mutable state. Never install the
+		// source's nodes or snapshots in a second store.
+		c.activePath = []*trieNode{c.root}
+		if prefix > 0 {
+			c.pageOut(c.advancePath(c.root, keys[:prefix], prefix))
+			shared[len(shared)-1].lastUsed = time.Now()
+		}
+		// Cross-cache restores may materialize the source's lazy snapshots.
+		// Trim only after all borrowed snapshots have been consumed.
+		source.enforceEvictionPolicy()
+		originalMatched = max(originalMatched, prefix)
+	}
 	remaining := inputs[prefix:]
 
 	session := &cacheSession{
@@ -235,65 +260,15 @@ func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 		ancestorOffset = c.activePath[commonLen-1].endOffset
 	}
 
-	var pageInCount int
-
 	// Rewind each cache to the target offset or free it. When matched
 	// falls within the ancestor's range (same-path case), we rewind
 	// directly to the match point. Otherwise we rewind to the ancestor
 	// and let page-in bring us forward to matched.
 	rewindTarget := min(ancestorOffset, matched)
-	for _, kv := range c.caches {
-		if kv == nil {
-			continue
-		}
-		if !kv.Restore(nil, rewindTarget) {
-			kv.Free()
-		}
-	}
-
-	// Page in — walk the full new path, restoring from snapshots.
-	// Freed caches naturally pick up the first available snapshot.
-	// Caches already past a node skip it via offset check.
-pageIn:
-	for _, node := range newPath {
-		if !node.hasSnapshots() {
-			continue
-		}
-		nodeTarget := min(node.endOffset, matched)
-		for j, kv := range c.caches {
-			if kv == nil {
-				continue
-			}
-			if j >= len(node.snapshots) || node.snapshots[j] == nil {
-				continue
-			}
-			if kv.Offset() >= nodeTarget {
-				continue
-			}
-			if !kv.Restore(node.snapshots[j], nodeTarget) {
-				// Restore failed — stop page-in and let alignment
-				// bring all caches to a consistent offset.
-				break pageIn
-			}
-		}
-		if node.endOffset > ancestorOffset {
-			pageInCount++
-			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
-		}
-	}
-
-	// Align all caches to the minimum offset.
+	c.rewind(rewindTarget)
+	pageInCount := c.restoreSnapshots(newPath, matched, ancestorOffset)
 	c.activePath = newPath
-	minOff := c.minCacheOffset()
-	for _, kv := range c.caches {
-		if kv != nil && kv.Offset() != minOff {
-			if !kv.Restore(nil, minOff) {
-				slog.Warn("failed to restore cache, freeing all caches", "offset", minOff)
-				c.freeAll()
-				break
-			}
-		}
-	}
+	minOff := c.alignCaches()
 
 	// If the live offset falls inside the last node, split it so the reused
 	// head stays on the active path and only the unused tail can be evicted.
@@ -319,6 +294,78 @@ pageIn:
 	if pageInCount > 0 {
 		slog.Debug("switching cache path", "page_in", pageInCount)
 	}
+}
+
+// sharedPrefix returns complete saved edges that another slot can restore.
+// Live state and partial edges are not borrowed: recurrent and wrapped sliding
+// caches can only resume at a saved boundary. Missing edges break KV continuity.
+func (c *prefixCache) sharedPrefix(keys []trieKey, maxReuse int, items []mediaItem) ([]*trieNode, int) {
+	path, matched := findBestMatch(c.root, keys[:maxReuse])
+	end, count := 0, 1
+	for i := 1; i < len(path); i++ {
+		node := path[i]
+		if node.endOffset > matched || !hasAllSnapshots(node, c.caches) {
+			break
+		}
+		if insideAtomicItem(items, node.endOffset) == nil {
+			end, count = node.endOffset, i+1
+		}
+	}
+	if end == 0 {
+		return nil, 0
+	}
+	return path[:count], end
+}
+
+func (c *prefixCache) rewind(offset int) {
+	for _, kv := range c.caches {
+		if kv != nil && !kv.Restore(nil, offset) {
+			kv.Free()
+		}
+	}
+}
+
+func (c *prefixCache) restoreSnapshots(path []*trieNode, matched, ancestorOffset int) int {
+	count := 0
+	for _, node := range path {
+		if !node.hasSnapshots() {
+			continue
+		}
+		nodeTarget := min(node.endOffset, matched)
+		for j, kv := range c.caches {
+			if kv == nil {
+				continue
+			}
+			if j >= len(node.snapshots) || node.snapshots[j] == nil {
+				continue
+			}
+			if kv.Offset() >= nodeTarget {
+				continue
+			}
+			if !kv.Restore(node.snapshots[j], nodeTarget) {
+				// Restore failed — stop page-in and let alignment
+				// bring all caches to a consistent offset.
+				return count
+			}
+		}
+		if node.endOffset > ancestorOffset {
+			count++
+			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
+		}
+	}
+	return count
+}
+
+func (c *prefixCache) alignCaches() int {
+	offset := c.minCacheOffset()
+	for _, kv := range c.caches {
+		if kv != nil && kv.Offset() != offset && !kv.Restore(nil, offset) {
+			slog.Warn("failed to restore cache, freeing all caches", "offset", offset)
+			c.freeAll()
+			return 0
+		}
+	}
+	return offset
 }
 
 // schedulePrefillSnapshots schedules every cache to capture snapshots as the

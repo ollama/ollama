@@ -15,7 +15,7 @@ type activeEvaluation struct {
 	state   *evaluationState
 }
 
-func (r *Runner) scheduleEvaluation(ctx context.Context, open func(*batchSlot) (*evaluationState, error)) error {
+func (r *Runner) scheduleEvaluation(ctx context.Context, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
 	request := &evaluationRequest{ctx: ctx, open: open, done: make(chan error, 1)}
 	select {
 	case <-ctx.Done():
@@ -40,7 +40,13 @@ func (s *batchScheduler) admitEvaluation(request *evaluationRequest) {
 			slot = &batchSlot{id: i}
 			s.slots[i] = slot
 		}
-		p, err := request.open(slot)
+		var peers []*prefixCache
+		for _, other := range s.slots {
+			if other != nil && other != slot && other.scoreCache != nil {
+				peers = append(peers, other.scoreCache)
+			}
+		}
+		p, err := request.open(slot, peers)
 		if err != nil {
 			request.done <- err
 			return
@@ -83,8 +89,8 @@ func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest
 		return 0, err
 	}
 	cached := 0
-	err = r.scheduleEvaluation(ctx, func(slot *batchSlot) (*evaluationState, error) {
-		p := r.openEvaluation(slot, input, items, consume)
+	err = r.scheduleEvaluation(ctx, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+		p := r.openEvaluation(slot, input, items, consume, peers...)
 		p.keepScratch = true
 		cached = p.position
 		return p, nil
@@ -92,7 +98,7 @@ func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest
 	return cached, err
 }
 
-func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, items []mediaItem, consume func(*mlx.Array) error) *evaluationState {
+func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, items []mediaItem, consume func(*mlx.Array) error, peers ...*prefixCache) *evaluationState {
 	p := &evaluationState{r: r, input: input, consume: consume}
 	p.media = r.openMedia(request{Tokens: input.Tokens, MediaItems: items, Layout: input.Layout})
 	if slot.scoreCache == nil {
@@ -104,7 +110,7 @@ func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, i
 		}
 	}
 	if slot.scoreCache != nil {
-		p.session = slot.scoreCache.beginScore(input.Tokens, items)
+		p.session = slot.scoreCache.beginScore(input.Tokens, items, peers...)
 		p.session.schedulePrefillSnapshots(scoreSnapshots(len(input.Tokens), input.ScorePrefix))
 		p.hidden = slot.scoreHidden
 		p.position = len(input.Tokens) - len(p.session.remaining)
