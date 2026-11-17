@@ -2,6 +2,7 @@ package qwen4_exp
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -168,6 +169,22 @@ func (c *engramCache) Snapshot(int) cache.Snapshot {
 		return nil
 	}
 	return newEngramSnapshot(c.history, c.convHistory, c.offset)
+}
+
+func (c *engramCache) SnapshotData(snapshot cache.Snapshot) cache.SnapshotData {
+	if snapshot == nil {
+		return cache.SnapshotData{Arrays: []*mlx.Array{c.history, c.convHistory}, End: c.offset, SequenceAxis: -1}
+	}
+	s := snapshot.(*engramSnapshot)
+	return cache.SnapshotData{Arrays: []*mlx.Array{s.history, s.convHistory}, End: s.offset, SequenceAxis: -1}
+}
+
+func (c *engramCache) RestoreData(data cache.SnapshotData, target int) bool {
+	if data.SequenceAxis != -1 || data.Start != 0 || data.End <= 0 || data.Cursor != 0 || len(data.Arrays) != 2 || slices.Contains(data.Arrays, nil) ||
+		!slices.Equal(data.Arrays[0].Dims(), []int{1, c.width}) || !slices.Equal(data.Arrays[1].Dims(), []int{1, c.convTail, c.convDim}) {
+		return false
+	}
+	return c.Restore(&engramSnapshot{history: data.Arrays[0], convHistory: data.Arrays[1], offset: data.End}, target)
 }
 
 func (c *engramCache) Restore(snapshot cache.Snapshot, target int) bool {

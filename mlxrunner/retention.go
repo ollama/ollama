@@ -28,7 +28,8 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 	} else {
 		s.snapshotTimer.Reset(snapshotCheckInterval)
 	}
-	var caches, idle []*prefixCache
+	caches := s.cacheSlots()
+	var idle []*prefixCache
 	var working int64
 	for _, slot := range s.slots {
 		if slot == nil {
@@ -38,7 +39,6 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 			if c == nil {
 				continue
 			}
-			caches = append(caches, c)
 			if c == slot.activeCache() {
 				working += int64(c.liveBytes())
 			} else {
@@ -58,15 +58,26 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 		s.r.snapshotLimitBytes = maxPagedOutBytes / int64(max(1, s.r.parallel))
 		overLimit := false
 		for _, c := range caches {
+			if c == nil {
+				continue
+			}
 			c.limitBytes = s.r.snapshotLimitBytes
 			overLimit = overLimit || c.pagedOutBytes > c.limitBytes
 		}
 		if overLimit {
 			mlx.DefaultStream().Synchronize()
 			preferred := s.matchingHistory(incoming, destination)
-			for _, c := range caches {
-				for c.pagedOutBytes > c.limitBytes && evictColdHistory([]*prefixCache{c}, nil, preferred) {
+			// Keep scheduler slot numbers even while enforcing one cache's
+			// fallback limit, so a peer can replay the same eviction.
+			candidates := make([]*prefixCache, len(caches))
+			for i, c := range caches {
+				if c == nil {
+					continue
 				}
+				candidates[i] = c
+				for c.pagedOutBytes > c.limitBytes && evictColdHistory(candidates, nil, preferred) {
+				}
+				candidates[i] = nil
 			}
 			mlx.ClearCache()
 		}
@@ -74,11 +85,14 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 	}
 	s.r.snapshotLimitBytes = math.MaxInt64
 	for _, c := range caches {
+		if c == nil {
+			continue
+		}
 		c.limitBytes = math.MaxInt64
 	}
 	// Active rows may need a copy before writing shared buffers. The idle-row
 	// allowance is measured during trimming because eviction can release it.
-	trimHistory(caches, idle, s.matchingHistory(incoming, destination), observation, s.snapshotWorkspace+working)
+	trimHistory(s.r.checkpoints, caches, idle, s.matchingHistory(incoming, destination), observation, s.snapshotWorkspace+working)
 }
 
 // Prefer the arriving request's matching paths, including peer-slot donors.
@@ -133,7 +147,7 @@ func (s *batchScheduler) matchingHistory(incoming queuedRequest, destination int
 	return preferred
 }
 
-func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memory discover.MemoryHeadroom, reserve int64) {
+func trimHistory(checkpoints *runnerCheckpoints, caches, idle []*prefixCache, preferred map[*trieNode]int, memory discover.MemoryHeadroom, reserve int64) {
 	active, pool := int64(mlx.ActiveMemory()), int64(mlx.CacheMemory())
 	storageBefore := active + pool
 	copyBytes := idleCopyBytes(idle)
@@ -154,17 +168,38 @@ func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memor
 	}
 	// Rising host compression asks each runner to yield cold owned history.
 	// This is bounded feedback, not a prediction of which process caused pressure.
-	reclaimed := reclaimColdHistory(caches, idle, pressure, preferred)
+	reclaimed := checkpoints.reclaimSaved(caches, idle, preferred, pressure)
+	reclaimed += reclaimColdHistory(caches, idle, max(0, pressure-reclaimed), preferred)
 	active, pool = int64(mlx.ActiveMemory()), int64(mlx.CacheMemory())
 	// Keep this physical-headroom baseline fixed: evicted buffers enter the
 	// allocator pool until ClearCache below. Only usage and the copy reserve vary.
 	changed := false
+	waited := false
 	for {
 		// Evicting an idle slot's last history also releases its live buffers.
 		// Stop reserving room to copy those buffers before choosing another victim.
 		copyBytes = idleCopyBytes(idle)
 		target = physicalHistoryLimit(memory, storageBefore, active, pool, reserve+copyBytes)
-		if int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) <= target || !evictColdHistory(caches, idle, preferred) {
+		if int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) <= target {
+			break
+		}
+		// Release one saved row, then recalculate its copy allowance before
+		// choosing another. A large row can remove the entire shortfall.
+		if victims := checkpoints.savedVictims(caches, idle, preferred); len(victims) > 0 {
+			checkpoints.release(caches, victims[:1])
+			changed = true
+			continue
+		}
+		if shortfall && !waited {
+			waited = true
+			ctx, cancel := context.WithTimeout(context.Background(), checkpointPressureTimeout)
+			ready := checkpoints.finishPending(ctx, caches, idle, preferred)
+			cancel()
+			if ready {
+				continue
+			}
+		}
+		if !evictColdHistory(caches, idle, preferred) {
 			break
 		}
 		changed = true

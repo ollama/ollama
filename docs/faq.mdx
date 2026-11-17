@@ -342,6 +342,18 @@ Alternatively, you can change the amount of time all models are loaded into memo
 
 The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endpoints will override the `OLLAMA_KEEP_ALIVE` setting.
 
+## How do I control the MLX conversation cache?
+
+MLX caches conversation state to make returning to long conversations faster, including after switching models or restarting Ollama. Ollama manages cache memory and disk usage automatically.
+
+Use `OLLAMA_KV_CACHE_POLICY` to choose the balance that suits your system:
+
+- `balanced` (default) balances memory use and responsiveness.
+- `lean` frees memory sooner for other applications and models.
+- `warm` keeps more conversation state in memory for faster follow-up requests.
+
+You can also use `OLLAMA_KV_CACHE_DIR` to choose the disk-cache location and `OLLAMA_KV_CACHE_SIZE` to limit its size in bytes (`0` disables disk caching). Set these variables before starting Ollama.
+
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
 If too many requests are sent to the local Ollama server, it responds with a `503` overloaded error. Set `OLLAMA_MAX_QUEUE` before starting the server to change the maximum number of queued requests:

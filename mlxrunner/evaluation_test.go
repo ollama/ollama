@@ -189,12 +189,14 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 			cached := make([]int, 2)
 			for id, tokens := range prompts {
 				done[id] = make(chan error, 1)
+				var state *evaluationState
 				req := &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 					p := r.openEvaluation(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 2 - id}, nil, func(h *mlx.Array) error { got[id] = h.Floats(); return nil })
-					cached[id] = p.position
+					state = p
 					return p, nil
 				}}
 				s.admitEvaluation(req, s.selectSlot(req))
+				cached[id] = state.position
 			}
 			for s.slots[0].busy() || s.slots[1].busy() {
 				s.step()
@@ -262,9 +264,11 @@ func TestCachedForwardChunkBoundaries(t *testing.T) {
 
 func TestCachedEvaluationReusesBusyPeer(t *testing.T) {
 	ctx := t.Context()
+	root := t.TempDir()
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		m := &cachedRowTestModel{}
-		r := &Runner{Model: m, parallel: 2}
+		r := &Runner{Model: m, parallel: 2, checkpoints: testRunnerCheckpoints(root)}
+		defer r.checkpoints.close()
 		s := &batchScheduler{r: r, slots: make([]*batchSlot, 2)}
 		defer func() {
 			for _, slot := range s.slots {
@@ -289,11 +293,20 @@ func TestCachedEvaluationReusesBusyPeer(t *testing.T) {
 		if err := <-warm.done; err != nil {
 			t.Fatal(err)
 		}
+		if err := r.flushCheckpoints(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if d := r.checkpoints.open(s.slots[0].scoreCache); d == nil || len(d.saved) == 0 {
+			t.Fatal("warm prefix was not saved to disk")
+		}
 		// Slot zero is occupied by another request before the fork arrives.
 		next := open(append(slices.Clone(prefix), 30))
 		s.admitEvaluation(next, s.selectSlot(next))
 		fork := open(append(slices.Clone(prefix), 20))
 		s.admitEvaluation(fork, s.selectSlot(fork))
+		if s.slots[1].evaluation.state.restore != nil {
+			t.Fatal("resident peer prefix was replaced by a disk restore")
+		}
 		if got := s.slots[1].evaluation.state.position; got != len(prefix) {
 			t.Fatalf("busy-peer cached tokens %d, want %d", got, len(prefix))
 		}

@@ -39,7 +39,7 @@ func TestRunnerShutdownWaitsForHandlers(t *testing.T) {
 	defer close(release)
 	done := make(chan error, 1)
 	go func() {
-		done <- r.Run(ctx, host, port, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		done <- r.Run(context.WithoutCancel(ctx), ctx.Done(), host, port, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			close(entered)
 			<-req.Context().Done()
 			close(canceled)
@@ -201,5 +201,77 @@ func TestRunnerCloseEmpty(t *testing.T) {
 		if r.cache != nil {
 			t.Error("closed runner retains empty generation cache")
 		}
+	}
+}
+
+func TestRunnerStopWaitsForSchedulerRound(t *testing.T) {
+	worker := mlxtest.Worker(t)
+	r := &Runner{mlxThread: worker, Requests: make(chan queuedRequest)}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	entered := make(chan context.Context, 1)
+	release := make(chan struct{})
+	defer close(release)
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Run(t.Context(), stop, host, port, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			evaluation := &evaluationRequest{ctx: req.Context(), done: make(chan error, 1), open: func(*batchSlot, []*prefixCache) (*evaluationState, error) {
+				entered <- req.Context()
+				<-release
+				return nil, context.Canceled
+			}}
+			r.Requests <- evaluation
+			<-evaluation.done
+		}))
+	}()
+	go func() {
+		client := &http.Client{Timeout: 5 * time.Second}
+		for t.Context().Err() == nil {
+			resp, err := client.Get("http://" + addr)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if err == nil {
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
+	var requestCtx context.Context
+	select {
+	case requestCtx = <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduler did not enter the round")
+	}
+	close(stop)
+	if err := requestCtx.Err(); err != nil {
+		t.Fatalf("local stop canceled the in-flight round: %v", err)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("runner returned before the round finished: %v", err)
+	default:
+	}
+	release <- struct{}{}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not honor stop at the next round")
 	}
 }

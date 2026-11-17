@@ -220,6 +220,12 @@ var (
 	DebugLogRequests = Bool("OLLAMA_DEBUG_LOG_REQUESTS")
 	// KvCacheType is the quantization type for the K/V cache.
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
+	// KvCacheDir selects the MLX persistent conversation-cache directory.
+	KvCacheDir = String("OLLAMA_KV_CACHE_DIR")
+	// KvCacheSize overrides its automatic disk capacity in bytes; zero disables it.
+	KvCacheSize = String("OLLAMA_KV_CACHE_SIZE")
+	// KvCachePolicy selects balanced, lean or warm idle-memory retention.
+	KvCachePolicy = String("OLLAMA_KV_CACHE_POLICY")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
@@ -317,6 +323,9 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_GO_TEMPLATE":          {"OLLAMA_GO_TEMPLATE", GoTemplate(true), "Enable Modelfile TEMPLATE based rendering when available"},
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
+		"OLLAMA_KV_CACHE_DIR":         {"OLLAMA_KV_CACHE_DIR", KvCacheDir(), "MLX conversation cache directory (default: OS user cache directory)"},
+		"OLLAMA_KV_CACHE_SIZE":        {"OLLAMA_KV_CACHE_SIZE", KvCacheSize(), "MLX conversation disk-cache capacity in bytes (default: automatic; 0 disables)"},
+		"OLLAMA_KV_CACHE_POLICY":      {"OLLAMA_KV_CACHE_POLICY", KvCachePolicy(), "MLX idle cache retention: balanced (default), lean or warm"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},

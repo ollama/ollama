@@ -32,6 +32,35 @@ func TestEngramHashes(t *testing.T) {
 	})
 }
 
+func TestEngramPersistentState(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		c := newEngramCache(2, 3, 1, 9)
+		defer c.Free()
+		b := &batch.Batch{InputIDs: mlx.FromValues([]int32{1, 2}, 1, 2), SeqQueryLens: []int32{2}}
+		c.put(b, b.InputIDs.AsType(mlx.DTypeInt64), mlx.FromValues([]float32{10, 20}, 1, 2, 1))
+		data := c.SnapshotData(nil)
+		restored := newEngramCache(2, 3, 1, 9)
+		defer restored.Free()
+		if restored.RestoreData(data, 1) || !restored.RestoreData(data, 2) {
+			t.Fatal("persistent state did not require its exact endpoint")
+		}
+		c.Free()
+		b.InputIDs = mlx.FromValues([]int32{3, 4}, 1, 2)
+		restored.put(b, b.InputIDs.AsType(mlx.DTypeInt64), mlx.FromValues([]float32{30, 40}, 1, 2, 1))
+		if got := restored.history.AsType(mlx.DTypeInt32).Ints(); !slices.Equal(got, []int32{3, 4}) {
+			t.Fatalf("restored token continuation: %v", got)
+		}
+		if got := restored.convHistory.Floats(); !slices.Equal(got, []float32{20, 30, 40}) {
+			t.Fatalf("restored convolution continuation: %v", got)
+		}
+		bad := restored.SnapshotData(nil)
+		bad.Arrays[1] = mlx.Zeros(mlx.DTypeFloat32, 1, 4, 1)
+		if restored.RestoreData(bad, 4) {
+			t.Fatal("accepted incompatible convolution history")
+		}
+	})
+}
+
 func TestEngramCacheCarriesChunkHistory(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		c := newEngramCache(2, 3, 1, 9)

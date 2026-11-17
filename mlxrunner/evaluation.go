@@ -2,6 +2,7 @@ package mlxrunner
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/mlx"
@@ -49,17 +50,38 @@ func (s *batchScheduler) admitEvaluation(request *evaluationRequest, index int) 
 		return
 	}
 	slot.evaluation = &activeEvaluation{request: request, state: p}
+	if event, ok := s.chooseRestore(slot); ok {
+		if err := s.startRestore(event); err == nil {
+			return
+		} else {
+			slog.Debug("KV disk restore missed; recomputing", "error", err)
+		}
+	}
+	if p.session != nil {
+		p.preparePrefill()
+	}
 }
 
 func (s *batchScheduler) finishEvaluation(slot *batchSlot, err error) {
 	p := slot.evaluation
 	s.keepScratch = p.state.keepScratch && err == nil
 	p.state.close()
+	if err == nil {
+		s.r.checkpoints.completed(p.state.session)
+	}
 	slot.evaluation = nil
 	p.request.done <- err
 }
 
 func (s *batchScheduler) stepEvaluation(slot *batchSlot) {
+	if slot.evaluation.state.restore != nil {
+		if event, ready := s.restoreProgress(slot); ready {
+			if err := s.finishRestore(event); err != nil {
+				s.finishEvaluation(slot, err)
+			}
+		}
+		return
+	}
 	if rows, n := s.cachedForwardSlots(slot); len(rows) > 1 {
 		s.cachedForward(rows, n)
 		return
@@ -82,13 +104,17 @@ func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest
 	if err != nil {
 		return 0, err
 	}
-	cached := 0
+	var evaluation *evaluationState
 	err = r.scheduleEvaluation(ctx, input.Tokens, items, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 		p := r.openEvaluation(slot, input, items, consume, peers...)
 		p.keepScratch = true
-		cached = p.position
+		evaluation = p
 		return p, nil
 	})
+	cached := 0
+	if evaluation != nil {
+		cached = evaluation.cached
+	}
 	return cached, err
 }
 
@@ -105,10 +131,7 @@ func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, i
 	}
 	if slot.scoreCache != nil {
 		p.session = slot.scoreCache.beginScore(input.Tokens, items, peers...)
-		p.session.schedulePrefillSnapshots(scoreSnapshots(len(input.Tokens), input.ScorePrefix))
 		p.hidden = slot.scoreHidden
-		p.position = len(input.Tokens) - len(p.session.remaining)
-		p.media.free(p.position)
 	}
 	return p
 }
@@ -122,6 +145,15 @@ type evaluationState struct {
 	media       *requestMedia
 	position    int
 	keepScratch bool
+	restore     *checkpointRestore
+	cached      int
+}
+
+func (p *evaluationState) preparePrefill() {
+	p.session.schedulePrefillSnapshots(scoreSnapshots(len(p.input.Tokens), p.input.ScorePrefix))
+	p.position = len(p.input.Tokens) - len(p.session.remaining)
+	p.cached = p.position
+	p.media.free(p.position)
 }
 
 func (p *evaluationState) step(ctx context.Context) (bool, error) {
@@ -170,6 +202,10 @@ func (p *evaluationState) inputBatch(offset, n int) *batch.Batch {
 }
 
 func (p *evaluationState) close() {
+	if p.restore != nil {
+		p.restore.close(false)
+		p.restore = nil
+	}
 	if p.session != nil {
 		p.session.close()
 	}
@@ -248,7 +284,7 @@ func forwardBatch(slots []*batchSlot, length int) *batch.Batch {
 
 func (s *batchScheduler) cachedForwardSlots(first *batchSlot) ([]*batchSlot, int) {
 	p := first.evaluation.state
-	if p.session == nil || p.position == len(p.input.Tokens) {
+	if p.session == nil || p.restore != nil || p.position == len(p.input.Tokens) {
 		return nil, 0
 	}
 	slots := []*batchSlot{first}
@@ -258,7 +294,7 @@ func (s *batchScheduler) cachedForwardSlots(first *batchSlot) ([]*batchSlot, int
 			continue
 		}
 		other := slot.evaluation.state
-		if other.session == nil || other.position == len(other.input.Tokens) {
+		if other.session == nil || other.restore != nil || other.position == len(other.input.Tokens) {
 			continue
 		}
 		candidate := min(n, len(other.input.Tokens)-other.position, prefillChunkSize()/(len(slots)+1))

@@ -178,7 +178,7 @@ func TestSchedulerRejectsUnadmittedRequests(t *testing.T) {
 					wantErr = mlxthread.ErrStopped
 					r := &Runner{parallel: 1, Requests: make(chan queuedRequest), mlxThread: worker}
 					stopped := make(chan error, 1)
-					go func() { stopped <- r.runBatchRequests(ctx) }()
+					go func() { stopped <- r.runBatchRequests(ctx, ctx.Done()) }()
 					select {
 					case r.Requests <- pending:
 					case <-ctx.Done():

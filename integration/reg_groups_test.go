@@ -109,6 +109,7 @@ func TestContext(t *testing.T) {
 		"generate-history",
 		"parallel-generate-history",
 		"parallel-chat-history",
+		"mlx-paging",
 	)
 }
 

@@ -283,7 +283,10 @@ func run(runnerCtx context.Context, modelName string, port int) error {
 		mux.Handle(source, http.RedirectHandler(target, http.StatusPermanentRedirect))
 	}
 
-	return runner.Run(runnerCtx, "127.0.0.1", strconv.Itoa(port), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// This runner owns scheduling, so its local process stop ends the round
+	// stream. A split follower instead runs until its leader ends that stream
+	// and passes nil for the local stop channel.
+	return runner.Run(context.WithoutCancel(runnerCtx), runnerCtx.Done(), "127.0.0.1", strconv.Itoa(port), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		recorder := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
 		t := time.Now()

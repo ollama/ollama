@@ -119,7 +119,10 @@ type Runner struct {
 	grammarEngine *grammarEngine
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
-	spec *speculation
+	spec             *speculation
+	checkpoints      *runnerCheckpoints
+	cacheLayout      cacheLayout
+	restoreAllLayers bool
 
 	// Last retention observation for new slots; accessed on the MLX worker.
 	snapshotLimitBytes int64
@@ -136,6 +139,9 @@ func (r *Runner) Load(modelName string) error {
 	r.weights.Attach(weights...)
 	configureWiredMemory()
 	r.configureParallelism()
+	if r.cache != nil {
+		r.checkpoints.open(r.cache)
+	}
 	return nil
 }
 
@@ -205,6 +211,10 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		}
 
 		r.Model = m
+		r.checkpoints = newRunnerCheckpoints(root.Manifest)
+		if r.checkpoints != nil {
+			r.checkpoints.layout = r.cacheLayout
+		}
 		mlx.EnableCompile()
 		// Speech-only models have no tokenizer; models that also chat need
 		// the text pipeline.
@@ -240,6 +250,8 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 }
 
 func (r *Runner) Close() {
+	r.checkpoints.close()
+	r.checkpoints = nil
 	r.cache.close()
 	r.cache = nil
 	if r.grammarEngine != nil {
@@ -434,7 +446,10 @@ func loadTensorsFromManifest(root *model.Root, skippedTensors []string) (map[str
 	return allTensors, nil
 }
 
-func (r *Runner) Run(ctx context.Context, host, port string, mux http.Handler) error {
+func (r *Runner) Run(ctx context.Context, stop <-chan struct{}, host, port string, mux http.Handler) error {
+	// A process stop is a scheduler input, not an asynchronous cancellation of
+	// the current forward. Once the scheduler accepts it at a round boundary,
+	// errgroup cancels HTTP handlers and the rest of runner teardown together.
 	g, ctx := errgroup.WithContext(ctx)
 	var handlers sync.RWMutex // keeps model state alive until admitted handlers finish
 	server := &http.Server{
@@ -449,7 +464,7 @@ func (r *Runner) Run(ctx context.Context, host, port string, mux http.Handler) e
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
-	g.Go(func() error { return r.runBatchRequests(ctx) })
+	g.Go(func() error { return r.runBatchRequests(ctx, stop) })
 
 	g.Go(func() error {
 		slog.Info("Starting HTTP server", "host", host, "port", port)
