@@ -65,6 +65,13 @@ func (s Stream) Synchronize() {
 	mlxCheck(C.mlx_synchronize(s.ctx))
 }
 
+// ClearStreams releases the current thread's streams before that thread exits.
+// Call it on the owning MLX thread after releasing its arrays.
+func ClearStreams() {
+	mlxCheck(C.mlx_clear_streams())
+	resetDefaultStreamCache()
+}
+
 func (s Stream) LogValue() slog.Value {
 	str := mlxCheck(C.mlx_string_new())
 	mlxCheck(C.mlx_stream_tostring(&str, s.ctx))

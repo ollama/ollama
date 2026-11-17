@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -26,16 +28,36 @@ func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 
 	var (
-		modelName string
-		port      int
+		modelName  string
+		port       int
+		parentPipe bool
 	)
 
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
+	flagSet.BoolVar(&parentPipe, "parent-pipe", false, "Stop when the parent closes stdin")
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
+	runnerCtx, cancelRunner := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancelRunner()
+	if parentPipe {
+		slog.Debug("watching MLX runner parent pipe")
+		go func() {
+			_, err := io.Copy(io.Discard, os.Stdin)
+			slog.Debug("MLX runner parent pipe closed", "error", err)
+			cancelRunner()
+		}()
+	}
 
+	if err := run(runnerCtx, modelName, port); err != nil {
+		return err
+	}
+	slog.Info("MLX runner stopped")
+	return finishProcess()
+}
+
+func run(runnerCtx context.Context, modelName string, port int) error {
 	worker, err := mlxthread.Start("mlxrunner", func() error {
 		if err := mlx.CheckInit(); err != nil {
 			return fmt.Errorf("MLX not available: %w", err)
@@ -58,9 +80,12 @@ func Execute(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer worker.Stop(context.Background(), mlx.ClearCache)
-	runnerCtx, cancelRunner := context.WithCancel(context.Background())
-	defer cancelRunner()
+	defer worker.Stop(context.Background(), func() {
+		// MLX requires stream cleanup on the owning thread before it exits.
+		slog.Debug("clearing MLX streams")
+		mlx.ClearStreams()
+		mlx.ClearCache()
+	})
 
 	runner := Runner{
 		parallel:  max(1, int(envconfig.NumParallel())),
@@ -68,12 +93,12 @@ func Execute(args []string) error {
 		mlxThread: worker,
 	}
 
-	if err := worker.Do(context.Background(), func() error {
+	if err := worker.Do(runnerCtx, func() error {
 		return runner.Load(modelName)
 	}); err != nil {
 		return err
 	}
-	defer runner.Close()
+	defer worker.Do(context.Background(), func() error { runner.Close(); return nil })
 
 	readMemory := func() (uint64, error) {
 		return uint64(mlx.ActiveMemory() + mlx.CacheMemory()), nil
@@ -258,7 +283,7 @@ func Execute(args []string) error {
 		mux.Handle(source, http.RedirectHandler(target, http.StatusPermanentRedirect))
 	}
 
-	return runner.Run("127.0.0.1", strconv.Itoa(port), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return runner.Run(runnerCtx, "127.0.0.1", strconv.Itoa(port), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		recorder := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
 		t := time.Now()

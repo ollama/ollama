@@ -47,8 +47,11 @@ type Client struct {
 	status              *llm.StatusWriter
 	mu                  sync.Mutex
 	cmd                 *exec.Cmd
+	stdin               io.WriteCloser
 	closed              bool
 }
+
+const runnerShutdownTimeout = 5 * time.Second
 
 var ErrRuntimeUnavailable = errors.New("MLX runtime is not available")
 
@@ -141,7 +144,7 @@ type CompletionResponse struct {
 	Error *api.StatusError
 }
 
-// Close terminates the subprocess.
+// Close asks the subprocess to stop, with a deadline for unresponsive runners.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -149,7 +152,18 @@ func (c *Client) Close() error {
 	c.closed = true
 	if c.cmd != nil && c.cmd.Process != nil {
 		slog.Info("stopping mlx runner subprocess", "pid", c.cmd.Process.Pid)
-		c.cmd.Process.Kill()
+		// EOF is a portable stop signal, including for Windows processes with
+		// no console. It also notifies the runner when its parent exits.
+		if c.stdin != nil {
+			c.stdin.Close()
+			c.stdin = nil
+		}
+		select {
+		case <-c.done:
+		case <-time.After(runnerShutdownTimeout):
+			slog.Warn("mlx runner did not stop before deadline", "pid", c.cmd.Process.Pid)
+			c.cmd.Process.Kill()
+		}
 		<-c.done
 		c.cmd = nil
 	}
@@ -436,7 +450,7 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	// Spawn subprocess: ollama runner --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port))
+	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port), "--parent-pipe")
 	cmd.Env = os.Environ()
 	loadedLibraryPath, err := mlx.LoadedLibraryPath()
 	if err != nil {
@@ -503,18 +517,25 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	if c.closed {
 		return nil, errors.New("mlx runner client is closed")
 	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("create mlx runner control pipe: %w", err)
+	}
 
 	c.status = status
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
 	if err := cmd.Start(); err != nil {
+		stdin.Close()
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
 	if err := llm.AddRunnerToJob(cmd.Process.Pid); err != nil {
+		stdin.Close()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("assign mlx runner to runner job: %w", err)
 	}
 	c.cmd = cmd
+	c.stdin = stdin
 
 	// Reap subprocess when it exits
 	go func() {
