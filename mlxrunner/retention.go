@@ -16,5 +16,9 @@ func newSnapshotRetention(parallel int) (snapshotRetention, error) {
 		// Preserve lazy observation, including retry after a failed read.
 		return &metalRetention{parallel: parallel}, nil
 	}
-	return nil, nil
+	retention, err := newCUDARetention()
+	if retention == nil {
+		return nil, err
+	}
+	return retention, nil
 }

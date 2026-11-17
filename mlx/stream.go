@@ -48,6 +48,12 @@ func GPUIsAvailable() bool {
 	return bool(avail)
 }
 
+func GPUCount() int {
+	var count C.int
+	mlxCheck(C.mlx_device_count(&count, C.MLX_GPU))
+	return int(count)
+}
+
 // SetDefaultDeviceGPU sets the default MLX device to GPU.
 func SetDefaultDeviceGPU() {
 	dev := mlxCheck(C.mlx_device_new_type(C.MLX_GPU, 0))

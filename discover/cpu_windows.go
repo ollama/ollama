@@ -2,8 +2,9 @@ package discover
 
 import (
 	"fmt"
-	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 type MEMORYSTATUSEX struct {
@@ -19,18 +20,26 @@ type MEMORYSTATUSEX struct {
 }
 
 var (
-	k32                      = syscall.NewLazyDLL("kernel32.dll")
+	k32                      = windows.NewLazySystemDLL("kernel32.dll")
 	globalMemoryStatusExProc = k32.NewProc("GlobalMemoryStatusEx")
 	sizeofMemoryStatusEx     = uint32(unsafe.Sizeof(MEMORYSTATUSEX{}))
 )
 
 func GetCPUMem() (memInfo, error) {
+	memStatus, err := getMemoryStatus()
+	if err != nil {
+		return memInfo{}, err
+	}
+	return memInfo{TotalMemory: memStatus.TotalPhys, FreeMemory: memStatus.AvailPhys, FreeSwap: memStatus.AvailPageFile}, nil
+}
+
+func getMemoryStatus() (MEMORYSTATUSEX, error) {
 	memStatus := MEMORYSTATUSEX{length: sizeofMemoryStatusEx}
 	r1, _, err := globalMemoryStatusExProc.Call(uintptr(unsafe.Pointer(&memStatus)))
 	if r1 == 0 {
-		return memInfo{}, fmt.Errorf("GlobalMemoryStatusEx failed: %w", err)
+		return MEMORYSTATUSEX{}, fmt.Errorf("GlobalMemoryStatusEx failed: %w", err)
 	}
-	return memInfo{TotalMemory: memStatus.TotalPhys, FreeMemory: memStatus.AvailPhys, FreeSwap: memStatus.AvailPageFile}, nil
+	return memStatus, nil
 }
 
 func IsNUMA() bool {
