@@ -424,6 +424,15 @@ func TestQwenToolParser(t *testing.T) {
 			}},
 		},
 		{
+			name:        "json arguments with parameter-shaped text in a string value",
+			tools:       []api.Tool{},
+			rawToolCall: `<function=write>{"content":"<parameter=foo>bar</parameter>"}</function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name:      "write",
+				Arguments: testArgs(map[string]any{"content": "<parameter=foo>bar</parameter>"}),
+			}},
+		},
+		{
 			name:        "non-json text in function body is ignored",
 			tools:       []api.Tool{},
 			rawToolCall: `<function=noop>not json</function>`,

@@ -224,9 +224,6 @@ type XMLFunctionCall struct {
 	XMLName    xml.Name       `xml:"function"`
 	Name       string         `xml:"name,attr"`
 	Parameters []XMLParameter `xml:"parameter"`
-	// Body holds character data directly inside <function>. Some models write
-	// the arguments there as a JSON object instead of <parameter> children.
-	Body string `xml:",chardata"`
 }
 
 type XMLParameter struct {
@@ -269,18 +266,17 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 		}
 	}
 
-	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
-	if len(functionCall.Parameters) == 0 {
-		// Some models (e.g. MiMo) occasionally write the arguments as a JSON
-		// object inside <function=...> instead of <parameter=...> blocks. Use
-		// it rather than silently returning a call with no arguments.
-		if body := strings.TrimSpace(functionCall.Body); strings.HasPrefix(body, "{") {
-			var args api.ToolCallFunctionArguments
-			if err := json.Unmarshal([]byte(body), &args); err == nil {
-				toolCall.Function.Arguments = args
-			}
-		}
+	// Some models (e.g. MiMo) occasionally write the arguments as a JSON
+	// object inside <function=...> instead of <parameter=...> blocks. Use it
+	// rather than silently returning a call with no arguments. This reads the
+	// raw body, so parameter-shaped text inside a JSON string value is kept
+	// as part of that value instead of being parsed as a <parameter> block.
+	if args, ok := jsonFunctionBody(raw.raw); ok {
+		toolCall.Function.Arguments = args
+		return toolCall, nil
 	}
+
+	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
 	for _, parameter := range functionCall.Parameters {
 		// Look up the parameter type if we found the tool
 		var paramType api.PropertyType
@@ -435,6 +431,25 @@ var (
 	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
 	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
 )
+
+// jsonFunctionBody returns the arguments when the body of a raw
+// `<function=name>...</function>` call is a single JSON object.
+func jsonFunctionBody(raw string) (api.ToolCallFunctionArguments, bool) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "<function=") || !strings.HasSuffix(raw, "</function>") {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	start := strings.IndexByte(raw, '>')
+	body := strings.TrimSpace(raw[start+1 : len(raw)-len("</function>")])
+	if !strings.HasPrefix(body, "{") {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	var args api.ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(body), &args); err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	return args, true
+}
 
 // transformToXML transforms a raw qwen tool call with xml-like tags into valid
 // xml so that it can be parsed by any xml parser
