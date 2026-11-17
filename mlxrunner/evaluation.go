@@ -208,13 +208,16 @@ func (s *batchScheduler) wholeForwardSlots(first *batchSlot) []*batchSlot {
 		return nil
 	}
 	slots := []*batchSlot{first}
+	if p.input.Isolated {
+		return slots
+	}
 	length := len(p.input.Tokens)
 	for _, slot := range s.slots {
 		if slot == nil || slot == first || slot.evaluation == nil || slot.evaluation.request.ctx.Err() != nil {
 			continue
 		}
 		other := slot.evaluation.state
-		if other.session != nil {
+		if other.session != nil || other.input.Isolated {
 			continue
 		}
 		n := max(length, len(other.input.Tokens))

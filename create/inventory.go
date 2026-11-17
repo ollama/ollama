@@ -171,7 +171,7 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 	if cfg.Architecture() != "Qwen3_5Model" {
 		return files, nil
 	}
-	return appendWeightSidecar(dir, files, "readout.safetensors", "Qwen decision")
+	return qwenDecisionWeightFiles(dir, files)
 }
 
 func appendWeightSidecar(dir string, files []string, name, modelName string) ([]string, error) {
@@ -282,6 +282,15 @@ func SafetensorsConfigFiles(dir string) ([]string, error) {
 			modelMetadata["preprocessor_config.json"] = true
 			modelMetadata["video_preprocessor_config.json"] = true
 			modelMetadata["vocab.json"] = true
+		} else {
+			config, _, err := pplxLocateSourceFiles(dir)
+			if err != nil {
+				return nil, err
+			}
+			if config != "" {
+				names = append(names, config)
+				modelMetadata[config] = true
+			}
 		}
 	}
 	return slices.DeleteFunc(names, func(name string) bool {

@@ -309,6 +309,14 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		return response, fmt.Errorf("scorer returned %d rows for %d questions", len(result.Logits), len(c.fields))
 	}
 	for i, f := range c.fields {
+		if c.encoding == "pplx" && f.typ == "locate" {
+			answer, err := c.pplxLocateAnswer(result.Answers, i)
+			if err != nil {
+				return response, err
+			}
+			response.Answers.Set(f.Name, answer)
+			continue
+		}
 		logits := result.Logits[i]
 		if len(logits) != len(f.Choices) {
 			return response, fmt.Errorf("scorer returned the wrong number of candidates for %q", f.Name)

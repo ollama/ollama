@@ -275,6 +275,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"old-format decision GGUF", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"old-format Clef GGUF", `{"model":"old-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"llama.cpp 65 questions", nativeQuestions(65), nil, 400, 0, false},
+		{"Perplexity Locate with 65 questions", strings.NewReplacer("laya-native", "safetensors-pplx", `"refund":{"type":"noul"`, `"refund":{"type":"locate"`).Replace(nativeQuestions(65)), nil, 400, 0, false},
 		{"vllm-d3 empty state", `{"model":"renamed-d3","state":"","questions":{"refund":{"type":"choice","instructions":"Which reply is shorter?","criteria":{"Yes.":null,"Yes, I can help with that.":null}}}}`, nil, 200, 1, false},
 		{"vllm-d3 whitespace state", `{"model":"renamed-d3","state":" ","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"safetensors empty state", `{"model":"decision-test","state":"","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},

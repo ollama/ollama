@@ -62,6 +62,8 @@ type PreparedRequest struct {
 	// runner to every forward, including text-only requests.
 	// Nil when the model derives nothing from it.
 	Layout any
+	// Isolated forwards must not share a batch with another scoring request.
+	Isolated bool
 }
 
 // MediaModel is implemented by models that accept media inputs.
