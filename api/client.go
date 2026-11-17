@@ -216,8 +216,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 
 	scanner := bufio.NewScanner(response.Body)
 	// increase the buffer size to avoid running out of space
-	scanBuf := make([]byte, 0, maxBufferSize)
-	scanner.Buffer(scanBuf, maxBufferSize)
+	scanner.Buffer(nil, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
 			Error     string `json:"error,omitempty"`
