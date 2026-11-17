@@ -207,8 +207,8 @@ func rippleRunnerRequest(t *testing.T, r *Runner, prompt string, count int) requ
 	return request
 }
 
-// Drive the production scheduler with the fixture's persistent cache owner so
-// the tests can inspect cache offsets and retained memory between requests.
+// Exercise generation and prefix restoration without host-pressure eviction;
+// these fixtures require their saved history to remain available between requests.
 func runRippleScheduledRequest(r *Runner, request request) error {
 	slot := &batchSlot{cache: r.cache, speculation: r.spec, targets: r.cache.caches}
 	if r.spec != nil {
@@ -216,7 +216,7 @@ func runRippleScheduledRequest(r *Runner, request request) error {
 	}
 	s := &batchScheduler{r: r, slots: []*batchSlot{slot}}
 	if err := r.onMLX(request.Ctx, func() error {
-		mlx.Scoped(func() { s.admit(request) })
+		mlx.Scoped(func() { s.admitGeneration(request) })
 		return nil
 	}); err != nil {
 		return err

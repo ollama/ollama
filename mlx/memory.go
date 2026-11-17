@@ -7,6 +7,8 @@ import "C"
 import (
 	"fmt"
 	"log/slog"
+	"math"
+	"runtime"
 	"strconv"
 	"unsafe"
 )
@@ -58,38 +60,108 @@ func CacheMemory() int {
 	return int(cache)
 }
 
+// priorPeak preserves the reporting interval while measuring smaller operations.
+// Like other MLX state, it is accessed only on the MLX thread.
+var priorPeak int
+
 func PeakMemory() int {
+	return max(priorPeak, nativePeakMemory())
+}
+
+func nativePeakMemory() int {
 	var peak C.size_t
 	mlxCheck(C.mlx_get_peak_memory(&peak))
 	return int(peak)
 }
 
 func ResetPeakMemory() {
+	priorPeak = 0
 	mlxCheck(C.mlx_reset_peak_memory())
+}
+
+// MeasurePeakMemory returns the allocation peak during f while preserving the
+// peak since ResetPeakMemory for request logs and other cumulative reporting.
+func MeasurePeakMemory(f func()) int {
+	priorPeak = PeakMemory()
+	mlxCheck(C.mlx_reset_peak_memory())
+	f()
+	return nativePeakMemory()
 }
 
 // MaxRecommendedWorkingSetSize returns the device's recommended upper bound
 // for resident Metal allocations.
 func MaxRecommendedWorkingSetSize() (int, error) {
 	info := mlxCheck(C.mlx_device_info_new())
+	defer func() { freeDeviceInfo(info) }() // get populates the initially empty handle.
 	if err := mlxError(C.mlx_device_info_get(&info, DefaultDevice().ctx)); err != nil {
 		return 0, err
 	}
-	defer freeDeviceInfo(info)
+	return deviceInfoSize(info, "max_recommended_working_set_size")
+}
 
-	key := C.CString("max_recommended_working_set_size")
+func deviceInfoSize(info C.mlx_device_info, name string) (int, error) {
+	key := C.CString(name)
 	defer C.free(unsafe.Pointer(key))
 
 	var size C.size_t
-	rc := C.mlx_device_info_get_size(&size, info, key)
-	if err := lastError(); err != nil {
-		return 0, err
+	if err := mlxError(C.mlx_device_info_get_size(&size, info, key)); err != nil {
+		return 0, fmt.Errorf("MLX device info %q: %w", name, err)
 	}
-	if rc != 0 {
-		// mlx-c reports a missing key with a non-zero return and no message.
-		return 0, fmt.Errorf("mlx: no max_recommended_working_set_size in device info")
+	if uint64(size) > math.MaxInt {
+		return 0, fmt.Errorf("MLX device info %q exceeds signed byte range", name)
 	}
 	return int(size), nil
+}
+
+// MemoryLimit returns MLX's current allocation budget, a guideline for graph
+// evaluation rather than a hard limit. An unlimited budget saturates at MaxInt.
+func MemoryLimit() (int, error) {
+	var limit C.size_t
+	if err := mlxError(C.mlx_get_memory_limit(&limit)); err != nil {
+		return 0, err
+	}
+	return int(min(uint64(limit), uint64(math.MaxInt))), nil
+}
+
+// IntegratedGPU reports whether the default GPU shares system memory. Older
+// native libraries without this property return an error, not a guess.
+func IntegratedGPU() (bool, error) {
+	info := mlxCheck(C.mlx_device_info_new())
+	defer func() { freeDeviceInfo(info) }() // get populates the initially empty handle.
+	if err := mlxError(C.mlx_device_info_get(&info, DefaultDevice().ctx)); err != nil {
+		return false, err
+	}
+	integrated, err := deviceInfoSize(info, "integrated")
+	return integrated != 0, err
+}
+
+// MemoryBudget is the current process's WDDM local-segment budget and usage.
+// On integrated GPUs this segment can include shared system memory.
+type MemoryBudget struct {
+	Budget, Usage int64
+}
+
+// DeviceMemoryBudget returns the current process's WDDM budget on Windows CUDA.
+// Other backends return nil. Missing or failed Windows CUDA telemetry returns
+// an error; a successfully queried zero budget is valid.
+func DeviceMemoryBudget() (*MemoryBudget, error) {
+	if runtime.GOOS != "windows" || !CUDAIsAvailable() {
+		return nil, nil
+	}
+	info := mlxCheck(C.mlx_device_info_new())
+	defer func() { freeDeviceInfo(info) }() // get populates the initially empty handle.
+	if err := mlxError(C.mlx_device_info_get(&info, DefaultDevice().ctx)); err != nil {
+		return nil, err
+	}
+	budget, err := deviceInfoSize(info, "memory_budget")
+	if err != nil {
+		return nil, err
+	}
+	usage, err := deviceInfoSize(info, "memory_usage")
+	if err != nil {
+		return nil, err
+	}
+	return &MemoryBudget{Budget: int64(budget), Usage: int64(usage)}, nil
 }
 
 // SetWiredLimit sets the maximum amount of Metal memory MLX keeps resident and
@@ -126,4 +198,14 @@ type (
 
 func ClearCache() {
 	mlxCheck(C.mlx_clear_cache())
+}
+
+// SetCacheLimit limits the freed buffers retained by MLX's allocator.
+func SetCacheLimit(limit int) int {
+	if limit < 0 {
+		panic("mlx: negative cache limit")
+	}
+	var previous C.size_t
+	mlxCheck(C.mlx_set_cache_limit(&previous, C.size_t(limit)))
+	return int(previous)
 }

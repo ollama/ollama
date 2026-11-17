@@ -1,0 +1,264 @@
+diff --git a/mlx/backend/cuda/device_info.cpp b/mlx/backend/cuda/device_info.cpp
+index 6829bf829..4648cdfbf 100644
+--- a/mlx/backend/cuda/device_info.cpp
++++ b/mlx/backend/cuda/device_info.cpp
+@@ -3,6 +3,10 @@
+ #include "mlx/backend/gpu/device_info.h"
+ #include "mlx/backend/cuda/cuda.h"
+
++#ifdef _WIN32
++#include "mlx/backend/cuda/wddm.h"
++#endif
++
+ #include <cuda_runtime.h>
+ #include <dlfcn.h>
+ #include <sstream>
+@@ -151,6 +155,7 @@ device_info_impl(int device_index) {
+       // Compute capability as size_t (to match Metal's variant type)
+       dev.info["compute_capability_major"] = static_cast<size_t>(prop.major);
+       dev.info["compute_capability_minor"] = static_cast<size_t>(prop.minor);
++      dev.info["integrated"] = static_cast<size_t>(prop.integrated);
+
+       devices.push_back(std::move(dev));
+     }
+@@ -198,6 +203,13 @@ device_info_impl(int device_index) {
+   device_info_copy["free_memory"] = free_mem;
+   device_info_copy["total_memory"] = total_mem;
+
++#ifdef _WIN32
++  if (auto memory = cu::get_wddm_memory_info(device_index)) {
++    device_info_copy["memory_budget"] = static_cast<size_t>(memory->budget);
++    device_info_copy["memory_usage"] = static_cast<size_t>(memory->usage);
++  }
++#endif
++
+   return device_info_copy;
+ }
+
+diff --git a/mlx/backend/cuda/wddm.cpp b/mlx/backend/cuda/wddm.cpp
+index 71027f77c..dee84b98b 100644
+--- a/mlx/backend/cuda/wddm.cpp
++++ b/mlx/backend/cuda/wddm.cpp
+@@ -21,6 +21,7 @@ namespace {
+ struct DeviceMemoryBudget {
+   Microsoft::WRL::ComPtr<IDXGIAdapter3> adapter;
+   UINT node{0};
++  bool integrated{false};
+   std::chrono::steady_clock::time_point next_query;
+   size_t memory_limit{std::numeric_limits<size_t>::max()};
+ };
+@@ -36,8 +37,7 @@ class WddmMemoryBudget {
+     for (int device = 0; device < device_count; ++device) {
+       cudaDeviceProp properties{};
+       CHECK_CUDA_ERROR(cudaGetDeviceProperties(&properties, device));
+-      if (properties.integrated || properties.tccDriver ||
+-          properties.luidDeviceNodeMask == 0) {
++      if (properties.tccDriver || properties.luidDeviceNodeMask == 0) {
+         continue;
+       }
+
+@@ -48,6 +48,7 @@ class WddmMemoryBudget {
+       }
+
+       auto& budget = budgets_[device];
++      budget.integrated = properties.integrated;
+       if (FAILED(factory->EnumAdapterByLuid(
+               luid, IID_PPV_ARGS(&budget.adapter)))) {
+         continue;
+@@ -64,7 +65,8 @@ class WddmMemoryBudget {
+   size_t get_memory_limit(int device, cudaMemPool_t pool) {
+     size_t max_size = std::numeric_limits<size_t>::max();
+     auto& budget = budgets_.at(device);
+-    if (!budget.adapter || !pool) {
++    // Integrated budgets are reported without changing allocation policy.
++    if (budget.integrated || !budget.adapter || !pool) {
+       return max_size;
+     }
+
+@@ -92,16 +94,40 @@ class WddmMemoryBudget {
+     return budget.memory_limit;
+   }
+
++  std::optional<WddmMemoryInfo> get_memory_info(int device) {
++    std::lock_guard lock(mutex_);
++    const auto& budget = budgets_.at(device);
++    if (!budget.adapter) {
++      return std::nullopt;
++    }
++    DXGI_QUERY_VIDEO_MEMORY_INFO info{};
++    if (FAILED(budget.adapter->QueryVideoMemoryInfo(
++            budget.node, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info))) {
++      return std::nullopt;
++    }
++    return WddmMemoryInfo{info.Budget, info.CurrentUsage};
++  }
++
+  private:
+   std::vector<DeviceMemoryBudget> budgets_;
+   std::mutex mutex_;
+ };
+
++WddmMemoryBudget& memory_budget() {
++  // Match the CUDA devices' process lifetime. Releasing DXGI adapters during
++  // DLL shutdown can fail after the graphics runtime has started teardown.
++  static auto* budget = new WddmMemoryBudget(gpu::device_count());
++  return *budget;
++}
++
+ } // namespace
+
+ size_t get_wddm_memory_limit(int device, cudaMemPool_t pool) {
+-  static WddmMemoryBudget budget(gpu::device_count());
+-  return budget.get_memory_limit(device, pool);
++  return memory_budget().get_memory_limit(device, pool);
++}
++
++std::optional<WddmMemoryInfo> get_wddm_memory_info(int device) {
++  return memory_budget().get_memory_info(device);
+ }
+
+ } // namespace mlx::core::cu
+diff --git a/mlx/backend/cuda/wddm.h b/mlx/backend/cuda/wddm.h
+index c76224b7b..15d767ffa 100644
+--- a/mlx/backend/cuda/wddm.h
++++ b/mlx/backend/cuda/wddm.h
+@@ -5,6 +5,7 @@
+ #include <cuda_runtime.h>
+
+ #include <limits>
++#include <optional>
+
+ namespace mlx::core::cu {
+
+@@ -23,4 +24,13 @@ inline size_t memory_limit_from_budget(
+
+ size_t get_wddm_memory_limit(int device, cudaMemPool_t pool);
+
++struct WddmMemoryInfo {
++  uint64_t budget;
++  uint64_t usage;
++};
++
++// Query the current process's local segment. A failed query has no value;
++// a successful query can report a zero budget.
++std::optional<WddmMemoryInfo> get_wddm_memory_info(int device);
++
+ } // namespace mlx::core::cu
+diff --git a/python/src/device.cpp b/python/src/device.cpp
+index da4f919b1..7e6bd0916 100644
+--- a/python/src/device.cpp
++++ b/python/src/device.cpp
+@@ -100,6 +100,14 @@ void init_device(nb::module_& m) {
+       on the backend and device type. Common keys include ``device_name``,
+       ``architecture``, and ``total_memory`` (or ``memory_size``).
+
++      CUDA devices include ``integrated`` (0 or 1). On Windows WDDM devices,
++      ``memory_budget`` and ``memory_usage`` report the current process's
++      local-segment budget and usage in bytes. This segment includes shared
++      memory on integrated GPUs. These values are refreshed on each call;
++      both keys are absent if the query fails or is unsupported. A zero
++      budget is a valid observation. Host memory and commit limits can be
++      more restrictive than the GPU budget.
++
+       Args:
+           d (Device): The device to query (defaults to the default device).
+
+diff --git a/python/tests/test_device.py b/python/tests/test_device.py
+index 86f7fbebd..0bcb721e6 100644
+--- a/python/tests/test_device.py
++++ b/python/tests/test_device.py
+@@ -2,6 +2,8 @@
+
+ import concurrent.futures
+ import gc
++import subprocess
++import sys
+ import unittest
+
+ import mlx.core as mx
+@@ -183,6 +185,14 @@ class TestDeviceInfo(mlx_tests.MLXTestCase):
+             self.assertIn("device_name", info)
+             self.assertTrue(len(info["device_name"]) > 0)
+             self.assertIn("architecture", info)
++            if mx.cuda.is_available():
++                self.assertIn(info["integrated"], (0, 1))
++                self.assertEqual("memory_budget" in info, "memory_usage" in info)
++                if "memory_budget" in info:
++                    self.assertIsInstance(info["memory_budget"], int)
++                    self.assertIsInstance(info["memory_usage"], int)
++                    self.assertGreaterEqual(info["memory_budget"], 0)
++                    self.assertGreaterEqual(info["memory_usage"], 0)
+
+     def test_cuda_get_arch_list(self):
+         arch_list = mx.cuda.get_arch_list()
+@@ -194,6 +204,25 @@ class TestDeviceInfo(mlx_tests.MLXTestCase):
+         else:
+             self.assertEqual(arch_list, [])
+
++    @unittest.skipIf(
++        sys.platform != "win32" or not mx.cuda.is_available(),
++        "Windows CUDA is not available",
++    )
++    def test_wddm_info_shutdown(self):
++        if "memory_budget" not in mx.device_info(mx.gpu):
++            self.skipTest("WDDM memory information is not available")
++        result = subprocess.run(
++            [
++                sys.executable,
++                "-c",
++                "import mlx.core as mx; mx.device_info(mx.gpu); mx.clear_streams()",
++            ],
++            capture_output=True,
++            text=True,
++            timeout=30,
++        )
++        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
++
+     def test_device_info_default(self):
+         info = mx.device_info()
+         self.assertIsInstance(info, dict)
+diff --git a/tests/cuda_tests.cpp b/tests/cuda_tests.cpp
+index 9afa980cd..ce499691b 100644
+--- a/tests/cuda_tests.cpp
++++ b/tests/cuda_tests.cpp
+@@ -53,6 +53,8 @@ TEST_CASE("test memory limit from budget") {
+       cu::memory_limit_from_budget(24 * gib, 4 * gib, 6 * gib),
+       24 * gib - (24 * gib) / 20);
+   CHECK_EQ(cu::memory_limit_from_budget(24 * gib, 25 * gib, 0), 0);
++  CHECK_EQ(cu::memory_limit_from_budget(0, 0, 0), 0);
++  CHECK_EQ(cu::memory_limit_from_budget(24 * gib, 24 * gib, 0), 0);
+ }
+
+ TEST_CASE("test wddm memory limit") {
+@@ -62,13 +64,29 @@ TEST_CASE("test wddm memory limit") {
+   REQUIRE_EQ(cudaGetDeviceProperties(&default_properties, 0), cudaSuccess);
+   auto default_limit = get_memory_limit();
+   if (default_properties.memoryPoolsSupported &&
+-      !default_properties.integrated && !default_properties.tccDriver &&
++      !default_properties.tccDriver &&
+       default_properties.luidDeviceNodeMask != 0) {
+-    CHECK_LT(default_limit, std::numeric_limits<size_t>::max());
++    auto info = device_info(Device::gpu);
++    REQUIRE(info.count("memory_budget"));
++    REQUIRE(info.count("memory_usage"));
++    if (default_properties.integrated) {
++      CHECK_EQ(default_limit, std::numeric_limits<size_t>::max());
++      CHECK_EQ(get_memory_limit(), default_limit);
++    } else {
++      CHECK_LT(default_limit, std::numeric_limits<size_t>::max());
++      CHECK_LE(default_limit, std::get<size_t>(info.at("memory_budget")));
++    }
+   }
+ }
+ #endif // _WIN32
+
++TEST_CASE("test integrated CUDA device info") {
++  cudaDeviceProp properties{};
++  REQUIRE_EQ(cudaGetDeviceProperties(&properties, 0), cudaSuccess);
++  auto info = device_info(Device::gpu);
++  CHECK_EQ(std::get<size_t>(info.at("integrated")), properties.integrated);
++}
++
+ TEST_CASE("test clear cache trims CUDA pool") {
+   if (!memory_pools_supported()) {
+     return;
