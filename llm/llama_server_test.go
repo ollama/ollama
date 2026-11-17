@@ -1987,6 +1987,19 @@ func TestLlamaServerBatch(t *testing.T) {
 	}
 }
 
+func TestLlamaServerBatchDecisionTypeWithoutBlockCount(t *testing.T) {
+	f := loadTestGGUF(t, gguftest.KV{
+		"general.architecture": "lfm3",
+		"lfm3.context_length":  uint64(4096),
+		"lfm3.decision.type":   "lfm3-d1",
+	})
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192, NumBatch: 512}}
+	batch, memory := LlamaServerBatch(f, opts, false)
+	if batch != 4096 || memory != 2<<30 {
+		t.Fatalf("batch=%d memory=%d, want batch=4096 memory=%d", batch, memory, 2<<30)
+	}
+}
+
 func TestAppendBatchArgs(t *testing.T) {
 	tests := []struct {
 		name        string
