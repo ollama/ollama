@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParseHFGenerationDefaults(t *testing.T) {
 	defaults, err := ParseHFGenerationDefaults([]byte(`{
@@ -74,5 +77,58 @@ func TestParseHFGenerationDefaultsSkipsInvalidValues(t *testing.T) {
 	}
 	if got := defaults["top_p"]; got != float64(0.8) {
 		t.Fatalf("top_p = %#v, want %#v", got, float64(0.8))
+	}
+}
+
+func TestParseHFGenerationDefaultsNullValues(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+		want GenerationDefaults
+	}{
+		{
+			name: "all null",
+			data: `{
+				"top_k": null, "top_p": null, "min_p": null,
+				"temperature": null, "repetition_penalty": null,
+				"repeat_penalty": null, "penalty_repeat": null,
+				"presence_penalty": null, "frequency_penalty": null,
+				"repeat_last_n": null, "penalty_last_n": null
+			}`,
+		},
+		{
+			name: "null alongside numeric value",
+			data: `{"temperature": null, "top_p": null, "top_k": null, "min_p": 0.05}`,
+			want: GenerationDefaults{"min_p": float64(0.05)},
+		},
+		{
+			name: "null primary allows alias",
+			data: `{"repetition_penalty": null, "repeat_penalty": 1.1, "repeat_last_n": null, "penalty_last_n": 128}`,
+			want: GenerationDefaults{"repeat_penalty": float64(1.1), "repeat_last_n": int64(128)},
+		},
+		{
+			name: "null aliases allow final alias",
+			data: `{"repetition_penalty": null, "repeat_penalty": null, "penalty_repeat": 1.2}`,
+			want: GenerationDefaults{"repeat_penalty": float64(1.2)},
+		},
+		{
+			name: "explicit zero takes precedence",
+			data: `{"temperature": 0, "top_p": 0, "top_k": 0, "repetition_penalty": 0, "repeat_penalty": 1.1, "repeat_last_n": 0, "penalty_last_n": 128}`,
+			want: GenerationDefaults{
+				"temperature": float64(0), "top_p": float64(0), "top_k": int64(0),
+				"repeat_penalty": float64(0), "repeat_last_n": int64(0),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseHFGenerationDefaults([]byte(tt.data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("defaults = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
