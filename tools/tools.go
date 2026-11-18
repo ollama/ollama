@@ -297,6 +297,9 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 						if args, ok := findMap("arguments", obj); ok {
 							return args, true
 						}
+						if args, ok := findMap("args", obj); ok {
+							return args, true
+						}
 						if args, ok := findMap("parameters", obj); ok {
 							return args, true
 						}
