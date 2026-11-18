@@ -6,6 +6,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -69,9 +70,11 @@ func TestUpdateStagePathHashesETag(t *testing.T) {
 
 func TestIsNewReleaseAvailable(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
+	var gotChannel string
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/update.json" {
+			gotChannel = r.URL.Query().Get("channel")
 			w.Write([]byte(
 				fmt.Sprintf(`{"version": "9.9.9", "url": "%s"}`,
 					server.URL+"/9.9.9/"+Installer)))
@@ -85,6 +88,16 @@ func TestIsNewReleaseAvailable(t *testing.T) {
 
 	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
 	defer updater.Store.Close() // Ensure database is closed
+	settings, err := updater.Store.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.UpdateChannel = store.UpdateChannelPreview
+	if err := updater.Store.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	oldUpdateCheckURLBase := UpdateCheckURLBase
+	t.Cleanup(func() { UpdateCheckURLBase = oldUpdateCheckURLBase })
 	UpdateCheckURLBase = server.URL + "/update.json"
 	updatePresent, resp := updater.checkForUpdate(t.Context())
 	if !updatePresent {
@@ -92,6 +105,58 @@ func TestIsNewReleaseAvailable(t *testing.T) {
 	}
 	if resp.UpdateVersion != "9.9.9" {
 		t.Fatal("unexpected response", "url", resp.UpdateURL, "version", resp.UpdateVersion)
+	}
+	if gotChannel != store.UpdateChannelPreview || resp.updateChannel != store.UpdateChannelPreview {
+		t.Fatalf("request channel = %q, response channel = %q, want preview", gotChannel, resp.updateChannel)
+	}
+}
+
+func TestDiscardPendingUpdate(t *testing.T) {
+	oldStageDir := UpdateStageDir
+	oldDownloaded := UpdateDownloaded
+	t.Cleanup(func() {
+		UpdateStageDir = oldStageDir
+		UpdateDownloaded = oldDownloaded
+	})
+
+	UpdateStageDir = t.TempDir()
+	payload := filepath.Join(UpdateStageDir, "etag", Installer)
+	if err := os.MkdirAll(filepath.Dir(payload), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payload, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	UpdateDownloaded = true
+	(&Updater{}).DiscardPendingUpdate()
+	if UpdateDownloaded {
+		t.Fatal("UpdateDownloaded = true, want false")
+	}
+	if _, err := os.Stat(payload); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staged payload still exists: %v", err)
+	}
+}
+
+func TestDownloadNewReleaseRejectsChangedChannel(t *testing.T) {
+	appStore := &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}
+	defer appStore.Close()
+
+	requested := atomic.Bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requested.Store(true)
+	}))
+	defer server.Close()
+
+	err := (&Updater{Store: appStore}).DownloadNewRelease(t.Context(), UpdateResponse{
+		UpdateURL:     server.URL,
+		updateChannel: store.UpdateChannelPreview,
+	})
+	if err == nil || !strings.Contains(err.Error(), "update channel changed") {
+		t.Fatalf("DownloadNewRelease() error = %v, want channel change", err)
+	}
+	if requested.Load() {
+		t.Fatal("download started after the selected channel changed")
 	}
 }
 
@@ -177,10 +242,16 @@ func TestDownloadNewReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 {
-		t.Fatalf("expected one staged update dir, got %d", len(entries))
+	var updateDirs []os.DirEntry
+	for _, entry := range entries {
+		if entry.IsDir() {
+			updateDirs = append(updateDirs, entry)
+		}
 	}
-	stageFilename := filepath.Join(UpdateStageDir, entries[0].Name(), Installer)
+	if len(updateDirs) != 1 {
+		t.Fatalf("expected one staged update dir, got %d", len(updateDirs))
+	}
+	stageFilename := filepath.Join(UpdateStageDir, updateDirs[0].Name(), Installer)
 	got, err := os.ReadFile(stageFilename)
 	if err != nil {
 		t.Fatal(err)
@@ -223,21 +294,18 @@ func (u *Updater) waitDownloadIdle() {
 
 func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 	UpdateStageDir = t.TempDir()
-	oldInstaller := Installer
 	oldVerifyDownload := VerifyDownload
 	oldUpdateDownloaded := UpdateDownloaded
 	oldUpdateCheckInitialDelay := UpdateCheckInitialDelay
 	oldUpdateCheckInterval := UpdateCheckInterval
 	oldUpdateCheckURLBase := UpdateCheckURLBase
 	defer func() {
-		Installer = oldInstaller
 		VerifyDownload = oldVerifyDownload
 		UpdateDownloaded = oldUpdateDownloaded
 		UpdateCheckInitialDelay = oldUpdateCheckInitialDelay
 		UpdateCheckInterval = oldUpdateCheckInterval
 		UpdateCheckURLBase = oldUpdateCheckURLBase
 	}()
-	Installer = "OllamaSetup.exe"
 	UpdateDownloaded = false
 	UpdateCheckInitialDelay = time.Millisecond
 	UpdateCheckInterval = 5 * time.Millisecond
@@ -261,7 +329,7 @@ func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 				fmt.Sprintf(`{"version": "9.9.9", "url": "%s"}`,
 					server.URL+"/9.9.9/"+Installer)))
 		case "/9.9.9/" + Installer:
-			w.Header().Set("Content-Disposition", `attachment; filename="OllamaSetup.exe"`)
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, Installer))
 			switch r.Method {
 			case http.MethodHead:
 				etag := headETag
