@@ -890,6 +890,75 @@ func createTestFile(t *testing.T, contents string) (string, string) {
 	return path, fmt.Sprintf("sha256:%x", digest)
 }
 
+func TestParseFileCaseInsensitiveParameterAndRole(t *testing.T) {
+	cases := []struct {
+		name, input string
+		expected    []Command
+	}{
+		{
+			"parameter name",
+			"FROM foo\nPARAMETER Temperature 0.5",
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "temperature", Args: "0.5"},
+			},
+		},
+		{
+			"parameter name mixed case",
+			"FROM foo\nPARAMETER Num_Ctx 4096",
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "num_ctx", Args: "4096"},
+			},
+		},
+		{
+			"message role",
+			"FROM foo\nMESSAGE User hi",
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "message", Args: "user: hi"},
+			},
+		},
+		{
+			"message role stays lowercase in multiline",
+			"FROM foo\nMESSAGE Assistant \"\"\"\nhello\n\"\"\"",
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "message", Args: "assistant: \nhello\n"},
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			modelfile, err := ParseFile(strings.NewReader(tt.input))
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, modelfile.Commands)
+
+			// round-tripping should reproduce the same commands
+			again, err := ParseFile(strings.NewReader(modelfile.String()))
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, again.Commands)
+		})
+	}
+}
+
+func TestCreateRequestCaseInsensitiveParameterAndRole(t *testing.T) {
+	f, err := ParseFile(strings.NewReader(`
+FROM test
+PARAMETER Temperature 0.5
+PARAMETER TOP_K 1
+MESSAGE User Hello
+`))
+	require.NoError(t, err)
+
+	req, err := f.CreateRequest("")
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]any{"temperature": float32(0.5), "top_k": int64(1)}, req.Parameters)
+	assert.Equal(t, []api.Message{{Role: "user", Content: "Hello"}}, req.Messages)
+}
+
 func TestCreateRequestFiles(t *testing.T) {
 	n1, d1 := createTestFile(t, "first")
 	n2, d2 := createTestFile(t, "second")
