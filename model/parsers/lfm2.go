@@ -557,7 +557,7 @@ func parsePythonArgValue(s string, i int) (any, int, error) {
 				continue
 			}
 			if s[i] == quote {
-				value := s[start:i]
+				value := unescapePythonString(s[start:i])
 				i++
 				return value, i, nil
 			}
@@ -622,6 +622,38 @@ func parsePythonArgValue(s string, i int) (any, int, error) {
 	token := strings.TrimSpace(s[start:i])
 	value, err := parsePythonLiteral(token)
 	return value, i, err
+}
+
+// unescapePythonString resolves the backslash escapes of a Python string
+// literal body. Unknown escapes are kept as written, as Python does.
+func unescapePythonString(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			sb.WriteByte(s[i])
+			continue
+		}
+		i++
+		switch s[i] {
+		case 'n':
+			sb.WriteByte('\n')
+		case 't':
+			sb.WriteByte('\t')
+		case 'r':
+			sb.WriteByte('\r')
+		case '\\', '\'', '"':
+			sb.WriteByte(s[i])
+		default:
+			sb.WriteByte('\\')
+			sb.WriteByte(s[i])
+		}
+	}
+	return sb.String()
 }
 
 func parsePythonLiteral(token string) (any, error) {
