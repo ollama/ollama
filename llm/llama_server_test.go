@@ -253,6 +253,107 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerCompletionStreamError(t *testing.T) {
+	const errorFrame = `data: {"error":{"code":500,"message":"Compute error.","type":"server_error"}}`
+	const oomStatus = "error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"
+
+	tests := []struct {
+		name        string
+		lastError   string
+		sseLines    []string
+		wantContent []string
+		wantErr     string
+		wantOOM     bool
+	}{
+		{
+			name: "after tokens",
+			sseLines: []string{
+				`data: {"content":"Hello","stop":false}`,
+				``,
+				errorFrame,
+				``,
+			},
+			wantContent: []string{"Hello"},
+			wantErr:     "Compute error.",
+		},
+		{
+			name: "only error frame",
+			sseLines: []string{
+				errorFrame,
+				``,
+			},
+			wantErr: "Compute error.",
+		},
+		{
+			name:      "includes OOM status",
+			lastError: oomStatus,
+			sseLines: []string{
+				errorFrame,
+				``,
+			},
+			wantErr: "Compute error.\n" + oomStatus,
+			wantOOM: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case "/completion":
+					w.Header().Set("Content-Type", "text/event-stream")
+					for _, line := range tt.sseLines {
+						fmt.Fprintln(w, line)
+					}
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			status := &StatusWriter{}
+			status.SetLastError(tt.lastError)
+			runner := &llamaServerRunner{
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+				status:  status,
+			}
+
+			var gotContent []string
+			opts := api.DefaultOptions()
+			err := runner.Completion(t.Context(), CompletionRequest{
+				Prompt:  "test prompt",
+				Options: &opts,
+			}, func(cr CompletionResponse) {
+				if cr.Done {
+					t.Error("failed stream should not produce a done response")
+				}
+				gotContent = append(gotContent, cr.Content)
+			})
+			if err == nil {
+				t.Fatal("expected error from llama-server error frame")
+			}
+			if err.Error() != tt.wantErr {
+				t.Errorf("error = %q, want %q", err, tt.wantErr)
+			}
+			if got := IsOutOfMemory(err); got != tt.wantOOM {
+				t.Errorf("IsOutOfMemory(%q) = %v, want %v", err, got, tt.wantOOM)
+			}
+			if !slices.Equal(gotContent, tt.wantContent) {
+				t.Errorf("content = %q, want %q", gotContent, tt.wantContent)
+			}
+		})
+	}
+}
+
 func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
