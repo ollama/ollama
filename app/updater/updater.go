@@ -130,6 +130,11 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	// Extract the version string from the URL in the github release artifact path
 	updateResp.UpdateVersion = path.Base(path.Dir(updateResp.UpdateURL))
 
+	if strings.TrimPrefix(updateResp.UpdateVersion, "v") == strings.TrimPrefix(currentVersion, "v") {
+		slog.Debug("update version matches current version, ignoring", "version", currentVersion)
+		return false, UpdateResponse{}
+	}
+
 	slog.Info("New update available at " + updateResp.UpdateURL)
 	return true, updateResp
 }

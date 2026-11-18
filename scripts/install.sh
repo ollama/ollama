@@ -65,7 +65,7 @@ if [ "$OS" = "Darwin" ]; then
 
     if [ -d "/Applications/Ollama.app" ]; then
         status "Removing existing Ollama installation..."
-        rm -rf "/Applications/Ollama.app"
+        rm -rf "/Applications/Ollama.app" 2>/dev/null || sudo rm -rf "/Applications/Ollama.app"
     fi
 
     status "Downloading Ollama for macOS..."
@@ -74,7 +74,7 @@ if [ "$OS" = "Darwin" ]; then
 
     status "Installing Ollama to /Applications..."
     unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
-    mv "$TEMP_DIR/Ollama.app" "/Applications/"
+    mv "$TEMP_DIR/Ollama.app" "/Applications/" 2>/dev/null || sudo mv "$TEMP_DIR/Ollama.app" "/Applications/"
 
     if [ ! -L "/usr/local/bin/ollama" ] || [ "$(readlink "/usr/local/bin/ollama")" != "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
         status "Adding 'ollama' command to PATH (may require password)..."
