@@ -1327,3 +1327,102 @@ func TestOverlapFunction(t *testing.T) {
 		})
 	}
 }
+
+// qwen3-coder sometimes leaves out the <tool_call> opener, typically after a
+// sentence of reasoning (#18530, #17353). With tools available, a bare
+// <function= block is parsed as a tool call.
+func TestQwen3CoderParserImplicitToolCallOpener(t *testing.T) {
+	tools := []api.Tool{tool("read_file", map[string]api.ToolProperty{"path": {Type: api.PropertyType{"string"}}})}
+	wantCall := func(path string) api.ToolCall {
+		return api.ToolCall{Function: api.ToolCallFunction{Name: "read_file", Arguments: args(`{"path": "` + path + `"}`)}}
+	}
+
+	for _, tt := range []struct {
+		name      string
+		tools     []api.Tool
+		chunks    []string
+		wantText  string
+		wantCalls []api.ToolCall
+	}{
+		{
+			name:  "preamble, missing opener, closer present (observed output)",
+			tools: tools,
+			chunks: []string{
+				"I'll start by looking at the file.\n\n<function=read_file>\n<parameter=path>\napp/inc/pris.php\n</parameter>\n</function>\n</tool_call>",
+			},
+			wantText:  "I'll start by looking at the file.",
+			wantCalls: []api.ToolCall{wantCall("app/inc/pris.php")},
+		},
+		{
+			name:  "opener split across chunks is not leaked as content",
+			tools: tools,
+			chunks: []string{
+				"Läser filen.\n\n<func",
+				"tion=read_file>\n<parameter=path>\na.php\n</parameter>\n</func",
+				"tion>\n</tool_call>",
+			},
+			wantText:  "Läser filen.",
+			wantCalls: []api.ToolCall{wantCall("a.php")},
+		},
+		{
+			name:      "both opener and closer missing",
+			tools:     tools,
+			chunks:    []string{"Checking.\n<function=read_file>\n<parameter=path>\nb.php\n</parameter>\n</function>"},
+			wantText:  "Checking.",
+			wantCalls: []api.ToolCall{wantCall("b.php")},
+		},
+		{
+			name:      "explicit opener still works",
+			tools:     tools,
+			chunks:    []string{"Checking.\n<tool_call>\n<function=read_file>\n<parameter=path>\nc.php\n</parameter>\n</function>\n</tool_call>"},
+			wantText:  "Checking.",
+			wantCalls: []api.ToolCall{wantCall("c.php")},
+		},
+		{
+			name:     "without tools a bare <function= stays content",
+			tools:    nil,
+			chunks:   []string{"<function=read_file>\n<parameter=path>\na.php\n</parameter>\n</function>\n</tool_call>"},
+			wantText: "<function=read_file>\n<parameter=path>\na.php\n</parameter>\n</function>\n</tool_call>",
+		},
+		{
+			name:     "prose mentioning <function= is returned unchanged",
+			tools:    tools,
+			chunks:   []string{"Use the ", "<function=name> syntax to call it."},
+			wantText: "Use the <function=name> syntax to call it.",
+		},
+		{
+			name:     "implicit call that does not parse is returned as content, not an error",
+			tools:    tools,
+			chunks:   []string{"Writing. <function=write><parameter=content>print('ok')</function></tool_call>"},
+			wantText: "Writing. <function=write><parameter=content>print('ok')</function></tool_call>",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := Qwen3CoderParser{}
+			parser.Init(tt.tools, nil, nil)
+
+			var text string
+			var calls []api.ToolCall
+			for i, chunk := range tt.chunks {
+				content, _, c, err := parser.Add(chunk, i == len(tt.chunks)-1)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				text += content
+				calls = append(calls, c...)
+			}
+			if text != tt.wantText {
+				t.Errorf("content = %q, want %q", text, tt.wantText)
+			}
+			if len(calls) != len(tt.wantCalls) {
+				t.Fatalf("got %d tool calls, want %d: %#v", len(calls), len(tt.wantCalls), calls)
+			}
+			for i := range calls {
+				calls[i].Function.Index = 0
+				if !toolCallEqual(calls[i], tt.wantCalls[i]) {
+					t.Errorf("call %d = %#v, want %#v", i, calls[i], tt.wantCalls[i])
+				}
+			}
+		})
+	}
+}
