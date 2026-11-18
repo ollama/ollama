@@ -352,11 +352,22 @@ func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.C
 	}
 
 	conv := newMessageConverter(r.Tools)
+	// tool_result blocks only carry the tool_use id, but templates name the
+	// tool a result belongs to, so look the name up from the tool_use
+	toolNames := make(map[string]string)
 	for i, msg := range r.Messages {
 		converted, err := conv.convertMessage(msg)
 		if err != nil {
 			logutil.Trace("anthropic: message conversion failed", "index", i, "role", msg.Role, "err", err)
 			return nil, err
+		}
+		for j := range converted {
+			for _, tc := range converted[j].ToolCalls {
+				toolNames[tc.ID] = tc.Function.Name
+			}
+			if converted[j].Role == "tool" && converted[j].ToolName == "" {
+				converted[j].ToolName = toolNames[converted[j].ToolCallID]
+			}
 		}
 		messages = append(messages, converted...)
 	}
