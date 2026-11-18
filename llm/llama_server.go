@@ -93,9 +93,11 @@ const (
 // when deciding whether to load a model alongside other models.
 func LlamaServerBatch(f *gguf.Model, opts api.Options, completion bool) (int, uint64) {
 	batch := opts.NumBatch
-	// These decision heads read the whole prompt without a KV cache, so the
-	// physical batch must hold the entire effective context.
-	wholePrompt := f.KV().Uint("decision.block_count") > 0
+	// llama-server evaluates the whole prompt in one ubatch when the model has
+	// no KV cache (decision heads) or uses non-causal attention (such as d1),
+	// so the physical batch must hold the entire effective context.
+	wholePrompt := f.KV().Uint("decision.block_count") > 0 ||
+		(f.KV().String("decision.type") != "" && !f.KV().Bool("attention.causal", true))
 	if wholePrompt {
 		batch = opts.NumCtx
 		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 {
