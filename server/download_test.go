@@ -12,12 +12,16 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/transfer"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestDownloadChunkRedirects(t *testing.T) {
@@ -288,5 +292,64 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 	}
 	if elapsed >= 5*downloadStallTimeout {
 		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*downloadStallTimeout)
+	}
+}
+
+func TestDownloadBlobCancelsWhenWaiterLeavesBeforeRun(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	data := make([]byte, 1024)
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+
+	unblock := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		if r.Method == http.MethodGet {
+			// Hold the download open until the test ends or the client cancels.
+			select {
+			case <-r.Context().Done():
+			case <-unblock:
+			}
+		}
+	}))
+	defer ts.Close()
+	defer close(unblock)
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := model.ParseName(u.Host + "/library/test")
+	n.ProtocolScheme = "http"
+
+	// Write part files from an earlier attempt so that Prepare resumes from
+	// disk and does not need the request context.
+	fp, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier := &blobDownload{Name: fp, Digest: digest}
+	if err := earlier.Prepare(t.Context(), n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "blobs", digest), &registryOptions{Insecure: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The only client disconnects before the download goroutine starts.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = downloadBlob(ctx, downloadOpts{n: n, digest: digest, regOpts: &registryOptions{Insecure: true}, fn: func(api.ProgressResponse) {}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("downloadBlob() = %v, want context.Canceled", err)
+	}
+
+	// A finished or canceled download removes itself from the manager.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := blobDownloadManager.Load(digest); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("download kept running after its only waiter left")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
