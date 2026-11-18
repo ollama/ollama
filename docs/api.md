@@ -55,7 +55,7 @@ Advanced parameters (optional):
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
-- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`). Accepts duration strings like `"10m"`, integer seconds (`0` unloads immediately), or `-1` to keep loaded indefinitely.
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 
 #### Structured outputs
