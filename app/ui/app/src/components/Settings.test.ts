@@ -58,6 +58,10 @@ describe("Settings defaults", () => {
       Models: "",
       ContextLength: 65_536,
       AutoUpdateEnabled: true,
+      SpeechVoice: "",
+      SpeechRate: 1,
+      SpeechVolume: 1,
+      SpeechAutoRead: false,
     });
     expect(onSaved).not.toHaveBeenCalled();
     settingsUpdate.resolve();

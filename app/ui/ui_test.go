@@ -31,12 +31,16 @@ func TestHandlePostApiSettings(t *testing.T) {
 		{
 			name: "valid settings update - all fields",
 			requested: store.Settings{
-				Expose:     true,
-				Browser:    true,
-				Models:     "/custom/models",
-				Agent:      true,
-				Tools:      true,
-				WorkingDir: "/workspace",
+				Expose:         true,
+				Browser:        true,
+				Models:         "/custom/models",
+				Agent:          true,
+				Tools:          true,
+				WorkingDir:     "/workspace",
+				SpeechVoice:    "com.example.voice",
+				SpeechRate:     1.5,
+				SpeechVolume:   0.4,
+				SpeechAutoRead: true,
 			},
 			wantErr: false,
 		},
@@ -115,9 +119,65 @@ func TestHandlePostApiSettings(t *testing.T) {
 					if tt.requested.Models != "" && savedSettings.Models != tt.requested.Models {
 						t.Errorf("Models: got %q, want %q", savedSettings.Models, tt.requested.Models)
 					}
+					if savedSettings.SpeechVoice != tt.requested.SpeechVoice {
+						t.Errorf("SpeechVoice: got %q, want %q", savedSettings.SpeechVoice, tt.requested.SpeechVoice)
+					}
+					if savedSettings.SpeechRate != tt.requested.SpeechRate {
+						t.Errorf("SpeechRate: got %v, want %v", savedSettings.SpeechRate, tt.requested.SpeechRate)
+					}
+					if savedSettings.SpeechVolume != tt.requested.SpeechVolume {
+						t.Errorf("SpeechVolume: got %v, want %v", savedSettings.SpeechVolume, tt.requested.SpeechVolume)
+					}
+					if savedSettings.SpeechAutoRead != tt.requested.SpeechAutoRead {
+						t.Errorf("SpeechAutoRead: got %v, want %v", savedSettings.SpeechAutoRead, tt.requested.SpeechAutoRead)
+					}
 				}
 			}
 		})
+	}
+}
+
+func TestSettingsPreservesSpeechSettingsWhenOmitted(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.SpeechVoice = "com.example.voice"
+	settings.SpeechRate = 1.5
+	settings.SpeechVolume = 0.4
+	settings.SpeechAutoRead = true
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	payload := []byte(`{"Agent":true}`)
+	server := &Server{Store: testStore, Restart: func() {}}
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(payload))
+	rr := httptest.NewRecorder()
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.SpeechVoice != "com.example.voice" {
+		t.Errorf("SpeechVoice = %q, want %q", saved.SpeechVoice, "com.example.voice")
+	}
+	if saved.SpeechRate != 1.5 {
+		t.Errorf("SpeechRate = %v, want %v", saved.SpeechRate, 1.5)
+	}
+	if saved.SpeechVolume != 0.4 {
+		t.Errorf("SpeechVolume = %v, want %v", saved.SpeechVolume, 0.4)
+	}
+	if !saved.SpeechAutoRead {
+		t.Error("SpeechAutoRead was not preserved")
 	}
 }
 

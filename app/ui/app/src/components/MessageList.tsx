@@ -3,22 +3,31 @@ import React from "react";
 import Message from "./Message";
 import Downloading from "./Downloading";
 import { ErrorMessage } from "./ErrorMessage";
+import { readAloudOwnerKey } from "@/utils/readAloudOwnerKey";
 
 export default function MessageList({
+  chatId,
   messages,
   spacerHeight,
   isWaitingForLoad,
   isStreaming,
+  didCompleteStreaming,
+  autoReadEnabled = false,
+  onCompletionConsumed,
   downloadProgress,
   onEditMessage,
   editingMessageIndex,
   error,
   browserToolResult,
 }: {
+  chatId: string;
   messages: MessageType[];
   spacerHeight: number;
   isWaitingForLoad?: boolean;
   isStreaming: boolean;
+  didCompleteStreaming?: boolean;
+  autoReadEnabled?: boolean;
+  onCompletionConsumed?: () => void;
   downloadProgress?: DownloadEvent;
   onEditMessage?: (content: string, index: number) => void | Promise<void>;
   editingMessageIndex?: number;
@@ -26,8 +35,44 @@ export default function MessageList({
   browserToolResult?: any;
 }) {
   const [showDots, setShowDots] = React.useState(false);
+  const [autoReadMessageIndex, setAutoReadMessageIndex] = React.useState<
+    number | null
+  >(null);
+  const wasStreaming = React.useRef(isStreaming);
   const isDownloadingModel = downloadProgress && !downloadProgress.done;
   const shouldShowDownload = messages.length > 0;
+  const lastIdx = messages.length - 1;
+
+  React.useEffect(() => {
+    const justFinishedStreaming = wasStreaming.current && !isStreaming;
+    wasStreaming.current = isStreaming;
+    if (isStreaming || !didCompleteStreaming) {
+      return;
+    }
+
+    const lastMessage = messages[lastIdx];
+    const shouldAutoRead =
+      justFinishedStreaming &&
+      autoReadEnabled &&
+      lastMessage?.role === "assistant" &&
+      lastMessage.content?.trim() &&
+      (!lastMessage.tool_calls || lastMessage.tool_calls.length === 0) &&
+      !lastMessage.tool_call;
+
+    if (shouldAutoRead) {
+      setAutoReadMessageIndex(lastIdx);
+      queueMicrotask(() => onCompletionConsumed?.());
+      return;
+    }
+    onCompletionConsumed?.();
+  }, [
+    autoReadEnabled,
+    didCompleteStreaming,
+    isStreaming,
+    lastIdx,
+    messages,
+    onCompletionConsumed,
+  ]);
 
   React.useEffect(() => {
     let timer: number;
@@ -46,8 +91,6 @@ export default function MessageList({
 
     return () => window.clearTimeout(timer);
   }, [isStreaming, isWaitingForLoad, isDownloadingModel, messages]);
-
-  const lastIdx = messages.length - 1;
 
   // Memoize the last tool query (web_search query or web_fetch url) at each message index
   const lastToolQueries = React.useMemo(() => {
@@ -73,7 +116,9 @@ export default function MessageList({
                     ? String(args.url).trim()
                     : "";
               if (candidate) lastQuery = candidate;
-            } catch { /* ignored */ }
+            } catch {
+              /* ignored */
+            }
           }
         }
       }
@@ -96,6 +141,8 @@ export default function MessageList({
               onEditMessage={onEditMessage}
               messageIndex={idx}
               isStreaming={isStreaming && idx === lastIdx}
+              autoStart={idx === autoReadMessageIndex}
+              readAloudOwnerKey={readAloudOwnerKey(chatId, idx, message)}
               isFaded={
                 editingMessageIndex !== undefined && idx >= editingMessageIndex
               }
