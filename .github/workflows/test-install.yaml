@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/install.sh'
+      - 'scripts/install_test.py'
       - '.github/workflows/test-install.yaml'
 
 jobs:
@@ -14,6 +15,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Test interrupted downloads
+        run: |
+          python3 ./scripts/install_test.py -v
+          if command -v dash >/dev/null; then
+            SHELL_UNDER_TEST=dash python3 ./scripts/install_test.py -v
+          fi
       - name: Run install script
         run: sh ./scripts/install.sh
         env:

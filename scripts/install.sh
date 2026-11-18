@@ -2,6 +2,39 @@
 # This script installs Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
+download() {
+    local url="$1"
+    local output="$2"
+    local attempt=1
+    local max_attempts=3
+    local curl_status
+
+    while [ "$attempt" -le "$max_attempts" ]; do
+        if curl --fail --show-error --location --progress-bar \
+            --continue-at - --output "$output" "$url"
+        then
+            return 0
+        else
+            curl_status=$?
+        fi
+
+        if [ "$attempt" -eq "$max_attempts" ]; then
+            return "$curl_status"
+        fi
+
+        # curl returns 33 when a server does not support resuming. Remove the
+        # partial file so the next attempt starts from the beginning instead
+        # of repeatedly requesting an unsupported byte range.
+        if [ "$curl_status" -eq 33 ]; then
+            rm -f "$output"
+        fi
+
+        warning "Download failed; retrying in 1 second ($attempt/$max_attempts)"
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+}
+
 # Wrap script in main function so that a truncated partial download doesn't end
 # up executing half a script.
 main() {
@@ -16,7 +49,7 @@ error() { echo "${red}ERROR:${plain} $*"; exit 1; }
 warning() { echo "${red}WARNING:${plain} $*"; }
 
 TEMP_DIR=$(mktemp -d)
-cleanup() { rm -rf $TEMP_DIR; }
+cleanup() { rm -rf "$TEMP_DIR"; }
 trap cleanup EXIT
 
 available() { command -v $1 >/dev/null; }
@@ -69,8 +102,7 @@ if [ "$OS" = "Darwin" ]; then
     fi
 
     status "Downloading Ollama for macOS..."
-    curl --fail --show-error --location --progress-bar \
-        -o "$TEMP_DIR/Ollama-darwin.zip" "$DOWNLOAD_URL"
+    download "$DOWNLOAD_URL" "$TEMP_DIR/Ollama-darwin.zip"
 
     status "Installing Ollama to /Applications..."
     unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
@@ -131,6 +163,7 @@ download_and_extract() {
     local url_base="$1"
     local dest_dir="$2"
     local filename="$3"
+    local archive
 
     # Check if .tar.zst is available
     if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
@@ -143,17 +176,17 @@ download_and_extract() {
         fi
 
         status "Downloading ${filename}.tar.zst"
-        curl --fail --show-error --location --progress-bar \
-            "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
-            zstd -d | $SUDO tar -xf - -C "${dest_dir}"
+        archive="$TEMP_DIR/${filename}.tar.zst"
+        download "${url_base}/${filename}.tar.zst${VER_PARAM}" "$archive"
+        zstd -d -c "$archive" | $SUDO tar -xf - -C "${dest_dir}"
         return 0
     fi
 
     # Fall back to .tgz for older versions
     status "Downloading ${filename}.tgz"
-    curl --fail --show-error --location --progress-bar \
-        "${url_base}/${filename}.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "${dest_dir}"
+    archive="$TEMP_DIR/${filename}.tgz"
+    download "${url_base}/${filename}.tgz${VER_PARAM}" "$archive"
+    $SUDO tar -xzf "$archive" -C "${dest_dir}"
 }
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
