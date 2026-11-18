@@ -697,6 +697,9 @@ components:
             quantization_level:
               type: string
               description: Quantization level used (for example `Q4_0`)
+            embedding_length:
+              type: integer
+              description: Embedding length reported by the model metadata, when available
     ListResponse:
       type: object
       properties:
@@ -1701,6 +1704,7 @@ paths:
                         - "gemma4"
                       parameter_size: "8.0B"
                       quantization_level: "Q4_K_M"
+                      embedding_length: 2560
   /api/ps:
     get:
       summary: List running models
