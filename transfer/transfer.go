@@ -134,6 +134,7 @@ var defaultClient = &http.Client{
 	Transport: &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
+		Proxy:               http.ProxyFromEnvironment, // Enable proxy from environment
 		IdleConnTimeout:     90 * time.Second,
 	},
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
