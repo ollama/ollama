@@ -302,6 +302,19 @@ func openRotatingLog() (io.WriteCloser, error) {
 // log.  Set ctx to timeout to control how long to wait for the logs to appear
 func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 	info := &InferenceInfo{}
+	wait := func(timeout time.Duration) bool {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		}
+	}
+	timeoutError := func() (*InferenceInfo, error) {
+		return nil, fmt.Errorf("timeout scanning server log for inference compute details")
+	}
 	computeMarker := regexp.MustCompile(`inference compute.*library=`)
 	defaultCtxMarker := regexp.MustCompile(`vram-based default context`)
 	defaultCtxRegex := regexp.MustCompile(`default_num_ctx=(\d+)`)
@@ -358,16 +371,17 @@ func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("timeout scanning server log for inference compute details")
+			return timeoutError()
 		default:
 		}
 		file, err := os.Open(serverLogPath)
 		if err != nil {
 			slog.Debug("failed to open server log", "log", serverLogPath, "error", err)
-			time.Sleep(time.Second)
+			if !wait(time.Second) {
+				return timeoutError()
+			}
 			continue
 		}
-		defer file.Close()
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -396,14 +410,19 @@ func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 						slog.Info("Matched default context length", "default_num_ctx", numCtx)
 					}
 				}
+				file.Close()
 				return info, nil
 			}
 			// If we've found compute info but hit a non-matching line, return what we have
 			// This handles older server versions that don't log the default context line
 			if len(info.Computes) > 0 {
+				file.Close()
 				return info, nil
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
+		file.Close()
+		if !wait(100 * time.Millisecond) {
+			return timeoutError()
+		}
 	}
 }
