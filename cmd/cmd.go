@@ -33,6 +33,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/pkg/browser"
+	"github.com/rivo/uniseg"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
@@ -1933,6 +1934,28 @@ func applyShowResponseToRunOptions(opts *runOptions, info *api.ShowResponse) {
 type displayResponseState struct {
 	lineLength int
 	wordBuffer string
+	glyph      string
+}
+
+// advance reports how many columns the cursor moves when ch is printed after
+// the runes already in state.glyph, and remembers ch for the next call.
+//
+// A glyph can be several runes: an emoji carrying a skin tone, a flag built
+// from two regional indicators, a family joined by zero-width joiners. Adding
+// each rune's own width counts a family as eight columns where it occupies
+// two, so a line wraps long before it is full. Adding the increase in the
+// width of the glyph being built counts it once, and needs no lookahead, so a
+// rune is still printed the moment it arrives and a glyph split across two
+// streamed chunks is measured the same as one that is not.
+func (s *displayResponseState) advance(ch rune) int {
+	candidate := s.glyph + string(ch)
+	if cluster, _, _, _ := uniseg.FirstGraphemeClusterInString(candidate, -1); cluster == candidate {
+		width := runewidth.StringWidth(candidate) - runewidth.StringWidth(s.glyph)
+		s.glyph = candidate
+		return max(width, 0)
+	}
+	s.glyph = string(ch)
+	return runewidth.StringWidth(s.glyph)
 }
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
@@ -1957,12 +1980,12 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 				}
 				fmt.Printf("\x1b[K\n")
 				fmt.Printf("%s%c", state.wordBuffer, ch)
-				chWidth := runewidth.RuneWidth(ch)
+				chWidth := state.advance(ch)
 
 				state.lineLength = runewidth.StringWidth(state.wordBuffer) + chWidth
 			} else {
 				fmt.Print(string(ch))
-				state.lineLength += runewidth.RuneWidth(ch)
+				state.lineLength += state.advance(ch)
 				if runewidth.RuneWidth(ch) >= 2 {
 					state.wordBuffer = ""
 					continue
