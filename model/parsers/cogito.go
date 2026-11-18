@@ -122,7 +122,7 @@ func (cogitoEventToolCall) isCogitoEvent()        {}
 
 func (p *CogitoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-	events := p.parseEvents()
+	events := p.parseEvents(done)
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -146,13 +146,13 @@ func (p *CogitoParser) Add(s string, done bool) (content string, thinking string
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
-func (p *CogitoParser) parseEvents() []cogitoEvent {
+func (p *CogitoParser) parseEvents(done bool) []cogitoEvent {
 	var all []cogitoEvent
 
 	keepLooping := true
 	for keepLooping {
 		var events []cogitoEvent
-		events, keepLooping = p.eat()
+		events, keepLooping = p.eat(done)
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -161,7 +161,7 @@ func (p *CogitoParser) parseEvents() []cogitoEvent {
 	return all
 }
 
-func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
+func (p *CogitoParser) eat(done bool) ([]cogitoEvent, bool) {
 	var events []cogitoEvent
 	bufStr := p.buffer.String()
 	if bufStr == "" {
@@ -214,11 +214,9 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 		}
 
 	case CogitoCollectingContent:
-		switch {
-		case strings.Contains(bufStr, cogitoToolCallsBeginTag): // content[<｜tool▁calls▁begin｜>] -> tool calls
-			split := strings.SplitN(bufStr, cogitoToolCallsBeginTag, 2)
-			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
-			remaining := split[1]
+		if idx := strings.Index(bufStr, cogitoToolCallsBeginTag); idx != -1 { // content[<｜tool▁calls▁begin｜>] -> tool calls
+			contentBefore := strings.TrimRightFunc(bufStr[:idx], unicode.IsSpace)
+			remaining := bufStr[idx+len(cogitoToolCallsBeginTag):]
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
@@ -228,10 +226,10 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 				events = append(events, cogitoEventContent{content: contentBefore})
 			}
 			return events, true
-		case strings.Contains(bufStr, cogitoToolOutputsBeginTag): // content[<｜tool▁outputs▁begin｜>] -> tool outputs
-			split := strings.SplitN(bufStr, cogitoToolOutputsBeginTag, 2)
-			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
-			remaining := split[1]
+		}
+		if idx := strings.Index(bufStr, cogitoToolOutputsBeginTag); idx != -1 { // content[<｜tool▁outputs▁begin｜>] -> tool outputs
+			contentBefore := strings.TrimRightFunc(bufStr[:idx], unicode.IsSpace)
+			remaining := bufStr[idx+len(cogitoToolOutputsBeginTag):]
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
@@ -241,13 +239,40 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 				events = append(events, cogitoEventContent{content: contentBefore})
 			}
 			return events, true
-		default: // otherwise its content
-			p.buffer.Reset()
-			if len(bufStr) > 0 {
-				events = append(events, cogitoEventContent{content: bufStr})
-			}
-			return events, false
 		}
+		if overlapLen := longestOverlap(bufStr, cogitoToolCallsBeginTag, cogitoToolOutputsBeginTag); overlapLen > 0 { // partial tag, hold back
+			// Hold back the partial tag and any trailing whitespace that might
+			// belong to it, but keep whitespace when the buffer is nothing but
+			// whitespace so a whitespace-only answer is still emitted.
+			beforePartialTag := bufStr[:len(bufStr)-overlapLen]
+			if strings.TrimSpace(bufStr) != "" {
+				trailingLen := trailingWhitespaceLen(beforePartialTag)
+				ambiguousStart := len(beforePartialTag) - trailingLen
+
+				unambiguous := bufStr[:ambiguousStart]
+				ambiguous := bufStr[ambiguousStart:]
+				p.buffer.Reset()
+				p.buffer.WriteString(ambiguous)
+				if len(unambiguous) > 0 {
+					events = append(events, cogitoEventContent{content: unambiguous})
+				}
+				return events, false
+			}
+		}
+		// Otherwise its content
+		whitespaceLen := trailingWhitespaceLen(bufStr)
+		if done || strings.TrimSpace(bufStr) != "" {
+			ambiguousStart := len(bufStr) - whitespaceLen
+
+			unambiguous := bufStr[:ambiguousStart]
+			ambiguous := bufStr[ambiguousStart:]
+			p.buffer.Reset()
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, cogitoEventContent{content: unambiguous})
+			}
+		}
+		return events, false
 	case CogitoCollectingToolCalls:
 		if idx := strings.Index(bufStr, cogitoToolCallBeginTag); idx != -1 {
 			startIdx := idx + len(cogitoToolCallBeginTag)
