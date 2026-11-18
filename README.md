@@ -179,6 +179,7 @@ console.log(response.message.content);
 
 - [Dify.AI](https://github.com/langgenius/dify) - LLM app development platform
 - [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) - All-in-one AI app for Mac, Windows, and Linux
+- [ThoughtDAG](https://github.com/chenxiachan/thoughtdag) - Local-first visual research workspace where graph edges define the context sent to Ollama
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid) - Cross-platform mobile and desktop client
 - [Witsy](https://github.com/nbonamy/witsy) - AI desktop app for Mac, Windows, and Linux
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) - Multi-provider desktop client
