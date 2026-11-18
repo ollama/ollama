@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -248,7 +249,7 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 		env[s[0]] = s[1]
 	}
 	if settings.Expose {
-		env["OLLAMA_HOST"] = "0.0.0.0"
+		env["OLLAMA_HOST"] = exposedHost(env["OLLAMA_HOST"])
 	}
 	if settings.Browser {
 		env["OLLAMA_ORIGINS"] = "*"
@@ -406,4 +407,20 @@ func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// exposedHost is the OLLAMA_HOST the server gets when the app's "Expose Ollama to the
+// network" setting is on: every interface, on the port the environment asked for, if any.
+// Without this, a port set with OLLAMA_HOST (for example 127.0.0.1:4090) was dropped and
+// the server moved to the default port.
+func exposedHost(current string) string {
+	h := current
+	if i := strings.Index(h, "://"); i >= 0 {
+		h = h[i+3:]
+	}
+	h = strings.TrimSuffix(h, "/")
+	if _, port, err := net.SplitHostPort(h); err == nil && port != "" {
+		return net.JoinHostPort("0.0.0.0", port)
+	}
+	return "0.0.0.0"
 }
