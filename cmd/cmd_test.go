@@ -25,6 +25,7 @@ import (
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/version"
 )
 
 func TestRunThinkingNamesReachServer(t *testing.T) {
@@ -111,6 +112,69 @@ func captureStdout(t *testing.T, fn func()) string {
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	return captureOutput(t, &os.Stderr, fn)
+}
+
+func TestVersionFlagOnlyPrintsVersion(t *testing.T) {
+	t.Run("no server running", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not here", http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
+		cmd := NewCLI()
+		cmd.SetArgs([]string{"-v"})
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+
+		out := captureStdout(t, func() {
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+		})
+
+		if strings.Contains(out, "Warning") {
+			t.Errorf("-v should not print warnings when nothing is running, got:\n%s", out)
+		}
+		if !strings.Contains(out, version.Version) {
+			t.Errorf("expected the client version %q, got:\n%s", version.Version, out)
+		}
+	})
+
+	t.Run("server running", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/version" {
+				http.NotFound(w, r)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"version": "9.9.9"})
+		}))
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
+		cmd := NewCLI()
+		cmd.SetArgs([]string{"--version"})
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+
+		out := captureStdout(t, func() {
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+		})
+
+		if !strings.Contains(out, "ollama version is 9.9.9") {
+			t.Errorf("expected the server version, got:\n%s", out)
+		}
+		if strings.Contains(out, "could not connect") {
+			t.Errorf("the server answered, so there is no heartbeat failure to report, got:\n%s", out)
+		}
+		// A server that disagrees with the client still gets flagged, that
+		// warning is the only thing it is good for.
+		if want := "Warning: client version is " + version.Version; version.Version != "9.9.9" && !strings.Contains(out, want) {
+			t.Errorf("expected a client/server mismatch warning %q, got:\n%s", want, out)
+		}
+	})
 }
 
 func TestShowInfo(t *testing.T) {
