@@ -303,6 +303,7 @@ type sourceQuantization struct {
 type sourceModelConfig struct {
 	ModelType     string          `json:"model_type"`
 	Architectures []string        `json:"architectures"`
+	TorchDtype    string          `json:"torch_dtype"`
 	VisionConfig  *map[string]any `json:"vision_config"`
 	AudioConfig   *map[string]any `json:"audio_config"`
 	HasVision     bool            `json:"has_vision"`
