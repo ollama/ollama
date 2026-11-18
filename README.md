@@ -269,6 +269,7 @@ console.log(response.message.content);
 - [any-agent](https://github.com/mozilla-ai/any-agent) - Unified agent framework interface by Mozilla
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
+- [kwant](https://github.com/alexsergivan/kwant) - Self-hosted team of AI agents in one binary, with spaces, @mention handoffs, scheduled routines, and approvals
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
 
 ### RAG & Knowledge Bases
