@@ -4102,3 +4102,60 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 		t.Errorf("json format converted a schema, %d conversions", got)
 	}
 }
+
+// Tokenize used to wrap any error body in "tokenize error: <body>", so a prompt
+// that outgrew llama-server's batch reached the client as raw JSON with a 500.
+// The server sizes the batch from whatever the model reports, so the only way to
+// get here is a prompt longer than the batch, which clients should see as a
+// context length problem.
+func TestLlamaServerTokenizePromptOverBatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantStatus int
+		wantMsg    string
+	}{
+		{
+			name:       "physical batch size",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":{"code":500,"message":"input (541 tokens) is too large to process. increase the physical batch size (current batch size: 512)","type":"server_error"}}`,
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    promptTooLongMessage,
+		},
+		{
+			name:       "available context",
+			statusCode: http.StatusBadRequest,
+			body:       `{"error":{"message":"request (302 tokens) exceeds the available context size (256 tokens), try increasing it"}}`,
+			wantStatus: http.StatusBadRequest,
+			wantMsg:    promptTooLongMessage,
+		},
+		{
+			name:       "unrelated error keeps its message",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":{"message":"failed to tokenize prompt"}}`,
+			wantStatus: http.StatusInternalServerError,
+			wantMsg:    "failed to tokenize prompt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				fmt.Fprint(w, tt.body)
+			}))
+			defer srv.Close()
+			runner := &llamaServerRunner{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client(), cmd: fakeRunningCmd(), sem: semaphore.NewWeighted(1)}
+
+			_, err := runner.Tokenize(t.Context(), "hello")
+			var serr api.StatusError
+			if !errors.As(err, &serr) {
+				t.Fatalf("err = %v, want api.StatusError", err)
+			}
+			if serr.StatusCode != tt.wantStatus || serr.ErrorMessage != tt.wantMsg {
+				t.Fatalf("err = %d %q, want %d %q", serr.StatusCode, serr.ErrorMessage, tt.wantStatus, tt.wantMsg)
+			}
+		})
+	}
+}
