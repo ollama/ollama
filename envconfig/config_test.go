@@ -40,6 +40,12 @@ func TestHost(t *testing.T) {
 		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
 		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
 		"ollama.com":          {"ollama.com", "https://ollama.com:443"},
+		"userinfo":            {"http://user:pass@example.com", "http://example.com:80"},
+		"userinfo and port":   {"http://user:pass@example.com:4321", "http://example.com:4321"},
+		"user only":           {"http://user@example.com", "http://example.com:80"},
+		"userinfo no scheme":  {"user:pass@example.com:4321", "http://example.com:4321"},
+		"userinfo ipv6":       {"http://user:pass@[::1]:4321", "http://[::1]:4321"},
+		"userinfo empty host": {"http://user:pass@", "http://127.0.0.1:80"},
 	}
 
 	for name, tt := range cases {
