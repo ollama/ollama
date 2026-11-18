@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,30 +101,46 @@ func (m speechTestModel) DecodeSpeech(states []model.SpeechState) ([]model.Speec
 	for i, state := range states {
 		s := state.(*speechTestState)
 		s.generated++
-		out[i] = model.SpeechOutput{Samples: make([]float32, 1<<16), Done: s.generated == m.chunks}
+		out[i] = model.SpeechOutput{Samples: []float32{-1, 0, 1}, Done: s.generated == m.chunks}
 	}
 	return out, nil
 }
 
+type blockedSpeechWriter struct {
+	*controlledSpeechWriter
+	read <-chan struct{}
+}
+
+func (w *blockedSpeechWriter) Write(p []byte) (int, error) {
+	<-w.read
+	return w.ResponseRecorder.Write(p)
+}
+
 // A client reading at playback speed must not hold the MLX worker.
 func TestSpeechDoesNotWaitForClient(t *testing.T) {
-	m := speechTestModel{chunks: 256, generated: make(chan struct{})} // 32 MiB, more than socket buffers hold
+	m := speechTestModel{chunks: 3, generated: make(chan struct{})}
 	r := &Runner{Model: m, mlxThread: mlxtest.Worker(t), parallel: 2}
 	defer startTestScheduler(t, r)()
-	srv := httptest.NewServer(http.HandlerFunc(r.speechHandler))
-	defer srv.Close()
-	res, err := srv.Client().Post(srv.URL, "application/json", strings.NewReader("{}"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
+	// Hold every write until released: generation can only finish here if
+	// neither the handler nor the MLX worker waits for the client to read.
+	read := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(read) })
+	w := &blockedSpeechWriter{controlledSpeechWriter: &controlledSpeechWriter{ResponseRecorder: httptest.NewRecorder()}, read: read}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.speechHandler(w, httptest.NewRequestWithContext(t.Context(), "POST", "/v1/audio/speech", strings.NewReader("{}")))
+	}()
+	defer func() { unblock(); <-done }()
 	select {
 	case <-m.generated:
 	case <-time.After(10 * time.Second):
 		t.Fatal("generation waited for the client to read")
 	}
-	if n, err := io.Copy(io.Discard, res.Body); err != nil || n != 256<<17 {
-		t.Fatalf("read %d bytes: %v", n, err)
+	unblock()
+	<-done
+	if want := bytes.Repeat([]byte{1, 128, 0, 0, 255, 127}, m.chunks); !bytes.Equal(w.Body.Bytes(), want) {
+		t.Fatalf("audio = %x, want %x", w.Body.Bytes(), want)
 	}
 }
 
