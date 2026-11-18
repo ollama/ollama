@@ -468,12 +468,9 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 		return body, true, err
 	case "function_call", "function_call_output":
 		return item, true, nil
-	case "tool_search_call", "tool_search_output", "compaction_trigger":
-		// Preserve client-executed control items for the Responses adapter.
+	case "tool_search_call", "tool_search_output", "compaction_trigger", "compaction":
+		// Leave tool-search and compaction handling to the Responses adapter.
 		return item, true, nil
-	case "compaction":
-		// Only Ollama compaction state can be expanded by the server middleware.
-		return item, isOllamaCompactionItem(item), nil
 	case "reasoning":
 		var reasoning struct {
 			ID string `json:"id"`
