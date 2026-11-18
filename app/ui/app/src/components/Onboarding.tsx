@@ -415,14 +415,15 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
             id="claude-connected-title"
             className="font-rounded text-lg font-medium leading-6 text-neutral-950 dark:text-neutral-100"
           >
-            Easily access Ollama models in your Claude
+            Use Ollama models in Claude
           </h2>
           <p
             id="claude-connected-description"
             className="mt-2 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400"
           >
-            Ollama automatically routes Claude models for you. Open settings in
-            Ollama to update which models are used by Claude Desktop.
+            Claude opens a separate Ollama profile. Disconnect in Ollama to
+            return to your usual Claude account and chats. Choose your models in
+            Ollama Settings.
           </p>
           <div className="mt-11 flex justify-end">
             <button
@@ -1070,8 +1071,8 @@ export function ConnectAppsScreen({
                         : claudePhase === "disconnecting"
                           ? "Restoring Claude’s usual connection…"
                           : !claudeInstalled
-                            ? "We’ll download Claude and connect it to Ollama."
-                            : "Use Ollama models in your Claude Code.")}
+                            ? "We’ll download Claude and open its Ollama profile."
+                            : "Use Ollama models in a separate Claude profile.")}
           </p>
         </div>
       </div>
