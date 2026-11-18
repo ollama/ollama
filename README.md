@@ -8,6 +8,10 @@
 
 Start building with open models. Access the latest releases locally or in the cloud with complete privacy.
 
+<!-- impact-note:start -->
+<sub><strong>Efficiency and practical value.</strong> This fork retains the <a href="https://github.com/ollama/ollama">upstream Ollama</a> runtime and documented interfaces for using models across local applications and agent tools. Reusable model-serving and client interfaces reduce repeated integration work and enable use of available hardware. These benefits originate upstream; operating cost, speed and energy use depend on the selected model, hardware and workload.</sub>
+<!-- impact-note:end -->
+
 ## Download
 
 ### macOS
@@ -308,6 +312,7 @@ console.log(response.message.content);
 ### Productivity & Apps
 
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) - AI collaborative workspace, self-hostable Notion alternative
+- [CAJAL](https://github.com/Agnuxo1/CAJAL) - Python CLI and local API server for chatting with Ollama models
 - [Screenpipe](https://github.com/mediar-ai/screenpipe) - 24/7 screen and mic recording with AI-powered search
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
