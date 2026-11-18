@@ -163,6 +163,30 @@ func LoadTimeout() (loadTimeout time.Duration) {
 	return loadTimeout
 }
 
+// GPUDiscoverTimeout returns the timeout for initial GPU discovery. It can be
+// configured via the OLLAMA_GPUDISCOVER_TIMEOUT environment variable.
+// Zero or negative values are treated as infinite. Defaults are 30 seconds,
+// or 90 seconds on Windows.
+func GPUDiscoverTimeout() (timeout time.Duration) {
+	timeout = 30 * time.Second
+	if runtime.GOOS == "windows" {
+		timeout = 90 * time.Second
+	}
+	if s := Var("OLLAMA_GPUDISCOVER_TIMEOUT"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			timeout = d
+		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			timeout = time.Duration(n) * time.Second
+		}
+	}
+
+	if timeout <= 0 {
+		return time.Duration(math.MaxInt64)
+	}
+
+	return timeout
+}
+
 func Remotes() []string {
 	var r []string
 	raw := strings.TrimSpace(Var("OLLAMA_REMOTES"))
@@ -318,6 +342,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_GPUDISCOVER_TIMEOUT": {"OLLAMA_GPUDISCOVER_TIMEOUT", GPUDiscoverTimeout(), "Timeout for initial GPU discovery (default: 30s, or 90s on Windows)"},
 		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},

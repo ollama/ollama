@@ -86,15 +86,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			// in low power/idle mode, initialization can take multiple seconds.  We
 			// set a longer timeout just for bootstrap discovery to reduce the chance
 			// of giving up too quickly
-			bootstrapTimeout := 30 * time.Second
-			if runtime.GOOS == "windows" {
-				// On Windows with Defender enabled, AV scanning of the DLLs
-				// takes place sequentially and this can significantly increase
-				// the time it takes too do the initial discovery pass.
-				// Subsequent loads will be faster as the scan results are
-				// cached
-				bootstrapTimeout = 90 * time.Second
-			}
+			bootstrapTimeout := envconfig.GPUDiscoverTimeout()
 			var dirs []string
 			if dir != "" {
 				if requested != "" && !strings.HasPrefix(requested, "mlx_") && filepath.Base(dir) != requested {
