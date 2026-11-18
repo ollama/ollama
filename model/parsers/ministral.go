@@ -121,9 +121,11 @@ func (p *MinistralParser) eat() ([]ministralEvent, bool) {
 	switch p.state {
 	case ministralCollectingContent:
 		bufStr := p.buffer.String()
+		toolIdx := strings.Index(bufStr, ministralToolCallsTag)
+		thinkIdx := strings.Index(bufStr, ministralThinkTag)
 
-		// Check for [TOOL_CALLS] tag
-		if strings.Contains(bufStr, ministralToolCallsTag) {
+		// Process the first marker so a later tool call cannot skip thinking.
+		if toolIdx != -1 && (thinkIdx == -1 || toolIdx < thinkIdx) {
 			split := strings.SplitN(bufStr, ministralToolCallsTag, 2)
 			before := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			if len(before) > 0 {
@@ -137,7 +139,7 @@ func (p *MinistralParser) eat() ([]ministralEvent, bool) {
 		}
 
 		// Check for [THINK] tag
-		if strings.Contains(bufStr, ministralThinkTag) {
+		if thinkIdx != -1 {
 			split := strings.SplitN(bufStr, ministralThinkTag, 2)
 			before := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			if len(before) > 0 {
