@@ -352,6 +352,125 @@ func TestOlmo3Parser_Streaming(t *testing.T) {
 	}
 }
 
+// TestOlmo3Parser_TerminalChunk asserts that a payload has the same semantic
+// output whether it arrives in the chunk that carries done=true or in an
+// earlier chunk followed by a separate empty terminal chunk.
+//
+// Both shapes occur in normal operation: llm/llama_server.go builds the final
+// CompletionResponse with the last Content and Done together, and the server
+// forwards that pair to Parser.Add unchanged.
+func TestOlmo3Parser_TerminalChunk(t *testing.T) {
+	tests := []struct {
+		name            string
+		payload         string
+		expectedContent string
+		expectedCalls   []api.ToolCall
+	}{
+		{
+			name:    "tool call in terminal chunk",
+			payload: `<function_calls>get_weather(location="San Francisco")</function_calls>`,
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "San Francisco"}),
+					},
+				},
+			},
+		},
+		{
+			name:            "ordinary text in terminal chunk",
+			payload:         "Hello, how can I help you?",
+			expectedContent: "Hello, how can I help you?",
+		},
+		{
+			name:            "text before tool call in terminal chunk",
+			payload:         "Let me check that. " + `<function_calls>get_weather(location="San Francisco")</function_calls>`,
+			expectedContent: "Let me check that. ",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "San Francisco"}),
+					},
+				},
+			},
+		},
+		{
+			name: "multiple tool calls in terminal chunk",
+			payload: `<function_calls>get_weather(location="San Francisco")
+get_weather(location="New York")</function_calls>`,
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "San Francisco"}),
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index:     1,
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "New York"}),
+					},
+				},
+			},
+		},
+		{
+			// The opening tag is consumed and the unterminated body is dropped
+			// rather than surfaced as content, matching the drained path.
+			name:    "incomplete tool call in terminal chunk",
+			payload: `<function_calls>get_weather(location="San Francisco")`,
+		},
+		{
+			// A body that is not a call is dropped, matching the drained path.
+			name:    "malformed tool call in terminal chunk",
+			payload: `<function_calls>not a function call</function_calls>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			terminal := &Olmo3Parser{}
+			terminal.Init(nil, nil, nil)
+			terminalContent, _, terminalCalls, err := terminal.Add(tt.payload, true)
+			if err != nil {
+				t.Fatalf("unexpected error on terminal chunk: %v", err)
+			}
+
+			drained := &Olmo3Parser{}
+			drained.Init(nil, nil, nil)
+			drainedContent, _, drainedCalls, err := drained.Add(tt.payload, false)
+			if err != nil {
+				t.Fatalf("unexpected error on payload chunk: %v", err)
+			}
+			finalContent, _, finalCalls, err := drained.Add("", true)
+			if err != nil {
+				t.Fatalf("unexpected error on terminal drain: %v", err)
+			}
+			drainedContent += finalContent
+			drainedCalls = append(drainedCalls, finalCalls...)
+
+			if diff := cmp.Diff(terminalContent, drainedContent); diff != "" {
+				t.Errorf("terminal chunk vs separate drain content mismatch (-terminal +drained):\n%s", diff)
+			}
+			if diff := cmp.Diff(terminalCalls, drainedCalls, argsComparer); diff != "" {
+				t.Errorf("terminal chunk vs separate drain calls mismatch (-terminal +drained):\n%s", diff)
+			}
+
+			if diff := cmp.Diff(terminalContent, tt.expectedContent); diff != "" {
+				t.Errorf("content mismatch (-got +want):\n%s", diff)
+			}
+			if diff := cmp.Diff(terminalCalls, tt.expectedCalls, argsComparer); diff != "" {
+				t.Errorf("calls mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestOlmo3Parser_HasToolSupport(t *testing.T) {
 	p := &Olmo3Parser{}
 	if !p.HasToolSupport() {
