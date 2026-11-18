@@ -341,8 +341,11 @@ func ListMiddleware() gin.HandlerFunc {
 
 func RetrieveMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// The retrieve route is a wildcard ("/v1/models/*model") so IDs may
+		// contain slashes; gin includes the leading separator in the param.
+		model := strings.TrimPrefix(c.Param("model"), "/")
 		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(api.ShowRequest{Name: c.Param("model")}); err != nil {
+		if err := json.NewEncoder(&b).Encode(api.ShowRequest{Name: model}); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, err.Error()))
 			return
 		}
@@ -351,7 +354,7 @@ func RetrieveMiddleware() gin.HandlerFunc {
 
 		w := &RetrieveWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			model:      c.Param("model"),
+			model:      model,
 		}
 
 		c.Writer = w
