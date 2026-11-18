@@ -9,7 +9,7 @@
 // Several examples of using this package are available [in the GitHub
 // repository].
 //
-// [the API documentation]: https://github.com/ollama/ollama/blob/main/docs/api.md
+// [the API documentation]: https://docs.ollama.com/api
 // [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/api/examples
 package api
 
