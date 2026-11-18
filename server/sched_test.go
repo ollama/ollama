@@ -42,6 +42,83 @@ func TestSchedInit(t *testing.T) {
 	s.loadedMu.Unlock()
 }
 
+type startupTestLlm struct {
+	*mockLlm
+	pid     int
+	started chan struct{}
+	closed  atomic.Bool
+}
+
+func (s *startupTestLlm) Pid() int { return s.pid }
+
+func (s *startupTestLlm) Close() error {
+	s.closed.Store(true)
+	return nil
+}
+
+func (s *startupTestLlm) WaitUntilRunning(ctx context.Context) error {
+	if s.started == nil {
+		return s.mockLlm.WaitUntilRunning(ctx)
+	}
+	close(s.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestSchedRequestAfterCancelledStartup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	scenario := newScenarioRequest(t, ctx, "cancelled-startup", 10, &api.Duration{Duration: time.Minute}, nil)
+	defer scenario.ctxDone()
+	scenario.req.opts.NumCtx = 32
+	failed := &startupTestLlm{mockLlm: scenario.srv, pid: 1, started: make(chan struct{})}
+	s := InitScheduler(ctx)
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+	s.newServerFn = func(ml.SystemInfo, []ml.DeviceInfo, string, *gguf.Model, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		return failed, nil
+	}
+	s.load(scenario.req, ml.SystemInfo{}, nil, false)
+	select {
+	case <-failed.started:
+	case <-ctx.Done():
+		t.Fatal("startup did not begin")
+	}
+	scenario.ctxDone()
+	select {
+	case err := <-scenario.req.errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-ctx.Done():
+		t.Fatal("startup did not report cancellation")
+	}
+
+	// Keep expiration queued so the next request sees the cancelled runner.
+	successCh, errCh := s.getRunner(ctx, scenario.req.model, scenario.req.opts, scenario.req.sessionDuration, false, false, nil)
+	select {
+	case runner := <-successCh:
+		t.Fatalf("request reused runner after cancelled startup: %v", runner)
+	case err := <-errCh:
+		t.Fatalf("request failed instead of retrying: %v", err)
+	default:
+	}
+	require.Len(t, s.pendingReqCh, 1)
+
+	ready := &startupTestLlm{mockLlm: &mockLlm{modelPath: scenario.req.model.ModelPath}, pid: 2}
+	s.newServerFn = func(ml.SystemInfo, []ml.DeviceInfo, string, *gguf.Model, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		return ready, nil
+	}
+	s.Run(ctx)
+	select {
+	case runner := <-successCh:
+		require.Same(t, ready, runner.llama)
+		require.True(t, failed.closed.Load())
+	case err := <-errCh:
+		t.Fatalf("replacement load failed: %v", err)
+	case <-ctx.Done():
+		t.Fatal("replacement load did not finish")
+	}
+}
+
 func TestModelFileSize(t *testing.T) {
 	writeFile := func(data string) string {
 		t.Helper()
@@ -945,6 +1022,9 @@ func TestSchedNeedsReload(t *testing.T) {
 	require.True(t, resp)
 	req.model.ProjectorPaths = runner.model.Load().ProjectorPaths
 	runner.loading = true
+	resp = runner.needsReload(ctx, req)
+	require.True(t, resp)
+	runner.loading = false
 	req.opts.NumBatch = 1234
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
