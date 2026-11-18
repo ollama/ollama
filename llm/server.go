@@ -114,7 +114,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
-	return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct, config)
+	return NewLlamaServerRunner(systemInfo, gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct, config)
 }
 
 // Server status types

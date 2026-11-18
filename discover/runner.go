@@ -34,6 +34,18 @@ var defaultIntegratedROCmGFXTargets = map[string]struct{}{
 }
 
 func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+	devs, fresh := sampleDevices(ctx, runners)
+	return applyWSLBudget(devs, fresh, wslHost{
+		passthrough: wslGPUPassthrough(),
+		nvml:        nvmlDeviceMemory,
+		guestHeld:   readGuestHeld,
+		shared:      envconfig.WSLSharedGPUMemory(true),
+	})
+}
+
+// sampleDevices refreshes and copies the device list under deviceMu. fresh
+// reports which copies had their free memory refreshed; nil means all.
+func sampleDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) (devs []ml.DeviceInfo, fresh []bool) {
 	deviceMu.Lock()
 	defer deviceMu.Unlock()
 	startDiscovery := time.Now()
@@ -266,11 +278,12 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 	} else {
 		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 			// metal never updates free VRAM
-			return append([]ml.DeviceInfo{}, devices...)
+			return append([]ml.DeviceInfo{}, devices...), nil
 		}
 
 		slog.Debug("refreshing free memory")
 		updated := make([]bool, len(devices))
+		fresh = updated
 		allDone := func() bool {
 			allDone := true
 			for _, done := range updated {
@@ -295,19 +308,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			}
 
 			// Check to see if this runner is active on any devices that need a refresh
-			skip := true
-		devCheck:
-			for _, dev := range deviceIDs {
-				for i := range devices {
-					if dev == devices[i].DeviceID {
-						if !updated[i] {
-							skip = false
-							break devCheck
-						}
-					}
-				}
-			}
-			if skip {
+			if !runnerCanRefresh(deviceIDs, devices, updated, wslGPUPassthrough()) {
 				continue
 			}
 
@@ -318,15 +319,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			start := time.Now()
 			updatedDevices := runner.GetDeviceInfos(ctx)
 			slog.Debug("existing runner discovery took", "duration", time.Since(start))
-			for _, u := range updatedDevices {
-				for i := range devices {
-					if u.DeviceID == devices[i].DeviceID {
-						updated[i] = true
-						devices[i].FreeMemory = u.FreeMemory
-						break
-					}
-				}
-			}
+			refreshFromRunner(devices, updated, updatedDevices, wslGPUPassthrough())
 			// Short circuit if we've updated all the devices
 			if allDone() {
 				break
@@ -366,7 +359,38 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		}
 	}
 
-	return append([]ml.DeviceInfo{}, devices...)
+	return append([]ml.DeviceInfo{}, devices...), fresh
+}
+
+// runnerCanRefresh reports whether a runner active on deviceIDs can refresh
+// any device that still needs it. WSL integrated GPUs never count; see
+// refreshFromRunner.
+func runnerCanRefresh(deviceIDs []ml.DeviceID, devices []ml.DeviceInfo, updated []bool, passthrough bool) bool {
+	for _, dev := range deviceIDs {
+		for i := range devices {
+			if dev == devices[i].DeviceID && !updated[i] && !wslBudgetCandidate(devices[i], passthrough) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// refreshFromRunner copies the free memory a runner reports into devices. WSL
+// integrated GPUs are left to bootstrap discovery: their fit margin needs the
+// figure a new process sees, not one a runner derives from its own load.
+func refreshFromRunner(devices []ml.DeviceInfo, updated []bool, reported []ml.DeviceInfo, passthrough bool) {
+	for _, u := range reported {
+		for i := range devices {
+			if u.DeviceID == devices[i].DeviceID {
+				if !wslBudgetCandidate(devices[i], passthrough) {
+					updated[i] = true
+					devices[i].FreeMemory = u.FreeMemory
+				}
+				break
+			}
+		}
+	}
 }
 
 func sameRefreshDevice(updated, existing ml.DeviceInfo) bool {

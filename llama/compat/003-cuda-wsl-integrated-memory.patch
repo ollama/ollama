@@ -1,0 +1,52 @@
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 72e961d5c..83192d3e8 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -71,6 +71,7 @@
+ #include "ggml-cuda/fill.cuh"
+ #include "ggml-cuda/lightning-indexer.cuh"
+ #include "ggml-cuda/top-k-mask.cuh"
++#include "ggml-cuda/uma.cuh"
+ #include "ggml.h"
+ 
+ #include <algorithm>
+@@ -93,6 +94,10 @@
+ #include <string>
+ #include <vector>
+ 
++#if defined(__linux__)
++#include <sys/stat.h>
++#endif
++
+ static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
+ 
+ #define GGML_LOG_WARN_ONCE(str) \
+@@ -5578,10 +5583,9 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
+     cudaDeviceProp prop;
+     CUDA_CHECK(cudaGetDeviceProperties(&prop, ggml_cuda_get_physical_device(ctx->device)));
+ 
+-    // Check if UMA is explicitly enabled via environment variable
+-    bool is_uma = prop.integrated > 0 || ggml_cuda_unified_memory_enabled();
++    static const bool is_wsl = [] { struct stat st; return stat("/dev/dxg", &st) == 0; }();
+ 
+-    if (is_uma) {
++    if (ggml_cuda_uma_free_from_host(prop.integrated > 0, ggml_cuda_unified_memory_enabled(), is_wsl)) {
+         // For UMA systems (like DGX Spark), use system memory info
+         long available_memory_kb = 0;
+         long free_swap_kb = 0;
+diff --git a/ggml/src/ggml-cuda/uma.cuh b/ggml/src/ggml-cuda/uma.cuh
+new file mode 100644
+index 000000000..b89c32431
+--- /dev/null
++++ b/ggml/src/ggml-cuda/uma.cuh
+@@ -0,0 +1,10 @@
++#pragma once
++
++// whether a CUDA device reports host MemAvailable (/proc/meminfo) as its free memory
++// under WSL2 (/dev/dxg) the Windows host owns an integrated GPU's memory and /proc/meminfo describes only the VM
++static inline bool ggml_cuda_uma_free_from_host(bool integrated, bool unified_memory_env, bool wsl) {
++    if (integrated && wsl) {
++        return false;
++    }
++    return integrated || unified_memory_env;
++}

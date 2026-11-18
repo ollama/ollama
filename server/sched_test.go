@@ -1531,6 +1531,43 @@ func TestAvailableMemoryForLoadUsesWorstSharedMemoryMeasurement(t *testing.T) {
 	}
 }
 
+func TestAvailableMemoryBudget(t *testing.T) {
+	systemInfo := ml.SystemInfo{FreeMemory: 2 * format.GigaByte}
+	// The budget, not the backend figure, decides the cap: the backend may
+	// report no free memory, and discovery records it without a budget too.
+	budgeted := ml.DeviceInfo{
+		DeviceID:     ml.DeviceID{ID: "0", Library: "CUDA"},
+		Integrated:   true,
+		FreeMemory:   70 * format.GigaByte,
+		MemoryBudget: true,
+	}
+	unbudgeted := budgeted
+	unbudgeted.MemoryBudget = false
+	unbudgeted.BackendFreeMemory = 87 * format.GigaByte
+
+	t.Run("budgeted integrated GPU ignores host free memory", func(t *testing.T) {
+		want := uint64(70 * format.GigaByte)
+		available, gpuFree, systemLimited := availableMemoryForLoad(systemInfo, []ml.DeviceInfo{budgeted})
+		require.Equal(t, want, available)
+		require.Equal(t, want, gpuFree)
+		require.False(t, systemLimited)
+		require.Equal(t, want, availableMemoryForGPU(systemInfo, budgeted))
+
+		opts := api.DefaultOptions()
+		opts.MainGPU = testIntPtr(0)
+		available, _, systemLimited = availableMemoryForPlacement(systemInfo, []ml.DeviceInfo{budgeted}, opts)
+		require.Equal(t, want, available)
+		require.False(t, systemLimited)
+	})
+
+	t.Run("integrated GPU without a budget stays capped", func(t *testing.T) {
+		available, _, systemLimited := availableMemoryForLoad(systemInfo, []ml.DeviceInfo{unbudgeted})
+		require.Equal(t, uint64(2*format.GigaByte), available)
+		require.True(t, systemLimited)
+		require.Equal(t, uint64(2*format.GigaByte), availableMemoryForGPU(systemInfo, unbudgeted))
+	})
+}
+
 func TestSelectLlamaServerPlacement(t *testing.T) {
 	systemInfo := ml.SystemInfo{FreeMemory: 14 * format.GigaByte}
 
