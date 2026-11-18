@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen", "wirken"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -260,6 +260,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://github.com/poolsideai/pool",
+		},
+	},
+	{
+		Name:        "wirken",
+		Runner:      &Wirken{},
+		Description: "Secure agent gateway with sandbox and audit",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("wirken")
+				return err == nil
+			},
+			URL: "https://github.com/gebruder/wirken#install",
 		},
 	},
 	{

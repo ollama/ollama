@@ -180,7 +180,8 @@
               "/integrations/claude-desktop",
               "/integrations/openclaw",
               "/integrations/hermes",
-              "/integrations/hermes-desktop"
+              "/integrations/hermes-desktop",
+              "/integrations/wirken"
             ]
           },
           {
