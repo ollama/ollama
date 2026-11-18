@@ -36,9 +36,9 @@ func TestListModelsDescribesModel(t *testing.T) {
 		"test.embedding_length": uint32(384),
 	}, "{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 
-	got := listedModel(t, "list-describe:latest")
+	got := listedModel(t, "list-describe")
 
-	if got.Model != "list-describe:latest" {
+	if got.Model != "list-describe" {
 		t.Errorf("model = %q", got.Model)
 	}
 	if got.Digest == "" || got.Size == 0 {
@@ -72,11 +72,11 @@ func TestListModelsFollowsManifestChanges(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	createListedModelFromKV(t, "list-follow-a", map[string]any{"test.context_length": uint32(1024)}, "")
 
-	listedModel(t, "list-follow-a:latest")
+	listedModel(t, "list-follow-a")
 
 	createListedModelFromKV(t, "list-follow-b", map[string]any{"test.context_length": uint32(2048)}, "")
-	listedModel(t, "list-follow-a:latest")
-	listedModel(t, "list-follow-b:latest")
+	listedModel(t, "list-follow-a")
+	listedModel(t, "list-follow-b")
 
 	deleteModelNamed(t, "list-follow-a")
 
@@ -88,7 +88,7 @@ func TestListModelsFollowsManifestChanges(t *testing.T) {
 	for _, m := range models {
 		names = append(names, m.Name)
 	}
-	if slices.Contains(names, "list-follow-a:latest") || !slices.Contains(names, "list-follow-b:latest") {
+	if slices.Contains(names, "list-follow-a") || !slices.Contains(names, "list-follow-b") {
 		t.Fatalf("names after delete = %v, want only list-follow-b", names)
 	}
 }
@@ -154,7 +154,7 @@ func TestListModelsKeepsUnloadableModel(t *testing.T) {
 		t.Fatal("model still loads, so the listing is not being asked the question")
 	}
 
-	got := listedModel(t, "broken:latest")
+	got := listedModel(t, "broken")
 	if got.Details.Family != "test" {
 		t.Errorf("details = %+v, want the manifest config's family", got.Details)
 	}
