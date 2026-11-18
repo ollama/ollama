@@ -24,6 +24,20 @@ export default defineConfig((configEnv) =>
                 provider: "playwright",
                 instances: [{ browser: "chromium" }],
                 headless: true,
+                commands: {
+                  async setColorScheme(
+                    ctx: {
+                      page: {
+                        emulateMedia: (options: {
+                          colorScheme: "light" | "dark";
+                        }) => Promise<void>;
+                      };
+                    },
+                    scheme: "light" | "dark",
+                  ) {
+                    await ctx.page.emulateMedia({ colorScheme: scheme });
+                  },
+                },
               },
             }
           : {

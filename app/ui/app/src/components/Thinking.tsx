@@ -152,9 +152,10 @@ export default function Thinking({
           opacity: isCollapsed && finishedThinking ? 0 : 1,
         }}
       >
+        {/* 5ch fits markers like "100." inside this overflow box. prose-sm padding only fits a single digit. */}
         <div
           ref={contentRef}
-          className="transition-transform duration-300 opacity-75 select-text"
+          className="transition-transform duration-300 opacity-75 select-text [&_ol]:ps-[5ch]"
         >
           <StreamingMarkdownContent
             content={thinking}
