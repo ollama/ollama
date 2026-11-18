@@ -315,6 +315,7 @@ console.log(response.message.content);
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
 - [1Panel](https://github.com/1Panel-dev/1Panel/) - Web-based Linux server management
 - [Writeopia](https://github.com/Writeopia/Writeopia) - Text editor with Ollama integration
+- [AllInOneIME](https://github.com/MicroZ-LLC/AllInOneIME) - macOS input method with AI commands (rewrite, translate, ask) in every text field, using Ollama on your Mac
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) - GitHub code repository understanding
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama) - Ollama in Raycast
 - [Painting Droid](https://github.com/mateuszmigas/painting-droid) - Painting app with AI integrations
