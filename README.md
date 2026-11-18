@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Rolltop](https://rolltop.ai) - Desktop AI app for Mac, Windows, and Linux that turns local and cloud models into finished documents and decks
 
 #### Mobile
 
