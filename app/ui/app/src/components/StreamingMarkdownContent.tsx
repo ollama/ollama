@@ -209,6 +209,9 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           dark:prose-ul:marker:text-neutral-300
           dark:prose-li:marker:text-neutral-300
           break-words
+          border-1
+          border-solid
+          border-transparent
         `}
       >
         <StreamingMarkdownErrorBoundary
