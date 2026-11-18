@@ -4,12 +4,14 @@ vi.mock("./lib/ollama-client", () => ({
   ollamaClient: { list: listModels },
 }));
 
+import { ChatEvent, Model } from "@/gotypes";
 import {
   fetchConnectUrl,
   getClaudeDesktopAvailableModels,
   getClaudeDesktopModelsSettings,
   getCodexDesktopModelsSettings,
   getIntegrationStatuses,
+  sendMessage,
 } from "./api";
 
 describe("desktop model settings", () => {
@@ -202,5 +204,54 @@ describe("getClaudeDesktopAvailableModels", () => {
     const models = await getClaudeDesktopAvailableModels(true);
 
     expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
+  });
+});
+
+describe("sendMessage", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const model = new Model({ model: "qwen3:8b" });
+
+  it("yields streamed chat events", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response('{"eventName":"chat","content":"hi"}\n'),
+        ),
+    );
+
+    const events = [];
+    for await (const event of sendMessage("chat-1", "hello", model)) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toBeInstanceOf(ChatEvent);
+    expect(events[0].content).toBe("hi");
+  });
+
+  // A rejected request used to be parsed as JSONL and silently dropped, so the
+  // send looked successful and no reply or error ever appeared.
+  it.each([
+    ["an expired session", 403, '{"error":"Token is required"}'],
+    ["a server-side failure", 500, '{"error":"empty message"}'],
+    ["a server that is still starting", 503, "Ollama server is not ready"],
+  ])("rejects on %s", async (_label, status, body) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(body, { status })),
+    );
+
+    const send = async () => {
+      const received: unknown[] = [];
+      for await (const event of sendMessage("chat-1", "hello", model)) {
+        received.push(event);
+      }
+      return received;
+    };
+
+    await expect(send()).rejects.toThrow(body);
   });
 });
