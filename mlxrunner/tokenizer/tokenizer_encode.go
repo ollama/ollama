@@ -70,6 +70,26 @@ func (t *Tokenizer) appendEncodedChunk(ids []int32, c encodeChunk) []int32 {
 	return t.encodeChunkInto(c.text, ids)
 }
 
+// EncodeText tokenizes s as plain text, matching none of the tokenizer's added
+// or special tokens, so a control-token spelling inside user content stays
+// characters. It equals Encode for text that contains no added token.
+func (t *Tokenizer) EncodeText(s string) []int32 {
+	text := t.normalize(s)
+	if t.metaspace != nil {
+		text = strings.ReplaceAll(text, " ", "▁")
+		if t.metaspace.PrependScheme == "always" || t.metaspace.PrependScheme == "first" {
+			if !strings.HasPrefix(text, "▁") {
+				text = "▁" + text
+			}
+		}
+	}
+	var ids []int32
+	t.forEachPartChunk(text, func(c encodeChunk) {
+		ids = t.appendEncodedChunk(ids, c)
+	})
+	return ids
+}
+
 // Encode tokenizes text to token IDs.
 // Parallel encoding is used only for very large inputs with enough chunks per worker.
 func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
