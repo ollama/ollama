@@ -300,7 +300,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 					"pdf", "docx", "txt", "md", "csv", "json", "xml", "html", "htm",
 					"js", "jsx", "ts", "tsx", "py", "java", "cpp", "c", "cc", "h", "cs", "php", "rb",
 					"go", "rs", "swift", "kt", "scala", "sh", "bat", "yaml", "yml", "toml", "ini",
-					"cfg", "conf", "log", "rtf",
+					"cfg", "conf", "log", "rtf", "asm", "s",
 				}
 				imageExts := []string{"png", "jpg", "jpeg", "webp"}
 				allowedExts := append(textExts, imageExts...)
