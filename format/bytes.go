@@ -54,9 +54,17 @@ func HumanBytes2(b uint64) string {
 	case b >= GibiByte:
 		return fmt.Sprintf("%.1f GiB", float64(b)/GibiByte)
 	case b >= MebiByte:
-		return fmt.Sprintf("%.1f MiB", float64(b)/MebiByte)
+		formatted := fmt.Sprintf("%.1f MiB", float64(b)/MebiByte)
+		if formatted == "1024.0 MiB" {
+			return "1.0 GiB"
+		}
+		return formatted
 	case b >= KibiByte:
-		return fmt.Sprintf("%.1f KiB", float64(b)/KibiByte)
+		formatted := fmt.Sprintf("%.1f KiB", float64(b)/KibiByte)
+		if formatted == "1024.0 KiB" {
+			return "1.0 MiB"
+		}
+		return formatted
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
