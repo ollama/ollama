@@ -161,6 +161,8 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           prose-pre:my-0
           prose-pre:max-w-full
           prose-pre:pt-1
+          [&_ul]:list-inside
+          [&_ol]:list-inside
           [&_table]:border-collapse
           [&_table]:w-full
           [&_table]:border
