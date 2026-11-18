@@ -10,5 +10,5 @@ func availableSpace(path string) (uint64, error) {
 		return 0, err
 	}
 
-	return st.Bavail * uint64(st.Bsize), nil
+	return uint64(st.Bavail) * uint64(st.Bsize), nil
 }
