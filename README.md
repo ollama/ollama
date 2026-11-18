@@ -321,6 +321,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [MailTwin](https://www.mailtwin.ai/) - AI replies in Apple Mail, with Ollama as one of its providers (macOS)
 
 ### Observability & Monitoring
 
