@@ -193,7 +193,7 @@ console.log(response.message.content);
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio) - Multi-provider desktop IDE
 - [Reins](https://github.com/ibrahimcetin/reins) - Parameter tuning and reasoning model support
 - [ConfiChat](https://github.com/1runeberg/confichat) - Privacy-focused with optional encryption
-- [LLocal.in](https://github.com/kartikm7/llocal) - Electron desktop client
+- [LLocal.in](https://llocal.in) - Electron desktop client
 - [MindMac](https://mindmac.app) - AI chat client for Mac
 - [Msty](https://msty.app) - Multi-model desktop client
 - [BoltAI for Mac](https://boltai.com) - AI chat client for Mac
