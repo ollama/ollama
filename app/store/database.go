@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 19
+const currentSchemaVersion = 20
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -89,6 +89,7 @@ func (db *database) init() error {
 		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
 		auto_update_enabled BOOLEAN NOT NULL DEFAULT 1,
+		auto_restart BOOLEAN NOT NULL DEFAULT 0,
 		claude_desktop_used BOOLEAN NOT NULL DEFAULT 0,
 		codex_desktop_used BOOLEAN NOT NULL DEFAULT 0,
 		schema_version INTEGER NOT NULL DEFAULT %d
@@ -291,6 +292,11 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v18 to v19: %w", err)
 			}
 			version = 19
+		case 19:
+			if err := db.migrateV19ToV20(); err != nil {
+				return fmt.Errorf("migrate v19 to v20: %w", err)
+			}
+			version = 20
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -600,6 +606,19 @@ func (db *database) migrateV18ToV19() error {
 	}
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 19`)
 	return err
+}
+
+// migrateV19ToV20 adds the auto_restart column to the settings table
+func (db *database) migrateV19ToV20() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN auto_restart BOOLEAN NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add auto_restart column: %w", err)
+	}
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 20`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+	return nil
 }
 
 // cleanupOrphanedData removes orphaned records that may exist due to the foreign key bug
