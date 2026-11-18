@@ -142,16 +142,12 @@ func (p *CohereParser) eat(done bool) (content string, thinking string, calls []
 	case cohereAwaitingBlock:
 		// Between blocks: look for the next text or action opener, skipping
 		// whitespace and the end-of-turn token.
-		for _, open := range []string{cohereStartText, cohereStartResponse} {
-			if idx := strings.Index(buf, open); idx != -1 {
-				p.resetBuffer(buf[idx+len(open):])
-				p.state = cohereCollectingContent
-				return "", "", nil, true
+		if idx, open := cohereNextTag(buf, cohereStartText, cohereStartResponse, cohereStartAction); idx != -1 {
+			p.resetBuffer(buf[idx+len(open):])
+			p.state = cohereCollectingContent
+			if open == cohereStartAction {
+				p.state = cohereCollectingAction
 			}
-		}
-		if idx := strings.Index(buf, cohereStartAction); idx != -1 {
-			p.resetBuffer(buf[idx+len(cohereStartAction):])
-			p.state = cohereCollectingAction
 			return "", "", nil, true
 		}
 		trimmed := strings.TrimLeftFunc(buf, unicode.IsSpace)
@@ -178,13 +174,11 @@ func (p *CohereParser) eat(done bool) (content string, thinking string, calls []
 
 	case cohereCollectingContent:
 		// END_OF_TURN also closes content for models that skip END_TEXT.
-		for _, close := range []string{cohereEndText, cohereEndResponse, cohereEndOfTurn} {
-			if idx := strings.Index(buf, close); idx != -1 {
-				content = buf[:idx]
-				p.resetBuffer(buf[idx+len(close):])
-				p.state = cohereAwaitingBlock
-				return content, "", nil, true
-			}
+		if idx, close := cohereNextTag(buf, cohereEndText, cohereEndResponse, cohereEndOfTurn); idx != -1 {
+			content = buf[:idx]
+			p.resetBuffer(buf[idx+len(close):])
+			p.state = cohereAwaitingBlock
+			return content, "", nil, true
 		}
 		keep := max(overlap(buf, cohereEndText), overlap(buf, cohereEndResponse), overlap(buf, cohereEndOfTurn))
 		emitEnd := len(buf) - keep
@@ -221,6 +215,18 @@ func (p *CohereParser) eat(done bool) (content string, thinking string, calls []
 func (p *CohereParser) resetBuffer(s string) {
 	p.buffer.Reset()
 	p.buffer.WriteString(s)
+}
+
+// cohereNextTag finds the earliest marker, independent of the order of tags.
+// Choosing by marker type could skip an earlier block or match inside its payload.
+func cohereNextTag(s string, tags ...string) (index int, tag string) {
+	index = -1
+	for _, candidate := range tags {
+		if i := strings.Index(s, candidate); i != -1 && (index == -1 || i < index) {
+			index, tag = i, candidate
+		}
+	}
+	return index, tag
 }
 
 // maybePartialTag reports whether s is a proper prefix of one of the tags the
