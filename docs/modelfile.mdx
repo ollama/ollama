@@ -41,7 +41,7 @@ INSTRUCTION arguments
 | [`LICENSE`](#license)               | Specifies the legal license.                                   |
 | [`MESSAGE`](#message)               | Specify message history.                                       |
 | [`REQUIRES`](#requires)             | Specify the minimum version of Ollama required by the model.   |
-| [`CAPABILITY`](#capability)         | Declare an additional model capability.                       |
+| [`CAPABILITY`](#capability)         | Declares the model's capabilities; replaces inferred ones.     |
 
 ## Examples
 
@@ -225,11 +225,14 @@ MESSAGE assistant yes
 
 ### CAPABILITY
 
-Adds a capability to a GGUF or MLX model without removing inherited or inferred capabilities. Repeat the instruction to add more than one. Declare `decision` only for weights trained for System One's decision prompts:
+Declares a capability that a GGUF or MLX model supports. The declared set is exhaustive: it replaces the capabilities the model would otherwise inherit from its base model or have inferred from its weights, template, and parser. Repeat the instruction for every capability the model supports:
 
 ```
+CAPABILITY completion
 CAPABILITY decision
 ```
+
+Capabilities you leave out are reported as unsupported. Omitting `CAPABILITY` entirely keeps the base model's capabilities and inference. Declare `decision` only for weights trained for System One's decision prompts.
 
 ### REQUIRES
 
