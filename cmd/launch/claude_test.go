@@ -26,6 +26,32 @@ func TestClaudeIntegration(t *testing.T) {
 	})
 }
 
+func TestClaudeReadinessModel(t *testing.T) {
+	c := &Claude{}
+
+	tests := []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{name: "cloud model", model: "deepseek-v4-flash:0731-cloud[1m]", want: "deepseek-v4-flash:0731-cloud"},
+		{name: "local model", model: "gemma4[1m]", want: "gemma4"},
+		{name: "ordinary model", model: "gemma4", want: "gemma4"},
+		{name: "empty base", model: "[1m]", want: "[1m]"},
+		{name: "different suffix", model: "gemma4[200k]", want: "gemma4[200k]"},
+		{name: "case differs", model: "gemma4[1M]", want: "gemma4[1M]"},
+		{name: "suffix is not terminal", model: "gemma4[1m]-custom", want: "gemma4[1m]-custom"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := c.readinessModel(tt.model); got != tt.want {
+				t.Errorf("readinessModel(%q) = %q, want %q", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClaudeFindPath(t *testing.T) {
 	c := &Claude{}
 
@@ -318,6 +344,7 @@ func TestClaudeArgs(t *testing.T) {
 		want  []string
 	}{
 		{"with model", "llama3.2", nil, []string{"--model", "llama3.2"}},
+		{"preserves context suffix", "gemma4[1m]", nil, []string{"--model", "gemma4[1m]"}},
 		{"empty model", "", nil, nil},
 		{"with model and verbose", "llama3.2", []string{"--verbose"}, []string{"--model", "llama3.2", "--verbose"}},
 		{"empty model with help", "", []string{"--help"}, []string{"--help"}},
