@@ -496,6 +496,7 @@ func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
 		rounds []draftRound
 	}
 	controller := s.drafting.begin(ready)
+	batchedProposals := s.proposeDFlash(ready)
 	var groups []group
 	var plain []*batchSlot
 	for _, slot := range ready {
@@ -526,13 +527,18 @@ func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
 			continue
 		}
 		remaining := req.output.limit - req.output.generated
-		candidates := d.s.drafter.propose(d.current.Token, min(limit, remaining-1))
+		candidates := batchedProposals[slot]
+		if candidates == nil {
+			candidates = d.s.drafter.propose(d.current.Token, min(limit, remaining-1))
+			if candidates != nil {
+				mlx.AsyncEval(candidates.Arrays()...)
+			}
+		}
 		if candidates == nil {
 			s.drafting.reset()
 			plain = append(plain, slot)
 			continue
 		}
-		mlx.AsyncEval(candidates.Arrays()...)
 		n := candidates.tokens.Dim(1)
 		if n != limit {
 			s.drafting.reset()
@@ -569,6 +575,43 @@ func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
 		controller.next()
 	}
 	return err
+}
+
+// proposeDFlash batches full DFlash2 blocks without changing their trained
+// width or the per-request depth policy. Pipeline handoffs, short remaining
+// budgets and singletons continue through the ordinary proposal path. Large
+// prefill tails also run alone rather than padding every peer's feature input.
+func (s *batchScheduler) proposeDFlash(ready []*batchSlot) map[*batchSlot]*draftCandidates {
+	if _, ok := s.r.spec.draft.(dflashBatchModel); !ok {
+		return nil
+	}
+	var slots []*batchSlot
+	var sessions []*dflashDraftSession
+	var current []*mlx.Array
+	for _, slot := range ready {
+		d, ok := slot.request.decoder.(*speculativeDecoder)
+		if !ok || d.inner != nil || !d.s.fixedDepth || d.s.limit != dflash2Depth ||
+			slot.request.output.limit-slot.request.output.generated <= dflash2Depth {
+			continue
+		}
+		session, ok := d.s.drafter.(*dflashDraftSession)
+		if !ok || session.drafter.blockSize-1 < dflash2Depth || session.ctxOffset+session.pendingCount == 0 || session.pendingCount > dflash2Depth+1 {
+			continue
+		}
+		slots = append(slots, slot)
+		sessions = append(sessions, session)
+		current = append(current, d.current.Token)
+	}
+	if len(slots) < 2 {
+		return nil
+	}
+	candidates := proposeDFlashBatch(sessions, current, dflash2Depth)
+	logutil.Trace("mlx batch draft", "rows", len(slots), "depth", dflash2Depth)
+	bySlot := make(map[*batchSlot]*draftCandidates, len(slots))
+	for i, slot := range slots {
+		bySlot[slot] = candidates[i]
+	}
+	return bySlot
 }
 
 // decodePlain advances pipelined rows together, including requests whose draft

@@ -1,7 +1,9 @@
 package qwen3_5
 
 import (
+	"fmt"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
@@ -28,22 +30,64 @@ func patternArray(rows, cols int) *mlx.Array {
 
 func assertBitEqual(t *mlxtest.T, label string, got, want *mlx.Array) {
 	t.Helper()
+	if err := bitEqualError(got, want); err != nil {
+		t.Fatalf("%s: %v", label, err)
+	}
+}
+
+func bitEqualError(got, want *mlx.Array) error {
 	if got == nil || want == nil {
-		if got != want {
-			t.Fatalf("%s: got %v, want %v", label, got, want)
-		}
-		return
+		return fmt.Errorf("missing numerical comparison: got %v, want %v", got, want)
 	}
-	got32, want32 := got.AsType(mlx.DTypeFloat32), want.AsType(mlx.DTypeFloat32)
+	if !slices.Equal(got.Dims(), want.Dims()) {
+		return fmt.Errorf("shape %v, want %v", got.Dims(), want.Dims())
+	}
+	got32, want32 := mlx.Contiguous(got, false).AsType(mlx.DTypeFloat32), mlx.Contiguous(want, false).AsType(mlx.DTypeFloat32)
 	mlx.Eval(got32, want32)
-	gotValues, wantValues := got32.Floats(), want32.Floats()
-	if len(gotValues) != len(wantValues) {
-		t.Fatalf("%s: length %d, want %d", label, len(gotValues), len(wantValues))
+	gv, wv := got32.Floats(), want32.Floats()
+	if len(gv) == 0 || len(gv) != len(wv) {
+		return fmt.Errorf("length %d, want nonempty length %d", len(gv), len(wv))
 	}
-	for i := range wantValues {
-		if math.Float32bits(gotValues[i]) != math.Float32bits(wantValues[i]) {
-			t.Fatalf("%s[%d] = %v, want %v", label, i, gotValues[i], wantValues[i])
+	for i, v := range gv {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || math.IsNaN(float64(wv[i])) || math.IsInf(float64(wv[i]), 0) {
+			return fmt.Errorf("element %d is not finite: got %g, want %g", i, v, wv[i])
 		}
+		if math.Float32bits(v) != math.Float32bits(wv[i]) {
+			return fmt.Errorf("element %d = %g, want %g", i, v, wv[i])
+		}
+	}
+	return nil
+}
+
+func TestBitEqualRejectsInvalidComparisons(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		got, want           []float32
+		gotShape, wantShape []int
+		valid               bool
+	}{
+		{"finite equal", []float32{1, 2}, []float32{1, 2}, []int{1, 2}, []int{1, 2}, true},
+		{"finite unequal", []float32{1, 2}, []float32{1, 3}, []int{2}, []int{2}, false},
+		{"empty", nil, nil, []int{0}, []int{0}, false},
+		{"shape", []float32{1, 2}, []float32{1, 2}, []int{1, 2}, []int{2, 1}, false},
+		{"length", []float32{1}, []float32{1, 2}, []int{1}, []int{2}, false},
+		{"matching nan", []float32{float32(math.NaN())}, []float32{float32(math.NaN())}, []int{1}, []int{1}, false},
+		{"matching infinity", []float32{float32(math.Inf(1))}, []float32{float32(math.Inf(1))}, []int{1}, []int{1}, false},
+		{"nan reference", []float32{1}, []float32{float32(math.NaN())}, []int{1}, []int{1}, false},
+	} {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
+			array := func(values []float32, shape []int) *mlx.Array {
+				if len(values) == 0 {
+					return mlx.Zeros(mlx.DTypeFloat32, shape...)
+				}
+				return mlx.FromValues(values, shape...)
+			}
+			got, want := array(tc.got, tc.gotShape), array(tc.want, tc.wantShape)
+			err := bitEqualError(got, want)
+			if (err == nil) != tc.valid {
+				t.Fatalf("comparison error %v, want valid=%t", err, tc.valid)
+			}
+		})
 	}
 }
 

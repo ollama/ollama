@@ -342,11 +342,11 @@ func checkDraftRotaryArray(t *mlxtest.T, label string, array *mlx.Array, want []
 	array = mlx.Contiguous(array, false).AsType(mlx.DTypeFloat32)
 	mlx.Eval(array)
 	got := array.Floats()
-	if len(got) != len(want) {
+	if len(got) == 0 || len(got) != len(want) {
 		t.Fatalf("%s length=%d want=%d", label, len(got), len(want))
 	}
 	for i, v := range got {
-		if math.IsNaN(float64(v)) || math.Abs(float64(v)-want[i]) > 2e-3*math.Max(1, math.Abs(want[i])) {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) || math.IsNaN(want[i]) || math.IsInf(want[i], 0) || math.Abs(float64(v)-want[i]) > 2e-3*math.Max(1, math.Abs(want[i])) {
 			t.Errorf("%s[%d]: got %g want %g", label, i, v, want[i])
 			return
 		}

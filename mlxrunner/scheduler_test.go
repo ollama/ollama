@@ -318,7 +318,7 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 	for _, tc := range []struct {
 		draft  string
 		reject bool
-	}{{"mtp", false}, {"mtp", true}, {"mtp-cache", false}, {"mtp-cache", true}, {"dflash", false}, {"dflash", true}, {"dflash2", true}} {
+	}{{"mtp", false}, {"mtp", true}, {"mtp-cache", false}, {"mtp-cache", true}, {"dflash", false}, {"dflash", true}, {"dflash2", true}, {"dflash2-batch", true}} {
 		t.Run(fmt.Sprintf("%s/reject=%t", tc.draft, tc.reject), func(t *testing.T) {
 			mlxtest.Run(t, func(t *mlxtest.T) {
 				predict := map[int32]int32{0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 1}
@@ -331,16 +331,23 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 				r := &Runner{Model: m, Tokenizer: tok, Sampler: sample.New(4096), parallel: 2}
 				r.cache = newPrefixCache(m.NewCaches())
 				var draft model.DraftModel = &fakeMTPDraft{predict: draftPredict}
+				var batchDraft *batchedSelectedBlockDraft
 				switch tc.draft {
 				case "mtp-cache":
 					draft = &schedulingDraft{fakeMTPDraft: fakeMTPDraft{predict: draftPredict}}
 				case "dflash":
 					draft = &fakeBlockDraft{predict: draftPredict, blockSize: 8, maskToken: 7}
-				case "dflash2":
+				case "dflash2", "dflash2-batch":
 					// The selector intentionally proposes wrong tokens to exercise
 					// sparse-proposal rejection across the same mode transitions.
-					draft = &selectedBlockDraft{&fakeBlockDraft{predict: draftPredict, blockSize: 8, maskToken: 7}}
+					selected := &selectedBlockDraft{&fakeBlockDraft{predict: draftPredict, blockSize: 8, maskToken: 7}}
+					draft = selected
+					if tc.draft == "dflash2-batch" {
+						batchDraft = &batchedSelectedBlockDraft{selectedBlockDraft: selected}
+						draft = batchDraft
+					}
 				}
+				_, fixedDepth := draft.(model.BlockSelector)
 				r.spec = newSpeculation(r, pipelineSlot, draft, r.cache.caches, nil)
 				s := &batchScheduler{r: r, slots: make([]*batchSlot, 2)}
 				defer func() {
@@ -371,7 +378,7 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 								continue
 							}
 							req := slot.request
-							if tc.draft == "dflash2" && (!req.spec.fixedDepth || req.spec.limit != dflash2Depth) {
+							if fixedDepth && (!req.spec.fixedDepth || req.spec.limit != dflash2Depth) {
 								t.Fatalf("slot %d lost DFlash2 depth: fixed=%t limit=%d", slot.id, req.spec.fixedDepth, req.spec.limit)
 							}
 							// Every target write follows the request's own token chain,
@@ -428,6 +435,9 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 				if !sharedVerification {
 					t.Fatal("requests never shared a multi-token verification forward")
 				}
+				if batchDraft != nil && !slices.Contains(batchDraft.batches, 2) {
+					t.Fatalf("overlapping requests never shared a draft forward: batches %v", batchDraft.batches)
+				}
 				for range 3 {
 					step()
 				}
@@ -437,6 +447,10 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 				before = second.spec.stats.drafted
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
+				batchesBeforeCancel := 0
+				if batchDraft != nil {
+					batchesBeforeCancel = len(batchDraft.batches)
+				}
 				c := newRequest(ctx, 6, 30)
 				admit(c)
 				third := s.slots[0].request
@@ -444,6 +458,9 @@ func TestBatchSchedulerDraftHandoffs(t *testing.T) {
 				step()
 				if second.spec.stats.drafted <= before {
 					t.Fatal("second request stopped drafting while third was active")
+				}
+				if batchDraft != nil && !slices.Contains(batchDraft.batches[batchesBeforeCancel:], 2) {
+					t.Fatalf("cancelled request never shared a draft forward: batches %v", batchDraft.batches[batchesBeforeCancel:])
 				}
 				cancel()
 				for range 70 {

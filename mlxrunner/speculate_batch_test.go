@@ -97,7 +97,7 @@ func TestAcceptDraftBatchRejectsMismatchedLengths(t *testing.T) {
 func TestAcceptDraftBatchGrammarFailureIsolated(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		tok := newTestTokenizer(t, []int32{7})
-		m := &schedulingModel{fakeMTPModel: fakeMTPModel{tok: tok, predict: map[int32]int32{1: 2, 2: 3, 3: 4}}}
+		m := &collectiveRecurrentModel{fakeMTPModel: fakeMTPModel{tok: tok, predict: map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5}}}
 		r := &Runner{Model: m, Tokenizer: tok, Sampler: sample.New(4096)}
 		defer r.Sampler.Free()
 		// The digit-only fixture cannot produce the opening quote for a string.
@@ -109,19 +109,22 @@ func TestAcceptDraftBatchGrammarFailureIsolated(t *testing.T) {
 			cs := m.NewCaches()
 			defer cs[0].Free()
 			r.Sampler.Add(i, sample.Options{Temperature: 0}, nil)
-			drafts := []int32{2, 3}
+			drafts := []int32{2, 3, 4}
 			rounds[i] = draftRound{
 				s: &speculationSession{spec: &speculation{r: r, slotID: i, targets: cs}, drafter: nopDrafter{}}, position: &positions[i],
 				current:    sample.Result{Token: mlx.FromValues([]int32{1}, 1)},
-				candidates: &draftCandidates{tokens: mlx.FromValues(drafts, 1, 2), dist: r.Sampler.Distribution(i, oneHotLogits(drafts), nil)},
+				candidates: &draftCandidates{tokens: mlx.FromValues(drafts, 1, 3), dist: r.Sampler.Distribution(i, oneHotLogits(drafts), nil)},
 			}
 		}
 		rounds[0].grammar = g
 		out := r.acceptDrafts(rounds)
+		if m.deferredWrites != 1 {
+			t.Fatalf("deferred GDN writes = %d, want one shared forward", m.deferredWrites)
+		}
 		if out[0].err == nil || len(out[0].results) != 0 || positions[0] != 0 || rounds[0].s.spec.targets[0].Offset() != 1 {
 			t.Fatalf("failed row: %+v position %d cache offset %d", out[0], positions[0], rounds[0].s.spec.targets[0].Offset())
 		}
-		if out[1].err != nil || !slices.Equal(resultIDs(out[1].results), []int32{2, 3, 4}) || positions[1] != 3 {
+		if out[1].err != nil || !slices.Equal(resultIDs(out[1].results), []int32{2, 3, 4, 5}) || positions[1] != 4 {
 			t.Fatalf("healthy row: %+v position %d", out[1], positions[1])
 		}
 		for i, round := range rounds {

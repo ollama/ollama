@@ -1201,6 +1201,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, 
 	z = mlx.Reshape(z, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
 	convTail := cfg.LinearConvKernelDim - 1
 	var rc cache.Recurrent
+	var splits []int
 	opts := make([]nn.RecurrentOption, 0, 3)
 	opts = append(opts, nn.WithConvSiLU())
 	if cfg.PreciseGatedDeltaDecay {
@@ -1212,7 +1213,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, 
 		// When the cache has scheduled per-token snapshots, segment the
 		// recurrent kernels at the interior offsets so each boundary state
 		// can be captured.
-		if splits := rc.SnapshotSplits(int(L)); len(splits) > 0 {
+		if splits = rc.SnapshotSplits(int(L)); len(splits) > 0 {
 			opts = append(opts, nn.WithSnapshotSplits(splits))
 		}
 	} else {
@@ -1223,13 +1224,24 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, 
 	}
 
 	convOut, convStates := nn.CausalConv1D(b, qkv, g.Conv1D, int(convTail), opts...)
-	out, deltaStates := nn.GatedDelta(b, convOut, mixedBA, g.DtBias, g.AExp, opts...)
+	var out, end *mlx.Array
+	var deltaStates []*mlx.Array
+	var replay nn.GatedDeltaReplay
+	deferred, canDefer := rc.(cache.RecurrentReplay)
+	canDefer = canDefer && B > 1 && L > 1 && len(splits) == int(L)-1
+	if canDefer {
+		out, end, replay = nn.GatedDeltaForReplay(b, convOut, mixedBA, g.DtBias, g.AExp, opts...)
+	} else {
+		out, deltaStates = nn.GatedDelta(b, convOut, mixedBA, g.DtBias, g.AExp, opts...)
+	}
 	outDType := out.DType()
 	out = mlx.RMSNormFn(out, g.NormWeight, cfg.RMSNormEps)
 	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.SiLU(z.AsType(mlx.DTypeFloat32))).AsType(outDType)
 	out = mlx.Reshape(out, B, L, valueDim)
 	out = g.OutProj.Forward(out)
-	if rc != nil {
+	if canDefer {
+		deferred.PutReplay(b, convStates, end, replay)
+	} else if rc != nil {
 		rc.Put(b, convStates, deltaStates)
 	}
 	return out
