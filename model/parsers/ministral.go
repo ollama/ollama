@@ -41,12 +41,13 @@ func (ministralEventThinking) isMinistralEvent() {}
 func (ministralEventToolCall) isMinistralEvent() {}
 
 type MinistralParser struct {
-	state              ministralParserState
-	buffer             strings.Builder
-	tools              []api.Tool
-	callIndex          int
-	hasThinkingSupport bool
-	pendingToolName    string // stores tool name while collecting args
+	state                  ministralParserState
+	buffer                 strings.Builder
+	tools                  []api.Tool
+	callIndex              int
+	hasThinkingSupport     bool
+	pendingToolName        string // stores tool name while collecting args
+	maybeThinkingOpenAtBOL bool
 }
 
 func (p *MinistralParser) HasToolSupport() bool {
@@ -73,25 +74,32 @@ func (p *MinistralParser) PreservedTokens() []string {
 	}
 }
 
-func (p *MinistralParser) setInitialState(lastMessage *api.Message) {
+func (p *MinistralParser) setInitialState(lastMessage *api.Message, thinkingEnabled bool) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
-	if !p.HasThinkingSupport() {
+	if !p.HasThinkingSupport() || !thinkingEnabled {
 		p.state = ministralCollectingContent
+		p.maybeThinkingOpenAtBOL = false
 		return
 	}
 
 	if prefill && lastMessage.Content != "" {
 		p.state = ministralCollectingContent
+		p.maybeThinkingOpenAtBOL = false
 		return
 	}
 
 	p.state = ministralCollectingThinkingContent
+	p.maybeThinkingOpenAtBOL = true
 }
 
 func (p *MinistralParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
-	p.setInitialState(lastMessage)
+	thinkingEnabled := p.hasThinkingSupport
+	if thinkValue != nil {
+		thinkingEnabled = thinkValue.Bool()
+	}
+	p.setInitialState(lastMessage, thinkingEnabled)
 	return tools
 }
 
@@ -184,6 +192,28 @@ func (p *MinistralParser) eat() ([]ministralEvent, bool) {
 
 	case ministralCollectingThinkingContent:
 		bufStr := p.buffer.String()
+
+		// Ministral reasoning models emit an explicit leading [THINK] tag
+		// because the prompt does not prefill one. Strip exactly one leading
+		// opening tag; hold a partial prefix that could still become [THINK].
+		if p.maybeThinkingOpenAtBOL {
+			trimmed := strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+			if strings.HasPrefix(trimmed, ministralThinkTag) {
+				after := strings.TrimPrefix(trimmed, ministralThinkTag)
+				after = strings.TrimLeftFunc(after, unicode.IsSpace)
+				p.buffer.Reset()
+				p.buffer.WriteString(after)
+				if after == "" {
+					return events, false
+				}
+				p.maybeThinkingOpenAtBOL = false
+				return events, true
+			}
+			if strings.HasPrefix(ministralThinkTag, trimmed) {
+				return events, false
+			}
+			p.maybeThinkingOpenAtBOL = false
+		}
 
 		if strings.Contains(bufStr, ministralThinkEndTag) {
 			split := strings.SplitN(bufStr, ministralThinkEndTag, 2)

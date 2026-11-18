@@ -12,6 +12,9 @@ func TestTemplateSupportsThinking(t *testing.T) {
 		want bool
 	}{
 		{name: "paired tags", tmpl: "<think>{{ reasoning }}</think>", want: true},
+		{name: "mistral reasoning tags", tmpl: "{{ x }}[THINK]{{ y }}[/THINK]", want: true},
+		{name: "mistral instruct (no think tags)", tmpl: `{{- range .Messages }}{{ .Content }}{{ end }}[TOOL_CALLS]`, want: false},
+		{name: "mistral opening tag only (no closer)", tmpl: `{{ x }}[THINK]{{ y }}`, want: false},
 		{name: "single quoted split", tmpl: "content.split('</think>')", want: true},
 		{name: "double quoted split", tmpl: `content.split("</think>")`, want: true},
 		{name: "separate reasoning field", tmpl: "content.split('</think>') reasoning_content", want: false},
@@ -23,6 +26,49 @@ func TestTemplateSupportsThinking(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := TemplateSupportsThinking(tt.tmpl); got != tt.want {
 				t.Fatalf("TemplateSupportsThinking() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTemplateTags(t *testing.T) {
+	tests := []struct {
+		name         string
+		chatTemplate string
+		wantOpening  string
+		wantClosing  string
+	}{
+		{
+			name:         "mistral reasoning tags",
+			chatTemplate: `{{- range .Messages }}{{ .Content }}{{ end }}[THINK]your thoughts[/THINK]`,
+			wantOpening:  "[THINK]",
+			wantClosing:  "[/THINK]",
+		},
+		{
+			name:         "qwen style tags",
+			chatTemplate: `reasoning {{ content.split("</think>") }} <think>{{ .Thinking }}</think>`,
+			wantOpening:  "<think>",
+			wantClosing:  "</think>",
+		},
+		{
+			name:         "no thinking tags",
+			chatTemplate: `{{- range .Messages }}{{ .Content }}{{ end }}`,
+		},
+		{
+			name:         "only opening tag",
+			chatTemplate: `[THINK] without a closer`,
+		},
+		{
+			name:         "empty template",
+			chatTemplate: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opening, closing := TemplateTags(tt.chatTemplate)
+			if opening != tt.wantOpening || closing != tt.wantClosing {
+				t.Errorf("TemplateTags() = (%q, %q), want (%q, %q)", opening, closing, tt.wantOpening, tt.wantClosing)
 			}
 		})
 	}
