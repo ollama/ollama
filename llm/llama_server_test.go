@@ -653,6 +653,7 @@ func TestLlamaServerCompletionContextShiftAllowsPromptWithHeadroom(t *testing.T)
 		Prompt:   prompt,
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -724,6 +725,7 @@ func TestLlamaServerCompletionContextShiftTruncatesPromptOverContext(t *testing.
 		Prompt:   prompt,
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -816,6 +818,7 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 		Prompt:   strings.Repeat("long prompt ", 500),
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -4100,5 +4103,157 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 	if got := conversions.Load(); got != 1 {
 		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+}
+
+func TestNoShiftNumPredict(t *testing.T) {
+	tests := []struct {
+		name         string
+		numPredict   int
+		promptTokens int
+		want         int
+		wantErr      bool
+	}{
+		{name: "open-ended generation stops at the context limit", numPredict: -1, promptTokens: 3, want: 5},
+		{name: "budget larger than the remaining context is capped", numPredict: 100, promptTokens: 3, want: 5},
+		{name: "budget that fits is kept", numPredict: 2, promptTokens: 3, want: 2},
+		{name: "prompt leaving one token of room", numPredict: -1, promptTokens: 7, want: 1},
+		{name: "prompt filling the context is rejected", numPredict: -1, promptTokens: 8, wantErr: true},
+		{name: "prompt over the context is rejected", numPredict: -1, promptTokens: 9, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := noShiftNumPredict(tt.numPredict, 8, tt.promptTokens)
+			if tt.wantErr {
+				var serr api.StatusError
+				if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
+					t.Fatalf("err = %v, want 400 status error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("noShiftNumPredict = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func noShiftTestServer(t *testing.T, promptTokens int) (*llamaServerRunner, *int, *bool) {
+	t.Helper()
+
+	nPredict := -100
+	generated := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/apply-template":
+			fmt.Fprint(w, `{"prompt":"rendered chat"}`)
+		case "/tokenize":
+			json.NewEncoder(w).Encode(map[string][]int{"tokens": make([]int, promptTokens)})
+		case "/completion":
+			var req llamaServerCompletionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			generated, nPredict = true, req.NPredict
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		case "/v1/chat/completions":
+			var req struct {
+				NPredict int `json:"n_predict"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("invalid chat request body: %v", err)
+				return
+			}
+			generated, nPredict = true, req.NPredict
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	runner := &llamaServerRunner{
+		port:    srv.Listener.Addr().(*net.TCPAddr).Port,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+	return runner, &nPredict, &generated
+}
+
+func TestLlamaServerShiftDisabledOnShiftRunner(t *testing.T) {
+	type call func(r *llamaServerRunner, shift bool, opts *api.Options) error
+	calls := map[string]call{
+		"completion": func(r *llamaServerRunner, shift bool, opts *api.Options) error {
+			return r.Completion(t.Context(), CompletionRequest{Prompt: "hi", Options: opts, Truncate: true, Shift: shift}, func(CompletionResponse) {})
+		},
+		"chat": func(r *llamaServerRunner, shift bool, opts *api.Options) error {
+			return r.Chat(t.Context(), ChatRequest{Messages: []api.Message{{Role: "user", Content: "hi"}}, Options: opts, Shift: shift}, func(ChatResponse) {})
+		},
+	}
+
+	for name, run := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Run("shift false caps generation at the context limit", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				opts := api.DefaultOptions()
+				if err := run(runner, false, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if *nPredict != 5 {
+					t.Fatalf("n_predict = %d, want 5", *nPredict)
+				}
+			})
+
+			t.Run("shift false rejects a prompt that fills the context", func(t *testing.T) {
+				runner, _, generated := noShiftTestServer(t, 8)
+				opts := api.DefaultOptions()
+				err := run(runner, false, &opts)
+				var serr api.StatusError
+				if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
+					t.Fatalf("err = %v, want 400 status error", err)
+				}
+				if *generated {
+					t.Fatal("generation request was sent for a prompt that does not fit")
+				}
+			})
+
+			t.Run("shift true is not capped", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				opts := api.DefaultOptions()
+				if err := run(runner, true, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if want := boundedNumPredict(-1, 8); *nPredict != want {
+					t.Fatalf("n_predict = %d, want %d", *nPredict, want)
+				}
+			})
+
+			t.Run("shift false on a projector runner is not capped", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				runner.launch.projectors = []string{"mmproj.gguf"}
+				opts := api.DefaultOptions()
+				if err := run(runner, false, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if want := boundedNumPredict(-1, 8); *nPredict != want {
+					t.Fatalf("n_predict = %d, want %d", *nPredict, want)
+				}
+			})
+		})
 	}
 }

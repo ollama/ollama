@@ -961,7 +961,9 @@ func TestSchedNeedsReload(t *testing.T) {
 	req.opts.NumGPU = -1
 	resp = runner.needsReload(ctx, req)
 	require.False(t, resp)
-	req.contextShift = true
+	runner.model.Load().ProjectorPaths = nil
+	req.model.ProjectorPaths = nil
+	req.model.ModelPath = "model.gguf"
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
 }
@@ -983,11 +985,91 @@ func TestResolveContextShift(t *testing.T) {
 		{name: "explicit false disables shift for deepseek2", shift: &falseValue, model: &Model{Config: model.ConfigV2{ModelFamily: "deepseek2"}}, want: false},
 		{name: "explicit true enables shift", shift: &trueValue, want: true},
 		{name: "explicit true enables shift for deepseek2", shift: &trueValue, model: &Model{Config: model.ConfigV2{ModelFamily: "deepseek2"}}, want: true},
+		{name: "unset projector model disables shift", model: &Model{ProjectorPaths: []string{"mmproj"}}, want: false},
+		{name: "explicit true projector model disables shift", shift: &trueValue, model: &Model{ProjectorPaths: []string{"mmproj"}}, want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, resolveContextShift(tt.shift, tt.model))
+		})
+	}
+}
+
+func TestLaunchContextShift(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	deepseek2 := &Model{Config: model.ConfigV2{ModelFamily: "deepseek2"}}
+	vision := &Model{ProjectorPaths: []string{"mmproj"}}
+
+	tests := []struct {
+		name  string
+		shift *bool
+		model *Model
+		want  bool
+	}{
+		{name: "unset projector model launches without shift", model: vision, want: false},
+		{name: "explicit true projector model launches without shift", shift: &trueValue, model: vision, want: false},
+		{name: "unset launches with shift", want: true},
+		{name: "explicit false still launches with shift", shift: &falseValue, want: true},
+		{name: "explicit true launches with shift", shift: &trueValue, want: true},
+		{name: "unset deepseek2 launches without shift", model: deepseek2, want: false},
+		{name: "explicit false deepseek2 launches without shift", shift: &falseValue, model: deepseek2, want: false},
+		{name: "explicit true deepseek2 launches with shift", shift: &trueValue, model: deepseek2, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, launchContextShift(tt.shift, tt.model))
+		})
+	}
+}
+
+func TestSchedNeedsReloadShiftSettings(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	trueValue := true
+	falseValue := false
+	deepseek2 := model.ConfigV2{ModelFamily: "deepseek2"}
+
+	tests := []struct {
+		name        string
+		runnerShift bool
+		config      model.ConfigV2
+		projectors  []string
+		shift       *bool
+		want        bool
+	}{
+		{name: "shift runner serves shift false", runnerShift: true, shift: &falseValue, want: false},
+		{name: "shift runner serves unset shift", runnerShift: true, want: false},
+		{name: "shift runner serves shift true", runnerShift: true, shift: &trueValue, want: false},
+		{name: "no-shift runner serves shift false", runnerShift: false, shift: &falseValue, want: false},
+		{name: "no-shift runner reloads for shift true", runnerShift: false, shift: &trueValue, want: true},
+		{name: "no-shift runner reloads for unset shift", runnerShift: false, want: true},
+		{name: "no-shift deepseek2 runner serves unset shift", runnerShift: false, config: deepseek2, want: false},
+		{name: "no-shift projector runner serves unset shift", runnerShift: false, projectors: []string{"mmproj"}, want: false},
+		{name: "no-shift projector runner serves shift true", runnerShift: false, projectors: []string{"mmproj"}, shift: &trueValue, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &Model{ModelPath: "model.gguf", Config: tt.config, ProjectorPaths: tt.projectors}
+			opts := api.DefaultOptions()
+			runner := &runnerRef{
+				Options:      &opts,
+				llama:        &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+				numParallel:  1,
+				contextShift: tt.runnerShift,
+			}
+			runner.model.Store(m)
+			req := &LlmRequest{
+				model: m,
+				opts:  api.DefaultOptions(),
+				shift: tt.shift,
+			}
+
+			require.Equal(t, tt.want, runner.needsReload(ctx, req))
 		})
 	}
 }

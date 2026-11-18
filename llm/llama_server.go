@@ -308,7 +308,8 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
 	prompt := s.completionPrompt(req.Prompt, req.LeadingBOS)
-	if !req.Truncate || len(req.Media) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx {
+	noShift := s.requestDisablesShift(req.Shift)
+	if !noShift && (!req.Truncate || len(req.Media) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx) {
 		return prompt, nil
 	}
 
@@ -317,12 +318,17 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return nil, err
 	}
 
+	if noShift {
+		req.Options.NumPredict, err = noShiftNumPredict(req.Options.NumPredict, s.options.NumCtx, len(tokens))
+		return tokens, err
+	}
+
 	fullPromptLimit := s.options.NumCtx - 1
 	if len(tokens) <= fullPromptLimit {
 		return prompt, nil
 	}
 
-	if !s.launch.config.ContextShift {
+	if !s.launch.config.ContextShift || !req.Shift {
 		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: promptTooLongMessage}
 	}
 
@@ -343,6 +349,27 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 
 	slog.Warn("truncating input prompt", "limit", limit, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
 	return truncated, nil
+}
+
+// requestDisablesShift reports whether a shift:false request must be enforced
+// here because the runner was launched with context shift. llama-server
+// disables context shift whenever a projector is loaded, so those runners
+// (and the media prompts only they accept) never need it.
+func (s *llamaServerRunner) requestDisablesShift(shift bool) bool {
+	return s.launch.config.ContextShift && len(s.launch.projectors) == 0 && !shift && s.options.NumCtx > 1
+}
+
+// noShiftNumPredict caps numPredict so generation stops when the context is
+// full, before llama-server would shift.
+func noShiftNumPredict(numPredict, numCtx, promptTokens int) (int, error) {
+	remaining := numCtx - promptTokens
+	if remaining <= 0 {
+		return 0, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: promptTooLongMessage}
+	}
+	if numPredict < 0 || numPredict > remaining {
+		return remaining, nil
+	}
+	return numPredict, nil
 }
 
 func contextShiftPromptLimit(numCtx, numKeep int) int {
@@ -2080,6 +2107,21 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		return err
 	} else if status != ServerStatusReady {
 		return fmt.Errorf("unexpected server status: %s", status)
+	}
+
+	if s.requestDisablesShift(req.Shift) {
+		prompt, err := s.ApplyChatTemplate(ctx, req)
+		if err != nil {
+			return err
+		}
+		tokens, err := s.tokenize(ctx, prompt, true)
+		if err != nil {
+			return err
+		}
+		req.Options.NumPredict, err = noShiftNumPredict(req.Options.NumPredict, s.options.NumCtx, len(tokens))
+		if err != nil {
+			return err
+		}
 	}
 
 	lsReq, err := s.llamaServerChatRequest(req, true)
