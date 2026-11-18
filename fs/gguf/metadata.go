@@ -72,12 +72,12 @@ func (m *Metadata) KeyValue(key string) KeyValue {
 	if m == nil {
 		return KeyValue{}
 	}
-	if strings.HasPrefix(key, "split.") {
+	if strings.HasPrefix(key, "split.") || strings.HasPrefix(key, "gguf4.") {
 		if value := m.ExactKeyValue(key); value.Valid() {
 			return value
 		}
 	}
-	if !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "tokenizer.") {
+	if !strings.HasPrefix(key, "general.") && !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "gguf4.") {
 		key = m.Architecture() + "." + key
 	}
 	value, ok := m.values[key]
@@ -145,6 +145,22 @@ func (m *Metadata) Architecture() string {
 
 func (m *Metadata) Kind() string {
 	return m.String("general.type", "unknown")
+}
+
+// IsGGUFv4 reports whether the container conforms to the GGUF v4 community specification (64KB DMA alignment or gguf4 edition).
+func (m *Metadata) IsGGUFv4() bool {
+	if m == nil {
+		return false
+	}
+	return m.Uint("general.alignment", 32) == 65536 || m.ExactKeyValue("gguf4.edition").Valid()
+}
+
+// GGUFEdition returns the GGUF v4 edition string if present.
+func (m *Metadata) GGUFEdition() string {
+	if m == nil {
+		return ""
+	}
+	return m.ExactKeyValue("gguf4.edition").String()
 }
 
 func (m *Metadata) FileType() FileType {
