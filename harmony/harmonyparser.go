@@ -480,6 +480,16 @@ func (h *HarmonyMessageHandler) ThinkingClose() []string {
 	}
 }
 
+// ThinkingCloseWhitespace identifies header boundaries at which parseHeader
+// accepts whitespace. The format grammar must recognize those gaps too, rather
+// than allowing a final body to remain in the unconstrained thinking branch.
+func (h *HarmonyMessageHandler) ThinkingCloseWhitespace() []string {
+	if h.contentPrefill {
+		return nil
+	}
+	return []string{"<|start|>", "assistant", "final", "commentary", "<|constrain|>", "json"}
+}
+
 func (h *HarmonyMessageHandler) PreservedTokens() []string {
 	// <|call|> is an EOG marker for tool calls. Preserve structural tokens
 	// used by the parser, but let llama-server stop on the call terminator.

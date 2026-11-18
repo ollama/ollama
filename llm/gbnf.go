@@ -3,6 +3,7 @@ package llm
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -12,7 +13,7 @@ import (
 // closing to the root of the format grammar. The response may end before any
 // closing. A closing that is a prefix of another ends the thinking as soon
 // as it is complete.
-func thinkingGrammar(closings []string, format string) string {
+func thinkingGrammar(closings []string, format string, whitespaceAfter ...string) string {
 	// The rules added here take a prefix no rule of the format grammar starts
 	// with.
 	prefix := "ollama-"
@@ -21,7 +22,7 @@ func thinkingGrammar(closings []string, format string) string {
 	}
 	thinking, formatted := prefix+"thinking-", prefix+"format"
 
-	a := newClosingAutomaton(closings)
+	a := newClosingAutomaton(closings, whitespaceAfter...)
 	var b strings.Builder
 	fmt.Fprintf(&b, "root ::= %s0\n", thinking)
 	for state := range a.states {
@@ -58,18 +59,32 @@ func thinkingGrammar(closings []string, format string) string {
 // closingAutomaton is the Aho-Corasick automaton over the closings: each
 // state is a proper prefix of a closing, state 0 the empty one.
 type closingAutomaton struct {
-	closings []string
-	states   []string
-	index    map[string]int
-	alphabet []rune
+	closings    []string
+	states      []string
+	index       map[string]int
+	alphabet    []rune
+	transitions []map[rune]int
+	terminal    []map[rune]bool
 }
 
-func newClosingAutomaton(closings []string) *closingAutomaton {
+func newClosingAutomaton(closings []string, whitespaceAfter ...string) *closingAutomaton {
 	a := &closingAutomaton{closings: closings, index: map[string]int{}}
 	add := func(prefix string) {
 		if _, ok := a.index[prefix]; !ok {
 			a.index[prefix] = len(a.states)
 			a.states = append(a.states, prefix)
+		}
+	}
+	if len(whitespaceAfter) > 0 {
+		for _, interval := range unicode.White_Space.R16 {
+			for r := rune(interval.Lo); r <= rune(interval.Hi); r += rune(interval.Stride) {
+				a.alphabet = append(a.alphabet, r)
+			}
+		}
+		for _, interval := range unicode.White_Space.R32 {
+			for r := rune(interval.Lo); r <= rune(interval.Hi); r += rune(interval.Stride) {
+				a.alphabet = append(a.alphabet, r)
+			}
 		}
 	}
 	add("")
@@ -84,12 +99,71 @@ func newClosingAutomaton(closings []string) *closingAutomaton {
 		}
 	}
 	slices.Sort(a.alphabet)
+	if len(whitespaceAfter) > 0 {
+		return a.withWhitespace(whitespaceAfter)
+	}
 	return a
+}
+
+// Optional gaps and literal spaces can be active together (e.g. final followed
+// by either <|message|> or " json"). Determinize their prefix sets rather than
+// enumerating every combination of optional gaps in the closing strings.
+func (a *closingAutomaton) withWhitespace(markers []string) *closingAutomaton {
+	d := &closingAutomaton{alphabet: a.alphabet, index: map[string]int{}}
+	var sets [][]int
+	add := func(set []int) int {
+		slices.Sort(set)
+		set = slices.Compact(set)
+		var key strings.Builder
+		for _, state := range set {
+			key.WriteString(strconv.Itoa(state))
+			key.WriteByte(',')
+		}
+		if state, ok := d.index[key.String()]; ok {
+			return state
+		}
+		state := len(sets)
+		d.index[key.String()] = state
+		d.states = append(d.states, key.String())
+		sets = append(sets, set)
+		d.transitions = append(d.transitions, map[rune]int{})
+		d.terminal = append(d.terminal, map[rune]bool{})
+		return state
+	}
+	add([]int{0})
+	for state := 0; state < len(sets); state++ {
+		for _, r := range a.alphabet {
+			var next []int
+			for _, prefix := range sets[state] {
+				folded := r
+				if unicode.IsSpace(r) {
+					folded = ' '
+					gap := strings.HasSuffix(a.states[prefix], " ")
+					for _, marker := range markers {
+						gap = gap || strings.HasSuffix(a.states[prefix], marker)
+					}
+					if gap {
+						next = append(next, prefix)
+					}
+				}
+				to, done := a.next(prefix, folded)
+				d.terminal[state][r] = d.terminal[state][r] || done
+				next = append(next, to)
+			}
+			if !d.terminal[state][r] {
+				d.transitions[state][r] = add(next)
+			}
+		}
+	}
+	return d
 }
 
 // next returns the state after reading r in state, or done when the text
 // read so far ends with a closing.
 func (a *closingAutomaton) next(state int, r rune) (to int, done bool) {
+	if a.transitions != nil {
+		return a.transitions[state][r], a.terminal[state][r]
+	}
 	s := a.states[state] + string(r)
 	for _, closing := range a.closings {
 		if strings.HasSuffix(s, closing) {
