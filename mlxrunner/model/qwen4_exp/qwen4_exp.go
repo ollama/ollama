@@ -56,25 +56,11 @@ func NewModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 
-	tokenizerData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer: %w", err)
+		return nil, err
 	}
-	tokenizerConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
-	if data, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokenizerConfig.GenerationConfigJSON = data
-	}
-	if data, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokenizerConfig.TokenizerConfigJSON = data
-	}
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokenizerData, tokenizerConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
-	}
-	group, bits, mode := model.QuantizationParams(root.QuantType())
-	if root.GroupSize() > 0 {
-		group = root.GroupSize()
-	}
+	group, bits, mode, tensorQuant := root.Quantization()
 	hostPLE, err := openHostPLETables(root, &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open host-backed PLE: %w", err)
@@ -86,7 +72,7 @@ func NewModel(root *model.Root) (model.Model, error) {
 		quantBits:   bits,
 		quantGroup:  group,
 		quantMode:   mode,
-		tensorQuant: root.AllTensorQuant(),
+		tensorQuant: tensorQuant,
 		configData:  configData,
 		hostPLE:     hostPLE,
 	}, nil

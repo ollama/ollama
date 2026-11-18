@@ -339,32 +339,11 @@ func NewModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
-	}
-
-	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
-	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = genConfigData
-	}
-	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = tokConfigData
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 
 	m := &Model{
@@ -381,29 +360,6 @@ func NewModel(root *model.Root) (model.Model, error) {
 	}
 
 	return m, nil
-}
-
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
-// transposeExpertWeightForGatherMM converts stacked [E, out, in] expert
-// weights to the [E, in, out] layout GatherMM consumes, materialized once at
-// load so the forward path avoids per-call transposes.
-func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || w.NumDims() != 3 {
-		return w
-	}
-	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 // loadStackedProjection returns expert weights already stacked as a single 3D
@@ -428,7 +384,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		key, w, scales,
 	)
 	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if useQuantized && model.SupportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:          w,
 			Scales:          scales,
@@ -478,7 +434,7 @@ func loadExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantiz
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
 		key, w, scales,
 	)
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if useQuantized && model.SupportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:          w,
 			Scales:          scales,
@@ -595,14 +551,14 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
-	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantizedExperts := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantizedExperts && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantizedExperts = true
 				break
 			}
@@ -682,9 +638,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				switchMLP.DownGroupSize = downW.GroupSize
 				switchMLP.DownMode = downW.Mode
 			} else {
-				switchMLP.GateWeight = transposeExpertWeightForGatherMM(denseExpertWeight(gateW))
-				switchMLP.UpWeight = transposeExpertWeightForGatherMM(denseExpertWeight(upW))
-				switchMLP.DownWeight = transposeExpertWeightForGatherMM(denseExpertWeight(downW))
+				switchMLP.GateWeight = model.TransposeExpertWeightForGatherMM(denseExpertWeight(gateW))
+				switchMLP.UpWeight = model.TransposeExpertWeightForGatherMM(denseExpertWeight(upW))
+				switchMLP.DownWeight = model.TransposeExpertWeightForGatherMM(denseExpertWeight(downW))
 			}
 			moe.SwitchMLP = switchMLP
 

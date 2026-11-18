@@ -338,15 +338,7 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
 	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
 	if err != nil {
@@ -368,19 +360,8 @@ func newModel(root *model.Root) (model.Model, error) {
 	}, nil
 }
 
-// resolveWeightPrefix finds the language_model prefix used by the safetensors
-// blob (with or without the "model." root that the HF class nesting adds).
-func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
-	for _, prefix := range []string{"language_model.", "model.language_model.", ""} {
-		if tensors[prefix+"embed_tokens.weight"] != nil {
-			return prefix
-		}
-	}
-	return ""
-}
-
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
-	prefix := resolveWeightPrefix(tensors)
+	prefix, _ := model.WeightPrefix(tensors, "embed_tokens.weight", "language_model.", "model.language_model.", "")
 	tc := &m.Cfg.TextConfig
 	linears := model.NewLinearFactory(tensors, m.Cfg.QuantGroupSize, m.Cfg.QuantBits, m.Cfg.QuantMode, m.Cfg.TensorQuant)
 
