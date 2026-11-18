@@ -208,15 +208,8 @@ func (r *FunctionGemmaRenderer) formatToolCall(tc api.ToolCall) string {
 	var sb strings.Builder
 	sb.WriteString("<start_function_call>call:" + tc.Function.Name + "{")
 
-	keys := make([]string, 0, tc.Function.Arguments.Len())
-	for k := range tc.Function.Arguments.All() {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
 	first := true
-	for _, key := range keys {
-		value, _ := tc.Function.Arguments.Get(key)
+	for key, value := range sortedToolCallArgumentValues(tc.Function.Arguments) {
 		if !first {
 			sb.WriteString(",")
 		}
