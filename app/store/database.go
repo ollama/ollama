@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 19
+const currentSchemaVersion = 20
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -89,6 +89,7 @@ func (db *database) init() error {
 		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
 		auto_update_enabled BOOLEAN NOT NULL DEFAULT 1,
+		always_on_top BOOLEAN NOT NULL DEFAULT 0,
 		claude_desktop_used BOOLEAN NOT NULL DEFAULT 0,
 		codex_desktop_used BOOLEAN NOT NULL DEFAULT 0,
 		schema_version INTEGER NOT NULL DEFAULT %d
@@ -291,6 +292,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v18 to v19: %w", err)
 			}
 			version = 19
+		case 19:
+			// add always_on_top column to settings table
+			if err := db.migrateV19ToV20(); err != nil {
+				return fmt.Errorf("migrate v19 to v20: %w", err)
+			}
+			version = 20
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -523,6 +530,21 @@ func (db *database) migrateV13ToV14() error {
 	}
 
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 14`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV19ToV20 adds the always_on_top column to the settings table
+func (db *database) migrateV19ToV20() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN always_on_top BOOLEAN NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add always_on_top column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 20`)
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
 	}
@@ -1250,9 +1272,9 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled, claude_desktop_used, codex_desktop_used
+		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled, always_on_top, claude_desktop_used, codex_desktop_used
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled, &s.ClaudeDesktopUsed, &s.CodexDesktopUsed)
+	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled, &s.AlwaysOnTop, &s.ClaudeDesktopUsed, &s.CodexDesktopUsed)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1268,8 +1290,8 @@ func (db *database) setSettings(s Settings) error {
 
 	_, err := db.conn.Exec(`
 		UPDATE settings
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = MAX(onboarding_version, ?), think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed)
+		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = MAX(onboarding_version, ?), think_enabled = ?, think_level = ?, auto_update_enabled = ?, always_on_top = ?, claude_desktop_used = ?
+	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.AlwaysOnTop, s.ClaudeDesktopUsed)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}

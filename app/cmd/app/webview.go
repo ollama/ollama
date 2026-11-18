@@ -30,8 +30,13 @@ const (
 	defaultWindowHeight    = 960
 	onboardingWindowWidth  = 900
 	onboardingWindowHeight = 660
-	minimumWindowWidth     = onboardingWindowWidth
-	minimumWindowHeight    = onboardingWindowHeight
+
+	// The minimum window size is intentionally much smaller than the
+	// onboarding size so the window can be narrowed into a side column and
+	// used alongside an editor or browser. The UI is responsive down to this
+	// width: the model picker collapses and message bubbles reflow.
+	minimumWindowWidth  = 400
+	minimumWindowHeight = 480
 )
 
 type Webview struct {
@@ -212,6 +217,15 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 
 		wv.Bind("zoomReset", func() {
 			wv.SetZoom(1.0)
+		})
+
+		// Keeps the window above other windows so it can be used as a narrow
+		// side panel next to an editor. The setting is persisted by the UI;
+		// this binding only applies it to the native window.
+		wv.Bind("setAlwaysOnTop", func(enabled bool) {
+			wv.Dispatch(func() {
+				wv.SetAlwaysOnTop(enabled)
+			})
 		})
 
 		wv.Bind("ready", func() {
@@ -482,6 +496,16 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		}
 		wv.SetSize(width, height, webview.HintNone)
 		wv.SetSize(minimumWindowWidth, minimumWindowHeight, webview.HintMin)
+
+		// Re-apply the persisted always-on-top preference so the window
+		// keeps its previous behaviour across restarts.
+		if w.Store != nil {
+			if st, err := w.Store.Settings(); err != nil {
+				slog.Error("failed to get settings", "error", err)
+			} else if st.AlwaysOnTop {
+				wv.SetAlwaysOnTop(true)
+			}
+		}
 
 		w.webview = wv
 		w.webview.Navigate(url)
