@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlxrunner/model/videoclip"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
@@ -17,6 +18,8 @@ type VisionModel struct {
 	ProjectorAct        string
 	MinPixels           int32
 	MaxPixels           int32
+	VideoTokenID        int32
+	Video               *videoclip.Config // nil when the checkpoint has no video processor
 	Patchifier          nn.LinearLayer
 	EmbeddingNorm       *nn.RMSNorm
 	Layers              []*visionLayer

@@ -14,6 +14,7 @@ var (
 	fastToolsModels       = []string{"qwen3.5:2b"}
 	fastToolsStressModels = []string{"lfm2.5"}
 	fastAudioModels       = []string{"gemma4:e2b"}
+	fastVideoModels       = []string{"qwen3.5:2b"}
 )
 
 func init() {
@@ -46,4 +47,5 @@ func init() {
 	registerToolRouteCases(testModels(fastToolsModels))
 	registerToolStressCases(testModels(fastToolsStressModels))
 	registerAudioTranscriptionCases(testModels(fastAudioModels))
+	registerVideoCases(testModels(fastVideoModels))
 }

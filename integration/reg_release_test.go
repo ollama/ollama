@@ -63,6 +63,11 @@ var (
 		"gemma4:e2b",
 		"gemma4:e4b",
 	}
+	releaseVideoModels = []string{
+		"lfm3-omni:2b",
+		"lfm3-vl:2b",
+		"qwen3.5:2b",
+	}
 )
 
 const releaseSplitBatchVisionModel = "qwen3.5:2b"
@@ -144,4 +149,5 @@ func init() {
 	registerToolStressCases(testModels(releaseToolsModels))
 	registerVisionOCRDocumentCases(testModels(releaseVisionModels))
 	registerAudioTranscriptionCases(testModels(releaseAudioModels))
+	registerVideoCases(testModels(releaseVideoModels))
 }

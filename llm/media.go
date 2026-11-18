@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"net/http"
 	"strings"
+
+	"github.com/ollama/ollama/video"
 )
 
 func NewMediaData(id int, data []byte) MediaData {
@@ -20,6 +22,9 @@ func DetectMediaKind(data []byte) MediaKind {
 	}
 	if strings.HasPrefix(http.DetectContentType(data), "image/") {
 		return MediaKindImage
+	}
+	if video.IsVideo(data) {
+		return MediaKindVideo
 	}
 	return MediaKindUnknown
 }

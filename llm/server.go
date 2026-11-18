@@ -166,6 +166,7 @@ const (
 	MediaKindUnknown MediaKind = ""
 	MediaKindImage   MediaKind = "image"
 	MediaKindAudio   MediaKind = "audio"
+	MediaKindVideo   MediaKind = "video"
 )
 
 type MediaData struct {

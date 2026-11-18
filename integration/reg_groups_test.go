@@ -93,6 +93,12 @@ func TestVision(t *testing.T) {
 	)
 }
 
+func TestVideo(t *testing.T) {
+	runIntegrationGroup(t,
+		"video-describe",
+	)
+}
+
 func TestAudio(t *testing.T) {
 	runIntegrationGroup(t,
 		"audio-transcription",

@@ -36,13 +36,23 @@ type request struct {
 	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
 	MediaItems  []mediaItem
-	Layout      any // opaque PrepareMedia layout state, stamped on every batch
+	Layout      any    // opaque PrepareMedia layout state, stamped on every batch
+	Release     func() // PrepareMedia's request-scoped cleanup; see model.PreparedRequest
 	SamplerOpts sample.Options
 	Grammar     *grammarCompilation
 }
 
+// releaseMedia runs the request's media cleanup once.
+func (r *request) releaseMedia() {
+	if r.Release != nil {
+		r.Release()
+		r.Release = nil
+	}
+}
+
 func (r request) reject(err error) {
 	r.Grammar.close()
+	r.releaseMedia()
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		// An unadmitted request has no queued responses, so the production
 		// buffer accepts this error without blocking scheduler teardown.
