@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Meta-Capp](https://github.com/cyyyp100/meta-capp) - Offline study companion for PDFs: in-context answers, quizzes and flashcards
 
 #### Mobile
 
