@@ -25,3 +25,40 @@ export function useHasToolsCapability(modelName: string | undefined) {
   const { data: capabilitiesResponse } = useModelCapabilities(modelName);
   return capabilitiesResponse?.capabilities?.includes("tools") ?? false;
 }
+
+export interface ModelThinking {
+  values: (string | boolean)[];
+  default: string | boolean;
+  stringLevels: string[];
+  hasLevels: boolean;
+  hasOff: boolean;
+  isToggleOnly: boolean;
+}
+
+export function useModelThinking(
+  modelName: string | undefined,
+): ModelThinking | undefined {
+  const { data: capabilitiesResponse } = useModelCapabilities(modelName);
+  const thinking = capabilitiesResponse?.thinking;
+  const hasCapability =
+    capabilitiesResponse?.capabilities?.includes("thinking") ?? false;
+
+  if (!hasCapability || !thinking || !thinking.values?.length) {
+    return undefined;
+  }
+
+  const stringLevels = thinking.values.filter(
+    (v: any) => typeof v === "string",
+  ) as string[];
+  const hasLevels = stringLevels.length > 0;
+  const hasOff = thinking.values.includes(false);
+
+  return {
+    values: thinking.values as (string | boolean)[],
+    default: thinking.default as string | boolean,
+    stringLevels,
+    hasLevels,
+    hasOff,
+    isToggleOnly: !hasLevels,
+  };
+}
