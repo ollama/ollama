@@ -58,6 +58,12 @@ func (p *GLM46Parser) ThinkingClose() []string {
 	return nil
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *GLM46Parser) ThinkingTags() (string, string) {
+	return glm46ThinkingOpenTag, glm46ThinkingCloseTag
+}
+
 func (p *GLM46Parser) PreservedTokens() []string {
 	return []string{
 		glm46ThinkingOpenTag,
