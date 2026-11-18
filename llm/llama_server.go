@@ -2666,6 +2666,24 @@ func extractLlamaServerErrorMessage(body []byte) string {
 
 const promptTooLongMessage = "the prompt is longer than the context length currently available to the model; shorten the prompt, adjust the context length in settings, or use a model with a longer context length"
 
+// statusErrorFromBody turns a non-2xx llama-server response into a StatusError
+// the server can hand back to the caller. A prompt that does not fit the batch
+// llama-server was started with is reported as a context length problem: the
+// backend only says "physical batch size", which means nothing to a client.
+func statusErrorFromBody(statusCode int, body []byte) error {
+	msg := extractLlamaServerErrorMessage(body)
+	if msg == "" {
+		msg = strings.TrimSpace(string(body))
+	}
+	if isEmbeddingInputLimitError(msg) {
+		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: promptTooLongMessage}
+	}
+	if msg == "" {
+		return fmt.Errorf("llama-server returned %s", http.StatusText(statusCode))
+	}
+	return api.StatusError{StatusCode: statusCode, ErrorMessage: msg}
+}
+
 func isEmbeddingInputLimitError(errMsg string) bool {
 	msg := strings.ToLower(errMsg)
 	return strings.Contains(msg, "too large") ||
@@ -2707,7 +2725,7 @@ func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecia
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("tokenize error: %s", body)
+		return nil, statusErrorFromBody(resp.StatusCode, body)
 	}
 
 	var result struct {

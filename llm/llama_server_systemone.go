@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/ollama/ollama/api"
 )
@@ -57,13 +56,10 @@ func (s *llamaServerRunner) SystemOne(ctx context.Context, state, questions json
 		return nil, nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		msg := s.statusErrorMessage(body)
 		// Decision models that read a whole prompt in one batch run with a batch
 		// as large as the context, so outgrowing it means outgrowing the context.
-		if strings.Contains(msg, "physical batch size") {
-			return nil, nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: promptTooLongMessage}
-		}
-		return nil, nil, api.StatusError{StatusCode: res.StatusCode, ErrorMessage: msg}
+		// statusErrorFromBody maps it to the same "prompt too long" message.
+		return nil, nil, statusErrorFromBody(res.StatusCode, body)
 	}
 	var response struct {
 		Answers json.RawMessage `json:"answers"`
