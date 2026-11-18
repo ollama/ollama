@@ -82,10 +82,25 @@ func ConnectableHost() *url.URL {
 	return u
 }
 
+// splitList splits a comma-separated environment variable value into its
+// entries. Whitespace around an entry is ignored and empty entries are
+// dropped, so "a, b" and "a,b" describe the same list.
+func splitList(s string) []string {
+	parts := strings.Split(s, ",")
+	list := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			list = append(list, part)
+		}
+	}
+
+	return list
+}
+
 // AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
-		origins = strings.Split(s, ",")
+		origins = splitList(s)
 	}
 
 	for _, origin := range []string{"localhost", "127.0.0.1", "0.0.0.0"} {
@@ -169,7 +184,7 @@ func Remotes() []string {
 	if raw == "" {
 		r = []string{"ollama.com"}
 	} else {
-		r = strings.Split(raw, ",")
+		r = splitList(raw)
 	}
 	return r
 }
