@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"bytes"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -146,4 +150,60 @@ func TestExtractFileDataWAV(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, "before  after", cleaned)
+}
+
+func TestExtractFileDataShellQuotedApostrophes(t *testing.T) {
+	var imageData bytes.Buffer
+	if err := jpeg.Encode(&imageData, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{
+		"filename with '.jpg",
+		"person's photo.jpg",
+		"two 'single' quotes.JPG",
+		"写真's image.jpg",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), name)
+			if err := os.WriteFile(path, imageData.Bytes(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			// Terminals close the single-quoted string, escape the apostrophe,
+			// and reopen the string when a dragged filename contains a quote.
+			quoted := "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
+			input := "describe " + quoted + " please"
+			cleaned, images, err := extractFileData(input)
+			if assert.NoError(t, err) && assert.Len(t, images, 1) {
+				assert.Equal(t, imageData.Bytes(), []byte(images[0]))
+			}
+			assert.Equal(t, "describe  please", cleaned)
+
+			// A path that cannot be loaded must remain in the user's prompt.
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			cleaned, images, err = extractFileData(input)
+			assert.NoError(t, err)
+			assert.Empty(t, images)
+			assert.Equal(t, input, cleaned)
+		})
+	}
+}
+
+func TestNormalizeFilePathEscapes(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		want  string
+	}{
+		{`/home/user/filename with '\''.jpg`, `/home/user/filename with '.jpg`},
+		{`/home/user/person\'s\ photo.jpg`, `/home/user/person's photo.jpg`},
+		{`/home/user/person's photo.jpg`, `/home/user/person's photo.jpg`},
+		{`/Users/user/Mobile\ Documents/com\~apple\~CloudDocs/image\ at\ 21.26.40@2x.png`, `/Users/user/Mobile Documents/com~apple~CloudDocs/image at 21.26.40@2x.png`},
+		{`C:\Users\user\Pictures\image.jpg`, `C:\Users\user\Pictures\image.jpg`},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeFilePath(tt.input))
+		})
+	}
 }
