@@ -67,6 +67,38 @@ func TestReadFileMetadataRejectsMalformedValues(t *testing.T) {
 	}
 }
 
+func TestReadFileMetadataRejectsDuplicateKeys(t *testing.T) {
+	var b bytes.Buffer
+	b.WriteString("GGUF")
+	writeInternalRaw(t, &b, uint32(3))
+	writeInternalRaw(t, &b, uint64(0)) // tensors
+	writeInternalRaw(t, &b, uint64(2)) // key-values
+	for _, value := range []string{"llama", "llama2"} {
+		writeInternalString(t, &b, "general.architecture")
+		writeInternalRaw(t, &b, typeString)
+		writeInternalString(t, &b, value)
+	}
+
+	path := writeTempFile(t, b.Bytes())
+
+	f, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range f.KeyValues() {
+	}
+	if err := f.Err(); err == nil || !strings.Contains(err.Error(), `duplicate key "general.architecture"`) {
+		t.Fatalf("File.Err() = %v, want duplicate key error", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ReadFileMetadata(path, 0); err == nil || !strings.Contains(err.Error(), `duplicate key "general.architecture"`) {
+		t.Fatalf("ReadFileMetadata() error = %v, want duplicate key error", err)
+	}
+}
+
 func TestReadArrayRejectsOversizedCollectedArray(t *testing.T) {
 	var b bytes.Buffer
 	writeInternalRaw(t, &b, typeString)
