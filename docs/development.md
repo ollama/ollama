@@ -39,7 +39,23 @@ cmake -B build . -DOLLAMA_LLAMA_BACKENDS="cuda_v13;vulkan"
 cmake --build build --parallel 8
 ```
 
-Supported backend values are `cuda_v12`, `cuda_v13`, `rocm_v7_1`, `rocm_v7_2`, `vulkan`, `cuda_jetpack5`, and `cuda_jetpack6`.
+Supported backend values are `cuda_v12`, `cuda_v13`, `rocm_v7_1`, `rocm_v7_2`, `vulkan`, `zendnn`, `cuda_jetpack5`, and `cuda_jetpack6`.
+
+On Linux, `zendnn` accelerates CPU inference on AMD CPUs via [ZenDNN](https://github.com/amd/ZenDNN). It is built into the CPU payload rather than a separate runner. Set `ZENDNN_ROOT` to an existing ZenDNN install to skip the automatic download and build:
+
+```shell
+# ZenDNN
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS=zendnn
+cmake --build build --parallel 8
+
+# llama/server preset only 
+cmake -S llama/server --preset zendnn
+cmake --build build/llama-server-zendnn --parallel 8 --target llama-server llama-quantize
+
+# with an existing ZenDNN install
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS=zendnn -DZENDNN_ROOT=/path/to/zendnn/install
+cmake --build build --parallel 8
+```
 
 Use standard CMake architecture overrides to narrow GPU builds for local hardware:
 
