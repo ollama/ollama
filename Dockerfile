@@ -263,7 +263,7 @@ RUN curl --retry 3 -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.m
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 COPY . .
-ARG GOFLAGS="'-ldflags=-w -s'"
+ARG GOFLAGS="'-ldflags=-w'"
 ENV CGO_ENABLED=1
 ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
