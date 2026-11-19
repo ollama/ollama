@@ -155,6 +155,64 @@ cmake -B build . -DOLLAMA_MLX_BACKENDS=cuda_v13
 cmake --build build --parallel 8
 ```
 
+### Local llama.cpp source overrides
+
+To validate against a local checkout (or a fork/branch you are iterating on), set:
+
+```shell
+export OLLAMA_LLAMA_CPP_SOURCE=/path/to/llama.cpp
+```
+
+For remote forks/branches (no local checkout), override the repository and tag/commit directly:
+
+```shell
+export OLLAMA_LLAMA_CPP_REPOSITORY=https://github.com/<your-llama.cpp-fork>/llama.cpp.git
+export OLLAMA_LLAMA_CPP_TAG=hy3-mtp
+```
+
+Then run the normal Linux build:
+
+```shell
+cmake -S llama/server --preset cpu
+cmake --build build/llama-server-cpu --parallel 8
+```
+
+And rebuild the full Ollama payload:
+
+```shell
+cmake -B build . -DOLLAMA_LLAMA_BACKENDS="cuda_v13"
+cmake --build build --parallel 8
+```
+
+### Hy3 deployment workflow
+
+The Hy3 GGUF page currently recommends running against `hf.co/satgeze/Hy3-1M-GGUF`
+with a branch that has `hy_v3` support in llama.cpp (for example
+`satindergrewal/llama.cpp` at the `hy3-mtp` branch).
+
+To keep model files on a dedicated data drive, set the cache location before any
+deploy or run:
+
+```shell
+export OLLAMA_MODELS=/srv/hy3
+export OLLAMA_HOST=127.0.0.1:11450
+```
+
+Use the helper script to pick a class and verify in terminal:
+
+```shell
+./scripts/deploy-hy3.sh [auto|Q2_K|MTP-Q2_K|IQ2_M|...] 
+```
+
+If a class is already present under `/srv/hy3/models/manifests/hf.co/satgeze/Hy3-1M-GGUF`,
+the script runs directly from disk. Otherwise it pulls the model from Hugging Face
+into the same directory.
+
+On this host profile (A100 80GB GPUs, `/srv` storage), pure GPU fit is limited:
+Q2_K and larger Hy3 classes are over the available VRAM budget without offload,
+so plan for CPU fallback or lower-memory contexts even though storage is available on
+`/srv`.
+
 ## Docker
 
 ```shell
