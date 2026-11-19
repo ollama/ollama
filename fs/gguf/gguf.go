@@ -225,6 +225,16 @@ func (f *File) readKeyValue() (KeyValue, error) {
 		return KeyValue{}, err
 	}
 
+	// GGUF metadata keys are unique, so a repeated key is a malformed
+	// file. Reject it here, in the shared parse path, so the first-wins
+	// File.KeyValue reader and the last-wins ReadFileMetadata reader can
+	// no longer disagree about the same file.
+	if f.keyValues != nil && slices.ContainsFunc(f.keyValues.values, func(kv KeyValue) bool {
+		return kv.Key == key
+	}) {
+		return KeyValue{}, fmt.Errorf("%w duplicate metadata key %q", ErrUnsupported, key)
+	}
+
 	return KeyValue{
 		Key:   key,
 		Value: Value{value},
