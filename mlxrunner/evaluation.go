@@ -15,8 +15,8 @@ type activeEvaluation struct {
 	state   *evaluationState
 }
 
-func (r *Runner) scheduleEvaluation(ctx context.Context, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
-	request := &evaluationRequest{ctx: ctx, open: open, done: make(chan error, 1)}
+func (r *Runner) scheduleEvaluation(ctx context.Context, tokens []int32, items []mediaItem, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
+	request := &evaluationRequest{ctx: ctx, tokens: tokens, items: items, open: open, done: make(chan error, 1)}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -27,34 +27,28 @@ func (r *Runner) scheduleEvaluation(ctx context.Context, open func(*batchSlot, [
 	return <-request.done
 }
 
-func (s *batchScheduler) admitEvaluation(request *evaluationRequest) {
+func (s *batchScheduler) admitEvaluation(request *evaluationRequest, index int) {
 	if err := request.ctx.Err(); err != nil {
 		request.reject(err)
 		return
 	}
-	for i, slot := range s.slots {
-		if slot != nil && slot.busy() {
-			continue
+	slot := s.slots[index]
+	if slot == nil {
+		slot = &batchSlot{id: index}
+		s.slots[index] = slot
+	}
+	var peers []*prefixCache
+	for _, other := range s.slots {
+		if other != nil && other != slot && other.scoreCache != nil {
+			peers = append(peers, other.scoreCache)
 		}
-		if slot == nil {
-			slot = &batchSlot{id: i}
-			s.slots[i] = slot
-		}
-		var peers []*prefixCache
-		for _, other := range s.slots {
-			if other != nil && other != slot && other.scoreCache != nil {
-				peers = append(peers, other.scoreCache)
-			}
-		}
-		p, err := request.open(slot, peers)
-		if err != nil {
-			request.done <- err
-			return
-		}
-		slot.evaluation = &activeEvaluation{request: request, state: p}
+	}
+	p, err := request.open(slot, peers)
+	if err != nil {
+		request.done <- err
 		return
 	}
-	panic("scheduler admitted evaluation request without a free slot")
+	slot.evaluation = &activeEvaluation{request: request, state: p}
 }
 
 func (s *batchScheduler) finishEvaluation(slot *batchSlot, err error) {
@@ -89,7 +83,7 @@ func (r *Runner) forwardHidden(ctx context.Context, input *model.PreparedRequest
 		return 0, err
 	}
 	cached := 0
-	err = r.scheduleEvaluation(ctx, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+	err = r.scheduleEvaluation(ctx, input.Tokens, items, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 		p := r.openEvaluation(slot, input, items, consume, peers...)
 		p.keepScratch = true
 		cached = p.position
@@ -106,7 +100,7 @@ func (r *Runner) openEvaluation(slot *batchSlot, input *model.PreparedRequest, i
 		if len(cs) > 0 {
 			slot.scoreHidden = cache.NewHiddenCache()
 			slot.scoreCache = newPrefixCache(append(cs, slot.scoreHidden))
-			slot.scoreCache.limitBytes = maxPagedOutBytes / int64(max(1, r.parallel))
+			slot.scoreCache.limitBytes = r.snapshotLimit()
 		}
 	}
 	if slot.scoreCache != nil {

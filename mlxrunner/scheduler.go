@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -29,6 +30,18 @@ func (slot *batchSlot) busy() bool {
 	return slot.request != nil || slot.evaluation != nil || slot.speech != nil
 }
 
+// activeCache identifies state still owned by an executing session. A response
+// waiting for a slow reader no longer needs the completed session's cache.
+func (slot *batchSlot) activeCache() *prefixCache {
+	if slot.request != nil && !slot.request.finished {
+		return slot.cache
+	}
+	if slot.evaluation != nil {
+		return slot.scoreCache
+	}
+	return nil
+}
+
 type batchRequest struct {
 	request   request
 	session   *cacheSession
@@ -46,11 +59,14 @@ type batchRequest struct {
 }
 
 type batchScheduler struct {
-	r           *Runner
-	slots       []*batchSlot
-	nextPrefill int
-	keepScratch bool
-	drafting    batchDrafting
+	r                 *Runner
+	slots             []*batchSlot
+	nextPrefill       int
+	keepScratch       bool
+	drafting          batchDrafting
+	snapshotWorkspace int64
+	snapshotTimer     *time.Timer
+	memory            *discover.MemoryMonitor
 }
 
 type draftBatchSize struct {
@@ -126,6 +142,15 @@ func (r *Runner) onMLX(ctx context.Context, f func() error) error {
 
 func (r *Runner) runBatchRequests(ctx context.Context) error {
 	s := &batchScheduler{r: r, slots: make([]*batchSlot, max(1, r.parallel))}
+	defer func() {
+		if s.snapshotTimer != nil {
+			s.snapshotTimer.Stop()
+		}
+		if s.memory != nil {
+			s.memory.Close()
+		}
+		r.snapshotLimitBytes = 0
+	}()
 	defer skipCleanupOnPanic(func() {
 		_ = r.onMLX(context.Background(), func() error {
 			mlx.Scoped(func() {
@@ -156,6 +181,7 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 	})
 	slog.Info("MLX request scheduler", "parallel", r.parallel, "drafting", "shared-verification", "attention", "per-request")
 	for {
+		snapshotChanged := false
 		var pending queuedRequest
 		var incoming chan queuedRequest
 		active := false
@@ -166,35 +192,65 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 				active = true
 			}
 		}
+		var maintenance <-chan time.Time
+		if s.snapshotTimer != nil {
+			maintenance = s.snapshotTimer.C
+		}
 		if !active {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case pending = <-incoming:
+			case <-maintenance:
+				snapshotChanged = true
 			}
 		} else {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case pending = <-incoming:
+			case <-maintenance:
+				snapshotChanged = true
 			default:
 			}
 		}
 		progressed := false
 		err := r.onMLX(ctx, func() error {
+			measure := false
+			var before, peak int
 			mlx.Scoped(func() {
+				admitted := false
 				if pending != nil {
 					if _, generation := pending.(request); generation && !active {
 						mlx.ResetPeakMemory()
 					}
-					s.admit(pending)
+					admitted = s.admit(pending)
 					progressed = true
 				}
 				// Coalesce already waiting callers without delaying the first one.
-				s.admitPending()
-				worked := s.step()
-				progressed = progressed || worked
+				// Admission trims with the incoming prefix in view. Do not let a
+				// simultaneous timer wake discard it before lookup.
+				admitted = s.admitPending() || admitted
+				if snapshotChanged && !admitted {
+					s.trimSnapshots(nil, -1)
+				}
+				step := func() {
+					worked := s.step()
+					progressed = progressed || worked
+				}
+				measure = s.hasPrefixCache() && s.memory != nil
+				if measure {
+					before = mlx.ActiveMemory()
+					peak = mlx.MeasurePeakMemory(step)
+				} else {
+					step()
+				}
 			})
+			if measure {
+				// Reserve transient workspace and growth of live cache buffers.
+				// Prefill buffers can be larger than their decode-time state.
+				s.snapshotWorkspace = max(s.snapshotWorkspace, int64(peak-before))
+			}
 			// Release unused allocator buffers after the round's temporaries
 			// are freed, once all responses have drained.
 			for _, slot := range s.slots {
@@ -230,38 +286,61 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 	}
 }
 
-func (s *batchScheduler) admit(pending queuedRequest) {
+func (s *batchScheduler) admit(pending queuedRequest) bool {
+	if err := pending.context().Err(); err != nil {
+		pending.reject(err)
+		return false
+	}
+	// Choose the destination before trimming so retention uses the same local
+	// cache and peer-checkpoint rules as the request that follows.
+	index := s.selectSlot(pending)
+	s.trimSnapshots(pending, index)
 	switch req := pending.(type) {
 	case request:
-		s.admitGeneration(req)
+		s.admitGeneration(req, index)
 	case *evaluationRequest:
-		s.admitEvaluation(req)
+		s.admitEvaluation(req, index)
 	case *speechRequest:
 		s.admitSpeech(req)
 	default:
 		panic("unknown scheduler request type")
 	}
+	// The first prefix cache is created during admission. Seed the observation
+	// before its first forward so that any resulting compression remains visible.
+	if s.snapshotTimer == nil {
+		s.trimSnapshots(pending, index)
+	}
+	return true
 }
 
-func (s *batchScheduler) admitGeneration(request request) {
-	s.keepScratch = false
-	if err := request.Ctx.Err(); err != nil {
-		request.reject(err)
-		return
+// Generation prefers the longest local match; other requests use the first
+// available slot. A completed response still draining to its reader is busy.
+func (s *batchScheduler) selectSlot(pending queuedRequest) int {
+	var keys []uint32
+	if req, ok := pending.(request); ok {
+		keys = effectiveKeyTokens(req.Tokens, req.MediaItems)
 	}
 	best, bestMatch := -1, -1
-	keys := effectiveKeyTokens(request.Tokens, request.MediaItems)
 	for i, slot := range s.slots {
 		if slot != nil && slot.busy() {
 			continue
 		}
 		matched := 0
-		if slot != nil && slot.cache != nil && slot.cache.root != nil {
+		if len(keys) > 0 && slot != nil && slot.cache != nil && slot.cache.root != nil {
 			_, matched = findBestMatch(slot.cache.root, slot.cache.key(keys))
 		}
 		if matched > bestMatch {
 			best, bestMatch = i, matched
 		}
+	}
+	return best
+}
+
+func (s *batchScheduler) admitGeneration(request request, best int) {
+	s.keepScratch = false
+	if err := request.Ctx.Err(); err != nil {
+		request.reject(err)
+		return
 	}
 	slot := s.slots[best]
 	if slot == nil {
@@ -276,7 +355,7 @@ func (s *batchScheduler) admitGeneration(request request) {
 		}
 		slot.targets = targets
 		slot.cache = newPrefixCache(slices.Concat(targets, draft))
-		slot.cache.limitBytes = maxPagedOutBytes / int64(len(s.slots))
+		slot.cache.limitBytes = s.r.snapshotLimit()
 		if s.r.spec != nil {
 			slot.speculation = newSpeculation(s.r, slot.id, s.r.spec.draft, targets, draft)
 			slot.cache.draftLookahead = s.r.cache.draftLookahead
@@ -667,7 +746,8 @@ func sampleRow(result sample.Result, row int) sample.Result {
 	return sample.Result{Token: result.Token.Slice(mlx.Slice(row, row+1)), Logprob: slice(result.Logprob), TopTokens: slice(result.TopTokens), TopLogprobs: slice(result.TopLogprobs)}
 }
 
-func (s *batchScheduler) admitPending() {
+func (s *batchScheduler) admitPending() bool {
+	admitted := false
 	free := 0
 	for _, slot := range s.slots {
 		if slot == nil || !slot.busy() {
@@ -677,9 +757,28 @@ func (s *batchScheduler) admitPending() {
 	for range free {
 		select {
 		case request := <-s.r.Requests:
-			s.admit(request)
+			admitted = s.admit(request) || admitted
 		default:
-			return
+			return admitted
 		}
 	}
+	return admitted
+}
+
+// New slots use the last successful observation or its failure fallback.
+// Until retention has observed memory, preserve the fixed per-slot allowance.
+func (r *Runner) snapshotLimit() int64 {
+	if r.snapshotLimitBytes != 0 {
+		return r.snapshotLimitBytes
+	}
+	return maxPagedOutBytes / int64(max(1, r.parallel))
+}
+
+func (s *batchScheduler) hasPrefixCache() bool {
+	for _, slot := range s.slots {
+		if slot != nil && (slot.cache != nil || slot.scoreCache != nil) {
+			return true
+		}
+	}
+	return false
 }

@@ -153,6 +153,19 @@ func (s *kvSnapshot) Size() int {
 	return 0
 }
 
+func (s *kvSnapshot) pendingBytes() int {
+	if s.cache == nil || s.keys != nil {
+		return 0
+	}
+	c := s.cache
+	// A one-head slice is contiguous and can retain the full backing buffer.
+	// Its next overwrite may therefore copy the whole live buffer.
+	if c.keys.Dim(0)*c.keys.Dim(1) == 1 {
+		return c.keys.NumBytes() + c.values.NumBytes()
+	}
+	return (c.keys.NumBytes() + c.values.NumBytes()) / c.keys.Dim(2) * (s.toOffset - s.fromOffset)
+}
+
 func (s *kvSnapshot) SetMaterializeHook(fn func(delta int)) { s.onMaterialize = fn }
 
 func (s *kvSnapshot) Close() {

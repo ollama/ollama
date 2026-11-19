@@ -268,7 +268,7 @@ func (r *Runner) runEmbed(ctx context.Context, request embeddingRequest) (embedW
 		return fail(http.StatusBadRequest, err)
 	}
 	var embedding []float32
-	err = r.scheduleEvaluation(ctx, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+	err = r.scheduleEvaluation(ctx, tokens, items, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 		// Device queries and array operations stay on the MLX worker.
 		if budget := EmbedCapacityBudget(); budget > 0 {
 			if need := PredictedEmbedAllocationBytes(len(tokens), embedHiddenSize(r.Model)); need > budget {

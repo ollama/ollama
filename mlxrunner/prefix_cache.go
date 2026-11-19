@@ -703,6 +703,130 @@ func (s *cacheSession) close() {
 	}
 }
 
+// reclaimColdHistory responds to observed pressure with released owned storage.
+// Removing only a lazy snapshot's possible future copy does not repay pressure.
+func reclaimColdHistory(caches, idle []*prefixCache, bytes int64, preferred map[*trieNode]int) int64 {
+	before := mlx.ActiveMemory()
+	changed := false
+	for int64(before-mlx.ActiveMemory()) < bytes {
+		owner, node, frontier := oldestColdHistory(caches, idle, preferred)
+		// Compression feedback yields checkpoints, but only the physical
+		// headroom target may discard an idle slot's final restore point.
+		// Do not skip that frontier to evict a better incoming match instead.
+		if node == nil || frontier {
+			break
+		}
+		owner.evictNode(node)
+		changed = true
+	}
+	if changed {
+		mlx.ClearCache()
+	}
+	return int64(before - mlx.ActiveMemory())
+}
+
+func pendingHistoryBytes(caches []*prefixCache) int64 {
+	var bytes int64
+	for _, c := range caches {
+		walkNodes(c.root, func(n *trieNode) bool {
+			for _, snap := range n.snapshots {
+				if snap != nil {
+					bytes += int64(cache.PendingCopyBytes(snap))
+				}
+			}
+			return true
+		})
+	}
+	return bytes
+}
+
+// oldestColdHistory selects the oldest eligible checkpoint or inactive leaf.
+// Checkpoint merges must preserve the child's state without allocating. Only
+// after candidates with the same match length are exhausted may an idle slot
+// give up its frontier.
+// Prefer shorter incoming-prefix matches, then older history, without pinning
+// any idle state against pressure.
+func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) (*prefixCache, *trieNode, bool) {
+	var owner *prefixCache
+	var oldest *trieNode
+	for _, c := range caches {
+		walkNodes(c.root, func(n *trieNode) bool {
+			if n.parent == nil || len(n.children) > 1 || len(c.activePath) == 0 || n == c.activePath[len(c.activePath)-1] {
+				return true
+			}
+			if len(n.children) == 1 {
+				child := n.children[0]
+				for i, layer := range c.caches {
+					var parentSnap, childSnap cache.Snapshot
+					if i < len(n.snapshots) {
+						parentSnap = n.snapshots[i]
+					}
+					if i < len(child.snapshots) {
+						childSnap = child.snapshots[i]
+					}
+					if !cache.CanMergeWithoutCopy(layer, parentSnap, childSnap) {
+						return true
+					}
+				}
+			}
+			if oldest == nil || cmp.Or(cmp.Compare(preferred[n], preferred[oldest]), n.lastUsed.Compare(oldest.lastUsed), cmp.Compare(oldest.endOffset, n.endOffset), cmp.Compare(oldest.snapshotBytes(), n.snapshotBytes())) < 0 {
+				owner, oldest = c, n
+			}
+			return true
+		})
+	}
+	// Keep frontiers ahead of ordinary checkpoints at the same match length.
+	// A shorter matching idle history may yield before a better incoming match.
+	idleSelected := false
+	for _, c := range idle {
+		if len(c.activePath) < 2 {
+			continue
+		}
+		n := c.activePath[len(c.activePath)-1]
+		if len(n.children) != 0 {
+			continue
+		}
+		if oldest != nil {
+			if preferred[n] > preferred[oldest] {
+				continue
+			}
+			if preferred[n] == preferred[oldest] && (!idleSelected || !n.lastUsed.Before(oldest.lastUsed)) {
+				continue
+			}
+		}
+		owner, oldest, idleSelected = c, n, true
+	}
+	return owner, oldest, idleSelected
+}
+
+func evictColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) bool {
+	owner, oldest, _ := oldestColdHistory(caches, idle, preferred)
+	if oldest == nil {
+		return false
+	}
+	if len(oldest.children) == 0 {
+		if i := slices.Index(owner.activePath, oldest); i >= 0 {
+			owner.activePath = owner.activePath[:i]
+		}
+	}
+	owner.evictNode(oldest)
+	if len(owner.root.children) == 0 && slices.Contains(idle, owner) {
+		owner.freeAll()
+	}
+	return true
+}
+
+// liveBytes includes unused attention capacity which a write may copy.
+func (c *prefixCache) liveBytes() int {
+	var bytes int
+	mlx.Scoped(func() {
+		for _, kv := range c.caches {
+			bytes += cache.CopyBytes(kv)
+		}
+	})
+	return bytes
+}
+
 // enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
 func (c *prefixCache) enforceEvictionPolicy() {
 	limit := c.limitBytes
