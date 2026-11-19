@@ -5,11 +5,20 @@ import (
 	"math"
 	"math/cmplx"
 	"math/rand/v2"
+	"os"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
+
+func TestMain(m *testing.M) {
+	// LFM3 speech needs full float32 for its codec; set it before MLX caches the precision mode.
+	if err := os.Setenv("MLX_ENABLE_TF32", "0"); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 func TestFSQRoundTrip(t *testing.T) {
 	cfg, err := ParseCodecConfig([]byte(codecConfig))
@@ -206,8 +215,6 @@ func randArray(rng *rand.Rand, scale float64, shape ...int) *mlx.Array {
 }
 
 func TestCodecStreamMatchesDecode(t *testing.T) {
-	// Compare in full float32; TF32 matmuls (the M5 default) differ by shape.
-	t.Setenv("MLX_ENABLE_TF32", "0")
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		c := tinyCodec(t)
 		rng := rand.New(rand.NewPCG(9, 10))

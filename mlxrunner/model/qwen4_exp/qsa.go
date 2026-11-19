@@ -60,7 +60,7 @@ func loadFullAttention(linears model.LinearFactory, tensors map[string]*mlx.Arra
 	return a, nil
 }
 
-func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
+func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Layer, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 
@@ -92,27 +92,42 @@ func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cach
 	}
 
 	var out *mlx.Array
-	keyLength := L
-	for _, offset := range b.SeqOffsets {
-		keyLength = max(keyLength, offset+L)
-	}
 	if mainHistory == nil {
 		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
 			nn.WithKV(k, v, b.SeqQueryLens), nn.WithMask(nn.CausalMask()))
-	} else if keyLength <= cfg.IndexerBudget {
-		// QSA selects the entire visible history within the indexer budget.
-		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
-			nn.WithKVHistory(mainHistory), nn.WithMask(nn.CausalMask()))
 	} else {
-		compressed := qsaCompressedKeys(indexHistory.K(), indexHistory.V(), a.Indexer, cfg)
-		scores := mlx.Matmul(indexQ.AsType(mlx.DTypeFloat32), mlx.Transpose(compressed.AsType(mlx.DTypeFloat32), 0, 1, 3, 2))
-		scores = mlx.DivScalar(mlx.Sum(mlx.ReLU(scores), 1, false), float32(math.Sqrt(float64(cfg.IndexerHeadDim))))
-		blocks, queryEnds := qsaLogicalBlocks(scores, b, keyLength, cfg)
-		out = qsaSparseAttention(q, mainHistory, blocks, queryEnds, cfg)
+		out = a.attend(b, q, indexQ, mainHistory, indexHistory, cfg)
 	}
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	out = mlx.Mul(out, mlx.Sigmoid(gate))
 	return a.OProj.Forward(out)
+}
+
+// attend uses each request's own sparse-selection budget and history length.
+// The projections remain batched; attention does not pad or copy KV histories.
+func (a *fullAttention) attend(b *batch.Batch, q, indexQ *mlx.Array, main, index *nn.KVHistory, cfg *Config) *mlx.Array {
+	if rows := main.Rows(); rows != nil {
+		outputs := make([]*mlx.Array, len(rows))
+		for i, row := range rows {
+			outputs[i] = a.attend(b.Row(i),
+				q.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				indexQ.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				row, index.Rows()[i], cfg)
+		}
+		return mlx.Concatenate(outputs, 0)
+	}
+	keyLength := int32(q.Dim(2))
+	for _, offset := range b.SeqOffsets {
+		keyLength = max(keyLength, offset+int32(q.Dim(2)))
+	}
+	if keyLength <= cfg.IndexerBudget {
+		return nn.ScaledDotProductAttention(b, q, cfg.Scale, nn.WithKVHistory(main), nn.WithMask(nn.CausalMask()))
+	}
+	compressed := qsaCompressedKeys(index.K(), index.V(), a.Indexer, cfg)
+	scores := mlx.Matmul(indexQ.AsType(mlx.DTypeFloat32), mlx.Transpose(compressed.AsType(mlx.DTypeFloat32), 0, 1, 3, 2))
+	scores = mlx.DivScalar(mlx.Sum(mlx.ReLU(scores), 1, false), float32(math.Sqrt(float64(cfg.IndexerHeadDim))))
+	blocks, queryEnds := qsaLogicalBlocks(scores, b, keyLength, cfg)
+	return qsaSparseAttention(q, main, blocks, queryEnds, cfg)
 }
 
 func (a *attentionIndexer) Forward(x, cos, sin *mlx.Array, cfg *Config) (*mlx.Array, *mlx.Array) {

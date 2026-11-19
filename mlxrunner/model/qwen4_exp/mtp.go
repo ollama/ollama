@@ -62,7 +62,7 @@ func (m *mtpDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
 
 func (m *mtpDraft) Unembed(x *mlx.Array) *mlx.Array { return (*Model)(m).Unembed(x) }
 
-func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	B, L := int32(b.InputIDs.Dim(0)), int32(b.InputIDs.Dim(1))
 	var mrope []int32
 	if m.Vision != nil {
@@ -81,7 +81,7 @@ func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden
 	backbone = mlx.Add(backbone, mlx.ExpandDims(embedding, -2))
 	backbone = mlx.Reshape(backbone, B, L, m.HCCount*m.HiddenSize)
 
-	var main, side cache.Cache
+	var main, side cache.Layer
 	if len(draftCaches) > 0 {
 		main = draftCaches[0]
 	}

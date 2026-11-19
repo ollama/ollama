@@ -9,12 +9,9 @@ import (
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	if caches != nil && len(caches) < len(m.Layers) {
 		panic("ripple: cache count must cover target layers")
-	}
-	if caches != nil && b.InputIDs.Dim(0) != 1 {
-		panic("ripple: cached batches require one sequence")
 	}
 	h := scaleEmbedding(m.EmbedTokens.Forward(b.InputIDs), m.EmbedScale)
 	seed := h
@@ -22,7 +19,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	cos, sin := rotaryTables(positions, m.HeadDim, m.RopeTheta, h.DType())
 	var features []*mlx.Array
 	for i, layer := range m.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if caches != nil {
 			c = caches[i]
 		}
@@ -38,7 +35,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	return h, h
 }
 
-func (l *Layer) Forward(x, seed *mlx.Array, b *batch.Batch, c cache.Cache, cos, sin *mlx.Array, local bool, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x, seed *mlx.Array, b *batch.Batch, c cache.Layer, cos, sin *mlx.Array, local bool, cfg *Config) *mlx.Array {
 	u := rmsNorm(x, l.InputNorm, cfg.RMSNormEps)
 	a := l.Attention.Forward(u, seed, b, c, cos, sin, local, cfg)
 	h := mlx.Add(x, rmsNorm(a, l.PostAttentionNorm, cfg.RMSNormEps))
@@ -46,7 +43,7 @@ func (l *Layer) Forward(x, seed *mlx.Array, b *batch.Batch, c cache.Cache, cos, 
 	return mlx.Add(h, rmsNorm(f, l.PostFFNNorm, cfg.RMSNormEps))
 }
 
-func (a *Attention) Forward(x, seed *mlx.Array, b *batch.Batch, c cache.Cache, cos, sin *mlx.Array, local bool, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x, seed *mlx.Array, b *batch.Batch, c cache.Layer, cos, sin *mlx.Array, local bool, cfg *Config) *mlx.Array {
 	B, L := int32(x.Dim(0)), int32(x.Dim(1))
 	q := mlx.Reshape(a.QProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
 	k := mlx.Reshape(a.KProj.Forward(x), B, L, cfg.NumKeyValueHeads, cfg.HeadDim)

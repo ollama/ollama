@@ -658,7 +658,7 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 	}
 	if name == "pi" {
 		budget := modelShowTimeout
-		model, err := c.piTargetModel(ctx, cfg.Models[0], &budget)
+		model, _, err := c.piTargetModel(ctx, cfg.Models[0], &budget, nil)
 		return cfg.Models[0], err == nil && piSupportsChat(model), nil
 	}
 
@@ -1567,7 +1567,7 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 			resolved[i].Thinking = thinking.Clone()
 		}
 	}
-	if integration != "codex" && integration != chatGPTIntegrationName && integration != codexAppIntegrationName {
+	if !slices.Contains([]string{"codex", "opencode", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
 		return resolved
 	}
 	showCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

@@ -188,11 +188,10 @@ func rippleRunnerMemory(t *testing.T) (active int) {
 	return active
 }
 
-func rippleRunnerRequest(t *testing.T, r *Runner, prompt string, count int) Request {
+func rippleRunnerRequest(t *testing.T, r *Runner, prompt string, count int) request {
 	t.Helper()
-	request := Request{
+	request := request{
 		CompletionRequest: CompletionRequest{Prompt: prompt, Options: api.Options{NumPredict: count}},
-		Pipeline:          r.TextGenerationPipeline,
 		SamplerOpts: sample.Options{
 			Temperature: 0, RepeatLastN: 8, RepeatPenalty: 1.1,
 			Seed: 1, UseSeed: true, Logprobs: true, TopLogprobs: 3,
@@ -208,16 +207,52 @@ func rippleRunnerRequest(t *testing.T, r *Runner, prompt string, count int) Requ
 	return request
 }
 
+// Drive the production scheduler with the fixture's persistent cache owner so
+// the tests can inspect cache offsets and retained memory between requests.
+func runRippleScheduledRequest(r *Runner, request request) error {
+	slot := &batchSlot{cache: r.cache, speculation: r.spec, targets: r.cache.caches}
+	if r.spec != nil {
+		slot.targets = r.spec.targets
+	}
+	s := &batchScheduler{r: r, slots: []*batchSlot{slot}}
+	if err := r.onMLX(request.Ctx, func() error {
+		mlx.Scoped(func() { s.admit(request) })
+		return nil
+	}); err != nil {
+		return err
+	}
+	var result error
+	for slot.request != nil {
+		if err := r.onMLX(context.Background(), func() error {
+			mlx.Scoped(func() {
+				active := slot.request
+				s.step()
+				for _, response := range active.responses {
+					if response.Error != nil {
+						result = *response.Error
+					}
+				}
+			})
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if request.Ctx.Err() != nil {
+		return request.Ctx.Err()
+	}
+	return result
+}
+
 func runRippleRunnerRequest(t *testing.T, r *Runner, prompt string) (string, []llm.Logprob, int) {
 	t.Helper()
 	request := rippleRunnerRequest(t, r, prompt, 4)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	request.Ctx = ctx
-	if err := r.runRequest(request); err != nil {
+	if err := runRippleScheduledRequest(r, request); err != nil {
 		t.Fatal(err)
 	}
-	close(request.Responses)
 	var text strings.Builder
 	var logprobs []llm.Logprob
 	var final *CompletionResponse
@@ -313,8 +348,7 @@ func TestRippleRunnerRequests(t *testing.T) {
 		}
 		responses <- received
 	}()
-	err := reused.runRequest(request)
-	close(request.Responses)
+	err := runRippleScheduledRequest(reused, request)
 	received := <-responses
 	if !errors.Is(err, context.Canceled) || len(received) == 0 || received[0].Content == "" {
 		t.Fatalf("cancel after real output: err=%v responses=%+v", err, received)
@@ -454,7 +488,7 @@ type rippleDFlash2Observer struct {
 	selections int
 }
 
-func (d *rippleDFlash2Observer) Forward(b *batch.Batch, targets, drafts []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (d *rippleDFlash2Observer) Forward(b *batch.Batch, targets, drafts []cache.Layer) (*mlx.Array, *mlx.Array) {
 	call := rippleDraftForward{offset: int(b.SeqOffsets[0])}
 	if b.Hidden != nil {
 		call.contextRows, call.featureWidth = b.Hidden.Dim(1), b.Hidden.Dim(2)
@@ -529,10 +563,9 @@ func runRippleDFlash2Request(t *testing.T, r *Runner, prompt string, count int) 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	request.Ctx = ctx
-	if err := r.runRequest(request); err != nil {
+	if err := runRippleScheduledRequest(r, request); err != nil {
 		t.Fatal(err)
 	}
-	close(request.Responses)
 	var text strings.Builder
 	var final *CompletionResponse
 	for response := range request.Responses {
@@ -659,8 +692,7 @@ func TestRippleRunnerDFlash2(t *testing.T) {
 			}
 			responses <- received
 		}()
-		err := r.runRequest(request)
-		close(request.Responses)
+		err := runRippleScheduledRequest(r, request)
 		received := <-responses
 		if !errors.Is(err, context.Canceled) || len(received) == 0 || received[0].Content == "" || d.selections == 0 {
 			t.Fatalf("cancel after real speculative output: err=%v responses=%+v selections=%d", err, received, d.selections)

@@ -14,7 +14,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
-var _ model.CachedScorer = (*Model)(nil)
+var _ model.Scorer = (*Model)(nil)
 
 // The publisher's bare-v1 prompt has no chat delimiters or generation suffix.
 const imageMarker = "<|vision_start|><|image_pad|><|vision_end|>"
@@ -160,15 +160,11 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model
 		if len(prepared.Tokens) > input.MaxTokens {
 			return badRequest(fmt.Errorf("question %d needs %d tokens; limit is %d", i, len(prepared.Tokens), input.MaxTokens))
 		}
-		mlx.Scoped(func() {
-			var hidden *mlx.Array
-			var restored int
-			hidden, restored, err = forward(ctx, prepared, segments)
-			cached += restored
-			if err == nil {
-				result.Logits = append(result.Logits, m.finishScore(hidden, len(prepared.Tokens), ids, bias, row.Question.Type))
-			}
+		restored, err := forward(ctx, prepared, segments, func(hidden *mlx.Array) error {
+			result.Logits = append(result.Logits, m.finishScore(hidden, len(prepared.Tokens), ids, bias, row.Question.Type))
+			return nil
 		})
+		cached += restored
 		if err != nil {
 			return result, err
 		}

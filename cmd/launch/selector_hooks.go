@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -101,7 +102,7 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 		return true, nil
 	}
 	if currentLaunchConfirmPolicy.requireYesMessage {
-		return false, fmt.Errorf("%s requires confirmation; re-run with --yes to continue", prompt)
+		return false, fmt.Errorf("confirmation required: %s; re-run with --yes to continue", strings.TrimSuffix(prompt, "?"))
 	}
 
 	if DefaultConfirmPrompt != nil {

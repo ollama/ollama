@@ -29,7 +29,9 @@ func TestResolveThinking(t *testing.T) {
 		{"invalid metadata retains request", &model.Thinking{Values: []any{false}, Default: 75}, "xhigh", "xhigh"},
 		{"toggle unsupported uses on", &model.Thinking{Values: []any{false, true}, Default: true}, "low", true},
 		{"off default is not lost", &model.Thinking{Values: []any{false, true}, Default: false}, "low", false},
-		{"fixed thinking preserves explicit off", &model.Thinking{Values: []any{true}, Default: true}, false, false},
+		{"fixed thinking uses minimum for explicit off", &model.Thinking{Values: []any{true}, Default: true}, false, true},
+		{"named thinking uses lowest level for explicit off", &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}, false, "low"},
+		{"unknown retains explicit off", nil, false, false},
 		{"known nonthinking default", &model.Thinking{Values: []any{false}, Default: false}, nil, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

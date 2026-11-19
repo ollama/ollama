@@ -63,9 +63,9 @@ func Execute(args []string) error {
 	defer cancelRunner()
 
 	runner := Runner{
-		Requests:      make(chan Request),
-		EmbedRequests: make(chan EmbeddingRequest),
-		mlxThread:     worker,
+		parallel:  max(1, int(envconfig.NumParallel())),
+		Requests:  make(chan queuedRequest),
+		mlxThread: worker,
 	}
 
 	if err := worker.Do(context.Background(), func() error {
@@ -128,12 +128,20 @@ func Execute(args []string) error {
 		}
 	})
 
+	admission := make(chan struct{}, runner.parallel+int(envconfig.MaxQueue()))
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
-		if runner.Tokenizer == nil {
+		if runner.Sampler == nil {
 			http.Error(w, "this model does not support text generation", http.StatusBadRequest)
 			return
 		}
-		request := Request{Responses: make(chan CompletionResponse)}
+		select {
+		case admission <- struct{}{}:
+			defer func() { <-admission }()
+		default:
+			http.Error(w, "runner queue is full", http.StatusServiceUnavailable)
+			return
+		}
+		request := request{Responses: make(chan CompletionResponse, 8)}
 
 		if err := json.NewDecoder(r.Body).Decode(&request.CompletionRequest); err != nil {
 			slog.Error("Failed to decode request", "error", err)
@@ -141,7 +149,6 @@ func Execute(args []string) error {
 			return
 		}
 
-		request.Pipeline = runner.TextGenerationPipeline
 		request.SamplerOpts = sample.Options{
 			Temperature:      request.Options.Temperature,
 			TopP:             request.Options.TopP,

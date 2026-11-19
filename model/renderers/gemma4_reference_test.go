@@ -2098,3 +2098,19 @@ func thinkTrue() *api.ThinkValue {
 func thinkFalse() *api.ThinkValue {
 	return &api.ThinkValue{Value: false}
 }
+
+func TestGemma4RendererNullable(t *testing.T) {
+	var tool api.Tool
+	if err := json.Unmarshal([]byte(`{"type":"function","function":{"name":"find","parameters":{"type":"object","properties":{
+		"note":{"type":"string","nullable":true},
+		"venue":{"type":"object","properties":{"city":{"type":"string","nullable":true}}}
+	}}}}`), &tool); err != nil {
+		t.Fatal(err)
+	}
+
+	rendered, err := RenderWithRenderer("gemma4-large", []api.Message{{Role: "user", Content: "go"}}, []api.Tool{tool}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Contains(t, rendered, `properties:{note:{nullable:true,type:<|"|>STRING<|"|>},venue:{properties:{city:{nullable:true,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}`)
+}

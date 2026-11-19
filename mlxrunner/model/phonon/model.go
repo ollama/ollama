@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
@@ -211,11 +212,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		return fmt.Errorf("missing or invalid speech conditioning")
 	}
 	m.BOS = mlx.Reshape(m.BOS, 1, 1, -1)
-	m.sample = mlx.Compile("phonon_sample", func(in ...*mlx.Array) []*mlx.Array {
-		h := m.OutNorm.Forward(mlx.Reshape(in[0].AsType(mlx.DTypeFloat32), 1, -1))
-		latent := m.Head.sample(h, in[1])
-		return []*mlx.Array{mlx.ExpandDims(latent, 0), m.EOS.Forward(h)}
-	})
+	m.sample = mlx.Compile("phonon_sample", m.sampleFrame)
 
 	// The packager projects each speaker prompt into the flow LM's embedding
 	// space. Prefill it once at load time; requests start from these cached keys
@@ -243,7 +240,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 func (m *Model) prefillVoice(prompt *mlx.Array) *Voice {
-	caches := make([]cache.Attention, len(m.Flow.Layers))
+	caches := make([]cache.Cache, len(m.Flow.Layers))
 	for i := range caches {
 		caches[i] = cache.NewKVCache()
 		defer caches[i].Free()
@@ -270,7 +267,7 @@ func (m *Model) prefillVoice(prompt *mlx.Array) *Voice {
 // Speech models load through model.Model but never run the text pipeline.
 func (m *Model) NewCaches() []cache.Cache { return nil }
 
-func (m *Model) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *Model) Forward(*batch.Batch, []cache.Layer) (*mlx.Array, *mlx.Array) {
 	panic("phonon: text forward is not supported")
 }
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array { return x }
@@ -307,103 +304,187 @@ func foldVoiceName(s string) string {
 	return b.String()
 }
 
-func (m *Model) Speak(ctx context.Context, req llm.SpeechRequest, emit func([]float32) error) error {
+func (m *Model) NewSpeech(ctx context.Context, req llm.SpeechRequest) (model.SpeechState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	voice := m.voice(req.Voice)
 	if voice == nil {
-		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("voice %q not found; available voices: %s", req.Voice, strings.Join(m.VoiceNames(), ", "))}
+		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("voice %q not found; available voices: %s", req.Voice, strings.Join(m.VoiceNames(), ", "))}
 	}
 	chunks, err := m.tok.chunks(req.Input)
 	if err != nil {
-		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
-	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
-	for _, chunk := range chunks {
-		if err := m.speak(ctx, chunk, voice, rng, emit); err != nil {
-			return err
-		}
-	}
-	return nil
+	return &speechState{voice: voice, chunks: chunks, rng: rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))}, nil
 }
 
-// speak generates one chunk from a fresh copy of the voice state.
-func (m *Model) speak(ctx context.Context, text string, voice *Voice, rng *rand.Rand, emit func([]float32) error) error {
-	text, framesAfterEOS, err := prepareText(text)
+type speechState struct {
+	voice                                   *Voice
+	chunks                                  []string
+	rng                                     *rand.Rand
+	caches                                  []cache.Cache
+	mimi                                    *mimiState
+	held                                    *mlx.Scope
+	prev                                    *mlx.Array
+	offset, generated, stop, framesAfterEOS int
+	noise                                   []float32
+}
+
+func (s *speechState) startChunk(m *Model) error {
+	text, framesAfterEOS, err := prepareText(s.chunks[0])
 	if err != nil {
 		return err
 	}
+	s.chunks = s.chunks[1:]
+	s.framesAfterEOS = framesAfterEOS
 	tokens := m.tok.encode(text)
-	maxFrames := int(math.Ceil((float64(len(tokens))/3 + 2) * m.cfg.Mimi.FrameRate))
-
-	caches := make([]cache.Attention, len(m.Flow.Layers))
-	for i := range caches {
-		caches[i] = cache.NewKVCache()
-		defer caches[i].Free()
+	s.stop = int(math.Ceil((float64(len(tokens))/3 + 2) * m.cfg.Mimi.FrameRate))
+	s.generated = 0
+	s.caches = make([]cache.Cache, len(m.Flow.Layers))
+	for i := range s.caches {
+		s.caches[i] = cache.NewKVCache()
 	}
-	mimi := m.Mimi.newState()
-	defer mimi.close()
-	held := mlx.NewScope()
-	defer held.Close()
-
-	prev := m.BOS.Clone()
-	held.Attach(prev)
-	offset := voice.Keys[0].Dim(2)
+	s.mimi, s.held = m.Mimi.newState(), mlx.NewScope()
+	s.prev = m.BOS.Clone()
+	s.held.Attach(s.prev)
+	s.offset = s.voice.Keys[0].Dim(2)
 	mlx.Scoped(func() {
-		for i, c := range caches {
-			c.Update(nil, voice.Keys[i], voice.Values[i])
+		for i, c := range s.caches {
+			c.(cache.Attention).Update(nil, s.voice.Keys[i], s.voice.Values[i])
 		}
 		ids := mlx.FromValues(tokens, 1, len(tokens))
-		m.Flow.forward(m.Embed.Forward(ids), offset, caches)
+		m.Flow.forward(m.Embed.Forward(ids), s.offset, s.caches)
 	})
-	offset += len(tokens)
+	s.offset += len(tokens)
+	s.noise = make([]float32, m.BOS.Dim(2))
+	return nil
+}
 
+func (m *Model) sampleFrame(in ...*mlx.Array) []*mlx.Array {
+	h := m.OutNorm.Forward(in[0].AsType(mlx.DTypeFloat32).Reshape(in[0].Dim(0), -1))
+	latent := m.Head.sample(h, in[1])
+	return []*mlx.Array{latent.ExpandDims(1), m.EOS.Forward(h)}
+}
+
+// speechFrame shares the transformer and flow head across active requests.
+func (m *Model) speechFrame(prev *mlx.Array, offsets []int32, owners [][]cache.Cache, noise *mlx.Array) ([]*mlx.Array, error) {
+	logutil.Trace("mlx speech frame batch", "rows", len(owners))
+	layers, err := cache.Batch(owners)
+	if err != nil {
+		return nil, err
+	}
+	b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, len(owners), 1), SeqOffsets: offsets, SeqQueryLens: make([]int32, len(owners))}
+	for i := range b.SeqQueryLens {
+		b.SeqQueryLens[i] = 1
+	}
+	out := mlx.ScopedArrays(func() []*mlx.Array {
+		input := mlx.Add(m.InputLinear.Forward(prev.AsType(mlx.DTypeBFloat16)), m.Conditions)
+		h := m.Flow.forwardBatch(input, b, layers)
+		return m.sample(h, noise)
+	})
+	return out, nil
+}
+
+func (m *Model) DecodeSpeech(states []model.SpeechState) ([]model.SpeechOutput, error) {
+	output := make([]model.SpeechOutput, len(states))
+	counts := make([]int, len(states))
+	maxFrames := 0
+	for i, state := range states {
+		s := state.(*speechState)
+		if s.held == nil && len(s.chunks) > 0 {
+			if err := s.startChunk(m); err != nil {
+				output[i].Err = err
+				continue
+			}
+		}
+		if s.held == nil {
+			output[i].Done = true
+			continue
+		}
+		counts[i] = min(mimiBatch, s.stop-s.generated)
+		if s.generated == 0 {
+			counts[i] = 1
+		}
+		maxFrames = max(maxFrames, counts[i])
+	}
+	latents, logits := make([][]*mlx.Array, len(states)), make([][]*mlx.Array, len(states))
 	std := math.Sqrt(float64(m.cfg.Temperature))
-	noise := make([]float32, m.BOS.Dim(2))
-	for generated, stop := 0, maxFrames; generated < stop; {
-		// Decode the first frame alone for latency, then in batches. EOS
-		// is read at the same sync points; frames past it are dropped.
-		n := min(mimiBatch, stop-generated)
-		if generated == 0 {
-			n = 1
-		}
-		var latents, logits []*mlx.Array
-		for step := generated; step < generated+n; step++ {
-			if err := ctx.Err(); err != nil {
-				return err
+	// Preserve each stream's original first-frame and eight-frame EOS sync
+	// points. A newly joined stream does not alter its peers' sampling history.
+	for step := range maxFrames {
+		var ids []int
+		var inputs []*mlx.Array
+		var owners [][]cache.Cache
+		var offsets []int32
+		var noise []float32
+		for i, state := range states {
+			if step >= counts[i] {
+				continue
 			}
-			for i := range noise {
-				noise[i] = float32(rng.NormFloat64() * std)
+			s := state.(*speechState)
+			for j := range s.noise {
+				s.noise[j] = float32(s.rng.NormFloat64() * std)
 			}
-			out := mlx.ScopedArrays(func() []*mlx.Array {
-				input := mlx.Add(m.InputLinear.Forward(prev.AsType(mlx.DTypeBFloat16)), m.Conditions)
-				h := m.Flow.forward(input, offset+step, caches)
-				out := m.sample(h, mlx.FromValues(noise, 1, len(noise)))
-				prev.Set(out[0])
-				return out
-			})
-			held.Attach(out...)
-			mlx.AsyncEval(out...)
-			latents, logits = append(latents, out[0]), append(logits, out[1])
+			noise = append(noise, s.noise...)
+			ids, inputs, owners = append(ids, i), append(inputs, s.prev), append(owners, s.caches)
+			offsets = append(offsets, int32(s.offset+s.generated+step))
 		}
+		out, err := m.speechFrame(mlx.Concatenate(inputs, 0), offsets, owners, mlx.FromValues(noise, len(ids), len(noise)/len(ids)))
+		if err != nil {
+			return nil, err
+		}
+		for row, id := range ids {
+			s := states[id].(*speechState)
+			latent := out[0].Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice())
+			logit := out[1].Slice(mlx.Slice(row, row+1), mlx.Slice())
+			s.prev.Set(latent)
+			s.held.Attach(latent, logit)
+			latents[id], logits[id] = append(latents[id], latent), append(logits[id], logit)
+		}
+		mlx.AsyncEval(out...)
+	}
+	for i, state := range states {
+		if counts[i] == 0 {
+			continue
+		}
+		s := state.(*speechState)
 		var eos []float32
-		mlx.Scoped(func() { eos = mlx.Concatenate(logits, 0).Floats() })
-		for i, e := range eos {
+		mlx.Scoped(func() { eos = mlx.Concatenate(logits[i], 0).Floats() })
+		for j, e := range eos {
 			if e > m.cfg.EOSThreshold {
-				stop = min(stop, generated+i+1+framesAfterEOS)
+				s.stop = min(s.stop, s.generated+j+1+s.framesAfterEOS)
 				break
 			}
 		}
-		n = min(n, stop-generated)
-		var samples []float32
+		n := min(counts[i], s.stop-s.generated)
 		mlx.Scoped(func() {
-			z := mlx.Add(mlx.Mul(mlx.Concatenate(latents[:n], 1), m.EmbStd), m.EmbMean)
-			samples = m.Mimi.decode(mimi, z).Floats()
+			z := mlx.Add(mlx.Mul(mlx.Concatenate(latents[i][:n], 1), m.EmbStd), m.EmbMean)
+			output[i].Samples = m.Mimi.decode(s.mimi, z).Floats()
 		})
-		held.Discard(latents...)
-		held.Discard(logits...)
-		generated += n
-		if err := emit(samples); err != nil {
-			return err
+		s.held.Discard(latents[i]...)
+		s.held.Discard(logits[i]...)
+		s.generated += n
+		if s.generated == s.stop {
+			s.closeChunk()
 		}
 	}
-	return nil
+	return output, nil
 }
+
+func (s *speechState) closeChunk() {
+	for _, c := range s.caches {
+		c.Free()
+	}
+	s.caches = nil
+	if s.mimi != nil {
+		s.mimi.close()
+		s.mimi = nil
+	}
+	if s.held != nil {
+		s.held.Close()
+		s.held, s.prev = nil, nil
+	}
+}
+
+func (s *speechState) Close() { s.closeChunk() }

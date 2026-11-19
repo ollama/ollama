@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
@@ -17,6 +19,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxthread"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 // This small stateful model uses real KV and recurrent caches. Its outputs
@@ -37,7 +40,7 @@ func (m *scoringTestModel) NewCaches() []cache.Cache {
 	return m.caches
 }
 
-func (m *scoringTestModel) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *scoringTestModel) Forward(b *batch.Batch, caches []cache.Layer) (*mlx.Array, *mlx.Array) {
 	n, offset := b.InputIDs.Dim(1), int(b.SeqOffsets[0])
 	m.positions = append(m.positions, offset)
 	m.lengths = append(m.lengths, n)
@@ -99,14 +102,14 @@ func TestScoreSharedPrefix(t *testing.T) {
 	} {
 		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			m := &scoringTestModel{}
-			r := &Runner{Model: m}
+			r := newScoreTestRunner(m)
 			rows := make([]scoreRow, len(tt.tokens))
 			for i, tokens := range tt.tokens {
 				rows[i] = scoreRow{tokens: tokens, candidates: []int32{2, 0, 1, 3, 4}}
 			}
 			independent := make([][]float32, len(rows))
 			for i, row := range rows {
-				cold := &Runner{Model: &scoringTestModel{}}
+				cold := newScoreTestRunner(&scoringTestModel{})
 				got, _, err := cold.scoreRows(context.Background(), []scoreRow{row}, 0)
 				if err != nil {
 					t.Fatal(err)
@@ -157,7 +160,7 @@ func TestScoreCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			m := &scoringTestModel{cancel: cancel, cancelAfter: cancelAfter}
-			r := &Runner{Model: m}
+			r := newScoreTestRunner(m)
 			defer func() { r.scoreCache.close() }()
 			rows := []scoreRow{{tokens: []int32{1, 2, 3}, candidates: []int32{0}}, {tokens: []int32{1, 2, 4}, candidates: []int32{0}}}
 			_, _, err := r.scoreRows(ctx, rows, 2)
@@ -202,75 +205,133 @@ func TestScoreValidation(t *testing.T) {
 
 func TestScoreHandlerScratchCache(t *testing.T) {
 	worker := mlxtest.Worker(t)
-	if err := worker.Do(context.Background(), func() error {
-		if !mlx.GPUIsAvailable() {
-			return errors.New("GPU unavailable")
-		}
-		mlx.ClearCache()
-		return nil
-	}); err != nil {
-		t.Skipf("MLX GPU not available: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := worker.Do(context.Background(), func() error {
-			mlx.ClearCache()
-			return nil
-		}); err != nil {
-			t.Error(err)
-		}
-	})
-	r := &Runner{Tokenizer: newTestTokenizer(t, []int32{7}), contextLength: 512, mlxThread: worker}
-	defer worker.Do(context.Background(), func() error { r.Close(); return nil })
-	for _, n := range []int{16, 128, 512, 16} {
+	for _, n := range []int{16, 128, 512} {
 		for _, cancelled := range []bool{false, true} {
-			// Start with reusable scratch from an earlier request.
-			// These CPU-filled arrays are freed synchronously into MLX's cache.
-			const scratchBytes = 4 << 20
-			if err := worker.Do(context.Background(), func() error {
-				r.Close()
-				mlx.Scoped(func() { mlx.FromValues(make([]int32, scratchBytes/4), scratchBytes/4) })
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			m := &scoringTestModel{}
-			if cancelled {
-				m.cancel, m.cancelAfter = cancel, 1
-			}
-			r.Model = m
-			input, err := json.Marshal(llm.ScoreRequest{
-				MaxTokens: 512,
-				Rows:      []llm.ScoreRow{{Prompt: strings.Repeat("1", n), Candidates: []string{"2"}}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/score", strings.NewReader(string(input)))
-			response := httptest.NewRecorder()
-			r.scoreHandler(response, req)
-			cancel()
-			wantStatus := http.StatusOK
-			if cancelled {
-				wantStatus = http.StatusInternalServerError
-			}
-			if response.Code != wantStatus {
-				t.Fatalf("tokens=%d cancelled=%t: status %d: %s", n, cancelled, response.Code, response.Body)
-			}
-			memory, err := mlxthread.Call(context.Background(), worker, func() (int, error) {
-				memory := mlx.CacheMemory()
-				if !cancelled && mlx.MetalIsAvailable() && memory == 0 {
-					return 0, errors.New("successful scoring discarded all reusable scratch buffers")
+			t.Run(fmt.Sprintf("tokens=%d/cancelled=%t", n, cancelled), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				m := &scoringTestModel{}
+				if cancelled {
+					m.cancel, m.cancelAfter = cancel, 1
 				}
-				return memory, nil
+				r := &Runner{Model: m, Tokenizer: newTestTokenizer(t, []int32{7}), contextLength: 512, mlxThread: worker, parallel: 1}
+				defer startTestScheduler(t, r)()
+				const scratchBytes = 4 << 20
+				if err := worker.Do(t.Context(), func() error {
+					mlx.ClearCache()
+					mlx.Scoped(func() { mlx.FromValues(make([]int32, scratchBytes/4), scratchBytes/4) })
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				input, err := json.Marshal(llm.ScoreRequest{MaxTokens: 512, Rows: []llm.ScoreRow{{Prompt: strings.Repeat("1", n), Candidates: []string{"2"}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/score", strings.NewReader(string(input)))
+				response := httptest.NewRecorder()
+				r.scoreHandler(response, req)
+				wantStatus := http.StatusOK
+				if cancelled {
+					wantStatus = http.StatusInternalServerError
+				}
+				if response.Code != wantStatus {
+					t.Fatalf("status %d: %s", response.Code, response.Body)
+				}
+				memory, err := mlxthread.Call(t.Context(), worker, func() (int, error) {
+					memory := mlx.CacheMemory()
+					if !cancelled && mlx.MetalIsAvailable() && memory == 0 {
+						return 0, errors.New("successful scoring discarded all reusable scratch buffers")
+					}
+					return memory, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if memory > scoreScratchLimit || (cancelled && memory >= scratchBytes) {
+					t.Fatalf("retained %d scratch bytes", memory)
+				}
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Successful requests may reuse scratch; cancelled requests release it.
-			if memory > scoreScratchLimit || (cancelled && memory >= scratchBytes) {
-				t.Fatalf("tokens=%d cancelled=%t: retained %d scratch bytes", n, cancelled, memory)
+		}
+	}
+}
+
+// Value tests already own an MLX thread. Drive the real admission/step methods
+// there while the CPU scoring caller waits for its evaluation.
+type scoreTestRunner struct {
+	Runner
+	batchSlot
+}
+
+func newScoreTestRunner(m model.Model) *scoreTestRunner {
+	return &scoreTestRunner{Runner: Runner{Model: m, parallel: 1, Requests: make(chan queuedRequest)}}
+}
+
+func (r *scoreTestRunner) run(f func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- f() }()
+	s := &batchScheduler{r: &r.Runner, slots: []*batchSlot{&r.batchSlot}}
+	for {
+		select {
+		case err := <-done:
+			return err
+		case req := <-r.Requests:
+			s.admit(req)
+			for r.evaluation != nil {
+				s.stepEvaluation(&r.batchSlot)
 			}
 		}
 	}
+}
+
+func (r *scoreTestRunner) scoreRows(ctx context.Context, rows []scoreRow, prefix int) ([][]float32, int, error) {
+	var result [][]float32
+	var cached int
+	err := r.run(func() error {
+		var err error
+		result, cached, err = r.Runner.scoreRows(ctx, rows, prefix)
+		return err
+	})
+	return result, cached, err
+}
+
+func (r *scoreTestRunner) scoreHiddenRow(ctx context.Context, input *model.PreparedRequest, segments []model.Segment) (*mlx.Array, int, error) {
+	var hidden *mlx.Array
+	var cached int
+	err := r.run(func() error {
+		var err error
+		cached, err = r.forwardHidden(ctx, input, segments, func(h *mlx.Array) error {
+			hidden = h.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice())
+			return nil
+		})
+		return err
+	})
+	return hidden, cached, err
+}
+
+func startTestScheduler(t *testing.T, r *Runner) func() {
+	t.Helper()
+	r.Requests = make(chan queuedRequest)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- r.runBatchRequests(ctx) }()
+	stop := func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("scheduler failed to stop")
+		}
+	}
+	return stop
+}
+
+func (r *scoreTestRunner) runEmbed(ctx context.Context, input embeddingRequest) (embedWireResponse, error) {
+	var response embedWireResponse
+	err := r.run(func() error {
+		var err error
+		response, err = r.Runner.runEmbed(ctx, input)
+		return err
+	})
+	return response, err
 }

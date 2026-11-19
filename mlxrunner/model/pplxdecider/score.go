@@ -10,12 +10,11 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/model/renderers"
 )
 
-var _ llm.Scorer = (*Model)(nil)
+var _ model.Scorer = (*Model)(nil)
 
 const (
 	imageMarker   = "<|vision_start|><|image_pad|><|vision_end|>"
@@ -70,21 +69,21 @@ func (m *Model) scorePrompt(input llm.ScoreRequest, rows []llm.ScoreRow) (string
 	return prompt, start, nil
 }
 
-func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*model.PreparedRequest, []int32, error) {
+func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*model.PreparedRequest, []model.Segment, []int32, error) {
 	prompt, imageStart, err := m.scorePrompt(input, rows)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var prepared *model.PreparedRequest
+	var segments []model.Segment
 	if len(input.Images) == 0 {
 		prepared, err = m.PrepareMedia([]model.Segment{{Tokens: m.Tokenizer().Encode(prompt, false)}})
 	} else {
-		var segments []model.Segment
 		start := 0
 		for i, image := range input.Images {
 			end := imageStart + i*len(imageMarker)
 			if !strings.HasPrefix(prompt[end:], imageMarker) {
-				return nil, nil, fmt.Errorf("image %d is missing from the rendered prompt", i)
+				return nil, nil, nil, fmt.Errorf("image %d is missing from the rendered prompt", i)
 			}
 			segments = append(segments, model.Segment{Tokens: m.Tokenizer().Encode(prompt[start:end], false)})
 			segments = append(segments, model.Segment{Kind: "image", Data: image})
@@ -94,7 +93,7 @@ func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*mode
 		prepared, err = m.PrepareMedia(segments)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var markers []int32
 	for i, token := range prepared.Tokens {
@@ -103,15 +102,16 @@ func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*mode
 		}
 	}
 	if len(markers) != len(rows) {
-		return nil, nil, fmt.Errorf("Perplexity readout markers do not match questions")
+		return nil, nil, nil, fmt.Errorf("Perplexity readout markers do not match questions")
 	}
-	return prepared, markers, nil
+	return prepared, segments, markers, nil
 }
 
 type scoreChunk struct {
 	rows     []llm.ScoreRow
 	prepared *model.PreparedRequest
 	markers  []int32
+	segments []model.Segment
 }
 
 // A request shares one noncausal sequence. Split only when its complete
@@ -120,12 +120,12 @@ func (m *Model) planScore(input llm.ScoreRequest) ([]scoreChunk, error) {
 	var chunks []scoreChunk
 	var split func([]llm.ScoreRow) error
 	split = func(rows []llm.ScoreRow) error {
-		prepared, markers, err := m.prepareJoint(input, rows)
+		prepared, segments, markers, err := m.prepareJoint(input, rows)
 		if err != nil {
 			return err
 		}
 		if len(prepared.Tokens) <= input.MaxTokens {
-			chunks = append(chunks, scoreChunk{rows: rows, prepared: prepared, markers: markers})
+			chunks = append(chunks, scoreChunk{rows: rows, prepared: prepared, markers: markers, segments: segments})
 			return nil
 		}
 		if len(rows) == 1 {
@@ -143,7 +143,7 @@ func (m *Model) planScore(input llm.ScoreRequest) ([]scoreChunk, error) {
 	return chunks, nil
 }
 
-func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
 	cached := 0
 	result.CachedTokens = &cached
@@ -165,31 +165,17 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 			return result, err
 		}
 		var logits []float32
-		mlx.Scoped(func() {
-			prepared := chunk.prepared
-			media := make([]batch.MediaItem, len(prepared.Items))
-			for i := range prepared.Items {
-				item := &prepared.Items[i]
-				data := mlx.FromValues(item.MediaData, item.Dims...)
-				media[i] = batch.MediaItem{Pos: item.Range[0], Opaque: item.Opaque, Features: m.EncodeMedia(item, data)}
-				item.MediaData = nil
-			}
-			b := &batch.Batch{
-				InputIDs:     mlx.FromValues(prepared.Tokens, 1, len(prepared.Tokens)),
-				SeqOffsets:   []int32{0},
-				SeqQueryLens: []int32{int32(len(prepared.Tokens))},
-				Media:        media,
-			}
-			if prepared.Layout != nil {
-				b.Layout = []any{prepared.Layout}
-			}
-			hidden, _ := m.Forward(b, nil)
+		_, err := forward(ctx, chunk.prepared, chunk.segments, func(hidden *mlx.Array) error {
 			readouts := hidden.TakeAxis(mlx.FromValues(chunk.markers, len(chunk.markers)), 1)
 			output := mlx.DivScalar(m.Readout.Forward(readouts).AsType(mlx.DTypeFloat32), m.config.Temperature)
 			output = output.Reshape(len(chunk.rows) * len(m.config.Codes))
 			mlx.Eval(output)
 			logits = output.Floats()
+			return nil
 		})
+		if err != nil {
+			return result, err
+		}
 		for i, row := range chunk.rows {
 			start := i * len(m.config.Codes)
 			count := len(row.Question.Options)

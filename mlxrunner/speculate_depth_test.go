@@ -296,3 +296,22 @@ func TestDepthControllerTracksAcceptanceDrift(t *testing.T) {
 		t.Errorf("expected selection to deepen after acceptance rose (was %d, now %d)", shallow, deep)
 	}
 }
+
+func TestDepthControllerIncludesPlainPeers(t *testing.T) {
+	c := newDepthController()
+	c.drafterLimit = 1
+	c.cost.observe(0, time.Millisecond)
+	c.cost.observe(1, 1500*time.Microsecond)
+	for range acceptanceMinSamples {
+		c.acc.observe(1, 1)
+	}
+	if got := c.selected(); got != 1 {
+		t.Fatalf("draft-only selection = %d, want 1", got)
+	}
+	// Three plain peers produce one token each in every round. Doubling
+	// the drafting row's output no longer pays for a 50% longer batch.
+	c.plainTokens = 3
+	if got := c.selected(); got != 0 {
+		t.Fatalf("mixed selection = %d, want 0", got)
+	}
+}

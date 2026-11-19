@@ -3,7 +3,9 @@ package renderers
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -51,6 +53,12 @@ func flintJSONValue(value reflect.Value, depth int) (any, error) {
 				properties.Set(name, converted)
 			}
 			return properties, nil
+		case api.ToolFunctionParameters:
+			type plain api.ToolFunctionParameters
+			return flintStructWithExtra(reflect.ValueOf(plain(v)), v.Extra, depth)
+		case api.ToolProperty:
+			type plain api.ToolProperty
+			return flintStructWithExtra(reflect.ValueOf(plain(v)), v.Extra, depth)
 		case api.ToolCallFunctionArguments:
 			arguments := orderedmap.New[string, any]()
 			for name, argument := range v.All() {
@@ -138,6 +146,28 @@ func flintJSONValue(value reflect.Value, depth int) (any, error) {
 	default:
 		return value.Interface(), nil
 	}
+}
+
+func flintStructWithExtra(value reflect.Value, extra map[string]any, depth int) (any, error) {
+	converted, err := flintJSONValue(value, depth)
+	if err != nil || len(extra) == 0 {
+		return converted, err
+	}
+	fields, ok := converted.(*orderedmap.Map[string, any])
+	if !ok {
+		return converted, nil
+	}
+	for _, key := range slices.Sorted(maps.Keys(extra)) {
+		if _, exists := fields.Get(key); exists {
+			continue
+		}
+		member, err := flintJSONValue(reflect.ValueOf(extra[key]), depth+1)
+		if err != nil {
+			return nil, err
+		}
+		fields.Set(key, member)
+	}
+	return fields, nil
 }
 
 func flintEmptyJSONValue(value reflect.Value) bool {
