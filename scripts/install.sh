@@ -156,10 +156,26 @@ download_and_extract() {
         $SUDO tar -xzf - -C "${dest_dir}"
 }
 
-for BINDIR in /usr/local/bin /usr/bin /bin; do
-    echo $PATH | grep -q $BINDIR && break || continue
-done
-OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+# Allow overriding the install location via OLLAMA_INSTALL_DIR
+# (which sets the lib path) and OLLAMA_BIN_DIR (which sets the
+# symlink target). This lets users on systems where they lack
+# write access to /usr/local/bin or /usr/bin install ollama into
+# a user-owned prefix (e.g. ~/.local) without having to patch the
+# install script. SUDO is set below based on the effective uid,
+# not based on the destination directory, so this also fixes
+# installs on corporate machines without sudo (issue #16783).
+if [ -n "${OLLAMA_INSTALL_DIR:-}" ]; then
+    OLLAMA_INSTALL_DIR="${OLLAMA_INSTALL_DIR%/}"
+    BINDIR="${OLLAMA_BIN_DIR:-$OLLAMA_INSTALL_DIR/bin}"
+elif [ -n "${OLLAMA_BIN_DIR:-}" ]; then
+    BINDIR="${OLLAMA_BIN_DIR%/}"
+    OLLAMA_INSTALL_DIR=$(dirname "${BINDIR}")
+else
+    for BINDIR in /usr/local/bin /usr/bin /bin; do
+        echo $PATH | grep -q $BINDIR && break || continue
+    done
+    OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+fi
 
 if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
     status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
