@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -76,7 +77,7 @@ func (t *winTray) UpdateAvailable(ver string) error {
 		t.muNID.Lock()
 		defer t.muNID.Unlock()
 		copy(t.nid.InfoTitle[:], windows.StringToUTF16(updateTitle))
-		copy(t.nid.Info[:], windows.StringToUTF16(fmt.Sprintf(updateMessage, ver)))
+		copy(t.nid.Info[:], windows.StringToUTF16(updateNotificationMessage(ver)))
 		t.nid.Flags |= NIF_INFO
 		t.nid.Timeout = 10
 		t.nid.Size = uint32(unsafe.Sizeof(*wt.nid))
@@ -86,6 +87,14 @@ func (t *winTray) UpdateAvailable(ver string) error {
 		}
 	}
 	return nil
+}
+
+func updateNotificationMessage(ver string) string {
+	ver = strings.TrimSpace(ver)
+	if ver == "" {
+		return updateMessageAny
+	}
+	return fmt.Sprintf(updateMessage, ver)
 }
 
 func (t *winTray) showLogs() error {

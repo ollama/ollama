@@ -84,6 +84,21 @@ Additional prerequisites:
 
 For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or another shell where the Visual Studio compiler is available.
 
+### Windows installer tests
+
+Unit tests run on the host. Integration tests install and uninstall Ollama for
+real, so run them in Windows Sandbox (a disposable VM; set up once per
+checkout, then reuse):
+
+```powershell
+.\scripts\tests\Setup-WindowsTestSandbox.ps1
+.\scripts\tests\Invoke-WindowsInstallTests.ps1 -Tag Unit
+.\scripts\tests\Invoke-WindowsInstallTests.ps1 -Tag Integration
+```
+
+Results and logs land under `.cache\windows-test-sandbox\runs`. Pass
+`-Isolation Host` to run destructive tests directly on a clean machine instead.
+
 > Building for Vulkan requires VULKAN_SDK environment variable:
 > 
 > PowerShell
