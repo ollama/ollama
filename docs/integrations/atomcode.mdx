@@ -1,0 +1,38 @@
+---
+title: AtomCode
+---
+
+AtomCode is an open-source AI coding agent for the terminal, built by [AtomGit](https://atomcode.atomgit.com). Use it with Ollama local and cloud models.
+
+## Quick start
+
+Launch AtomCode with Ollama:
+
+```bash
+ollama launch atomcode
+```
+
+Ollama installs AtomCode if needed, configures it to use your Ollama server, and starts it with the selected model.
+
+To launch with a specific model:
+
+```bash
+ollama launch atomcode --model qwen3:32b
+```
+
+Use `--yes` for scripts, Docker, or CI:
+
+```bash
+ollama launch atomcode --model qwen3:32b --yes
+```
+
+## Usage
+
+AtomCode works like other terminal coding agents: describe a task in natural language and it reads, edits, runs, and verifies code in your project.
+
+Each launch writes a dedicated config file to `~/.atomcode/ollama-launch.toml` and starts AtomCode with `--config` pointing at it, so your own `~/.atomcode/config.toml` is never modified. Inside AtomCode you can switch models at any time with `/model`.
+
+## Requirements
+
+- [AtomCode](https://atomcode.atomgit.com/docs/en/getting-started.html) — installed automatically on first launch when missing
+- Function calling works best with instruct-tuned models such as `qwen3` or `llama3.2`; weaker local models may not invoke tools reliably
