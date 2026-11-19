@@ -174,6 +174,7 @@ console.log(response.message.content);
 - [chat](https://github.com/swuecho/chat) - Chat web app for teams
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) - Chat with multiple PDFs using RAG
 - [Tkinter-based client](https://github.com/chyok/ollama-gui) - Python desktop client
+- [Athena](https://github.com/alaskanloosemoose-dotcom/athena-lattice-agent) - Local companion that paints its replies with FLUX.2, for Apple Silicon Macs
 
 #### Desktop
 
