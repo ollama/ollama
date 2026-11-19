@@ -276,7 +276,7 @@ func (r *scoreTestRunner) run(f func() error) error {
 		case err := <-done:
 			return err
 		case req := <-r.Requests:
-			s.admitEvaluation(req.(*evaluationRequest))
+			s.admitEvaluation(req.(*evaluationRequest), s.selectSlot(req))
 			for r.evaluation != nil {
 				s.stepEvaluation(&r.batchSlot)
 			}

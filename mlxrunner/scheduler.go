@@ -232,7 +232,7 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 				// simultaneous timer wake discard it before lookup.
 				admitted = s.admitPending() || admitted
 				if snapshotChanged && !admitted {
-					s.trimSnapshots(nil)
+					s.trimSnapshots(nil, -1)
 				}
 				step := func() {
 					worked := s.step()
@@ -291,12 +291,15 @@ func (s *batchScheduler) admit(pending queuedRequest) bool {
 		pending.reject(err)
 		return false
 	}
-	s.trimSnapshots(pending)
+	// Choose the destination before trimming so retention uses the same local
+	// cache and peer-checkpoint rules as the request that follows.
+	index := s.selectSlot(pending)
+	s.trimSnapshots(pending, index)
 	switch req := pending.(type) {
 	case request:
-		s.admitGeneration(req)
+		s.admitGeneration(req, index)
 	case *evaluationRequest:
-		s.admitEvaluation(req)
+		s.admitEvaluation(req, index)
 	case *speechRequest:
 		s.admitSpeech(req)
 	default:
@@ -305,30 +308,39 @@ func (s *batchScheduler) admit(pending queuedRequest) bool {
 	// The first prefix cache is created during admission. Seed the observation
 	// before its first forward so that any resulting compression remains visible.
 	if s.snapshotTimer == nil {
-		s.trimSnapshots(pending)
+		s.trimSnapshots(pending, index)
 	}
 	return true
 }
 
-func (s *batchScheduler) admitGeneration(request request) {
-	s.keepScratch = false
-	if err := request.Ctx.Err(); err != nil {
-		request.reject(err)
-		return
+// Generation prefers the longest local match; other requests use the first
+// available slot. A completed response still draining to its reader is busy.
+func (s *batchScheduler) selectSlot(pending queuedRequest) int {
+	var keys []uint32
+	if req, ok := pending.(request); ok {
+		keys = effectiveKeyTokens(req.Tokens, req.MediaItems)
 	}
 	best, bestMatch := -1, -1
-	keys := effectiveKeyTokens(request.Tokens, request.MediaItems)
 	for i, slot := range s.slots {
 		if slot != nil && slot.busy() {
 			continue
 		}
 		matched := 0
-		if slot != nil && slot.cache != nil && slot.cache.root != nil {
+		if len(keys) > 0 && slot != nil && slot.cache != nil && slot.cache.root != nil {
 			_, matched = findBestMatch(slot.cache.root, slot.cache.key(keys))
 		}
 		if matched > bestMatch {
 			best, bestMatch = i, matched
 		}
+	}
+	return best
+}
+
+func (s *batchScheduler) admitGeneration(request request, best int) {
+	s.keepScratch = false
+	if err := request.Ctx.Err(); err != nil {
+		request.reject(err)
+		return
 	}
 	slot := s.slots[best]
 	if slot == nil {

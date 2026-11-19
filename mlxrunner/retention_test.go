@@ -15,6 +15,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/sample"
 )
 
@@ -341,6 +342,36 @@ func TestPressureCompactsOldCheckpointsWithoutLosingLatestPrefix(t *testing.T) {
 	})
 }
 
+func TestRetainedHistoryStopsAfterMeetingLimit(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.GPUIsAvailable() {
+			t.Skip("GPU allocator counters required")
+		}
+		c := nativeRetentionHistory()
+		defer c.close()
+		before := mlx.ActiveMemory()
+		old := c.activePath[1].snapshotBytes()
+		if old == 0 {
+			t.Fatal("fixture needs owned checkpoint storage")
+		}
+		// One eviction releases more than this shortfall. Another checkpoint is
+		// eligible, but must survive once current usage meets the fixed limit.
+		target := int64(before) + pendingHistoryBytes([]*prefixCache{c}) - 1
+		trimRetainedHistory([]*prefixCache{c}, nil, target, nil)
+		if freed := int64(before - mlx.ActiveMemory()); freed < old {
+			t.Fatalf("released %d bytes, want at least the first checkpoint's %d", freed, old)
+		}
+		if len(c.activePath) != 3 || c.activePath[1].endOffset != 8 {
+			t.Fatal("eviction discarded the next checkpoint after meeting the limit")
+		}
+		after := mlx.ActiveMemory()
+		trimRetainedHistory([]*prefixCache{c}, nil, target, nil)
+		if mlx.ActiveMemory() != after || len(c.activePath) != 3 {
+			t.Fatal("rechecking the same limit discarded more history")
+		}
+	})
+}
+
 func TestPressureNeverMergesFrontierPastPendingCapture(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		c := nativeRetentionHistory()
@@ -427,7 +458,7 @@ func TestAdmissionPrefersMatchingHistory(t *testing.T) {
 			})
 		}
 		s := &batchScheduler{slots: []*batchSlot{{cache: pc}}}
-		preferred := s.matchingHistory(request{Tokens: incoming})
+		preferred := s.matchingHistory(request{Tokens: incoming}, 0)
 		before, matched := findBestMatch(pc.root, pc.key(effectiveKeyTokens(incoming, nil)))
 		if !evictColdHistory([]*prefixCache{pc}, []*prefixCache{pc}, preferred) {
 			t.Fatal("did not reclaim unrelated history")
@@ -463,7 +494,7 @@ func TestAdmissionPrefersPeerHistory(t *testing.T) {
 			} else {
 				s.slots[0].cache, s.slots[1].cache = donor.pc, idle.pc
 			}
-			preferred := s.matchingHistory(req)
+			preferred := s.matchingHistory(req, 1)
 			// The donor is older, but the unrelated idle frontier should go first.
 			caches := []*prefixCache{donor.pc, idle.pc}
 			if !evictColdHistory(caches, caches, preferred) || idle.pc.minCacheOffset() != 0 {
@@ -485,6 +516,114 @@ func TestAdmissionPrefersPeerHistory(t *testing.T) {
 			}
 			if donor.pc.minCacheOffset() != 0 || idle.pc.minCacheOffset() != 0 {
 				t.Fatal("incoming prefix prevented pressure reclamation")
+			}
+		})
+	}
+}
+
+func TestAdmissionDoesNotPreferUnrestorablePeerMatch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		score bool
+		busy  bool
+	}{
+		{"generation busy donor", false, true},
+		{"scoring busy donor", true, true},
+		{"scoring idle donor", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for name, newEnv := range map[string]func() *testEnv{
+				"full": newTransformerEnv, "sliding": newSlidingWindowEnv, "recurrent": newRecurrentEnv,
+			} {
+				t.Run(name, func(t *testing.T) {
+					donor, local := newEnv(), newEnv()
+					defer donor.pc.close()
+					defer local.pc.close()
+					incoming := []int32{1, 2, 3, 4, 5, 6, 30, 31}
+					// The donor matches six tokens, but its first checkpoint is at
+					// eight. The destination has a usable four-token checkpoint.
+					simulateRequest(t, donor.pc, []int32{1, 2, 3, 4, 5, 6, 7, 8, 9}, nil, 8)
+					simulateRequest(t, local.pc, []int32{1, 2, 3, 4, 20}, nil, 4)
+					donorSlot, localSlot := &batchSlot{}, &batchSlot{}
+					var req queuedRequest = request{Tokens: incoming}
+					if tc.score {
+						donorSlot.scoreCache, localSlot.scoreCache = donor.pc, local.pc
+						req = &evaluationRequest{tokens: incoming}
+					} else {
+						donorSlot.cache, localSlot.cache = donor.pc, local.pc
+					}
+					s := &batchScheduler{slots: []*batchSlot{localSlot, donorSlot}}
+					if tc.busy {
+						// Still draining a response: cannot accept work, but its
+						// completed cache is eligible for pressure reclamation.
+						donorSlot.request = &batchRequest{finished: true}
+						s.slots = []*batchSlot{donorSlot, localSlot}
+					}
+					destination := s.selectSlot(req)
+					if s.slots[destination] != localSlot {
+						t.Fatal("request did not select the available destination")
+					}
+					preferred := s.matchingHistory(req, destination)
+					caches := []*prefixCache{donor.pc, local.pc}
+					if !evictColdHistory(caches, caches, preferred) {
+						t.Fatal("no idle history was evicted")
+					}
+					var session *cacheSession
+					if tc.score {
+						session = local.pc.beginScore(incoming, nil, donor.pc)
+					} else {
+						session = local.pc.begin(incoming, nil, donor.pc)
+					}
+					defer session.close()
+					if reused := len(incoming) - len(session.remaining); reused != 4 {
+						t.Fatalf("reused %d tokens after trim, want 4", reused)
+					}
+					local.assertAllTokens(t, "preserved destination", incoming[:4])
+				})
+			}
+		})
+	}
+}
+
+func TestAdmissionPeerPreferenceUsesRestoreBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		score     bool
+		lookahead int
+		items     []mediaItem
+		want      int
+	}{
+		{"generation seed", false, 0, nil, 4},
+		{"draft lookahead", false, 1, nil, 7},
+		{"complete scoring row", true, 0, nil, 8},
+		{"atomic media", false, 0, []mediaItem{{pos: 3, length: 5, fold: 100, item: &model.PreparedItem{}}}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			donor := newRecurrentEnv()
+			defer donor.pc.close()
+			donor.pc.draftLookahead = tc.lookahead
+			inputs := []int32{1, 2, 3, 4, 5, 6, 7, 8}
+			session := donor.pc.begin(append(slices.Clone(inputs), 9), tc.items)
+			session.schedulePrefillSnapshots([]int{4, 8})
+			feedAll(donor.caches, inputs)
+			session.attachPrefillSnapshots()
+			session.close()
+			incoming := inputs
+			s := &batchScheduler{slots: []*batchSlot{{}, {request: &batchRequest{finished: true}}}}
+			var req queuedRequest = request{Tokens: incoming, MediaItems: tc.items}
+			if tc.score {
+				s.slots[1].scoreCache = donor.pc
+				req = &evaluationRequest{tokens: incoming, items: tc.items}
+			} else {
+				s.slots[1].cache = donor.pc
+			}
+			preferred := s.matchingHistory(req, s.selectSlot(req))
+			longest := 0
+			for _, matched := range preferred {
+				longest = max(longest, matched)
+			}
+			if longest != tc.want {
+				t.Fatalf("peer preference = %d tokens, want %d", longest, tc.want)
 			}
 		})
 	}
@@ -530,16 +669,16 @@ func TestAdmissionHistoryUsesMediaAndLookahead(t *testing.T) {
 		c.draftLookahead = lookahead
 		c.ensureRoot()
 		tokens := []int32{1, 2, 3, 4}
-		items := []mediaItem{{pos: 1, length: 2, fold: 100}}
+		items := []mediaItem{{pos: 1, length: 2, fold: 100, item: &model.PreparedItem{}}}
 		n := c.root.appendChild(c.key(effectiveKeyTokens(tokens, items)), 4-lookahead)
 		s := &batchScheduler{slots: []*batchSlot{{cache: c}}}
-		if s.matchingHistory(request{Tokens: tokens, MediaItems: items})[n] == 0 {
+		if s.matchingHistory(request{Tokens: tokens, MediaItems: items}, 0)[n] == 0 {
 			t.Fatalf("lookahead %d: matching media prefix was not preferred", lookahead)
 		}
 		items[0].fold++
 		// A shared first key still earns a bounded preference at lookahead zero;
 		// lookahead one includes the changed media in its very first key.
-		if lookahead == 1 && s.matchingHistory(request{Tokens: tokens, MediaItems: items})[n] != 0 {
+		if lookahead == 1 && s.matchingHistory(request{Tokens: tokens, MediaItems: items}, 0)[n] != 0 {
 			t.Fatal("changed media incorrectly matched the draft key")
 		}
 	}

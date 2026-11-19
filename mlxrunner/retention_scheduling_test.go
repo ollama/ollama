@@ -18,7 +18,7 @@ func TestSnapshotRetentionScheduling(t *testing.T) {
 		c := nativeRetentionHistory()
 		defer c.close()
 		s := &batchScheduler{r: &Runner{parallel: 2}, slots: []*batchSlot{{cache: c}}}
-		s.trimSnapshots(nil)
+		s.trimSnapshots(nil, -1)
 		if s.memory == nil || s.snapshotTimer == nil || s.r.snapshotLimit() != math.MaxInt64 {
 			t.Fatal("first observation did not establish maintenance and the new-slot allowance")
 		}
@@ -37,7 +37,7 @@ func TestSnapshotRetentionScheduling(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("maintenance timer did not wake the scheduler")
 		}
-		s.trimSnapshots(nil)
+		s.trimSnapshots(nil, -1)
 		if s.memory != monitor || s.snapshotTimer != timer {
 			t.Fatal("maintenance replaced the monitor or timer")
 		}
@@ -46,8 +46,8 @@ func TestSnapshotRetentionScheduling(t *testing.T) {
 
 func TestCachelessSchedulerDoesNotInitializeRetention(t *testing.T) {
 	s := &batchScheduler{r: &Runner{}, slots: []*batchSlot{{}}}
-	s.trimSnapshots(nil)
-	s.trimSnapshots(request{})
+	s.trimSnapshots(nil, -1)
+	s.trimSnapshots(request{}, 0)
 	if s.memory != nil || s.snapshotTimer != nil {
 		t.Fatal("cacheless scheduler initialized retention")
 	}

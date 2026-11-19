@@ -19,7 +19,7 @@ const snapshotCheckInterval = time.Second
 // Keep reclamation local to this runner. Revisit cross-runner pruning after
 // disk paging, with headroom for each model's active KV and workspace;
 // fitting both sets of weights alone need not improve throughput.
-func (s *batchScheduler) trimSnapshots(incoming queuedRequest) {
+func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) {
 	if !s.hasPrefixCache() || !mlx.MetalIsAvailable() {
 		return
 	}
@@ -65,7 +65,7 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest) {
 		}
 		if overLimit {
 			mlx.DefaultStream().Synchronize()
-			preferred := s.matchingHistory(incoming)
+			preferred := s.matchingHistory(incoming, destination)
 			for _, c := range caches {
 				for c.pagedOutBytes > c.limitBytes && evictColdHistory([]*prefixCache{c}, nil, preferred) {
 				}
@@ -80,14 +80,15 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest) {
 	}
 	// Allow one copy per active row, and one idle row which may be admitted.
 	// Restoring history or writing a shared buffer can require a fresh copy.
-	trimHistory(caches, idle, s.matchingHistory(incoming), observation, s.snapshotWorkspace+working+next)
+	trimHistory(caches, idle, s.matchingHistory(incoming, destination), observation, s.snapshotWorkspace+working+next)
 }
 
 // Prefer the arriving request's matching paths, including peer-slot donors.
 // This is an eviction preference, not a reservation: severe pressure can still
 // discard them. Longer matches take precedence over a shared system prefix.
-// Match media identities and draft lookahead just as lookup does.
-func (s *batchScheduler) matchingHistory(incoming queuedRequest) map[*trieNode]int {
+// Only the destination may reuse local state; donors must have complete saved
+// checkpoints. Match media identities and draft lookahead just as lookup does.
+func (s *batchScheduler) matchingHistory(incoming queuedRequest, destination int) map[*trieNode]int {
 	var tokens []int32
 	var items []mediaItem
 	score := false
@@ -100,8 +101,12 @@ func (s *batchScheduler) matchingHistory(incoming queuedRequest) map[*trieNode]i
 		return nil
 	}
 	keys := effectiveKeyTokens(tokens, items)
+	maxReuse := len(tokens)
+	if !score {
+		maxReuse = max(0, maxReuse-1) // Generation needs a decode seed.
+	}
 	preferred := make(map[*trieNode]int)
-	for _, slot := range s.slots {
+	for i, slot := range s.slots {
 		if slot == nil {
 			continue
 		}
@@ -112,7 +117,17 @@ func (s *batchScheduler) matchingHistory(incoming queuedRequest) map[*trieNode]i
 		if c == nil || c.root == nil {
 			continue
 		}
-		path, matched := findBestMatch(c.root, c.key(keys))
+		cacheKeys := c.key(keys)
+		var path []*trieNode
+		var matched int
+		if i == destination {
+			path, matched = findBestMatch(c.root, cacheKeys[:min(maxReuse, len(cacheKeys))])
+			if item := insideAtomicItem(items, matched); item != nil {
+				path, matched = findBestMatch(c.root, cacheKeys[:item.pos])
+			}
+		} else {
+			path, matched = c.sharedPrefix(cacheKeys, min(maxReuse, len(cacheKeys)), items)
+		}
 		for _, n := range path {
 			preferred[n] = matched
 		}

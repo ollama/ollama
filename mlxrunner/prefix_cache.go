@@ -744,6 +744,8 @@ func pendingHistoryBytes(caches []*prefixCache) int64 {
 // and complete-edge eviction. Surviving paths keep continuous KV history.
 func trimRetainedHistory(caches, idle []*prefixCache, target int64, preferred map[*trieNode]int) {
 	changed := false
+	// target is the retained-memory ceiling, not bytes left to free. Re-read
+	// usage after each eviction and stop as soon as it fits beneath that ceiling.
 	for int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) > target {
 		if !evictColdHistory(caches, idle, preferred) {
 			break // Remaining buffers belong to active requests.

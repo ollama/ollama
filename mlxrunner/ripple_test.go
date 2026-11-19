@@ -216,7 +216,7 @@ func runRippleScheduledRequest(r *Runner, request request) error {
 	}
 	s := &batchScheduler{r: r, slots: []*batchSlot{slot}}
 	if err := r.onMLX(request.Ctx, func() error {
-		mlx.Scoped(func() { s.admitGeneration(request) })
+		mlx.Scoped(func() { s.admitGeneration(request, s.selectSlot(request)) })
 		return nil
 	}); err != nil {
 		return err

@@ -189,11 +189,12 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 			cached := make([]int, 2)
 			for id, tokens := range prompts {
 				done[id] = make(chan error, 1)
-				s.admitEvaluation(&evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+				req := &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 					p := r.openEvaluation(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 2 - id}, nil, func(h *mlx.Array) error { got[id] = h.Floats(); return nil })
 					cached[id] = p.position
 					return p, nil
-				}})
+				}}
+				s.admitEvaluation(req, s.selectSlot(req))
 			}
 			for s.slots[0].busy() || s.slots[1].busy() {
 				s.step()
@@ -283,15 +284,16 @@ func TestCachedEvaluationReusesBusyPeer(t *testing.T) {
 		}
 		prefix := []int32{1, 2, 3, 4, 5, 6, 7, 8}
 		warm := open(prefix)
-		s.admitEvaluation(warm)
+		s.admitEvaluation(warm, s.selectSlot(warm))
 		s.stepEvaluation(s.slots[0])
 		if err := <-warm.done; err != nil {
 			t.Fatal(err)
 		}
 		// Slot zero is occupied by another request before the fork arrives.
-		s.admitEvaluation(open(append(slices.Clone(prefix), 30)))
+		next := open(append(slices.Clone(prefix), 30))
+		s.admitEvaluation(next, s.selectSlot(next))
 		fork := open(append(slices.Clone(prefix), 20))
-		s.admitEvaluation(fork)
+		s.admitEvaluation(fork, s.selectSlot(fork))
 		if got := s.slots[1].evaluation.state.position; got != len(prefix) {
 			t.Fatalf("busy-peer cached tokens %d, want %d", got, len(prefix))
 		}

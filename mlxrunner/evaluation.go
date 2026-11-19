@@ -27,34 +27,28 @@ func (r *Runner) scheduleEvaluation(ctx context.Context, tokens []int32, items [
 	return <-request.done
 }
 
-func (s *batchScheduler) admitEvaluation(request *evaluationRequest) {
+func (s *batchScheduler) admitEvaluation(request *evaluationRequest, index int) {
 	if err := request.ctx.Err(); err != nil {
 		request.reject(err)
 		return
 	}
-	for i, slot := range s.slots {
-		if slot != nil && slot.busy() {
-			continue
+	slot := s.slots[index]
+	if slot == nil {
+		slot = &batchSlot{id: index}
+		s.slots[index] = slot
+	}
+	var peers []*prefixCache
+	for _, other := range s.slots {
+		if other != nil && other != slot && other.scoreCache != nil {
+			peers = append(peers, other.scoreCache)
 		}
-		if slot == nil {
-			slot = &batchSlot{id: i}
-			s.slots[i] = slot
-		}
-		var peers []*prefixCache
-		for _, other := range s.slots {
-			if other != nil && other != slot && other.scoreCache != nil {
-				peers = append(peers, other.scoreCache)
-			}
-		}
-		p, err := request.open(slot, peers)
-		if err != nil {
-			request.done <- err
-			return
-		}
-		slot.evaluation = &activeEvaluation{request: request, state: p}
+	}
+	p, err := request.open(slot, peers)
+	if err != nil {
+		request.done <- err
 		return
 	}
-	panic("scheduler admitted evaluation request without a free slot")
+	slot.evaluation = &activeEvaluation{request: request, state: p}
 }
 
 func (s *batchScheduler) finishEvaluation(slot *batchSlot, err error) {
