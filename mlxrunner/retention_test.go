@@ -183,12 +183,11 @@ func TestRetainedHistoryPressureReleasesLazyBacking(t *testing.T) {
 		if pc.pagedOutBytes != 0 || pending == 0 {
 			t.Fatal("test requires a lazy snapshot with future copy cost")
 		}
-		live := mlx.ActiveMemory()
-		trimRetainedHistory([]*prefixCache{pc}, []*prefixCache{pc}, int64(live+pending), nil)
+		trimHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil, discover.MemoryHeadroom{AvailableRAM: int64(pending + pc.liveBytes())}, 0)
 		if len(pc.root.children) != 1 {
 			t.Fatal("history evicted despite sufficient headroom")
 		}
-		trimRetainedHistory([]*prefixCache{pc}, []*prefixCache{pc}, int64(baseline), nil)
+		trimHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil, discover.MemoryHeadroom{}, math.MaxInt64/2)
 		mlx.DefaultStream().Synchronize()
 		if len(pc.root.children) != 0 || kv.Offset() != 0 {
 			t.Fatal("idle history did not yield under pressure")
@@ -318,7 +317,7 @@ func TestPressureCompactsOldCheckpointsWithoutLosingLatestPrefix(t *testing.T) {
 		before, retained := mlx.ActiveMemory(), c.pagedOutBytes
 		t.Logf("before active=%d retained=%d pending=%d old=%d", before, retained, pending, saved)
 		mlx.ResetPeakMemory()
-		trimRetainedHistory([]*prefixCache{c}, nil, int64(before)+pending-saved, nil)
+		trimHistory([]*prefixCache{c}, nil, nil, discover.MemoryHeadroom{AvailableRAM: pending}, int64(mlx.CacheMemory())+saved)
 		if got := mlx.PeakMemory(); got > before {
 			t.Fatalf("pressure compaction allocated: peak %d > %d", got, before)
 		}
@@ -356,8 +355,10 @@ func TestRetainedHistoryStopsAfterMeetingLimit(t *testing.T) {
 		}
 		// One eviction releases more than this shortfall. Another checkpoint is
 		// eligible, but must survive once current usage meets the fixed limit.
-		target := int64(before) + pendingHistoryBytes([]*prefixCache{c}) - 1
-		trimRetainedHistory([]*prefixCache{c}, nil, target, nil)
+		storageBefore := int64(before + mlx.CacheMemory())
+		memory := discover.MemoryHeadroom{AvailableRAM: pendingHistoryBytes([]*prefixCache{c})}
+		reserve := int64(mlx.CacheMemory()) + 1
+		trimHistory([]*prefixCache{c}, nil, nil, memory, reserve)
 		if freed := int64(before - mlx.ActiveMemory()); freed < old {
 			t.Fatalf("released %d bytes, want at least the first checkpoint's %d", freed, old)
 		}
@@ -365,11 +366,79 @@ func TestRetainedHistoryStopsAfterMeetingLimit(t *testing.T) {
 			t.Fatal("eviction discarded the next checkpoint after meeting the limit")
 		}
 		after := mlx.ActiveMemory()
-		trimRetainedHistory([]*prefixCache{c}, nil, target, nil)
+		// A later host observation credits the storage returned by the first trim.
+		memory.AvailableRAM += storageBefore - int64(after+mlx.CacheMemory())
+		trimHistory([]*prefixCache{c}, nil, nil, memory, reserve)
 		if mlx.ActiveMemory() != after || len(c.activePath) != 3 {
 			t.Fatal("rechecking the same limit discarded more history")
 		}
 	})
+}
+
+func TestRetentionUpdatesIdleCopyReserve(t *testing.T) {
+	for _, shortfall := range []bool{false, true} {
+		mlxtest.RunSubtest(t, fmt.Sprintf("physical_shortfall=%v", shortfall), func(t *mlxtest.T) {
+			if !mlx.GPUIsAvailable() {
+				t.Skip("GPU allocator counters required")
+			}
+			makeHistory := func(count int) *prefixCache {
+				c := newPrefixCache([]cache.Cache{cache.NewKVCache()})
+				c.ensureRoot()
+				tokens := make([]int32, count)
+				for i := range tokens {
+					tokens[i] = int32(i + 1)
+				}
+				feedNativeRetention(c, tokens)
+				n := c.advancePath(c.root, c.key(effectiveKeyTokens(tokens, nil)), count)
+				c.pageOut(n)
+				return c
+			}
+			before := mlx.ActiveMemory()
+			large := makeHistory(1024)
+			defer large.close()
+			largeBytes := int64(mlx.ActiveMemory() - before)
+			small := makeHistory(4)
+			defer small.close()
+			large.activePath[1].lastUsed = time.Unix(1, 0)
+			small.activePath[1].lastUsed = time.Unix(2, 0)
+			if large.liveBytes() <= small.liveBytes() {
+				t.Fatal("fixture needs unequal copy reserves")
+			}
+			mlx.ClearCache()
+			caches := []*prefixCache{large, small}
+			memory := discover.MemoryHeadroom{
+				AvailableRAM: int64(large.liveBytes()) + pendingHistoryBytes([]*prefixCache{small}),
+			}
+			// With the old copy reserve, the target remains one byte below the
+			// smaller cache's usage even after all of the larger cache is freed.
+			// Dropping the obsolete reserve must let that smaller history survive.
+			reserve := largeBytes + 1
+			if shortfall {
+				// A real physical shortfall still requires the smaller cache to go;
+				// lowering the copy reserve must not relax this separate constraint.
+				immediate := -largeBytes - 1
+				memory.FreeMemoryAboveTarget = &immediate
+			}
+			trimHistory(caches, caches, nil, memory, reserve)
+			if large.minCacheOffset() != 0 {
+				t.Fatal("oldest, larger history was not released")
+			}
+			if shortfall {
+				if small.minCacheOffset() != 0 {
+					t.Fatal("copy-reserve reduction ignored the physical shortfall")
+				}
+				return
+			}
+			if small.minCacheOffset() != 4 {
+				t.Fatal("evicted the smaller history after the larger cache and its copy reserve were released")
+			}
+			session := small.beginScore([]int32{1, 2, 3, 4}, nil)
+			defer session.close()
+			if len(session.remaining) != 0 {
+				t.Fatal("surviving history could not be reused")
+			}
+		})
+	}
 }
 
 func TestPressureNeverMergesFrontierPastPendingCapture(t *testing.T) {
@@ -711,7 +780,8 @@ func TestCompressionPreservesIdleFrontier(t *testing.T) {
 		if freed := reclaimColdHistory([]*prefixCache{unrelated}, []*prefixCache{unrelated}, 1, nil); freed != 0 {
 			t.Fatalf("idle compression check reclaimed the last restore point: %d bytes", freed)
 		}
-		trimRetainedHistory(caches, caches, int64(mlx.ActiveMemory())+pendingHistoryBytes(caches)-1, preferred)
+		memory := discover.MemoryHeadroom{AvailableRAM: pendingHistoryBytes(caches) + idleCopyBytes(caches)}
+		trimHistory(caches, caches, preferred, memory, int64(mlx.CacheMemory())+1)
 		if !slices.Equal(before, incoming.activePath) || unrelated.minCacheOffset() != 0 {
 			t.Fatal("physical shortfall did not reclaim the unrelated idle frontier first")
 		}

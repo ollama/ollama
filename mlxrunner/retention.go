@@ -29,7 +29,7 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 		s.snapshotTimer.Reset(snapshotCheckInterval)
 	}
 	var caches, idle []*prefixCache
-	var working, next int64
+	var working int64
 	for _, slot := range s.slots {
 		if slot == nil {
 			continue
@@ -39,12 +39,10 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 				continue
 			}
 			caches = append(caches, c)
-			live := int64(c.liveBytes())
 			if c == slot.activeCache() {
-				working += live
+				working += int64(c.liveBytes())
 			} else {
 				idle = append(idle, c)
-				next = max(next, live)
 			}
 		}
 	}
@@ -78,9 +76,9 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 	for _, c := range caches {
 		c.limitBytes = math.MaxInt64
 	}
-	// Allow one copy per active row, and one idle row which may be admitted.
-	// Restoring history or writing a shared buffer can require a fresh copy.
-	trimHistory(caches, idle, s.matchingHistory(incoming, destination), observation, s.snapshotWorkspace+working+next)
+	// Active rows may need a copy before writing shared buffers. The idle-row
+	// allowance is measured during trimming because eviction can release it.
+	trimHistory(caches, idle, s.matchingHistory(incoming, destination), observation, s.snapshotWorkspace+working)
 }
 
 // Prefer the arriving request's matching paths, including peer-slot donors.
@@ -138,7 +136,8 @@ func (s *batchScheduler) matchingHistory(incoming queuedRequest, destination int
 func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memory discover.MemoryHeadroom, reserve int64) {
 	active, pool := int64(mlx.ActiveMemory()), int64(mlx.CacheMemory())
 	storageBefore := active + pool
-	target := physicalHistoryLimit(memory, storageBefore, active, pool, reserve)
+	copyBytes := idleCopyBytes(idle)
+	target := physicalHistoryLimit(memory, storageBefore, active, pool, reserve+copyBytes)
 	shortfall := memory.FreeMemoryAboveTarget != nil && *memory.FreeMemoryAboveTarget < 0
 	if memory.ReclaimBytes == 0 && !shortfall && active+pendingHistoryBytes(caches) <= target {
 		return
@@ -157,9 +156,33 @@ func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memor
 	// This is bounded feedback, not a prediction of which process caused pressure.
 	reclaimed := reclaimColdHistory(caches, idle, pressure, preferred)
 	active, pool = int64(mlx.ActiveMemory()), int64(mlx.CacheMemory())
-	target = physicalHistoryLimit(memory, storageBefore, active, pool, reserve)
-	trimRetainedHistory(caches, idle, target, preferred)
-	slog.Log(context.Background(), logutil.LevelTrace, "MLX cache memory", "available", memory.AvailableRAM, "compression_growth", memory.ReclaimBytes, "compression_reclaimed", reclaimed, "reusable", pool, "reserve", reserve, "target", target, "active_before", active, "active_after", mlx.ActiveMemory())
+	// Keep this physical-headroom baseline fixed: evicted buffers enter the
+	// allocator pool until ClearCache below. Only usage and the copy reserve vary.
+	changed := false
+	for {
+		// Evicting an idle slot's last history also releases its live buffers.
+		// Stop reserving room to copy those buffers before choosing another victim.
+		copyBytes = idleCopyBytes(idle)
+		target = physicalHistoryLimit(memory, storageBefore, active, pool, reserve+copyBytes)
+		if int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) <= target || !evictColdHistory(caches, idle, preferred) {
+			break
+		}
+		changed = true
+	}
+	if changed {
+		// Return the evicted buffers from MLX's allocator pool to the OS.
+		mlx.ClearCache()
+	}
+	slog.Log(context.Background(), logutil.LevelTrace, "MLX cache memory", "available", memory.AvailableRAM, "compression_growth", memory.ReclaimBytes, "compression_reclaimed", reclaimed, "reusable", pool, "reserve", reserve+copyBytes, "target", target, "active_before", active, "active_after", mlx.ActiveMemory())
+}
+
+// Allow one idle row to restore history or copy shared buffers on admission.
+func idleCopyBytes(idle []*prefixCache) int64 {
+	var bytes int64
+	for _, c := range idle {
+		bytes = max(bytes, int64(c.liveBytes()))
+	}
+	return bytes
 }
 
 // physicalHistoryLimit accounts for native storage changes against the same

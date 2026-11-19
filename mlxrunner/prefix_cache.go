@@ -740,25 +740,6 @@ func pendingHistoryBytes(caches []*prefixCache) int64 {
 	return bytes
 }
 
-// trimRetainedHistory reclaims cold history through copy-free checkpoint merges
-// and complete-edge eviction. Surviving paths keep continuous KV history.
-func trimRetainedHistory(caches, idle []*prefixCache, target int64, preferred map[*trieNode]int) {
-	changed := false
-	// target is the retained-memory ceiling, not bytes left to free. Re-read
-	// usage after each eviction and stop as soon as it fits beneath that ceiling.
-	for int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) > target {
-		if !evictColdHistory(caches, idle, preferred) {
-			break // Remaining buffers belong to active requests.
-		}
-		changed = true
-	}
-	if changed {
-		// Closed arrays become unused allocator buffers; release those pages to
-		// the OS now, including while a scoring runner is idle.
-		mlx.ClearCache()
-	}
-}
-
 // oldestColdHistory selects the oldest eligible checkpoint or inactive leaf.
 // Checkpoint merges must preserve the child's state without allocating. Only
 // after candidates with the same match length are exhausted may an idle slot
