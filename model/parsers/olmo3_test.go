@@ -232,6 +232,18 @@ get_weather(location="New York")</function_calls>`,
 				},
 			},
 		},
+		{
+			name:  "tool call with unterminated quote",
+			input: `<function_calls>get_weather(location=")</function_calls>`,
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": `"`}),
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -469,6 +481,9 @@ func TestParseOlmo3Value(t *testing.T) {
 		{"simple object", `{"name": "John"}`, map[string]any{"name": "John"}},
 		{"object with number", `{"age": 30}`, map[string]any{"age": int64(30)}},
 		{"object with multiple keys", `{"a": 1, "b": 2}`, map[string]any{"a": int64(1), "b": int64(2)}},
+		{"lone double quote", `"`, `"`},
+		{"lone single quote", `'`, `'`},
+		{"object with lone double quote key", `{":1}`, map[string]any{`"`: int64(1)}},
 	}
 
 	for _, tt := range tests {
