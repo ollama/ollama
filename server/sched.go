@@ -61,7 +61,7 @@ type Scheduler struct {
 	pendingReqCh  chan *LlmRequest
 	finishedReqCh chan *LlmRequest
 	expiredCh     chan *runnerRef
-	unloadedCh    chan any
+	unloadedCh    chan error
 
 	// loadedMu protects loaded and activeLoading
 	loadedMu sync.Mutex
@@ -125,7 +125,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		pendingReqCh:    make(chan *LlmRequest, maxQueue),
 		finishedReqCh:   make(chan *LlmRequest, maxQueue),
 		expiredCh:       make(chan *runnerRef, maxQueue),
-		unloadedCh:      make(chan any, maxQueue),
+		unloadedCh:      make(chan error, maxQueue),
 		loaded:          make(map[string]*runnerRef),
 		newServerFn:     llm.NewLlamaServer,
 		getGpuFn:        discover.GPUDevices,
@@ -368,8 +368,15 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					// load() has already set oomRetryAttempted so a second
 					// crash falls through to the fail-fast path.
 					if pending.oomRetryAttempted {
-						if !s.evictAllAndWait(ctx, pendingKey) {
-							return
+						if err := s.evictAllAndWait(ctx, pendingKey); err != nil {
+							if ctx.Err() != nil {
+								return
+							}
+							// A runner that will not unload means the retry would run into the same
+							// memory again, so fail this request instead of looping on it.
+							slog.Error("failed to evict runners for an OOM retry", "model", pending.model.ModelPath, "error", err)
+							pending.errCh <- err
+							break
 						}
 						continue
 					}
@@ -397,14 +404,23 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				runnerToExpire.refMu.Unlock()
 				// Wait for the unload to happen
 				slog.Debug("waiting for pending requests to complete and unload to occur", "runner", runnerToExpire)
+				var unloadErr error
 				select {
 				case <-ctx.Done():
 					slog.Debug("shutting down scheduler pending loop")
 					return
-				case <-s.unloadedCh:
-					slog.Debug("unload completed", "runner", runnerToExpire)
-					continue
+				case unloadErr = <-s.unloadedCh:
 				}
+				if unloadErr != nil {
+					// The runner still has to go before this request can load, and it just refused to.
+					// Retrying the loop would pick the same runner and wait on a second unload that
+					// cannot succeed either, so report the failure instead of stalling the queue.
+					slog.Error("failed to unload a runner to make room", "runner", runnerToExpire, "error", unloadErr)
+					pending.errCh <- unloadErr
+					break
+				}
+				slog.Debug("unload completed", "runner", runnerToExpire)
+				continue
 			}
 		case <-s.unloadedCh:
 			// An unload request when there are no pending request can be ignored
@@ -495,7 +511,9 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				// do not delete the mismatched loaded runner, or wait for VRAM
 				// convergence.
 				slog.Debug("orphaned runner shutting down", "orphan", runner, "loaded", runnerToUnload)
-				runner.unload()
+				if err := runner.unload(); err != nil {
+					slog.Error("failed to shut down orphaned runner", "model", runner.modelKey, "pid", runner.pid, "error", err)
+				}
 				s.loadedMu.Unlock()
 				runner.refMu.Unlock()
 			} else {
@@ -505,14 +523,27 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 					runnersSnapshot = append(runnersSnapshot, r)
 				}
 				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
-				runner.unload()
+				if err := runner.unload(); err != nil {
+					// Still alive and still holding its VRAM. Keep it in
+					// s.loaded so the next load accounts for that memory
+					// instead of starting a second runner next to this one.
+					slog.Error("failed to unload runner, keeping it loaded",
+						"model", runner.modelKey, "pid", runner.pid, "error", err)
+					s.loadedMu.Unlock()
+					<-finished
+					runner.refMu.Unlock()
+					// Whoever is waiting for room has to hear about this, or it
+					// would wait for an unload that already gave up.
+					s.unloadedCh <- err
+					continue
+				}
 				delete(s.loaded, runner.modelKey)
 				s.loadedMu.Unlock()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
 				<-finished
 				runner.refMu.Unlock()
 				slog.Debug("sending an unloaded event", "runner", runner)
-				s.unloadedCh <- struct{}{}
+				s.unloadedCh <- nil
 			}
 		}
 	}
@@ -772,7 +803,9 @@ iGPUScan:
 		// Shouldn't happen, but safeguard against leaking a runner
 		slog.Warn("model was still loaded", "old_runner", oldRunner, "new_runner", runner)
 		oldRunner.refMu.Lock()
-		oldRunner.unload()
+		if err := oldRunner.unload(); err != nil {
+			slog.Error("failed to unload previous runner", "model", oldRunner.modelKey, "pid", oldRunner.pid, "error", err)
+		}
 		oldRunner.refMu.Unlock()
 	}
 	s.activeLoading = nil
@@ -1390,6 +1423,11 @@ type runnerRef struct {
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
+	// unloadFailed is set when we couldn't confirm the process is gone. The
+	// runner stays in s.loaded so its memory is still accounted for, but it
+	// can't be handed to another request.
+	unloadFailed bool
+
 	// model is atomic so lookups can read it without contending on refMu.
 	model        atomic.Pointer[Model]
 	modelPath    string
@@ -1403,19 +1441,29 @@ type runnerRef struct {
 	*api.Options
 }
 
-// The refMu must already be held when calling unload
-func (runner *runnerRef) unload() {
+// The refMu must already be held when calling unload. A non-nil error means the
+// runner's process could not be confirmed dead, and the scheduler must keep
+// accounting for it.
+func (runner *runnerRef) unload() error {
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
 	}
 	if runner.llama != nil {
-		runner.llama.Close()
+		if err := runner.llama.Close(); err != nil {
+			// Part of the process may still be around holding its memory, so
+			// don't clear the bookkeeping: needsReload() should keep answering
+			// for this runner rather than handing it back as usable.
+			runner.unloadFailed = true
+			return err
+		}
 	}
+	runner.unloadFailed = false
 	runner.model.Store(nil)
 	runner.Options = nil
 	runner.gpus = nil
 	runner.contextShift = false
+	return nil
 }
 
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
@@ -1427,6 +1475,12 @@ func (runner *runnerRef) reloadReason(ctx context.Context, req *LlmRequest) stri
 	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+
+	// A runner we failed to unload is still up but its bookkeeping is stale, so
+	// it can't serve this request. It still counts towards loaded memory.
+	if runner.unloadFailed {
+		return true
+	}
 
 	timeout := 10 * time.Second
 	if runner.loading {
@@ -1640,9 +1694,11 @@ func (a ByDurationAndName) Less(i, j int) bool {
 
 // evictAllAndWait synchronously expires every currently loaded runner except
 // the one being loaded (matched by modelKey) and waits for all unload events
-// to drain. Returns false if the context was cancelled mid-wait so the caller
-// can exit the scheduling loop. Used by the OOM retry path in processPending.
-func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
+// to drain. Returns an error when the context was cancelled mid-wait or a
+// runner could not be unloaded, so the caller can fail the request instead of
+// retrying against the same runner. Used by the OOM retry path in
+// processPending.
+func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) error {
 	s.loadedMu.Lock()
 	runnersToExpire := make([]*runnerRef, 0, len(s.loaded))
 	for key, r := range s.loaded {
@@ -1654,7 +1710,7 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 	s.loadedMu.Unlock()
 
 	if len(runnersToExpire) == 0 {
-		return true
+		return nil
 	}
 
 	slog.Info("evicting all other loaded models for OOM retry", "count", len(runnersToExpire))
@@ -1673,15 +1729,22 @@ func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
 
 	// Wait for every unload event. Each runner produces exactly one
 	// unloadedCh signal when its cleanup finishes.
+	var unloadErr error
 	for range runnersToExpire {
 		select {
 		case <-ctx.Done():
 			slog.Debug("shutting down scheduler during evict-all wait")
-			return false
-		case <-s.unloadedCh:
+			return ctx.Err()
+		case err := <-s.unloadedCh:
+			if err != nil && unloadErr == nil {
+				// Retrying the load would run into the same runner again, so
+				// let the caller fail fast instead.
+				slog.Error("failed to evict a runner, not retrying the load", "error", err)
+				unloadErr = err
+			}
 		}
 	}
-	return true
+	return unloadErr
 }
 
 func (s *Scheduler) expireRunnersForRuntimeOOM(model *Model, err error) {
@@ -1760,7 +1823,9 @@ func (s *Scheduler) unloadAllRunners() {
 	for model, runner := range s.loaded {
 		if runner.llama != nil {
 			slog.Debug("shutting down runner", "model", model)
-			runner.llama.Close()
+			if err := runner.llama.Close(); err != nil {
+				slog.Warn("failed to shut down runner", "model", model, "error", err)
+			}
 		}
 	}
 }
