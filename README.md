@@ -182,6 +182,7 @@ console.log(response.message.content);
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid) - Cross-platform mobile and desktop client
 - [Witsy](https://github.com/nbonamy/witsy) - AI desktop app for Mac, Windows, and Linux
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) - Multi-provider desktop client
+- [ChatOSS](https://github.com/pagecow/chatoss) - Desktop app for chatting and coding with local models.
 - [Ollama App](https://github.com/JHubi1/ollama-app) - Multi-platform client for desktop and mobile
 - [PyGPT](https://github.com/szczyglis-dev/py-gpt) - AI desktop assistant for Linux, Windows, and Mac
 - [Alpaca](https://github.com/Jeffser/Alpaca) - GTK4 client for Linux and macOS
