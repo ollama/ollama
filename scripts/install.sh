@@ -172,7 +172,7 @@ download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
-    $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
+    $SUDO ln -sf "$OLLAMA_INSTALL_DIR/bin/ollama" "$BINDIR/ollama"
 fi
 
 # Check for NVIDIA JetPack systems with additional downloads
