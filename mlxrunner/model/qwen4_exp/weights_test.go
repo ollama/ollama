@@ -63,8 +63,8 @@ func TestSparseMoEGlobalScales(t *testing.T) {
 					t.Fatal(err)
 				}
 				reference := *moe
-				reference.GateUp = &expertProjection{Weight: mlx.Transpose(dense[0], 0, 2, 1)}
-				reference.Down = &expertProjection{Weight: mlx.Transpose(dense[1], 0, 2, 1)}
+				reference.GateUp = &model.ExpertProjection{Weight: mlx.Transpose(dense[0], 0, 2, 1)}
+				reference.Down = &model.ExpertProjection{Weight: mlx.Transpose(dense[1], 0, 2, 1)}
 				for _, tokens := range []int{2, 64} {
 					x := mlx.FromValues(values(tokens*hidden, 0.02), 1, tokens, hidden)
 					got, want := moe.Forward(x, m.Config), reference.Forward(x, m.Config)

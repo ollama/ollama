@@ -140,6 +140,36 @@ func TestBatchAttentionRows(t *testing.T) {
 	}
 }
 
+func TestBatchAttentionViewWithEmptyRow(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		populated, empty := NewKVCache(), NewKVCache()
+		defer populated.Free()
+		defer empty.Free()
+		kv := mlx.FromValues([]float32{1, 2}, 1, 1, 1, 2)
+		populated.Update(newKVBatch(0, 1), kv, kv)
+
+		layers, err := Batch([][]Cache{{populated}, {empty}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := &batch.Batch{
+			InputIDs:     mlx.Zeros(mlx.DTypeInt32, 2, 1),
+			SeqOffsets:   []int32{1, 0},
+			SeqQueryLens: []int32{1, 1},
+		}
+		rows := layers[0].(Attention).View(b).Rows()
+		if len(rows) != 2 || rows[0] == nil || rows[1] == nil {
+			t.Fatalf("want both row histories, got %v", rows)
+		}
+		if err := compareRowArrays(rows[0].K(), kv); err != nil {
+			t.Fatal(err)
+		}
+		if rows[1].K() != nil || rows[1].V() != nil || empty.Offset() != 0 {
+			t.Fatal("view changed the empty row")
+		}
+	})
+}
+
 func TestBatchRecurrentOwnersAndSnapshots(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		a, b := NewRecurrentCache(2, 3, 1, 2, 2), NewRecurrentCache(2, 3, 1, 2, 2)

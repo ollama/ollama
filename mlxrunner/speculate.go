@@ -81,9 +81,13 @@ func newSpeculation(r *Runner, slotID int, draft model.DraftModel, targets, draf
 		return nil
 	}
 	s := &speculation{r: r, slotID: slotID, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
-	if bd, ok := draft.(model.BlockDraft); ok {
-		s.drafter = newDFlashDrafter(s, bd)
-	} else {
+	switch d := draft.(type) {
+	case sharedTargetBlockDraft:
+		blockSize, maskToken := d.SharedTargetBlockParams()
+		s.drafter = &sharedTargetDrafter{spec: s, draft: d, blockSize: blockSize, maskToken: maskToken}
+	case model.BlockDraft:
+		s.drafter = newDFlashDrafter(s, d)
+	default:
 		s.drafter = newMTPDrafter(s)
 	}
 	s.depth.drafterLimit = s.drafter.draftLimit()

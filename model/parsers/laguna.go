@@ -558,19 +558,7 @@ func parseLagunaToolCall(raw string, tools []api.Tool) (api.ToolCall, error) {
 	for _, match := range lagunaArgRE.FindAllStringSubmatch(argsText, -1) {
 		key := strings.TrimSpace(match[1])
 		value := match[2]
-		var paramType api.PropertyType
-		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
-			if prop, ok := matchedTool.Function.Parameters.Properties.Get(key); ok {
-				if len(prop.AnyOf) > 0 {
-					for _, anyOfProp := range prop.AnyOf {
-						paramType = append(paramType, anyOfProp.Type...)
-					}
-				} else {
-					paramType = prop.Type
-				}
-			}
-		}
-		call.Function.Arguments.Set(key, parseValue(value, paramType))
+		call.Function.Arguments.Set(key, parseValue(value, toolArgumentTypes(matchedTool, key)))
 	}
 	return call, nil
 }

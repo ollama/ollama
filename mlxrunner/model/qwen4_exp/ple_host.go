@@ -20,7 +20,7 @@ import (
 var errHostPLEUnsupported = errors.New("host-backed PLE requires standard NVFP4")
 
 type hostPLEShard struct {
-	mapping *hostMapping
+	mapping *model.HostMapping
 
 	weightStart   int64
 	scaleStart    int64
@@ -105,7 +105,7 @@ func openHostPLETable(layers map[string]manifest.Layer, quant map[string]*model.
 		if i == 0 {
 			table.rows = shard.rows
 		} else if shard.rows != table.rows {
-			shard.mapping.close()
+			shard.mapping.Close()
 			table.close()
 			return nil, fmt.Errorf("shard %d has %d rows, want %d", i, shard.rows, table.rows)
 		}
@@ -143,7 +143,7 @@ func openHostPLEShard(path, name string, rowWidth int, quant *model.TensorQuantI
 	if err != nil {
 		return nil, err
 	}
-	mapping, err := openHostMapping(path)
+	mapping, err := model.OpenHostMapping(path)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func closeHostPLETables(tables map[string]*hostPLETable) {
 func (t *hostPLETable) close() {
 	for _, shard := range t.shards {
 		if shard != nil {
-			shard.mapping.close()
+			shard.mapping.Close()
 		}
 	}
 }
@@ -232,7 +232,7 @@ func (t *hostPLETable) lookup(globalIDs *mlx.Array) *mlx.Array {
 
 		shard := t.shards[int(id)/t.rows]
 		row := int64(int(id) % t.rows)
-		weightBytes, err := shard.mapping.bytes(
+		weightBytes, err := shard.mapping.Bytes(
 			shard.weightStart+row*int64(weightColumns*4),
 			shard.weightStart+(row+1)*int64(weightColumns*4),
 		)
@@ -242,7 +242,7 @@ func (t *hostPLETable) lookup(globalIDs *mlx.Array) *mlx.Array {
 		for i := range weightColumns {
 			weightOutput[i] = binary.LittleEndian.Uint32(weightBytes[i*4:])
 		}
-		scaleBytes, err := shard.mapping.bytes(
+		scaleBytes, err := shard.mapping.Bytes(
 			shard.scaleStart+row*int64(scaleColumns),
 			shard.scaleStart+(row+1)*int64(scaleColumns),
 		)

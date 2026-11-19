@@ -92,6 +92,12 @@ func NewModel(root *model.Root) (model.Model, error) {
 	}, nil
 }
 
+func (m *Model) Close() error {
+	closeHostPLETables(m.hostPLE)
+	m.hostPLE = nil
+	return nil
+}
+
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	linears := model.NewLinearFactory(tensors, m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant)
 	var err error
