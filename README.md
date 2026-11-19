@@ -138,6 +138,43 @@ const response = await ollama.chat({
 console.log(response.message.content);
 ```
 
+## Splitting a model across GPUs
+
+By default Ollama decides how much of a model each device gets. It ranks devices by class,
+so when a model does not fit it spills the remainder to CPU rather than place it on a device
+it judges unhelpful — an integrated GPU is enumerated but may be given no tensors at all.
+
+`tensor_split` overrides that with an explicit proportion per device:
+
+```
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3.2",
+  "prompt": "Why is the sky blue?",
+  "options": { "tensor_split": "0.5,0.5" }
+}'
+```
+
+The values are proportions, not percentages — `3,7` and `0.3,0.7` are equivalent — and they
+apply to devices in the order Ollama enumerates them. `OLLAMA_TENSOR_SPLIT` sets a
+server-wide default and `PARAMETER tensor_split` sets one per model; a per-request option
+overrides both. Setting `main_gpu` pins the model to one device and ignores the split.
+
+### Across a discrete GPU and an integrated GPU
+
+The split may span backends, so a CUDA discrete GPU and a Vulkan integrated GPU can share
+one model. Ollama normally keeps one backend's devices and ignores the rest; an explicit
+`tensor_split` keeps every device it discovered, and each physical card is still counted
+once even when two backends enumerate it.
+
+A single model process can load **two GPU backends at most** — for example CUDA plus
+Vulkan. A split naming devices from a third backend is refused with a warning rather than
+started with devices it cannot address.
+
+Splitting is not automatically faster. An integrated GPU's memory *is* system memory, so it
+offers little bandwidth the CPU does not already have. Fully offloading a model that would
+otherwise spill to CPU tends to raise generation throughput and lower prompt processing.
+Measure it. See [docs/gpu.mdx](docs/gpu.mdx) for the details.
+
 ## Supported backends
 
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) project founded by Georgi Gerganov.
