@@ -111,6 +111,10 @@ func (mockRunner) Ping(_ context.Context) error { return nil }
 
 func (m mockRunner) ContextLength() int { return m.contextLength }
 
+func (m mockRunner) RunnerOptions() map[string]any {
+	return map[string]any{"num_ctx": int64(m.contextLength)}
+}
+
 func TestLlamaServerConfigForModelSplitPaths(t *testing.T) {
 	m := &Model{
 		Digest:          strings.Repeat("a", 64),
