@@ -109,7 +109,7 @@ Additional prerequisites:
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads)
 - (Optional) Vulkan GPU support
     - [Vulkan SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
-    - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
+    - Or install via package manager: `sudo apt install libvulkan-dev glslc spirv-headers` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
 - (Optional) MLX engine support
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
