@@ -50,6 +50,18 @@ func (p *RippleParser) ThinkingClose() []string {
 	return nil
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *RippleParser) ThinkingTags() (string, string) {
+	return rippleThinkOpen, rippleThinkClose
+}
+
+// ThinkingTagsAreText is true: Ripple's tokenizer has no special token for
+// either tag. "<think>" is "<th" "ink" ">" and "</think>" is "</" "think" ">",
+// and in generated text the ">" merges with the newline after it, so only a
+// runner that matches tags on the decoded text can arm the budget.
+func (p *RippleParser) ThinkingTagsAreText() bool { return true }
+
 func (p *RippleParser) PreservedTokens() []string {
 	return []string{rippleThinkOpen, rippleThinkClose, rippleToolOpen, rippleToolClose}
 }

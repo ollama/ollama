@@ -11,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/parsers"
 )
 
 // A model that states its thinking controls has an unsupported think value
@@ -98,5 +99,28 @@ func TestInvalidThinkBudgetIsABadRequest(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The runner is told the tags are text only when a budget has tags at all and
+// the parser says its tags are text.
+func TestThinkingTagsTextForCompletion(t *testing.T) {
+	tests := []struct {
+		name   string
+		parser parsers.Parser
+		start  string
+		want   bool
+	}{
+		{name: "ripple with a budget", parser: &parsers.RippleParser{}, start: "<think>", want: true},
+		{name: "ripple without a budget", parser: &parsers.RippleParser{}},
+		{name: "special-token tags", parser: &parsers.Qwen35Parser{}, start: "<think>"},
+		{name: "template tags, no parser", start: "<think>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := thinkingTagsTextForCompletion(tt.parser, tt.start); got != tt.want {
+				t.Errorf("thinkingTagsTextForCompletion() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
