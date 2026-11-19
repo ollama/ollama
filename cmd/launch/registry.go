@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen", "openamer"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -182,6 +182,23 @@ var integrationSpecs = []*IntegrationSpec{
 			},
 			URL:     "https://github.com/deepseek-ai/deepseek-harness",
 			Command: []string{"npm", "install", "-g", deepSeekHarnessNpmPackage},
+		},
+	},
+	{
+		Name:        openamerIntegrationName,
+		Runner:      &OpenAmer{},
+		Description: "Personal AI agent that learns across sessions",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := openamerLookPath(openamerBinary)
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureOpenAmerInstalled()
+				return err
+			},
+			URL:     "https://github.com/openamer/openamer",
+			Command: []string{"pip", "install", "--user", openamerPipPackage},
 		},
 	},
 	{
