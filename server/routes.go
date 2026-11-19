@@ -780,6 +780,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			ThinkingStartTag:   thinkStartTag,
 			ThinkingEndTag:     thinkEndTag,
 			ThinkBudgetMessage: opts.ThinkBudgetMessage,
+			ThinkingTagsText:   thinkingTagsTextForCompletion(builtinParser, thinkStartTag),
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -2979,6 +2980,14 @@ func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templ
 	return budget, opts.ThinkBudget, start, end
 }
 
+// thinkingTagsTextForCompletion reports whether the tags a thinking budget was
+// armed with are ordinary text rather than special tokens, so the runner can
+// leave the budget off on an engine that only matches exact token sequences.
+// No tags means no budget, and nothing to report.
+func thinkingTagsTextForCompletion(builtinParser parsers.Parser, start string) bool {
+	return start != "" && parsers.ThinkingTagsAreTextForParser(builtinParser)
+}
+
 // thinkBudgetForShow answers what a completion would be bounded by, without
 // running one: the budget that would apply, and the tokens it would resolve to,
 // against the options the caller asked about.
@@ -3548,6 +3557,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			ThinkingStartTag:   thinkStartTag,
 			ThinkingEndTag:     thinkEndTag,
 			ThinkBudgetMessage: opts.ThinkBudgetMessage,
+			ThinkingTagsText:   thinkingTagsTextForCompletion(builtinParser, thinkStartTag),
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,

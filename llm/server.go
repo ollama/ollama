@@ -229,6 +229,12 @@ type CompletionRequest struct {
 	ThinkBudgetMessage string
 	ThinkingStartTag   string
 	ThinkingEndTag     string
+	// ThinkingTagsText says the two tags are ordinary text in the model's
+	// vocabulary (several tokens that merge with their neighbours), not
+	// special tokens. A runner arms the budget on such tags only when its
+	// engine matches tags on the decoded text; otherwise the budget is left
+	// off rather than reported and not held.
+	ThinkingTagsText bool
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool

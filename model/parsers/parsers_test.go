@@ -419,6 +419,7 @@ func TestThinkingTagsForParser(t *testing.T) {
 		{name: "lfm2-thinking", parser: &LFM2Parser{hasThinkingSupport: true}, wantStart: "<think>", wantEnd: "</think>"},
 		{name: "lfm2", parser: &LFM2Parser{}},
 		{name: "nemotron-3-nano", parser: &Nemotron3NanoParser{}, wantStart: "<think>", wantEnd: "</think>"},
+		{name: "ripple", parser: &RippleParser{}, wantStart: "<think>", wantEnd: "</think>"},
 		{name: "parser without thinking tags", parser: &PassthroughParser{}},
 	}
 
@@ -427,6 +428,30 @@ func TestThinkingTagsForParser(t *testing.T) {
 			start, end := ThinkingTagsForParser(tt.parser)
 			if start != tt.wantStart || end != tt.wantEnd {
 				t.Errorf("ThinkingTagsForParser() = (%q, %q), want (%q, %q)", start, end, tt.wantStart, tt.wantEnd)
+			}
+		})
+	}
+}
+
+// Only a parser that says its tags are ordinary text is reported as such;
+// every parser with special-token tags keeps the exact-sequence match it had.
+func TestThinkingTagsAreTextForParser(t *testing.T) {
+	tests := []struct {
+		name   string
+		parser Parser
+		want   bool
+	}{
+		{name: "nil parser", parser: nil},
+		{name: "ripple", parser: &RippleParser{}, want: true},
+		{name: "qwen3.5", parser: &Qwen35Parser{}},
+		{name: "gemma4", parser: &Gemma4Parser{hasThinkingSupport: true}},
+		{name: "parser without thinking tags", parser: &PassthroughParser{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ThinkingTagsAreTextForParser(tt.parser); got != tt.want {
+				t.Errorf("ThinkingTagsAreTextForParser() = %v, want %v", got, tt.want)
 			}
 		})
 	}

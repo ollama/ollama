@@ -194,6 +194,13 @@ type llamaServerRunner struct {
 	launch                  llamaServerLaunchConfig
 	output                  *memoryParsingWriter
 	mmprojOffloadOOMRetried bool
+
+	// tagTextKnown and tagText remember whether the engine matches reasoning
+	// tags on the decoded text (reasoningTagsTextFeature in GET /props), once
+	// it has answered. Guarded by tagTextMu.
+	tagTextMu    sync.Mutex
+	tagTextKnown bool
+	tagText      bool
 }
 
 type llamaServerLaunchConfig struct {
@@ -1611,6 +1618,58 @@ func (s *llamaServerRunner) schemaGrammar(ctx context.Context, schema json.RawMe
 	return lsRes.Grammar, nil
 }
 
+// reasoningTagsTextFeature is the GET /props feature row of an engine whose
+// reasoning-budget sampler matches a tag on the decoded text, so a tag that is
+// several ordinary tokens is seen however the model's output tokenizes it
+// (opencoti c14 r17 on). Stock llama-server reports no feature list.
+const reasoningTagsTextFeature = "reasoning_tags_text_v1"
+
+// matchesReasoningTagsAsText reports whether the engine declares
+// reasoningTagsTextFeature. The answer is read from GET /props the first time
+// it is needed and kept for the runner's life; a read that fails is not an
+// answer and is tried again on the next request.
+func (s *llamaServerRunner) matchesReasoningTagsAsText(ctx context.Context) bool {
+	s.tagTextMu.Lock()
+	defer s.tagTextMu.Unlock()
+	if s.tagTextKnown {
+		return s.tagText
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/props", s.port), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := s.httpClient().Do(req)
+	if err != nil {
+		slog.Debug("reading engine features", "error", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		// An engine without /props has no features to declare.
+	case resp.StatusCode != http.StatusOK:
+		slog.Debug("reading engine features", "status", resp.StatusCode)
+		return false
+	default:
+		var props struct {
+			Features []string `json:"features"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&props); err != nil {
+			slog.Debug("reading engine features", "error", err)
+			return false
+		}
+		s.tagText = slices.Contains(props.Features, reasoningTagsTextFeature)
+	}
+	s.tagTextKnown = true
+	if !s.tagText {
+		slog.Info("engine matches reasoning tags only as token sequences; a thinking budget is left off for models whose tags are text",
+			"feature", reasoningTagsTextFeature)
+	}
+	return s.tagText
+}
+
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
 	tokens := append([]string{}, parserTokens...)
 	tokens = append(tokens, llamaServerPreservedTokensForToolTag(toolCallTag)...)
@@ -1818,7 +1877,22 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	// Cap thinking. llama-server's reasoning budget sampler needs both
 	// delimiters: it starts counting at the opening tag and forces the closing
 	// tag once the budget runs out.
-	if req.ThinkBudget > 0 && req.ThinkingStartTag != "" && req.ThinkingEndTag != "" {
+	armBudget := req.ThinkBudget > 0 && req.ThinkingStartTag != "" && req.ThinkingEndTag != ""
+
+	// Tags that are ordinary text (several tokens, the last merging with the
+	// newline after it) are invisible to a sampler that matches one exact
+	// token sequence: the budget would be reported and never hold, and if the
+	// opening did match by chance the end would be missed and the forced close
+	// written into the answer. Only an engine that matches tags on the decoded
+	// text gets them; anywhere else thinking is left unbounded, as it was
+	// before the parser named its tags.
+	if armBudget && req.ThinkingTagsText && !s.matchesReasoningTagsAsText(ctx) {
+		slog.Debug("thinking budget left off: the tags are text and the engine matches only token sequences",
+			"start", req.ThinkingStartTag, "end", req.ThinkingEndTag, "feature", reasoningTagsTextFeature)
+		armBudget = false
+	}
+
+	if armBudget {
 		lsReq.ReasoningBudgetTokens = req.ThinkBudget
 		lsReq.ReasoningBudgetStartTag = req.ThinkingStartTag
 		lsReq.ReasoningBudgetEndTag = req.ThinkingEndTag

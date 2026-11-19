@@ -4551,3 +4551,140 @@ func TestLlamaServerCompletionReasoningBudget(t *testing.T) {
 		})
 	}
 }
+
+// Tags that are ordinary text reach the engine only when its /props declares
+// reasoning_tags_text_v1; special-token tags never trigger the probe.
+func TestLlamaServerCompletionReasoningBudgetTextTags(t *testing.T) {
+	tests := []struct {
+		name       string
+		textTags   bool
+		props      func(w http.ResponseWriter)
+		wantArmed  []bool // per completion, in order
+		wantProbes int
+	}{
+		{
+			name:     "engine matches text tags",
+			textTags: true,
+			props: func(w http.ResponseWriter) {
+				fmt.Fprint(w, `{"features":["lock_v1","reasoning_tags_text_v1"]}`)
+			},
+			wantArmed:  []bool{true, true},
+			wantProbes: 1,
+		},
+		{
+			name:     "engine without the feature",
+			textTags: true,
+			props: func(w http.ResponseWriter) {
+				fmt.Fprint(w, `{"features":["lock_v1"]}`)
+			},
+			wantArmed:  []bool{false, false},
+			wantProbes: 1,
+		},
+		{
+			name:     "stock llama-server reports no feature list",
+			textTags: true,
+			props: func(w http.ResponseWriter) {
+				fmt.Fprint(w, `{"total_slots":1,"chat_template":"x"}`)
+			},
+			wantArmed:  []bool{false, false},
+			wantProbes: 1,
+		},
+		{
+			name:     "engine without /props",
+			textTags: true,
+			props: func(w http.ResponseWriter) {
+				http.NotFound(w, nil)
+			},
+			wantArmed:  []bool{false, false},
+			wantProbes: 1,
+		},
+		{
+			name:     "a failed read is not an answer and is asked again",
+			textTags: true,
+			props: func(w http.ResponseWriter) {
+				http.Error(w, "busy", http.StatusServiceUnavailable)
+			},
+			wantArmed:  []bool{false, false},
+			wantProbes: 2,
+		},
+		{
+			name:       "special-token tags never ask",
+			textTags:   false,
+			wantArmed:  []bool{true, true},
+			wantProbes: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var probes int
+			var bodies []map[string]any
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case "/props":
+					probes++
+					if tt.props == nil {
+						t.Errorf("/props read for special-token tags")
+						return
+					}
+					tt.props(w)
+				case "/completion":
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Errorf("invalid completion request body: %v", err)
+						return
+					}
+					bodies = append(bodies, body)
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintln(w, `data: {"content":"","stop":true}`)
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			for range tt.wantArmed {
+				opts := api.DefaultOptions()
+				req := CompletionRequest{
+					Prompt:           "<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n",
+					Options:          &opts,
+					ThinkBudget:      512,
+					ThinkingStartTag: "<think>",
+					ThinkingEndTag:   "</think>",
+					ThinkingTagsText: tt.textTags,
+				}
+				if err := runner.Completion(t.Context(), req, func(CompletionResponse) {}); err != nil {
+					t.Fatalf("Completion error: %v", err)
+				}
+			}
+
+			if probes != tt.wantProbes {
+				t.Errorf("/props read %d times, want %d", probes, tt.wantProbes)
+			}
+			if len(bodies) != len(tt.wantArmed) {
+				t.Fatalf("got %d completion requests, want %d", len(bodies), len(tt.wantArmed))
+			}
+			for i, want := range tt.wantArmed {
+				for _, field := range []string{"reasoning_budget_tokens", "reasoning_budget_start_tag", "reasoning_budget_end_tag", "reasoning_budget_message"} {
+					if _, ok := bodies[i][field]; ok != want {
+						t.Errorf("completion %d: %s present = %v, want %v", i, field, ok, want)
+					}
+				}
+			}
+		})
+	}
+}
