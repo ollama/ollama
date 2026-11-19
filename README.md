@@ -164,7 +164,7 @@ console.log(response.message.content);
 - [Lobe Chat](https://github.com/lobehub/lobe-chat) - Modern chat framework with plugin ecosystem ([docs](https://lobehub.com/docs/self-hosting/examples/ollama))
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) - Cross-platform ChatGPT UI ([docs](https://docs.nextchat.dev/models/ollama))
 - [Perplexica](https://github.com/ItzCrazyKns/Perplexica) - AI-powered search engine, open-source Perplexity alternative
-- [big-AGI](https://github.com/enricoros/big-AGI) - AI suite for professionals
+- [Big-AGI](https://github.com/enricoros/big-AGI) - AI workspace with local and cloud models ([docs](https://big-agi.com/docs/connect-ollama))
 - [Lollms WebUI](https://github.com/ParisNeo/lollms-webui) - Multi-model web interface
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) - Chatbot with knowledge bases
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt) - On-premise AI platform
