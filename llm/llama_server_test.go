@@ -3815,6 +3815,65 @@ func TestAccumulatedToolCallsRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
+func TestLlamaServerChatToolCallsAtOutputLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name, finish, args string
+		wantCalls          int
+		wantErr            bool
+	}{
+		{"partial on length", "length", `{"city":`, 0, false},
+		{"complete on length", "length", `{"city":"Lima"}`, 2, false},
+		{"partial on tool_calls", "tool_calls", `{"city":`, 0, true},
+		{"complete on tool_calls", "tool_calls", `{"city":"Lima"}`, 2, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case "/v1/chat/completions":
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintln(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"clock","arguments":"{}"}}]}}]}`)
+					fmt.Fprintf(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"name":"weather","arguments":%q}}]}}]}`+"\n", tt.args)
+					fmt.Fprintf(w, `data: {"choices":[{"delta":{},"finish_reason":%q}],"timings":{"predicted_n":8}}`+"\n", tt.finish)
+					fmt.Fprintln(w, "data: [DONE]")
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			runner := &llamaServerRunner{
+				port:    srv.Listener.Addr().(*net.TCPAddr).Port,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+			opts := api.DefaultOptions()
+			var responses []ChatResponse
+			err := runner.Chat(t.Context(), ChatRequest{Options: &opts}, func(r ChatResponse) {
+				responses = append(responses, r)
+			})
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "invalid tool call arguments") || len(responses) != 0 {
+					t.Fatalf("expected invalid arguments and no callbacks, got err=%v, responses=%v", err, responses)
+				}
+				return
+			}
+			if err != nil || len(responses) != 1 {
+				t.Fatalf("expected one final response, got err=%v, responses=%v", err, responses)
+			}
+			final := responses[0]
+			if !final.Done || final.EvalCount != 8 || len(final.Message.ToolCalls) != tt.wantCalls {
+				t.Fatalf("unexpected final response: %+v", final)
+			}
+			if tt.finish == "length" && final.DoneReason != DoneReasonLength {
+				t.Errorf("DoneReason = %v, want length", final.DoneReason)
+			}
+		})
+	}
+}
+
 func TestLlamaServerChatTemplateKwargs(t *testing.T) {
 	tests := []struct {
 		name  string
