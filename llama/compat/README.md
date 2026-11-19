@@ -37,10 +37,13 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
 - `tests/` - regression tests for the patches above. They are built when
   `OLLAMA_COMPAT_TESTS=ON` and run from the `patches` CI job, against the pinned
   llama.cpp with the patches applied. `tests/kv-shift-rope-test.cpp` synthesizes
-  a small model, forces YaRN scaling on it, drives a real context shift through
+  small models, forces YaRN scaling on them, drives a real context shift through
   `llama_memory_seq_add()` and asserts the cached keys keep their magnitude. It
   fails against an unpatched tree, so it also guards against dropping `002`
-  before upstream has the fix.
+  before upstream has the fix. One scenario uses a two-layer `gemma2` fixture
+  (SWA layer 0, dense layer 1) to pin down the per-layer part of the fix: the
+  dense layer reproduces the bug, while the SWA layer must stay amplitude-neutral
+  even though the context-level `rope_freq_scale` is 0.25.
 - `compat.cmake` - CMake glue that invokes the shared
   `cmake/apply-git-patches.cmake` idempotent applier (used by
   `llama/server/CMakeLists.txt`) for every `*.patch` under
