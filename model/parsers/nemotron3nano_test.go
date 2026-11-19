@@ -369,6 +369,61 @@ func TestNemotron3NanoParser_DoneFlushesUnterminatedToolCall(t *testing.T) {
 	}
 }
 
+func TestNemotron3NanoParser_DoneParsesToolCallWithoutCloseTag(t *testing.T) {
+	finish := tool("finish", map[string]api.ToolProperty{
+		"summary": {Type: api.PropertyType{"string"}},
+	})
+	wantCalls := []api.ToolCall{{
+		Function: api.ToolCallFunction{
+			Name:      "finish",
+			Arguments: testArgs(map[string]any{"summary": " \nHTTP 200, header rendered. "}),
+		},
+	}}
+	leaked := []string{"<tool_call>", "\n<function=finish> \n", "<parameter=summary> \nHTTP 200, header rendered. \n</parameter> \n", "</function>"}
+
+	for _, tt := range []struct {
+		name   string
+		chunks []string
+	}{
+		{name: "after think close", chunks: append([]string{"Checking the page.", "</think>", "\n"}, leaked...)},
+		{name: "without think close", chunks: append([]string{"Checking the page.\n"}, leaked...)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Nemotron3NanoParser{}
+			p.Init([]api.Tool{finish}, nil, &api.ThinkValue{Value: true})
+
+			var content, thinking string
+			var calls []api.ToolCall
+			for _, chunk := range tt.chunks {
+				c, th, cs, err := p.Add(chunk, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				content += c
+				thinking += th
+				calls = append(calls, cs...)
+			}
+			c, th, cs, err := p.Add("", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content += c
+			thinking += th
+			calls = append(calls, cs...)
+
+			if content != "" {
+				t.Errorf("content = %q, want none", content)
+			}
+			if thinking != "Checking the page." {
+				t.Errorf("thinking = %q, want %q", thinking, "Checking the page.")
+			}
+			if diff := cmp.Diff(calls, wantCalls, argsComparer); diff != "" {
+				t.Errorf("calls mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestNemotron3NanoParser_HasToolSupport(t *testing.T) {
 	p := &Nemotron3NanoParser{}
 	if !p.HasToolSupport() {
