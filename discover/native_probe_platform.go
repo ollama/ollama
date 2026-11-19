@@ -30,6 +30,8 @@ func ggmlProbeLibraryName(name string) string {
 		return "ROCm"
 	case "vulkan":
 		return "Vulkan"
+	case "sycl":
+		return "SYCL"
 	case "metal":
 		return "Metal"
 	default:
