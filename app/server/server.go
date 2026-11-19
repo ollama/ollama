@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/envconfig"
 )
 
 const restartDelay = time.Second
@@ -30,6 +32,11 @@ type Server struct {
 	bin   string // resolved path to `ollama`
 	log   io.WriteCloser
 	dev   bool // true if running with the dev flag
+
+	// NotifyPortConflict, if set, is called when ollama cannot start because
+	// addr is already in use by another process. It is invoked once per
+	// conflict so the app can surface the problem to the user.
+	NotifyPortConflict func(addr string)
 }
 
 type InferenceCompute struct {
@@ -188,6 +195,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	reaped := false
+	notified := false
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
@@ -210,21 +218,86 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 
 		if err = cmd.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && !s.dev && !reaped {
-				reaped = true
-				// This could be a port conflict, try to kill any existing ollama processes
-				if err := reapServers(); err != nil {
-					slog.Warn("failed to stop existing ollama server", "err", err)
-				} else {
-					slog.Debug("conflicting server stopped, waiting for port to be released")
-					continue
-				}
+			if s.handlePortConflict(err, &reaped, &notified) {
+				continue
 			}
 			slog.Error("ollama exited", "err", err)
 		}
 	}
 	return ctx.Err()
+}
+
+// handlePortConflict inspects a non-canceled cmd.Wait error and, when it is
+// caused by the configured address already being in use, handles it and
+// reports true (the caller should retry). The first conflict reaps a stale
+// ollama process; a persisting conflict means a foreign process holds the port,
+// so the user is notified once via NotifyPortConflict. Any other failure
+// returns false so the caller can log it normally.
+func (s *Server) handlePortConflict(err error, reaped, notified *bool) bool {
+	var exitErr *exec.ExitError
+	// Skip anything that isn't an exit-1 (bind) failure. Also skip in dev mode:
+	// the developer typically runs their own ollama server (see app/README.md),
+	// so reaping it or showing a conflict dialog would be disruptive.
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || s.dev {
+		return false
+	}
+
+	// Probe the address the child actually binds, which depends on the Expose
+	// setting (see cmd). Our child has already exited, so a failed bind proves a
+	// foreign process holds the address rather than our own (just-exited) server.
+	expose := false
+	if settings, err := s.store.Settings(); err != nil {
+		slog.Warn("failed to load settings for port conflict check", "err", err)
+	} else {
+		expose = settings.Expose
+	}
+	addr, inUse := addrInUse(expose)
+	if !inUse {
+		return false
+	}
+
+	// First time: a stale ollama process may hold the port. Reap it and retry
+	// before bothering the user. Only mark it reaped on success so a failed
+	// reap is retried on the next restart attempt rather than silently skipped.
+	if !*reaped {
+		if reapErr := reapServers(); reapErr != nil {
+			slog.Warn("failed to stop existing ollama server, will retry", "err", reapErr)
+		} else {
+			*reaped = true
+			slog.Debug("conflicting server stopped, waiting for port to be released")
+			return true
+		}
+	}
+
+	// Still in use after reaping → a foreign process holds the port. Tell the
+	// user once, then keep retrying quietly so we recover automatically once the
+	// port is freed.
+	slog.Error("ollama cannot start: address already in use", "addr", addr)
+	if !*notified && s.NotifyPortConflict != nil {
+		*notified = true
+		s.NotifyPortConflict(addr)
+	}
+	return true
+}
+
+// addrInUse reports the address the child server binds and whether it is
+// already bound by another process. When expose is set the child binds all
+// interfaces (0.0.0.0), matching cmd, so we probe that instead of the
+// configured host. It returns true only when a bind attempt fails specifically
+// because the address is in use — not for other errors.
+func addrInUse(expose bool) (string, bool) {
+	addr := envconfig.Host().Host
+	if expose {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			addr = net.JoinHostPort("0.0.0.0", port)
+		}
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return addr, isAddrInUse(err)
+	}
+	_ = ln.Close()
+	return addr, false
 }
 
 func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
