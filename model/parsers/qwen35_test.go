@@ -108,6 +108,34 @@ func TestQwen35ParserAssistantPrefillStartsInContent(t *testing.T) {
 	}
 }
 
+func TestQwen35ParserAssistantThinkingOnlyPrefillStartsInContent(t *testing.T) {
+	for _, name := range []string{"qwen3.5", "ornith"} {
+		t.Run(name, func(t *testing.T) {
+			parser := ParserForName(name)
+			if parser == nil {
+				t.Fatalf("expected %s parser", name)
+			}
+
+			last := &api.Message{Role: "assistant", Thinking: "Keep it brief."}
+			parser.Init(nil, last, &api.ThinkValue{Value: true})
+
+			content, thinking, calls, err := parser.Add("Done.", true)
+			if err != nil {
+				t.Fatalf("parse failed: %v", err)
+			}
+			if content != "Done." {
+				t.Fatalf("expected content %q, got %q", "Done.", content)
+			}
+			if thinking != "" {
+				t.Fatalf("expected no thinking for assistant prefill continuation, got %q", thinking)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("expected no tool calls, got %d", len(calls))
+			}
+		})
+	}
+}
+
 func TestQwen35ParserToolCallEmittedInThinkingIsParsed(t *testing.T) {
 	parser := ParserForName("qwen3.5")
 	if parser == nil {
