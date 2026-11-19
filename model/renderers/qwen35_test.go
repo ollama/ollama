@@ -90,6 +90,44 @@ func TestQwen35RendererNoThinkPrefill(t *testing.T) {
 	}
 }
 
+func TestQwen35RendererTrailingToolCallStartsNextAssistantTurn(t *testing.T) {
+	renderer := &Qwen35Renderer{isThinking: true}
+	msgs := []api.Message{
+		{Role: "user", Content: "What's the weather in Paris?"},
+		{
+			Role:     "assistant",
+			Thinking: "Need the weather before answering.",
+			ToolCalls: []api.ToolCall{
+				{Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgsOrdered([]orderedArg{
+						{Key: "location", Value: "Paris"},
+					}),
+				}},
+			},
+		},
+	}
+
+	got, err := renderer.Render(msgs, qwen35WeatherUVTools()[:1], nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	wantSuffix := `<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>assistant
+<think>
+`
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Fatalf("expected trailing tool call to close and start a new assistant turn, got:\n%s", got)
+	}
+}
+
 func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 	renderer := &Qwen35Renderer{isThinking: true}
 
