@@ -95,7 +95,10 @@ func LlamaServerBatch(f *gguf.Model, opts api.Options, completion bool) (int, ui
 	batch := opts.NumBatch
 	// These decision heads read the whole prompt without a KV cache, so the
 	// physical batch must hold the entire effective context.
-	wholePrompt := f.KV().Uint("decision.block_count") > 0
+	// Older decision models expose their head through decision.type without
+	// providing decision.block_count. They still evaluate the entire prompt in
+	// one physical batch, so use the decision metadata as the fallback marker.
+	wholePrompt := f.KV().Uint("decision.block_count") > 0 || f.KV().String("decision.type") != ""
 	if wholePrompt {
 		batch = opts.NumCtx
 		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 {
