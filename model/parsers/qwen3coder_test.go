@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -566,6 +567,129 @@ Hello! 你好! 🌟 مرحبا
 		if !toolCallEqual(gotToolCall, step.wantToolCall) {
 			t.Errorf("step %d (%s): got tool call %#v, want %#v", i, step.name, gotToolCall, step.wantToolCall)
 		}
+	}
+}
+
+// A parameter's value is character data, not markup. Rewriting `<tag=value>`
+// everywhere in the block reached into values that only looked like tags, and
+// changed them without saying so -- the first case here is a shell command that
+// would have run altered.
+func TestQwenToolCallValuesAreNotRewritten(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{
+			name:  "comparison followed by an assignment",
+			value: `node -e "if (a<b=c>d) console.log(1)"`,
+		},
+		{
+			name:  "text that looks like a tag",
+			value: "const el = <div=foo>;",
+		},
+	}
+
+	for _, tc := range cases {
+		raw := "<function=editor>\n<parameter=new_text>\n" + tc.value + "\n</parameter>\n</function>"
+		gotToolCall, err := parseToolCall(qwenEventRawToolCall{raw: raw}, []api.Tool{})
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		got, _ := gotToolCall.Function.Arguments.Get("new_text")
+		if got != tc.value {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.value)
+		}
+	}
+}
+
+// A model under long context stops emitting closing tags. All three shapes here
+// were taken from one agent session (2026-08-21), which produced both
+// `element <parameter> closed by </function>` and `unexpected EOF` from the same
+// model; the third is the same defect between two parameters. None of them is
+// ambiguous, because parameters do not nest.
+func TestQwenToolCallRecoversMissingClosingTags(t *testing.T) {
+	cases := []struct {
+		name         string
+		rawToolCall  string
+		wantToolCall api.ToolCall
+	}{
+		{
+			name: "parameter not closed before the next parameter",
+			rawToolCall: `<function=editor>
+<parameter=path>
+manic_miner.html
+<parameter=old_text>
+this.sX()
+</parameter>
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "editor",
+					Arguments: testArgs(map[string]any{
+						"path":     "manic_miner.html",
+						"old_text": "this.sX()",
+					}),
+				},
+			},
+		},
+		{
+			name: "parameter closed by the function's closing tag",
+			rawToolCall: `<function=editor>
+<parameter=path>
+manic_miner.html
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "editor",
+					Arguments: testArgs(map[string]any{"path": "manic_miner.html"}),
+				},
+			},
+		},
+		{
+			name: "nothing closed at all",
+			rawToolCall: `<function=editor>
+<parameter=path>
+manic_miner.html`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "editor",
+					Arguments: testArgs(map[string]any{"path": "manic_miner.html"}),
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		gotToolCall, err := parseToolCall(qwenEventRawToolCall{raw: tc.rawToolCall}, []api.Tool{})
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if !toolCallEqual(gotToolCall, tc.wantToolCall) {
+			t.Errorf("%s: got tool call %#v, want %#v", tc.name, gotToolCall, tc.wantToolCall)
+		}
+	}
+}
+
+// Without a `<function>` header there is no name to dispatch, so the call cannot
+// be recovered -- but failing the request is worse than saying nothing, because
+// the turn may already have run commands and there is no safe automatic retry
+// (mann1x/cline#54). The block goes back as content instead.
+func TestQwenUnrecoverableToolCallBecomesContent(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	raw := "\n<parameter=command>\nls\n</parameter>\n</function>\n"
+	content, _, calls, err := parser.Add(toolOpenTag+raw+toolCloseTag, true)
+	if err != nil {
+		t.Fatalf("expected the malformed call to be tolerated, got error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("expected no tool calls, got %d", len(calls))
+	}
+	if want := toolOpenTag + raw + toolCloseTag; content != want {
+		t.Errorf("got content %q, want %q", content, want)
 	}
 }
 
@@ -1186,24 +1310,47 @@ func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
 	}
 }
 
-func TestQwen3CoderParserRejectsMalformedParameters(t *testing.T) {
-	for _, raw := range []string{
-		`<function=write><parameter=content>print('ok')</function>`,
-		`<function=write><parameter=content>print('ok')</parameter=content></function>`,
-		`<function=write><parameter=content>text = "</function>"</parameter>`,
+// Upstream's cases (#19228) for calls it rejects. This branch recovers the two
+// whose only defect is a dropped closing tag, which is what it exists for, and
+// keeps the call out of the other two: a malformed closer comes back as text,
+// as every call it cannot read does, and a parameter holding parameters is not
+// flattened into arguments the model never wrote.
+func TestQwen3CoderParserMalformedParameters(t *testing.T) {
+	for _, tc := range []struct {
+		raw      string
+		wantCall string // "" when no call may come out
+	}{
+		{raw: `<function=write><parameter=content>print('ok')</function>`, wantCall: `write{"content":"print('ok')"}`},
+		{raw: `<function=write><parameter=content>print('ok')</parameter=content></function>`},
+		{raw: `<function=write><parameter=content>text = "</function>"</parameter>`, wantCall: `write{"content":"text = \"\u003c/function\u003e\""}`},
 		// Reduced shape from #18563's follow-up: the outer edits parameter is unclosed.
-		`<function=edit>
+		{raw: `<function=edit>
 <parameter=path>src/orders.py</parameter>
 <parameter=edits>
 <parameter=oldText>before</parameter>
 <parameter=newText>after</parameter>
-</function>`,
+</function>`},
 	} {
 		parser := Qwen3CoderParser{}
 		parser.Init(nil, nil, nil)
-		_, _, calls, err := parser.Add(toolOpenTag+raw+toolCloseTag, true)
-		if err == nil || len(calls) != 0 {
-			t.Errorf("raw=%q: expected rejection without tool calls, got calls=%#v, err=%v", raw, calls, err)
+		content, _, calls, err := parser.Add(toolOpenTag+tc.raw+toolCloseTag, true)
+		if err != nil {
+			t.Errorf("raw=%q: a call it cannot read fails nothing, got err=%v", tc.raw, err)
+			continue
+		}
+		if tc.wantCall == "" {
+			if len(calls) != 0 || content != toolOpenTag+tc.raw+toolCloseTag {
+				t.Errorf("raw=%q: want it back as text and no call, got calls=%#v content=%q", tc.raw, calls, content)
+			}
+			continue
+		}
+		if len(calls) != 1 {
+			t.Errorf("raw=%q: want one recovered call, got %#v", tc.raw, calls)
+			continue
+		}
+		args, _ := json.Marshal(calls[0].Function.Arguments)
+		if got := calls[0].Function.Name + string(args); got != tc.wantCall {
+			t.Errorf("raw=%q: got %s, want %s", tc.raw, got, tc.wantCall)
 		}
 	}
 }
