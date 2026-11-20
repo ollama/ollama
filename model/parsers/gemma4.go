@@ -449,6 +449,45 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 // (ollama/ollama#19273), and once closed an object in a list with a brace too
 // many: set:[…,{path:<|"|>Level<|"|>,value:{…}}}]}.
 func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, error) {
+	// Strings written between backticks, or with a backtick at one end and the
+	// delimiter at the other, read as the delimiter's, and a key written with no
+	// value as null: gemma4:e4b writes them so when it edits a line with a
+	// comment in it, as in
+	// call:edit{edits:[{newText:`; a comment`,oldText:<|"|># a comment<|"|>}],path:<|"|>x.psc<|"|>}.
+	// Tried after every other repair, so a call they read is read as before;
+	// the arguments then get every repair once more. Tried first where the
+	// delimiters are odd in count and a backtick closes a value: the repair that
+	// closes the last delimiter would read the backtick and what follows it as
+	// the value's text, as in remove:[<|"|>Name<|"|>,<|"|>Keywords`].
+	braceIdx := strings.Index(content, "{")
+	ticked := ""
+	if strings.HasPrefix(content, "call:") && braceIdx != -1 {
+		if repaired := repairGemma4EmptyValues(repairGemma4BacktickValues(content[braceIdx:])); repaired != content[braceIdx:] {
+			ticked = content[:braceIdx] + repaired
+		}
+	}
+	if ticked != "" && strings.Count(content, gemma4StringDelimiter)%2 == 1 {
+		if repaired, err := parseGemma4ClosedToolCallOnce(ticked, tools); err == nil {
+			return repaired, nil
+		}
+	}
+
+	toolCall, err := parseGemma4ClosedToolCallOnce(content, tools)
+	if err == nil {
+		return toolCall, nil
+	}
+	if ticked != "" {
+		if repaired, repairErr := parseGemma4ClosedToolCallOnce(ticked, tools); repairErr == nil {
+			return repaired, nil
+		}
+	}
+
+	return toolCall, err
+}
+
+// parseGemma4ClosedToolCallOnce is parseGemma4ClosedToolCall with every repair
+// but the backticks'.
+func parseGemma4ClosedToolCallOnce(content string, tools []api.Tool) (api.ToolCall, error) {
 	toolCall, err := parseGemma4ToolCall(content, tools)
 	if err == nil {
 		return toolCall, nil
@@ -536,6 +575,14 @@ func repairGemma4UnclosedBrackets(s string) string {
 				open = open[:len(open)-1]
 			}
 		case ']':
+			// An object still open where the list around it ends gets its `}` there:
+			// call:edit{edits:[{newText:<|"|>…<|"|>,oldText:<|"|>…<|"|>]}.
+			if top() == '{' && strings.LastIndexByte(string(open), '[') != -1 {
+				for top() == '{' {
+					sb.WriteByte('}')
+					open = open[:len(open)-1]
+				}
+			}
 			if top() == '[' {
 				open = open[:len(open)-1]
 			}
@@ -1153,6 +1200,167 @@ func repairGemma4MismatchedFences(s string) string {
 	return s
 }
 
+// gemma4Backtick is what gemma4:e4b writes in place of the string delimiter at
+// one end of a value, or at both: a Markdown code span's.
+const gemma4Backtick = "`"
+
+// repairGemma4BacktickValues writes the string delimiter for each value whose
+// text is between backticks, or between a backtick and the delimiter, as in
+// call:edit{edits:[{newText:`; a line`,oldText: `# a line`}],path:<|"|>x<|"|>},
+// call:edit{edits:[{newText:`; a line`<|"|>,oldText:<|"|># a line`}]} and
+// newText:“ for an empty one. A value is one after an object's key and its
+// colon, or a list's item after its `[` or `,`, any whitespace after them; its
+// text runs to the first backtick or delimiter whose end a `,`, `}` or `]`
+// follows after any whitespace, a delimiter right after its closing backtick
+// taken with it. A value opened by the delimiter and closed by it too is left
+// as it is, and so is one whose text has a delimiter inside.
+func repairGemma4BacktickValues(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != ':' && s[i] != '[' && s[i] != ',' {
+			sb.WriteByte(s[i])
+			i++
+			continue
+		}
+		sb.WriteByte(s[i])
+		i++
+		v := gemma4SkipSpace(s, i)
+		opener := ""
+		if strings.HasPrefix(s[v:], "```") {
+			// A code fence, read by repairGemma4MismatchedFences.
+			continue
+		} else if strings.HasPrefix(s[v:], gemma4Backtick) {
+			opener = gemma4Backtick
+		} else if strings.HasPrefix(s[v:], gemma4StringDelimiter) {
+			opener = gemma4StringDelimiter
+		} else if s[i-1] == ':' {
+			if text, end, ok := gemma4BareBacktickClosedValue(s, v); ok {
+				sb.WriteString(s[i:v])
+				sb.WriteString(gemma4StringDelimiter + text + gemma4StringDelimiter)
+				i = end
+			}
+			continue
+		}
+		if opener == "" {
+			continue
+		}
+		start := v + len(opener)
+		closed := false
+		for k := start; k < len(s); k++ {
+			closer := ""
+			if strings.HasPrefix(s[k:], gemma4Backtick) {
+				// A backtick of a run of them, a code fence's, closes no value here.
+				if k+1 < len(s) && s[k+1] == '`' || k-1 >= start && s[k-1] == '`' {
+					continue
+				}
+				closer = gemma4Backtick
+			} else if strings.HasPrefix(s[k:], gemma4StringDelimiter) {
+				closer = gemma4StringDelimiter
+			} else {
+				continue
+			}
+			end := k + len(closer)
+			if closer == gemma4Backtick && strings.HasPrefix(s[end:], gemma4StringDelimiter) {
+				end += len(gemma4StringDelimiter)
+			}
+			if !gemma4ListOrValueEnds(s, end) {
+				continue
+			}
+			text := s[start:k]
+			if opener == gemma4StringDelimiter && closer == gemma4StringDelimiter || strings.Contains(text, gemma4StringDelimiter) {
+				// A string as the format writes it, or one this cannot tell: copied.
+				sb.WriteString(s[i:end])
+			} else {
+				sb.WriteString(s[i:v])
+				sb.WriteString(gemma4StringDelimiter)
+				sb.WriteString(text)
+				sb.WriteString(gemma4StringDelimiter)
+			}
+			i = end
+			closed = true
+			break
+		}
+		if !closed {
+			continue
+		}
+	}
+	return sb.String()
+}
+
+// gemma4BareBacktickClosedValue reads a value opened by its text alone and
+// closed by a backtick whose end a `,`, `}` or `]` follows, as in
+// oldText:# a comment (CLOC event).`}: its text, and where the backtick ends.
+// It reads none whose text has a `,`, a bracket, a quote or the delimiter
+// before that backtick, which a value of its own, or a key, may be.
+func gemma4BareBacktickClosedValue(s string, v int) (string, int, bool) {
+	if v >= len(s) || strings.ContainsRune("{}[],\"'`<", rune(s[v])) {
+		return "", 0, false
+	}
+	for k := v; k < len(s); k++ {
+		switch s[k] {
+		case ',', '{', '}', '[', ']', '"', '\'':
+			return "", 0, false
+		case '<':
+			if strings.HasPrefix(s[k:], gemma4StringDelimiter) {
+				return "", 0, false
+			}
+		case '`':
+			if !gemma4ListOrValueEnds(s, k+1) {
+				return "", 0, false
+			}
+			return s[v:k], k + 1, true
+		}
+	}
+	return "", 0, false
+}
+
+// repairGemma4EmptyValues writes null for a key the model wrote with no value
+// at an object's end, its colon followed by `}` after any whitespace, as in
+// value:{Scripts:[{Name:Quest,Properties:}]}. A colon a `,` follows is left as
+// it is: the comma may be all of a value meant (call:set{a:,} reads as none).
+// Strings are copied as they are.
+func repairGemma4EmptyValues(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) + 8)
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				sb.WriteString(s[i:])
+				break
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+		if s[i] == '"' {
+			if end := gemma4JSONQuotedStringEnd(s, i); end != -1 {
+				sb.WriteString(s[i:end])
+				i = end
+				continue
+			}
+		}
+		sb.WriteByte(s[i])
+		if s[i] == ':' {
+			if next := gemma4SkipSpace(s, i+1); next < len(s) && s[next] == '}' {
+				sb.WriteString("null")
+			}
+		}
+		i++
+	}
+	return sb.String()
+}
+
+// gemma4ListOrValueEnds reports whether a `,`, `}` or `]` follows s[i] after any
+// whitespace, or the text ends there: where a value of an object or a list ends.
+func gemma4ListOrValueEnds(s string, i int) bool {
+	next := gemma4SkipSpace(s, i)
+	return next >= len(s) || s[next] == ',' || s[next] == '}' || s[next] == ']'
+}
+
 // gemma4ValueEnds reports whether a `}`, or a `,` and an object's key and its
 // colon, follows s[i] after any whitespace: where a value of an object ends.
 func gemma4ValueEnds(s string, i int) bool {
@@ -1545,6 +1753,18 @@ func gemma4SingleQuotedValue(s string, start int) (string, int, bool) {
 	var sb strings.Builder
 	escaped := false
 	for i := start + 1; i < len(s); i++ {
+		// An apostrophe written `\'` or doubled, `''`, inside the value, where no
+		// value's end follows: call:edit{edits:[{newText:'the script''s line'}]}.
+		if s[i] == '\\' && !escaped && i+1 < len(s) && s[i+1] == '\'' && !gemma4ListOrValueEnds(s, i+2) {
+			sb.WriteByte('\'')
+			i++
+			continue
+		}
+		if s[i] == '\'' && !escaped && i+1 < len(s) && s[i+1] == '\'' && !gemma4ListOrValueEnds(s, i+1) && !gemma4ListOrValueEnds(s, i+2) {
+			sb.WriteByte('\'')
+			i++
+			continue
+		}
 		if s[i] == '\'' && !escaped {
 			return sb.String(), i + 1, true
 		}

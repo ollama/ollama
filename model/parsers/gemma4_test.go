@@ -2453,6 +2453,154 @@ func TestParseGemma4ClosedToolCall_MismatchedFences(t *testing.T) {
 	}
 }
 
+func TestParseGemma4ClosedToolCall_BacktickValues(t *testing.T) {
+	tools := []api.Tool{gemma4TestStringTool("edit", "path"), gemma4TestStringTool("editRecord", "project")}
+	edit := func(edits ...map[string]any) map[string]any {
+		list := make([]any, len(edits))
+		for i, e := range edits {
+			list[i] = e
+		}
+		return map[string]any{"edits": list, "path": "x.psc"}
+	}
+	pair := func(newText, oldText string) map[string]any {
+		return map[string]any{"newText": newText, "oldText": oldText}
+	}
+	// The shapes gemma4:e4b wrote in the eval rounds of 2026-11-19 and -20, editing a script's comment.
+	tests := []struct {
+		name    string
+		content string
+		tool    string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "between_backticks",
+			content: "call:edit{edits:[{newText:`; a comment`,oldText:<|\"|># a comment<|\"|>}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    edit(pair("; a comment", "# a comment")),
+		},
+		{
+			name:    "a_space_after_the_colon",
+			content: "call:edit{edits:[{newText:`; a comment`,oldText: `# a comment`}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    edit(pair("; a comment", "# a comment")),
+		},
+		{
+			name:    "opened_by_the_delimiter_closed_by_a_backtick",
+			content: "call:edit{edits:[{newText:`; one`,oldText:<|\"|># one`},{newText:`; two`,oldText:<|\"|># two`}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    edit(pair("; one", "# one"), pair("; two", "# two")),
+		},
+		{
+			name:    "closed_by_a_backtick_and_the_delimiter",
+			content: "call:edit{edits:[{newText:`; a comment`<|\"|>,oldText:`# a comment`}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    edit(pair("; a comment", "# a comment")),
+		},
+		{
+			name:    "empty",
+			content: "call:edit{edits:[{newText:``,oldText:<|\"|>Stop()<|\"|>}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    edit(pair("", "Stop()")),
+		},
+		{
+			name:    "opened_bare_closed_by_a_backtick",
+			content: "call:edit{edits:[{newText:`; a quest (CLOC event).`,oldText:# a quest (CLOC event).`}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    edit(pair("; a quest (CLOC event).", "# a quest (CLOC event).")),
+		},
+		{
+			name:    "a_list_item",
+			content: "call:editRecord{project:<|\"|>P<|\"|>,remove:[<|\"|>Name<|\"|>,<|\"|>Keywords`]}",
+			tool:    "editRecord",
+			want:    map[string]any{"project": "P", "remove": []any{"Name", "Keywords"}},
+		},
+		{
+			name:    "a_backtick_inside_a_delimited_string",
+			content: "call:edit{edits:[{newText:<|\"|>; a `b` c<|\"|>,oldText:<|\"|># a `b` c<|\"|>}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    edit(pair("; a `b` c", "# a `b` c")),
+		},
+		{
+			name:    "an_unclosed_backtick",
+			content: "call:edit{edits:[{newText:`; a comment,oldText:x}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tools)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: tt.tool, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ClosedToolCall_ListClosedOverAnObject(t *testing.T) {
+	// The object a list holds left open where the list ends: eval round 172's message+detailed #3.
+	got, err := parseGemma4ClosedToolCall("call:edit{edits:[{newText:<|\"|>a<|\"|>,oldText:<|\"|>b<|\"|>]}", []api.Tool{gemma4TestStringTool("edit", "path")})
+	if err != nil {
+		t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+	}
+	want := api.ToolCall{Function: api.ToolCallFunction{Name: "edit", Arguments: testArgs(map[string]any{"edits": []any{map[string]any{"newText": "a", "oldText": "b"}}})}}
+	if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseGemma4ClosedToolCall_EmptyValuesAndApostrophes(t *testing.T) {
+	tools := []api.Tool{gemma4TestStringTool("editRecord", "project"), gemma4TestStringTool("edit", "path")}
+	tests := []struct {
+		name    string
+		content string
+		tool    string
+		want    map[string]any
+	}{
+		{
+			name:    "an_empty_value",
+			content: "call:editRecord{project:<|\"|>P<|\"|>,set:[{path:<|\"|>VirtualMachineAdapter<|\"|>,value:{Scripts:[{Name:<|\"|>Q<|\"|>,Properties:}]}}]}",
+			tool:    "editRecord",
+			want: map[string]any{"project": "P", "set": []any{map[string]any{"path": "VirtualMachineAdapter",
+				"value": map[string]any{"Scripts": []any{map[string]any{"Name": "Q", "Properties": nil}}}}}},
+		},
+		{
+			name:    "a_doubled_apostrophe_in_single_quotes",
+			content: "call:edit{edits:[{newText:'; the script''s line',oldText:<|\"|>x<|\"|>}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    map[string]any{"edits": []any{map[string]any{"newText": "; the script's line", "oldText": "x"}}, "path": "x.psc"},
+		},
+		{
+			name:    "an_escaped_apostrophe_in_single_quotes",
+			content: "call:edit{edits:[{newText:'; the script\\'s line',oldText:<|\"|>x<|\"|>}],path:<|\"|>x.psc<|\"|>}",
+			tool:    "edit",
+			want:    map[string]any{"edits": []any{map[string]any{"newText": "; the script's line", "oldText": "x"}}, "path": "x.psc"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tools)
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: tt.tool, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4Parser_FencedValueInFinishedToolCall(t *testing.T) {
 	parser := &Gemma4Parser{hasThinkingSupport: true}
 	parser.Init([]api.Tool{gemma4TestStringTool("write", "content", "path")}, nil, &api.ThinkValue{Value: true})
