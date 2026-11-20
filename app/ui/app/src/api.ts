@@ -288,9 +288,7 @@ export async function getClaudeDesktopAvailableModels(
     const seen = new Set<string>();
     return [...localModels, ...cloudModels]
       .filter((model: ModelResponse) => {
-        const base = model.name
-          .replace(/:latest$/, "")
-          .replace(/:cloud$/, "");
+        const base = model.name.replace(/:latest$/, "").replace(/:cloud$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;
@@ -324,11 +322,27 @@ export async function getModelCapabilities(
   try {
     const showResponse = await ollama.show({ model: modelName });
 
-    return new ModelCapabilitiesResponse({
-      capabilities: Array.isArray(showResponse.capabilities)
-        ? showResponse.capabilities
-        : [],
-    });
+    const remote = showResponse as typeof showResponse & {
+      remote_host?: string;
+      remote_model?: string;
+    };
+    const capabilities: string[] = Array.isArray(showResponse.capabilities)
+      ? [...showResponse.capabilities]
+      : [];
+    // Only the local GGUF runner supports video. Vision also includes MLX
+    // and mllama, whose image paths cannot consume videos.
+    if (
+      !remote.remote_host &&
+      !remote.remote_model &&
+      !new Model({ model: modelName }).isCloud() &&
+      capabilities.includes("vision") &&
+      showResponse.details?.format === "gguf" &&
+      showResponse.details.family !== "mllama" &&
+      !showResponse.details.families?.includes("mllama")
+    ) {
+      capabilities.push("video");
+    }
+    return new ModelCapabilitiesResponse({ capabilities });
   } catch (error) {
     // Model might not be downloaded yet, return empty capabilities
     console.error(`Failed to get capabilities for ${modelName}:`, error);

@@ -19,6 +19,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
 import {
   useHasVisionCapability,
+  useHasVideoCapability,
   useHasToolsCapability,
 } from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
@@ -28,7 +29,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { ThinkButton } from "./ThinkButton";
 import { ErrorMessage } from "./ErrorMessage";
-import { processFiles } from "@/utils/fileValidation";
+import { isVideoFile, processFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
 
@@ -114,6 +115,7 @@ function ChatForm({
   const isDownloading = isDownloadingModel;
   const { selectedModel } = useSelectedModel();
   const hasVisionCapability = useHasVisionCapability(selectedModel?.model);
+  const hasVideoCapability = useHasVideoCapability(selectedModel?.model);
   const { isAuthenticated, isLoading: isLoadingUser } = useUser();
   const [loginPromptFeature, setLoginPromptFeature] = useState<
     "webSearch" | "turbo" | null
@@ -480,10 +482,12 @@ function ChatForm({
       return;
     }
 
-    // Prepare attachments for submission, excluding unsupported images
+    // Prepare attachments for submission, excluding unsupported visual media
     const attachmentsToSend: FileAttachment[] = message.attachments
       .filter(
-        (att) => hasVisionCapability || !isImageFile(att.filename),
+        (att) =>
+          (!isImageFile(att.filename) || hasVisionCapability) &&
+          (!isVideoFile(att.filename) || hasVideoCapability),
       )
       .map((att) => ({
         filename: att.filename,
@@ -739,71 +743,74 @@ function ChatForm({
         {(message.attachments.length > 0 || message.fileErrors.length > 0) && (
           <div className="flex gap-2 overflow-x-auto px-3 pt pb-3 w-full scrollbar-hide">
             {message.attachments.map((attachment, index) => {
-              const isUnsupportedImage =
-                !hasVisionCapability && isImageFile(attachment.filename);
+              const isUnsupportedMedia =
+                (!hasVisionCapability && isImageFile(attachment.filename)) ||
+                (!hasVideoCapability && isVideoFile(attachment.filename));
               return (
-              <div
-                key={attachment.id}
-                className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${
-                  isUnsupportedImage
-                    ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
-                    : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
-                }`}
-              >
-                {isImageFile(attachment.filename) ? (
-                  <ImageThumbnail
-                    image={{
-                      filename: attachment.filename,
-                      data: attachment.data || new Uint8Array(0),
-                    }}
-                    className="w-8 h-8 object-cover rounded-md flex-shrink-0"
-                  />
-                ) : (
-                  <svg
-                    className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
-                )}
-                <div className="flex flex-col min-w-0">
-                  <span className={`text-sm max-w-36 truncate ${isUnsupportedImage ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}>
-                    {attachment.filename}
-                  </span>
-                  {isUnsupportedImage && (
-                    <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
-                      This model does not support images
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeFile(index)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 -mr-1 cursor-pointer"
-                  aria-label={`Remove ${attachment.filename}`}
+                <div
+                  key={attachment.id}
+                  className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${
+                    isUnsupportedMedia
+                      ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                      : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                  }`}
                 >
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
+                  {isImageFile(attachment.filename) ? (
+                    <ImageThumbnail
+                      image={{
+                        filename: attachment.filename,
+                        data: attachment.data || new Uint8Array(0),
+                      }}
+                      className="w-8 h-8 object-cover rounded-md flex-shrink-0"
                     />
-                  </svg>
-                </button>
-              </div>
+                  ) : (
+                    <svg
+                      className="w-4 h-4 text-neutral-400 dark:text-neutral-500 flex-shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                  )}
+                  <div className="flex flex-col min-w-0">
+                    <span
+                      className={`text-sm max-w-36 truncate ${isUnsupportedMedia ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}
+                    >
+                      {attachment.filename}
+                    </span>
+                    {isUnsupportedMedia && (
+                      <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
+                        This model does not support visual media
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(index)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 -mr-1 cursor-pointer"
+                    aria-label={`Remove ${attachment.filename}`}
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                </div>
               );
             })}
             {message.fileErrors.map((fileError, index) => (

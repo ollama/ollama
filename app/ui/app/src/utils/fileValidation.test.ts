@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { IMAGE_EXTENSIONS, validateFile } from "./fileValidation";
+import {
+  IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
+  isVideoFile,
+  validateFile,
+} from "./fileValidation";
 
 describe("fileValidation", () => {
   describe("IMAGE_EXTENSIONS", () => {
@@ -11,12 +16,23 @@ describe("fileValidation", () => {
     });
   });
 
+  it.each(VIDEO_EXTENSIONS)("accepts .%s video attachments", (extension) => {
+    const file = new File([new Uint8Array([0, 1, 255])], `clip.${extension}`, {
+      type: "video/mp4",
+    });
+    expect(validateFile(file, { hasVisionCapability: true }).valid).toBe(true);
+    expect(isVideoFile(file.name)).toBe(true);
+    expect(IMAGE_EXTENSIONS).not.toContain(extension);
+  });
+
+  it("recognizes video extensions without confusing image previews", () => {
+    expect(isVideoFile("CLIP.MP4")).toBe(true);
+    expect(isVideoFile("clip.mp4.txt")).toBe(false);
+    expect(isVideoFile("image.png")).toBe(false);
+  });
+
   describe("validateFile", () => {
-    const createMockFile = (
-      name: string,
-      size: number,
-      type: string,
-    ): File => {
+    const createMockFile = (name: string, size: number, type: string): File => {
       const blob = new Blob(["test content"], { type });
       return new File([blob], name, { type });
     };
@@ -62,7 +78,7 @@ describe("fileValidation", () => {
       const content = new Uint8Array(largeSize);
       const blob = new Blob([content], { type: "image/webp" });
       const file = new File([blob], "large.webp", { type: "image/webp" });
-      
+
       const result = validateFile(file, {
         hasVisionCapability: true,
         maxFileSize: 10, // 10MB limit

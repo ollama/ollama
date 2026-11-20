@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -635,6 +636,81 @@ func TestRenderPromptResolvesDynamicGemma4Renderer(t *testing.T) {
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Fatalf("rendered prompt mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestVideoPromptMediaOrder(t *testing.T) {
+	original := []api.Message{
+		{Role: "user", Content: "look [img] then [img]", Images: []api.ImageData{[]byte("image")}, Videos: []api.VideoData{[]byte("video")}},
+		{Role: "assistant", Content: "ok"},
+		{Role: "user", Content: "next", Images: []api.ImageData{[]byte("next-image")}},
+	}
+	for _, renderer := range []string{"", "qwen3-vl-instruct", "gemma4"} {
+		t.Run(renderer, func(t *testing.T) {
+			m := &Model{Config: testConfigWithRenderer(renderer)}
+			placement := mediaTagsDefault
+			if m.Config.Renderer != "" {
+				placement = mediaTagsOmitted
+			}
+			tagged, media, err := mediaTaggedMessages(m, original, 0, false, placement)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(media) != 3 || media[0].ID != 0 || media[1].ID != 1 || media[2].ID != 2 || media[1].Kind != llm.MediaKindVideo || string(media[1].Data) != "video" {
+				t.Fatalf("media = %#v", media)
+			}
+			var prompt string
+			if renderer == "" {
+				prompt = tagged[0].Content + tagged[2].Content
+			} else {
+				prompt, err = renderPrompt(m, tagged, nil, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, marker := range []string{"[img-0]", "[img-1]", "[img-2]"} {
+				if strings.Count(prompt, marker) != 1 {
+					t.Fatalf("missing/duplicate %s in %s", marker, prompt)
+				}
+			}
+			cleared, _, err := mediaTaggedMessages(m, original, 0, true, mediaTagsAfterText)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cleared[0].Images)+len(cleared[0].Videos) != 0 {
+				t.Fatal("media not cleared for native template")
+			}
+			if len(original[0].Videos) != 1 || len(original[0].Images) != 1 || original[0].Content != "look [img] then [img]" {
+				t.Fatal("request mutated")
+			}
+		})
+	}
+}
+
+func TestVideoRendererKeepsImplicitMediaAfterText(t *testing.T) {
+	messages := []api.Message{
+		{Role: "user", Content: "history", Images: []api.ImageData{[]byte("history-image")}},
+		{Role: "assistant", Content: "ok"},
+		{Role: "user", Content: "look", Images: []api.ImageData{[]byte("image")}, Videos: []api.VideoData{[]byte("video")}},
+	}
+	for _, name := range []string{"qwen3-vl-instruct", "gemma4"} {
+		t.Run(name, func(t *testing.T) {
+			prompt, err := renderPrompt(&Model{Config: testConfigWithRenderer(name)}, messages, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(prompt, "look[img-1][img-2]") {
+				t.Fatalf("video moved before instruction or lost history offset: %q", prompt)
+			}
+			for _, marker := range []string{"[img-0]", "[img-1]", "[img-2]"} {
+				if strings.Count(prompt, marker) != 1 {
+					t.Fatalf("missing/duplicate %s in %q", marker, prompt)
+				}
+			}
+			if messages[2].Content != "look" || len(messages[2].Images) != 1 || len(messages[2].Videos) != 1 {
+				t.Fatal("renderer mutated request")
 			}
 		})
 	}

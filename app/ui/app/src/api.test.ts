@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-const { listModels } = vi.hoisted(() => ({ listModels: vi.fn() }));
+const { listModels, showModel } = vi.hoisted(() => ({
+  listModels: vi.fn(),
+  showModel: vi.fn(),
+}));
 vi.mock("./lib/ollama-client", () => ({
-  ollamaClient: { list: listModels },
+  ollamaClient: { list: listModels, show: showModel },
 }));
 
 import {
+  getModelCapabilities,
   fetchConnectUrl,
   getClaudeDesktopAvailableModels,
   getClaudeDesktopModelsSettings,
@@ -203,4 +207,47 @@ describe("getClaudeDesktopAvailableModels", () => {
 
     expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
   });
+});
+
+describe("video capabilities", () => {
+  it.each([
+    ["gguf", ["qwen3vl"], ["vision"], true],
+    ["safetensors", ["qwen3vl"], ["vision"], false],
+    ["gguf", ["mllama"], ["vision"], false],
+    ["gguf", ["llama"], ["completion"], false],
+  ])(
+    "derives video support for %s / %s",
+    async (format, families, capabilities, video) => {
+      showModel.mockResolvedValue({
+        details: { format, families },
+        capabilities,
+      });
+      const result = await getModelCapabilities("model");
+      expect(result.capabilities.includes("video")).toBe(video);
+      expect(result.capabilities.includes("vision")).toBe(
+        capabilities.includes("vision"),
+      );
+    },
+  );
+});
+
+it("does not infer local video decoding for remote models", async () => {
+  showModel.mockResolvedValue({
+    details: { format: "gguf", families: ["qwen3vl"] },
+    capabilities: ["vision"],
+    remote_host: "https://ollama.com",
+  });
+  expect((await getModelCapabilities("remote")).capabilities).not.toContain(
+    "video",
+  );
+});
+
+it("does not infer video for cloud refs when show metadata is incomplete", async () => {
+  showModel.mockResolvedValue({
+    details: { format: "gguf", families: ["qwen3vl"] },
+    capabilities: ["vision"],
+  });
+  expect(
+    (await getModelCapabilities("qwen3-vl:8b-cloud")).capabilities,
+  ).not.toContain("video");
 });
