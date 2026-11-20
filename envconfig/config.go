@@ -238,6 +238,10 @@ var (
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
 	// CreateRemote forces model creation through the server API even when the server is local.
 	CreateRemote = Bool("OLLAMA_CREATE_REMOTE")
+	// LogMetrics enables per-request token metrics logging to a JSONL file.
+	LogMetrics = Bool("OLLAMA_LOG_METRICS")
+	// MetricsLogFile sets a custom path for the metrics log file.
+	MetricsLogFile = String("OLLAMA_METRICS_LOG_FILE")
 )
 
 func String(s string) func() string {
@@ -338,6 +342,8 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
 		"OLLAMA_CREATE_REMOTE":        {"OLLAMA_CREATE_REMOTE", CreateRemote(), "Force model creation through the server API even when the server is local"},
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
+		"OLLAMA_LOG_METRICS":          {"OLLAMA_LOG_METRICS", LogMetrics(), "Log per-request token metrics to a JSONL file"},
+		"OLLAMA_METRICS_LOG_FILE":     {"OLLAMA_METRICS_LOG_FILE", MetricsLogFile(), "Custom path for the metrics log file"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
