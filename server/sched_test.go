@@ -694,6 +694,98 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 	require.Empty(t, s.pendingReqCh)
 }
 
+// A runner that refuses to go away has to tell whoever is waiting for room,
+// otherwise the pending loop waits for an unload that already gave up and every
+// later request hangs behind it.
+func TestSchedFailedUnloadWakesTheWaiter(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+
+	modelPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(32),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*gguftest.Tensor{
+		{Name: "blk.0.attn.weight", Type: gguf.TensorTypeF32, Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Type: gguf.TensorTypeF32, Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	reqCtx, cancelReq := context.WithCancel(ctx)
+	defer cancelReq()
+
+	req := &LlmRequest{
+		ctx:             reqCtx,
+		model:           &Model{ModelPath: modelPath},
+		opts:            api.DefaultOptions(),
+		successCh:       make(chan *runnerRef, 1),
+		errCh:           make(chan error, 1),
+		sessionDuration: &api.Duration{Duration: 2 * time.Minute},
+	}
+
+	gpus := []ml.DeviceInfo{}
+	systemInfo := ml.SystemInfo{}
+	server := &mockLlm{
+		vramSize:  10,
+		vramByGPU: map[ml.DeviceID]uint64{},
+		closeResp: errors.New("signal: permission denied"),
+	}
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		server.modelPath = model
+		return server, nil
+	}
+	s.load(req, systemInfo, gpus, false)
+
+	select {
+	case err := <-req.errCh:
+		if err != nil {
+			t.Fatalf("expected no errors when loading, got '%s'", err.Error())
+		}
+	case resp := <-req.successCh:
+		s.loadedMu.Lock()
+		if resp.refCount != uint(1) || len(s.loaded) != 1 {
+			t.Fatalf("expected a model to be loaded")
+		}
+		s.loadedMu.Unlock()
+	}
+
+	completedDone := make(chan struct{})
+	go func() {
+		defer close(completedDone)
+		s.processCompleted(ctx)
+	}()
+
+	s.expireRunner(&Model{ModelPath: modelPath})
+	cancelReq()
+
+	select {
+	case err := <-s.unloadedCh:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a failed unload left the waiter blocked")
+	}
+
+	// The process is still holding its memory, so the runner has to stay in the
+	// loaded set for the next load to account for it.
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 1)
+	s.loadedMu.Unlock()
+
+	done()
+	select {
+	case <-completedDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected completed loop to stop")
+	}
+}
+
 func TestSchedExpireRunner(t *testing.T) {
 	ctx, done := context.WithCancel(t.Context())
 	defer done()
@@ -1330,10 +1422,24 @@ func TestSchedUnload(t *testing.T) {
 	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, numParallel: 1}
 	r2 := withModel(&runnerRef{numParallel: 1}, &Model{AdapterPaths: []string{"A"}})
-	r1.unload()
+	require.NoError(t, r1.unload())
 	require.True(t, llm1.closeCalled.Load())
-	r2.unload()
+	require.NoError(t, r2.unload())
 	require.Nil(t, r2.model.Load())
+}
+
+func TestSchedUnloadReportsSurvivingProcess(t *testing.T) {
+	llm1 := &mockLlm{
+		vramByGPU: map[ml.DeviceID]uint64{},
+		closeResp: errors.New("signal: permission denied"),
+	}
+	r := withModel(&runnerRef{llama: llm1, numParallel: 1}, &Model{AdapterPaths: []string{"A"}})
+
+	// A runner whose process is still around must not be handed back to a
+	// later request, and must keep its bookkeeping so the memory still counts.
+	require.Error(t, r.unload())
+	require.NotNil(t, r.model.Load())
+	require.True(t, r.needsReload(t.Context(), &LlmRequest{model: &Model{AdapterPaths: []string{"A"}}}))
 }
 
 func TestSchedAlreadyCanceled(t *testing.T) {
