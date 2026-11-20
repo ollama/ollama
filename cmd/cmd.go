@@ -1623,13 +1623,18 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		})
 	}
 
-	if len(resp.Tensors) > 0 && verbose {
-		tableRender("Tensors", func() (rows [][]string) {
-			for _, t := range resp.Tensors {
-				rows = append(rows, []string{"", t.Name, t.Type, fmt.Sprint(t.Shape)})
+	if verbose && len(resp.Tensors) > 0 {
+		var rows [][]string
+		for _, t := range resp.Tensors {
+			if resp.Details.Format == manifest.FormatSafetensors && len(t.Shape) == 1 &&
+				(strings.HasSuffix(t.Name, ".bias") || strings.HasSuffix(t.Name, ".gamma")) {
+				continue
 			}
-			return
-		})
+			rows = append(rows, []string{"", t.Name, t.Type, fmt.Sprint(t.Shape)})
+		}
+		if len(rows) > 0 {
+			tableRender("Tensors", func() [][]string { return rows })
+		}
 	}
 
 	head := func(s string, n int) (rows [][]string) {
