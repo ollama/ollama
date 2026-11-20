@@ -36,7 +36,7 @@ func (s *llamaServerRunner) Speech(ctx context.Context, req SpeechRequest, fn fu
 		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
 
-	if err := s.sem.Acquire(ctx, 1); err != nil {
+	if err := s.acquire(ctx); err != nil {
 		return err
 	}
 	defer s.sem.Release(1)

@@ -138,7 +138,7 @@ func Execute(args []string) error {
 		case admission <- struct{}{}:
 			defer func() { <-admission }()
 		default:
-			http.Error(w, "runner queue is full", http.StatusServiceUnavailable)
+			http.Error(w, "runner queue is full", http.StatusTooManyRequests)
 			return
 		}
 		request := request{Responses: make(chan CompletionResponse, 8)}
@@ -178,12 +178,12 @@ func Execute(args []string) error {
 		request.Ctx, cancel = context.WithCancel(r.Context())
 		defer cancel()
 
-		select {
-		case <-r.Context().Done():
+		if err := runner.enqueue(r.Context(), request); err != nil {
 			// Never queued, so the runner will not close the grammar.
 			request.Grammar.close()
+			status := completionStatusError(err)
+			http.Error(w, status.ErrorMessage, status.StatusCode)
 			return
-		case runner.Requests <- request:
 		}
 
 		w.Header().Set("Content-Type", "application/jsonl")

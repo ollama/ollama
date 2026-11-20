@@ -1,12 +1,18 @@
 package mlxrunner
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"maps"
 	"math"
+	"net/http"
 	"slices"
 	"testing"
+	"testing/synctest"
+	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/safetensors"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
@@ -120,4 +126,75 @@ func TestRunnerCloseEmpty(t *testing.T) {
 			t.Error("closed runner retains empty generation cache")
 		}
 	}
+}
+
+func TestRequestQueueTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := &Runner{Requests: make(chan queuedRequest)}
+		requests := []queuedRequest{
+			request{Ctx: t.Context()},
+			&evaluationRequest{ctx: t.Context()},
+			&speechRequest{ctx: t.Context()},
+		}
+		for _, req := range requests {
+			start := time.Now()
+			err := r.enqueue(req.context(), req)
+			var status api.StatusError
+			if !errors.As(err, &status) || status.StatusCode != http.StatusTooManyRequests {
+				t.Fatalf("%T: got %v, want 429", req, err)
+			}
+			if elapsed := time.Since(start); elapsed != 5*time.Minute {
+				t.Fatalf("%T: queue wait took %s, want 5 minutes", req, elapsed)
+			}
+		}
+		select {
+		case <-r.Requests:
+			t.Fatal("timed-out request remained queued")
+		default:
+		}
+	})
+}
+
+func TestSerialRequestQueueWaitsForCapacity(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := &Runner{Requests: make(chan queuedRequest)}
+		go func() {
+			for range 3 {
+				time.Sleep(90 * time.Second)
+				<-r.Requests
+			}
+		}()
+		admitted := make(chan error, 3)
+		for range 3 {
+			go func() { admitted <- r.enqueue(t.Context(), request{Ctx: t.Context()}) }()
+		}
+		for range 3 {
+			if err := <-admitted; err != nil {
+				t.Fatalf("normal serial queue rejected a request: %v", err)
+			}
+		}
+	})
+}
+
+func TestAdmittedRequestOutlivesQueueTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := &Runner{Requests: make(chan queuedRequest)}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		go func() {
+			req := <-r.Requests
+			time.Sleep(6 * time.Minute)
+			if req.context().Err() != nil {
+				t.Error("queue timeout cancelled an admitted request")
+			}
+			cancel()
+		}()
+		if err := r.enqueue(ctx, request{Ctx: ctx}); err != nil {
+			t.Fatal(err)
+		}
+		<-ctx.Done()
+		if err := r.enqueue(ctx, request{Ctx: ctx}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled caller: got %v", err)
+		}
+	})
 }

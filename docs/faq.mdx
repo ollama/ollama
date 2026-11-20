@@ -323,7 +323,7 @@ The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endp
 
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
-If too many requests are sent to the local Ollama server, it responds with a `503` overloaded error. Set `OLLAMA_MAX_QUEUE` before starting the server to change the maximum number of queued requests:
+If too many requests are sent to the local Ollama server, it responds with a `429` busy error. Requests waiting more than five minutes for an available slot in a loaded model also receive `429`. Model loading and running requests are not interrupted by this queue timeout. Set `OLLAMA_MAX_QUEUE` before starting the server to change the maximum number of queued requests:
 
 ```shell
 OLLAMA_MAX_QUEUE=1024 ollama serve

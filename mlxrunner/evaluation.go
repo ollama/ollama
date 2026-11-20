@@ -17,10 +17,8 @@ type activeEvaluation struct {
 
 func (r *Runner) scheduleEvaluation(ctx context.Context, tokens []int32, items []mediaItem, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
 	request := &evaluationRequest{ctx: ctx, tokens: tokens, items: items, open: open, done: make(chan error, 1)}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case r.Requests <- request:
+	if err := r.enqueue(ctx, request); err != nil {
+		return err
 	}
 	// Once admitted, wait for cleanup even on cancellation. An evaluation may still
 	// be writing CPU results captured by the caller while its GPU step ends.
