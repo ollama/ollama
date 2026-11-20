@@ -23,13 +23,145 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/transfer"
 	"github.com/ollama/ollama/types/model"
 )
 
-const maxRetries = 6
+const maxRetries = 6 // used by upload.go; pulls use envconfig.MaxPullRetries
+
+// rateLimiter is a token bucket shared by every stream of one download, so the
+// configured rate is the total on the wire rather than a per-stream figure. A
+// bucket per stream multiplied the limit by OLLAMA_MAX_PULL_STREAMS, which is
+// not what anyone asking for "500k" means.
+//
+// The bucket starts empty on purpose. Starting it full handed out one free
+// second per stream, which made the measured average (t+1)/t times the limit —
+// still 9% high after ten seconds.
+type rateLimiter struct {
+	mu          sync.Mutex
+	bytesPerSec int64
+	budget      int64
+	lastRefill  time.Time
+}
+
+func newRateLimiter(bytesPerSec int64) *rateLimiter {
+	return &rateLimiter{bytesPerSec: bytesPerSec, lastRefill: time.Now()}
+}
+
+// refillLocked credits the time since the last call. The remainder below one
+// byte stays on the clock instead of being dropped, so frequent small reads do
+// not lose budget to truncation.
+func (l *rateLimiter) refillLocked() {
+	now := time.Now()
+	elapsed := now.Sub(l.lastRefill).Seconds()
+	add := int64(elapsed * float64(l.bytesPerSec))
+	if add <= 0 {
+		return
+	}
+	l.lastRefill = now
+	l.budget += add
+	if l.budget > l.bytesPerSec {
+		l.budget = l.bytesPerSec
+	}
+}
+
+// reserve blocks until the bucket holds at least one byte and returns how many
+// bytes the caller may read, never more than want.
+func (l *rateLimiter) reserve(want int64) int64 {
+	if want < 1 {
+		return want
+	}
+	for {
+		l.mu.Lock()
+		l.refillLocked()
+		if l.budget > 0 {
+			take := min(l.budget, want)
+			l.budget -= take
+			l.mu.Unlock()
+			return take
+		}
+		l.mu.Unlock()
+		// Warten, bis wieder etwas im Eimer ist. Eine Zehntelsekunde ist grob
+		// genug, um nicht zu pollen, und fein genug, dass die Rate stimmt.
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// refund returns budget that reserve granted but the reader did not use.
+func (l *rateLimiter) refund(n int64) {
+	if n <= 0 {
+		return
+	}
+	l.mu.Lock()
+	l.budget += n
+	if l.budget > l.bytesPerSec {
+		l.budget = l.bytesPerSec
+	}
+	l.mu.Unlock()
+}
+
+// throttledTransport applies a rateLimiter to every response body it returns.
+//
+// This is how the tensor-layer pull path gets the same total rate as the legacy
+// one. transfer.DownloadOptions carries no rate hook, but it does accept an
+// *http.Client, so the limit can be installed underneath without touching the
+// transfer package at all. One limiter per pull means the rate is shared across
+// the blobs transferring in parallel, exactly as on the legacy path.
+type throttledTransport struct {
+	base http.RoundTripper
+	l    *rateLimiter
+}
+
+func (t *throttledTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp == nil || resp.Body == nil {
+		return resp, err
+	}
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{Reader: newThrottledReader(resp.Body, t.l), Closer: resp.Body}
+	return resp, nil
+}
+
+// throttledClient returns a client that reads at no more than the limiter
+// allows. A nil limiter returns base unchanged, so the no-limit path keeps
+// using whatever client it had.
+func throttledClient(base *http.Client, l *rateLimiter) *http.Client {
+	if l == nil {
+		return base
+	}
+	c := http.Client{}
+	if base != nil {
+		c = *base
+	}
+	rt := c.Transport
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	c.Transport = &throttledTransport{base: rt, l: l}
+	return &c
+}
+
+// throttledReader draws from a shared rateLimiter before each read.
+type throttledReader struct {
+	r io.Reader
+	l *rateLimiter
+}
+
+func newThrottledReader(r io.Reader, l *rateLimiter) *throttledReader {
+	return &throttledReader{r: r, l: l}
+}
+
+func (t *throttledReader) Read(p []byte) (int, error) {
+	allowed := t.l.reserve(int64(len(p)))
+	n, err := t.r.Read(p[:allowed])
+	t.l.refund(allowed - int64(n))
+	return n, err
+}
 
 var (
 	errMaxRetriesExceeded   = errors.New("max retries exceeded")
@@ -42,6 +174,14 @@ var blobDownloadManager sync.Map
 type blobDownload struct {
 	Name   string
 	Digest string
+
+	// Limits are the per-request limits; a zero field falls back to the
+	// environment. Read in Run, before the parts start.
+	Limits api.PullLimits
+
+	// limiter is shared by all parts of this blob, so Limits.Rate is the total
+	// rate rather than a per-stream one. Built once in Run.
+	limiter *rateLimiter
 
 	Total     int64
 	Completed atomic.Int64
@@ -98,7 +238,6 @@ func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
 }
 
 const (
-	numDownloadParts          = 16
 	minDownloadPartSize int64 = 100 * format.MegaByte
 	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
@@ -126,6 +265,23 @@ func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 	p.lastUpdated = time.Now()
 	p.lastUpdatedMu.Unlock()
 	return n, nil
+}
+
+// effectiveLimits resolves the per-request limits against the environment.
+// It lives here alone so the rule cannot drift between its call sites: the
+// request wins, a zero field falls back to the environment, and streams never
+// drop below one. Taking a maximum of the two instead would let the
+// environment override a deliberately smaller request.
+func (b *blobDownload) effectiveLimits() (rate int64, streams int) {
+	rate = b.Limits.Rate
+	if rate == 0 {
+		rate = int64(envconfig.MaxPullRate())
+	}
+	streams = b.Limits.Streams
+	if streams == 0 {
+		streams = int(envconfig.MaxPullStreams())
+	}
+	return rate, max(streams, 1)
 }
 
 func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
@@ -156,7 +312,8 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 		b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 
-		size := b.Total / numDownloadParts
+		_, streams := b.effectiveLimits()
+		size := b.Total / int64(streams)
 		switch {
 		case size < minDownloadPartSize:
 			size = minDownloadPartSize
@@ -274,8 +431,17 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	client := transfer.NewRedirectClient(requestURL.String(), opts.Insecure)
 	defer client.CloseIdleConnections()
 
+	// One limiter for the whole blob, not one per part: a bucket per stream
+	// would multiply the configured rate by the number of streams.
+	bw, streams := b.effectiveLimits()
+	if bw > 0 {
+		b.limiter = newRateLimiter(bw)
+		slog.Debug("pull rate limit active", "bytes_per_sec", bw,
+			"streams", streams, "digest", b.Digest[:min(16, len(b.Digest))])
+	}
+
 	g, inner := errgroup.WithContext(ctx)
-	g.SetLimit(numDownloadParts)
+	g.SetLimit(streams)
 	for i := range b.Parts {
 		part := b.Parts[i]
 		if part.Completed.Load() == part.Size {
@@ -284,7 +450,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 		g.Go(func() error {
 			var err error
-			for try := 0; try < maxRetries; try++ {
+			for try := 0; try < int(envconfig.MaxPullRetries()); try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
 				err = b.downloadChunk(inner, client, directURL, w, part)
 				switch {
@@ -382,7 +548,12 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 		}
 		defer resp.Body.Close()
 
-		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
+		body := io.Reader(resp.Body)
+		if b.limiter != nil {
+			body = newThrottledReader(body, b.limiter)
+		}
+
+		n, err := io.CopyN(w, io.TeeReader(body, part), part.Size-part.Completed.Load())
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			// rollback progress
 			b.Completed.Add(-n)
@@ -504,6 +675,7 @@ type downloadOpts struct {
 	digest  string
 	regOpts *registryOptions
 	fn      func(api.ProgressResponse)
+	limits  api.PullLimits
 }
 
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
@@ -533,7 +705,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return true, nil
 	}
 
-	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
+	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest, Limits: opts.limits})
 	download := data.(*blobDownload)
 	if !ok {
 		requestURL := opts.n.BaseURL()
