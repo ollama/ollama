@@ -334,6 +334,9 @@ Examples:
 			if len(args) > 0 && launchCommandIsClaudeDesktop(args[0]) {
 				return fmt.Errorf("Claude Desktop can only be restored from the command line: ollama launch claude-desktop --restore")
 			}
+			if len(args) > 0 && strings.EqualFold(args[0], "pi") {
+				return nil
+			}
 			return checkServerHeartbeat(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -371,14 +374,9 @@ Examples:
 				return nil
 			}
 
-			canonical, _, _ := LookupIntegration(name)
-			piOverride := canonical == "pi" && piHasModelArgs(passArgs)
-			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
+			if !strings.EqualFold(name, "pi") && modelFlag != "" && isCloudModelName(modelFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
-						if canonical == "pi" {
-							return fmt.Errorf("cloud is disabled; enable cloud to use %s", modelFlag)
-						}
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
 						modelFlag = ""
 					}
@@ -494,16 +492,19 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	if req.Restore {
 		return restoreIntegration(name, runner, req)
 	}
+	if pi, ok := runner.(*Pi); ok {
+		restorePolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
+		defer restorePolicy()
+		if req.ConfigureOnly {
+			_, err := preparePi()
+			return err
+		}
+		return pi.Run(req.ModelOverride, nil, req.ExtraArgs)
+	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
 		if _, ok := runner.(ManagedAutodiscoveryIntegration); !ok {
 			return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
 		}
-	}
-	if pi, ok := runner.(*Pi); ok && !req.ForceConfigure && !req.ConfigureOnly && piHasModelArgs(req.ExtraArgs) {
-		if err := EnsureIntegrationInstalled(name, runner); err != nil {
-			return err
-		}
-		return runIntegration(pi, "", nil, req.ExtraArgs)
 	}
 
 	launchClient, saved, err := prepareIntegrationLaunch(name, policy)
@@ -579,10 +580,7 @@ func prepareIntegrationLaunch(name string, policy LaunchPolicy) (*launcherClient
 	if err != nil {
 		return nil, nil, err
 	}
-	saved, err := loadStoredIntegrationConfig(name)
-	if name == "pi" && err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, nil, err
-	}
+	saved, _ := loadStoredIntegrationConfig(name)
 	return launchClient, saved, nil
 }
 
@@ -615,6 +613,17 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 	integration, err := integrationFor(info.Name)
 	if err != nil {
 		return LauncherIntegrationState{}, err
+	}
+	if _, ok := integration.spec.Runner.(*Pi); ok {
+		return LauncherIntegrationState{
+			Name:            info.Name,
+			DisplayName:     info.DisplayName,
+			Description:     info.Description,
+			Installed:       integration.installed,
+			AutoInstallable: integration.autoInstallable,
+			Selectable:      integration.installed || integration.autoInstallable,
+			InstallHint:     integration.installHint,
+		}, nil
 	}
 	var currentModel string
 	var usable bool
@@ -655,11 +664,6 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 	hasModels := loadErr == nil && len(cfg.Models) > 0
 	if !hasModels {
 		return "", false, nil
-	}
-	if name == "pi" {
-		budget := modelShowTimeout
-		model, _, err := c.piTargetModel(ctx, cfg.Models[0], &budget, nil)
-		return cfg.Models[0], err == nil && piSupportsChat(model), nil
 	}
 
 	if isEditor {
@@ -773,9 +777,6 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
-	if pi, ok := editor.(*Pi); ok {
-		return c.launchPiIntegration(ctx, pi, saved, req)
-	}
 	previous := editorPreCheckedModels(saved, "")
 	models, needsConfigure := c.resolveEditorLaunchModels(ctx, saved, req)
 	if !needsConfigure && req.ModelOverride != "" && !slices.Contains(previous, req.ModelOverride) {
@@ -1120,12 +1121,6 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 	items, _, err := c.loadSelectableModels(ctx, nil, current, "no models available, run 'ollama pull <model>' first")
 	if err != nil {
 		return "", err
-	}
-	if commandName == "pi" {
-		items = c.piSelectableModels(ctx, items)
-		if len(items) == 0 {
-			return "", errors.New("no chat models available, run 'ollama pull <model>' first")
-		}
 	}
 
 	previous := current

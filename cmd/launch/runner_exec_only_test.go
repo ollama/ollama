@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,6 +90,22 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			writeFakeBinary(t, binDir, tt.binary)
 			if tt.name == "pi" {
 				writeFakeBinary(t, binDir, "npm")
+				plugin := filepath.Join(home, "ollama-plugin")
+				if err := os.MkdirAll(plugin, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				for name, data := range map[string]string{
+					"package.json": `{"name":"@ollama/pi"}`,
+					"index.ts":     "",
+				} {
+					if err := os.WriteFile(filepath.Join(plugin, name), []byte(data), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.5.2; exit 0; fi\nif [ \"$1\" = \"list\" ]; then echo %q; fi\n", plugin)
+				if err := os.WriteFile(filepath.Join(binDir, "pi"), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tt.name == "kimi" {
 				writeFakeBinary(t, binDir, "curl")
