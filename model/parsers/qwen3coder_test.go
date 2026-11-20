@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/ollama/ollama/api"
 )
 
@@ -1109,6 +1111,147 @@ func TestQwen3CoderParserDoneFlushesBufferedContent(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Fatalf("content = %q, want %q", got, tt.want)
+			}
+
+			content, _, calls, err = parser.Add("next", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if content != "next" || len(calls) != 0 {
+				t.Fatalf("parser was not reset after done: content = %q, calls = %v", content, calls)
+			}
+		})
+	}
+}
+
+func TestQwen3CoderParserDoneParsesToolCallWithoutCloseTag(t *testing.T) {
+	weather := tool("get_weather", map[string]api.ToolProperty{
+		"city": {Type: api.PropertyType{"string"}},
+	})
+	finish := tool("finish", map[string]api.ToolProperty{
+		"summary": {Type: api.PropertyType{"string"}},
+	})
+	call := func(index int, name string, args map[string]any) api.ToolCall {
+		return api.ToolCall{Function: api.ToolCallFunction{Index: index, Name: name, Arguments: testArgs(args)}}
+	}
+
+	for _, tt := range []struct {
+		name string
+		// chunks are sent with done=false; doneChunk is sent last with done=true
+		chunks      []string
+		doneChunk   string
+		tools       []api.Tool
+		wantContent string
+		wantCalls   []api.ToolCall
+	}{
+		{
+			name:      "single chunk with done",
+			doneChunk: "<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>",
+			tools:     []api.Tool{weather},
+			wantCalls: []api.ToolCall{call(0, "get_weather", map[string]any{"city": "Paris"})},
+		},
+		{
+			name:      "done in separate empty chunk",
+			chunks:    []string{"<tool_call>\n", "<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n", "</function>\n"},
+			tools:     []api.Tool{weather},
+			wantCalls: []api.ToolCall{call(0, "get_weather", map[string]any{"city": "Paris"})},
+		},
+		{
+			name:      "function close split across chunks",
+			chunks:    []string{"<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</fun", "ction"},
+			doneChunk: ">",
+			tools:     []api.Tool{weather},
+			wantCalls: []api.ToolCall{call(0, "get_weather", map[string]any{"city": "Paris"})},
+		},
+		{
+			// observed from nemotron-3-nano:4b; values keep their inner whitespace
+			// because parseValue only strips one leading/trailing newline
+			name:      "observed leaked call",
+			chunks:    []string{"<tool_call>\n<function=finish> \n<parameter=summary> \nHTTP 200, header rendered. \n</parameter> \n</function>"},
+			tools:     []api.Tool{finish},
+			wantCalls: []api.ToolCall{call(0, "finish", map[string]any{"summary": " \nHTTP 200, header rendered. "})},
+		},
+		{
+			name:        "content before call",
+			chunks:      []string{"Checking.\n", "<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>"},
+			tools:       []api.Tool{weather},
+			wantContent: "Checking.",
+			wantCalls:   []api.ToolCall{call(0, "get_weather", map[string]any{"city": "Paris"})},
+		},
+		{
+			name: "follows a closed call",
+			chunks: []string{
+				"<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n",
+				"<tool_call>\n<function=get_weather>\n<parameter=city>\nRome\n</parameter>\n</function>",
+			},
+			tools: []api.Tool{weather},
+			wantCalls: []api.ToolCall{
+				call(0, "get_weather", map[string]any{"city": "Paris"}),
+				call(1, "get_weather", map[string]any{"city": "Rome"}),
+			},
+		},
+		{
+			name:        "function close inside unclosed parameter stays content",
+			chunks:      []string{"<tool_call><function=test><parameter=x>a</function>"},
+			wantContent: "<tool_call><function=test><parameter=x>a</function>",
+		},
+		{
+			name:        "text after function close stays content",
+			chunks:      []string{"<tool_call><function=test></function> trailing"},
+			wantContent: "<tool_call><function=test></function> trailing",
+		},
+		{
+			name:        "second call after unclosed call stays content",
+			chunks:      []string{"<tool_call><function=alpha></function><tool_call><function=beta></function>"},
+			wantContent: "<tool_call><function=alpha></function><tool_call><function=beta></function>",
+		},
+		{
+			name:        "two functions stay content",
+			chunks:      []string{"<tool_call><function=alpha></function>\n<function=beta></function>"},
+			wantContent: "<tool_call><function=alpha></function>\n<function=beta></function>",
+		},
+		{
+			name:        "text before function stays content",
+			chunks:      []string{"<tool_call>note<function=alpha></function>"},
+			wantContent: "<tool_call>note<function=alpha></function>",
+		},
+		{
+			name:        "malformed opener before function stays content",
+			chunks:      []string{"<tool_call><function=><function=alpha></function>"},
+			wantContent: "<tool_call><function=><function=alpha></function>",
+		},
+		{
+			name:        "nameless function stays content",
+			chunks:      []string{"<tool_call><function></function>"},
+			wantContent: "<tool_call><function></function>",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := Qwen3CoderParser{}
+			parser.Init(tt.tools, nil, nil)
+
+			var gotContent string
+			var gotCalls []api.ToolCall
+			for _, chunk := range tt.chunks {
+				content, _, calls, err := parser.Add(chunk, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				gotContent += content
+				gotCalls = append(gotCalls, calls...)
+			}
+			content, _, calls, err := parser.Add(tt.doneChunk, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotContent += content
+			gotCalls = append(gotCalls, calls...)
+
+			if gotContent != tt.wantContent {
+				t.Errorf("content = %q, want %q", gotContent, tt.wantContent)
+			}
+			if diff := cmp.Diff(gotCalls, tt.wantCalls, argsComparer); diff != "" {
+				t.Errorf("calls mismatch (-got +want):\n%s", diff)
 			}
 
 			content, _, calls, err = parser.Add("next", true)
