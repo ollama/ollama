@@ -15,6 +15,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/ollama/ollama/app/logrotate"
 )
 
 var runningInstaller string
@@ -67,7 +69,12 @@ func init() {
 	// to avoid double upgrades on the transition
 	UpdateStageDir = filepath.Join(appDataDir, "updates_v2")
 
+	// Keep upgrade logs outside %LOCALAPPDATA%\Ollama, which the uninstaller
+	// deletes, so they survive an uninstall/reinstall after a failed upgrade
 	UpgradeLogFile = filepath.Join(appDataDir, "upgrade.log")
+	if home, err := os.UserHomeDir(); err == nil {
+		UpgradeLogFile = filepath.Join(home, ".ollama", "logs", "upgrade.log")
+	}
 	Installer = "OllamaSetup.exe"
 	runningInstaller = filepath.Join(appDataDir, Installer)
 	UpgradeMarkerFile = filepath.Join(appDataDir, "upgraded")
@@ -135,6 +142,11 @@ func DoUpgrade(interactive bool) error {
 		return fmt.Errorf("unable to rename %s -> %s : %w", bundle, runningInstaller, err)
 	}
 
+	if err := os.MkdirAll(filepath.Dir(UpgradeLogFile), 0o755); err != nil {
+		slog.Warn("unable to create upgrade log dir", "dir", filepath.Dir(UpgradeLogFile), "error", err)
+	}
+	// The installer's /LOG overwrites the file, so keep earlier upgrade logs
+	logrotate.Rotate(UpgradeLogFile)
 	slog.Info("upgrade log file " + UpgradeLogFile)
 
 	// make the upgrade show progress, but non interactive
