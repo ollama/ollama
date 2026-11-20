@@ -282,6 +282,7 @@ console.log(response.message.content);
 - [Archyve](https://github.com/nickthecook/archyve) - RAG-enabling document library
 - [Casibase](https://casibase.org) - AI knowledge base with RAG and SSO
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) - Native client with RAG and multi-agent automation
+- [PipesHub](https://github.com/pipeshub-ai/pipeshub-ai) - Permission-aware enterprise search with cited answers across workplace apps
 
 ### Bots & Messaging
 
