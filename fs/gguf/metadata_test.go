@@ -77,6 +77,9 @@ func TestReadFileMetadataSkipsLargeArrays(t *testing.T) {
 	if got := metadata.Values()["tokenizer.ggml.tokens"]; len(got.([]any)) != 0 {
 		t.Fatalf("serialized tokens = %v, want empty array", got)
 	}
+	if got := metadata.KeyValue("tokenizer.ggml.tokens").ArrayLen(); got != 3 {
+		t.Fatalf("skipped token array length = %d, want 3", got)
+	}
 	got := metadata.OmittedKeys()
 	slices.Sort(got)
 	if !slices.Equal(got, []string{"tokenizer.ggml.scores", "tokenizer.ggml.tokens"}) {

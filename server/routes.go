@@ -44,6 +44,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/middleware"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/template"
@@ -113,6 +114,7 @@ type Server struct {
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
 	modelCaches   *modelCaches
+	mlxTokenizers mlxrunner.Tokenizers
 }
 
 func init() {
@@ -381,22 +383,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
-		if disabled, _ := internalcloud.Status(); disabled {
-			c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)})
-			return
-		}
-
 		origModel := req.Model
 
-		remoteURL, err := url.Parse(m.Config.RemoteHost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
-			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
-			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+		remoteURL := remoteModelURL(c, m, cloudErrRemoteInferenceUnavailable)
+		if remoteURL == nil {
 			return
 		}
 
@@ -2429,6 +2419,8 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.withInferenceRequestLogging("/api/generate", s.GenerateHandler)...)
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
+	r.POST("/api/tokenize", s.TokenizeHandler)
+	r.POST("/api/detokenize", s.DetokenizeHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 	r.POST("/v1/systemone", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), s.SystemOneHandler)
@@ -2437,18 +2429,21 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
 	// parents on v1 request families while preserving this explicit :cloud passthrough.
 	r.POST("/v1/chat/completions", s.withInferenceRequestLogging("/v1/chat/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ChatMiddleware(lookupThinking), s.ChatHandler)...)
+	r.POST("/v1/chat/completions/input_tokens", s.withInferenceRequestLogging("/v1/chat/completions/input_tokens", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ChatInputTokensMiddleware(lookupThinking), s.ChatHandler)...)
 	r.POST("/v1/completions", s.withInferenceRequestLogging("/v1/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.CompletionsMiddleware(), s.GenerateHandler)...)
 	r.POST("/v1/embeddings", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", cloudModelPathPassthroughMiddleware(cloudErrRemoteModelDetailsUnavailable), middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", s.withInferenceRequestLogging("/v1/responses", s.responsesCompactionMiddleware(), cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesMiddleware(lookupThinking), s.ChatHandler)...)
 	r.POST("/v1/responses/compact", s.ResponsesCompactHandler)
+	r.POST("/v1/responses/input_tokens", s.withInferenceRequestLogging("/v1/responses/input_tokens", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesInputTokensMiddleware(lookupThinking), s.ChatHandler)...)
 	// OpenAI-compatible audio endpoints
 	r.POST("/v1/audio/transcriptions", s.TranscriptionHandler)
 	r.POST("/v1/audio/translations", s.TranslationHandler)
 	r.POST("/v1/audio/speech", s.SpeechHandler)
 
 	// Inference (Anthropic compatibility)
+	r.POST("/v1/messages/count_tokens", s.withInferenceRequestLogging("/v1/messages/count_tokens", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicCountTokensMiddleware(lookupThinking), s.ChatHandler)...)
 	r.POST("/v1/messages", s.withInferenceRequestLogging("/v1/messages", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicMessagesMiddleware(lookupThinking), s.ChatHandler)...)
 
 	return r, nil
@@ -3112,22 +3107,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
-		if disabled, _ := internalcloud.Status(); disabled {
-			c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)})
-			return
-		}
-
 		origModel := req.Model
 
-		remoteURL, err := url.Parse(m.Config.RemoteHost)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
-			slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
-			c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+		remoteURL := remoteModelURL(c, m, cloudErrRemoteInferenceUnavailable)
+		if remoteURL == nil {
 			return
 		}
 
@@ -3307,13 +3290,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
 	if req.DebugRenderOnly {
+		debugInfo, err := chatDebugInfo(c.Request.Context(), r, prompt, len(media), leadingBOSForModel(m))
+		if err != nil {
+			slog.Error("chat prompt token count error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:     req.Model,
 			CreatedAt: time.Now().UTC(),
-			DebugInfo: &api.DebugInfo{
-				RenderedTemplate: prompt,
-				ImageCount:       len(media),
-			},
+			DebugInfo: debugInfo,
 		})
 		return
 	}
@@ -3506,13 +3493,17 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 			return
 		}
 
+		debugInfo, err := chatDebugInfo(c.Request.Context(), r, prompt, countChatImages(msgs), leadingBOSForModel(m))
+		if err != nil {
+			slog.Error("chat prompt token count error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
 		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:     req.Model,
 			CreatedAt: time.Now().UTC(),
-			DebugInfo: &api.DebugInfo{
-				RenderedTemplate: prompt,
-				ImageCount:       countChatImages(msgs),
-			},
+			DebugInfo: debugInfo,
 		})
 		return
 	}
@@ -3628,6 +3619,42 @@ func countChatImages(msgs []api.Message) int {
 		count += len(msg.Images)
 	}
 	return count
+}
+
+func chatDebugInfo(ctx context.Context, r llm.LlamaServer, prompt string, imageCount int, leadingBOS string) (*api.DebugInfo, error) {
+	tokens, err := r.TokenizeForCompletion(ctx, prompt, leadingBOS)
+	if err != nil {
+		return nil, err
+	}
+	inputTokens := len(tokens)
+
+	return &api.DebugInfo{
+		RenderedTemplate: prompt,
+		ImageCount:       imageCount,
+		InputTokens:      &inputTokens,
+	}, nil
+}
+
+// remoteModelURL returns the host of remote model m if this server may use
+// it, and otherwise writes an error response and returns nil.
+func remoteModelURL(c *gin.Context, m *Model, disabledOperation string) *url.URL {
+	if disabled, _ := internalcloud.Status(); disabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(disabledOperation)})
+		return nil
+	}
+
+	remoteURL, err := url.Parse(m.Config.RemoteHost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return nil
+	}
+
+	if !slices.Contains(envconfig.Remotes(), remoteURL.Hostname()) {
+		slog.Info("remote model", "remotes", envconfig.Remotes(), "remoteURL", m.Config.RemoteHost, "hostname", remoteURL.Hostname())
+		c.JSON(http.StatusBadRequest, gin.H{"error": "this server cannot run this remote model"})
+		return nil
+	}
+	return remoteURL
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {

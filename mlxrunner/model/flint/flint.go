@@ -147,26 +147,9 @@ func NewModel(root *model.Root) (model.Model, error) {
 	}
 	cfg.TensorQuant = root.AllTensorQuant()
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.Tokenizer()
 	if err != nil {
-		return nil, fmt.Errorf("load Flint tokenizer: %w", err)
-	}
-	generation, err := root.Manifest.ReadConfig("generation_config.json")
-	if err != nil {
-		return nil, fmt.Errorf("load Flint generation config: %w", err)
-	}
-	tokenizerConfig, err := root.Manifest.ReadConfig("tokenizer_config.json")
-	if err != nil {
-		return nil, fmt.Errorf("load Flint tokenizer config: %w", err)
-	}
-	tokConfig := &tokenizer.TokenizerConfig{
-		ConfigJSON:           data,
-		GenerationConfigJSON: generation,
-		TokenizerConfigJSON:  tokenizerConfig,
-	}
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse Flint tokenizer: %w", err)
+		return nil, err
 	}
 
 	return &Model{Config: &cfg, Layers: make([]*Layer, cfg.NumHiddenLayers), tok: tok}, nil

@@ -118,6 +118,7 @@ func TestSanitizeRouteForFilename(t *testing.T) {
 		{route: "/api/generate", want: "api_generate"},
 		{route: "/v1/chat/completions", want: "v1_chat_completions"},
 		{route: "/v1/messages", want: "v1_messages"},
+		{route: "/v1/messages/count_tokens", want: "v1_messages_count_tokens"},
 	}
 
 	for _, tt := range tests {

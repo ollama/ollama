@@ -24,8 +24,8 @@ const (
 )
 
 func init() {
-	model.Register("Lfm3OmniForConditionalGeneration", newOmniModel)
-	model.Register("Lfm3AudioForConditionalGeneration", newAudioModel)
+	model.Register("Lfm3OmniForConditionalGeneration", newOmniModel, model.WithGenerationConfig(speechGenerationConfig))
+	model.Register("Lfm3AudioForConditionalGeneration", newAudioModel, model.WithGenerationConfig(speechGenerationConfig))
 }
 
 // audioInput turns a speech clip into encoder embeddings spliced over its
@@ -135,7 +135,7 @@ func newOmniModel(root *model.Root) (model.Model, error) {
 	if err := rejectQuantized(root, "model.audio_encoder.", "model.audio_projector."); err != nil {
 		return nil, err
 	}
-	m, err := newModelFromConfig(root, textConfig, speechGenerationConfig)
+	m, err := newModelFromConfig(root, textConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func newAudioModel(root *model.Root) (model.Model, error) {
 	if err := rejectQuantized(root, "encoder.", "mlp.model."); err != nil {
 		return nil, err
 	}
-	m, err := newModelFromConfig(root, cfg.LFM, speechGenerationConfig)
+	m, err := newModelFromConfig(root, cfg.LFM)
 	if err != nil {
 		return nil, err
 	}
