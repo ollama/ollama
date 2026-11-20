@@ -221,3 +221,25 @@ func TestRelativeAttentionKeepsDistancesAfterWindowRestore(t *testing.T) {
 		})
 	})
 }
+
+func TestRelativePositionDecodeBias(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.Scoped(func() {
+			for _, extent := range []int{16, 128, 1024} {
+				// Select one query from a query-major table, as in speculative verification.
+				table := mlx.Arange(0, float64(3*24*extent), 1, mlx.DTypeFloat32).AsType(mlx.DTypeBFloat16).Reshape(1, 3, 24, extent).Transpose(0, 2, 1, 3).Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(1, 2), mlx.Slice())
+				sink := mlx.Arange(0, 3*24, 1, mlx.DTypeFloat32).AsType(mlx.DTypeBFloat16).Reshape(1, 3, 24, 1).Transpose(0, 2, 1, 3).Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(1, 2), mlx.Slice())
+				for _, keys := range []int{1, 17, 127, 1023} {
+					got := mlx.RelativePositionDecodeBias(table, sink, keys)
+					if got == nil {
+						t.Skip("requires a qualified relative-attention Metal device")
+					}
+					want := relativeBiasGraph(table, sink, keys)
+					if !slices.Equal(got.Floats(), want.Floats()) {
+						t.Fatalf("extent=%d keys=%d: decode shader differs from graph", extent, keys)
+					}
+				}
+			}
+		})
+	})
+}

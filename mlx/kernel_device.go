@@ -121,6 +121,14 @@ func UsesM5MatrixKernels() bool {
 	return isM5MatrixDevice(kernelDevice())
 }
 
+// SupportsPackedController reports where a combined gain/forget projection
+// matches the two separate projections. M3 Ultra was verified on Metal 3.
+func SupportsPackedController() bool {
+	name, arch := kernelDevice()
+	return isM5MatrixDevice(name, arch) ||
+		name == "Apple M3 Ultra" && arch == "applegpu_g15d" && !hasMetalTensorOps()
+}
+
 // SupportsBF16WeightMatmul lets the loader retain compact weights only for a known reduction.
 func SupportsBF16WeightMatmul() bool {
 	return usesBF16TensorMatmul() || UsesM5MatrixKernels() && metalMatmul() == metalMatmulScalar

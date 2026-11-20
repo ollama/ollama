@@ -10,7 +10,7 @@ import (
 
 func TestMetalLoopControllerMatchesSeparateProjections(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		if !mlx.UsesM5MatrixKernels() {
+		if !mlx.SupportsPackedController() {
 			t.Skip("requires qualified Metal controller")
 		}
 		mlx.Scoped(func() {

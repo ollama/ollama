@@ -184,7 +184,19 @@ func relativeCachedSDPA(b *batch.Batch, q, table, sink *mlx.Array, history *nn.K
 }
 
 func relativeWindowSDPA(b *batch.Batch, q, table, sink *mlx.Array, keys, window int, scale float32, kv nn.SDPAOption) *mlx.Array {
-	queries := q.Dim(2)
+	shifted := mlx.RelativePositionDecodeBias(table, sink, keys)
+	if shifted == nil {
+		shifted = relativeBiasGraph(table, sink, keys)
+	}
+	mask := nn.DeviceCausalMask().Intersect(nn.ArrayMask(shifted))
+	if window > 0 {
+		mask = mask.Intersect(nn.SlidingWindowMaskDevice(b, keys, window, q.DType()))
+	}
+	return nn.ScaledDotProductAttention(b, q, scale, kv, nn.WithMask(mask), nn.WithSinks(mlx.Zeros(q.DType(), q.Dim(1))))
+}
+
+func relativeBiasGraph(table, sink *mlx.Array, keys int) *mlx.Array {
+	queries := table.Dim(2)
 	shiftedQueries := mlx.Arange(float64(keys-queries), float64(keys), 1, mlx.DTypeInt32).Reshape(1, 1, queries, 1)
 	keyPositions := mlx.Arange(0, float64(keys), 1, mlx.DTypeInt32)
 	distance := shiftedQueries.Subtract(keyPositions)
@@ -194,10 +206,5 @@ func relativeWindowSDPA(b *batch.Batch, q, table, sink *mlx.Array, keys, window 
 	bias = mlx.Where(index.Equal(distance), bias, mlx.FromValue(float32(0)))
 	// Shifting the real logits by the token's sink value lets the kernel use
 	// a single zero-logit sink per head with the same softmax denominator.
-	shifted := bias.Subtract(sink.AsType(mlx.DTypeFloat32))
-	mask := nn.DeviceCausalMask().Intersect(nn.ArrayMask(shifted))
-	if window > 0 {
-		mask = mask.Intersect(nn.SlidingWindowMaskDevice(b, keys, window, q.DType()))
-	}
-	return nn.ScaledDotProductAttention(b, q, scale, kv, nn.WithMask(mask), nn.WithSinks(mlx.Zeros(q.DType(), q.Dim(1))))
+	return bias.Subtract(sink.AsType(mlx.DTypeFloat32))
 }

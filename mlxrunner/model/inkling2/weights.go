@@ -134,7 +134,7 @@ func (r *weightReader) layer(c textConfig, index int, local bool, queries, kvQue
 			if r.err == nil {
 				gate.Gain.Weight = gate.Gain.Weight.AsType(mlx.DTypeFloat32)
 				gate.Forget.Weight = gate.Forget.Weight.AsType(mlx.DTypeFloat32)
-				if mlx.UsesM5MatrixKernels() && c.Loop.GateRank == 64 && c.HiddenSize == 2304 {
+				if mlx.SupportsPackedController() && c.Loop.GateRank == 64 && c.HiddenSize == 2304 {
 					gate.GainForget = nn.NewLinear(mlx.Concatenate([]*mlx.Array{gate.Gain.Weight, gate.Forget.Weight}, 0), nil)
 					gate.Gain, gate.Forget = nil, nil
 				}

@@ -63,6 +63,35 @@ func relativeAttentionPrefill(q, k, v, table, sink *Array, window int, scale flo
 	return Concatenate(pieces, 2)
 }
 
+// RelativePositionDecodeBias reuses the prefill mask shader for a single final query.
+// All keys are causal for this row; the caller applies any sliding-window mask.
+func RelativePositionDecodeBias(table, sink *Array, keys int) *Array {
+	if table == nil || sink == nil || keys < 1 || keys > math.MaxInt32 ||
+		!MetalIsAvailable() || !supportsRelativeAttentionPrefill(kernelDevice()) {
+		return nil
+	}
+	if table.NumDims() != 4 || table.Dim(0) != 1 || table.Dim(2) != 1 ||
+		table.DType() != DTypeBFloat16 || sink.DType() != DTypeBFloat16 {
+		return nil
+	}
+	heads, distances := table.Dim(1), table.Dim(3)
+	if heads == 0 || distances == 0 || uint64(heads)*uint64(max(keys, distances)) > math.MaxUint32 ||
+		sink.NumDims() != 4 || sink.Dim(0) != 1 || sink.Dim(1) != heads || sink.Dim(2) != 1 || sink.Dim(3) != 1 {
+		return nil
+	}
+	result, ok := relativeAttentionMask.applyMetal(gpuLaunch{
+		inputs:  []*Array{table, sink, FromValue(1), FromValue(keys), FromValue(0)},
+		dtypes:  []gpuDTypeArg{{"T", DTypeFloat32}},
+		ints:    []gpuIntArg{{"Heads", heads}, {"Distances", distances}},
+		outputs: []gpuOutputSpec{{"relative_bias", []int32{1, int32(heads), 1, int32(keys)}, DTypeFloat32}},
+		grid:    [3]int{keys, 1, heads}, threadGroup: [3]int{256, 1, 1},
+	})
+	if !ok {
+		return nil
+	}
+	return result[0]
+}
+
 // The stock graph gathers distances, shifts by the sink and applies masks separately.
 // Write the final bias for a visible query/key tile in one pass.
 var relativeAttentionMask = &gpuKernel{
