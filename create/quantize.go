@@ -120,10 +120,9 @@ func quantizeItemArrays(it quantizeItem, arrays map[string]*mlx.Array, tmpDir st
 // arrays keyed by name. With quantize == "" the (decoded) tensor is kept as-is.
 // It must be called on the MLX thread.
 //
-// TODO: MLX's safetensors loader takes a file path, so we spill each tensor to a
-// temp file. Wiring a streaming mlx_load_safetensors_reader into the CGO wrapper
-// would let us load from the reader directly and drop the temp files.
-func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, arrays map[string]*mlx.Array, tmpDir string) (tmpPath string, toEval []*mlx.Array, nativeHandle *mlx.SafetensorsFile, err error) {
+// The input is streaming but MLX reads lazily at arbitrary offsets, so each
+// tensor is first staged in a random-access temp file.
+func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, arrays map[string]*mlx.Array, tmpDir string) (tmpPath string, toEval []*mlx.Array, st *mlx.SafetensorsFile, err error) {
 	if quantize != "" && quant.Canonical(quantize) == "" {
 		return "", nil, nil, fmt.Errorf("unsupported quantization type: %s", quantize)
 	}
@@ -141,7 +140,7 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		return tmpPath, nil, nil, fmt.Errorf("failed to close temp file for %s: %w", name, err)
 	}
 
-	st, err := mlx.LoadSafetensorsNative(tmpPath)
+	st, err = mlx.OpenSafetensors(tmpPath)
 	if err != nil {
 		return tmpPath, nil, nil, fmt.Errorf("failed to load safetensors for %s: %w", name, err)
 	}

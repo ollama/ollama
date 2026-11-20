@@ -162,7 +162,7 @@ func loadRippleRunner(t *testing.T, name string) *Runner {
 	t.Helper()
 	r := &Runner{mlxThread: mlxtest.Worker(t)}
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		if err := r.Load(name); err != nil {
+		if err := r.Load(name, nil); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok := r.Model.(*ripple.Model); !ok {
