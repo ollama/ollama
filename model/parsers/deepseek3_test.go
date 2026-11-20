@@ -721,3 +721,16 @@ func TestDeepSeekParser_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestDeepSeek3ParserNestedArgumentOrder(t *testing.T) {
+	const args = `{"rows":[{"z":1,"a":2}]}`
+	p := DeepSeek3Parser{}
+	p.Init(nil, nil, nil)
+	_, _, calls, err := p.Add("<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>edit<｜tool▁sep｜>"+args+"<｜tool▁call▁end｜><｜tool▁calls▁end｜>", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].Function.Arguments.String() != args {
+		t.Fatalf("parsed calls = %#v, want arguments %s", calls, args)
+	}
+}

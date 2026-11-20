@@ -4257,3 +4257,22 @@ func TestLlamaServerShiftDisabledOnShiftRunner(t *testing.T) {
 		})
 	}
 }
+
+func TestLlamaServerPreservesNestedToolHistory(t *testing.T) {
+	for _, arguments := range []string{`{"query":"example"}`, `{"box":{"z":1,"a":2},"rows":[{"y":3,"b":4}]}`} {
+		t.Run(arguments, func(t *testing.T) {
+			var args api.ToolCallFunctionArguments
+			if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+				t.Fatal(err)
+			}
+			m, err := llamaServerChatMessage(Message{Role: "assistant", ToolCalls: []api.ToolCall{{ID: "one", Function: api.ToolCallFunction{Name: "edit", Arguments: args}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := m["tool_calls"].([]llamaServerChatToolCall)
+			if len(got) != 1 || got[0].Function.Arguments != arguments {
+				t.Fatalf("prepared tool history = %#v, want %s", got, arguments)
+			}
+		})
+	}
+}
