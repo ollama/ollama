@@ -236,6 +236,8 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	var lastToken string
+	var tokenRepeat int
 	for scanner.Scan() {
 		var raw CompletionResponse
 		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
@@ -245,6 +247,21 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 		if raw.Error != nil {
 			return *raw.Error
+		}
+
+		// Token repeat detection, matching the llama-server runner. Only
+		// responses carrying text count, so the final stats can't extend a run.
+		if raw.Content != "" {
+			if token := strings.TrimSpace(raw.Content); token == lastToken {
+				tokenRepeat++
+			} else {
+				lastToken = token
+				tokenRepeat = 0
+			}
+			if tokenRepeat > 100 {
+				slog.Debug("prediction aborted, token repeat limit reached")
+				return errors.New("prediction aborted, token repeat limit reached")
+			}
 		}
 
 		cresp := llm.CompletionResponse{
