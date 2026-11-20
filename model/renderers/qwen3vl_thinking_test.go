@@ -90,6 +90,33 @@ What is the weather like in San Francisco?<|im_end|>
 <think>
 Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.`,
 		},
+		{
+			name: "Thinking with tool call and no content",
+			msgs: []api.Message{
+				{Role: "user", Content: "What is the weather in Paris?"},
+				{Role: "assistant", Thinking: "I should call get_weather.", ToolCalls: []api.ToolCall{
+					{Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"location": "Paris"})}},
+				}},
+				{Role: "tool", Content: "sunny"},
+			},
+			expected: `<|im_start|>user
+What is the weather in Paris?<|im_end|>
+<|im_start|>assistant
+<think>
+I should call get_weather.
+</think>
+
+<tool_call>
+{"name": "get_weather", "arguments": {"location": "Paris"}}
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+sunny
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
 		// NOTE: Servers automatically prepend a [img-<n>] tag
 		// 		{
 		// 			name: "Image",
