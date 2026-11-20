@@ -19,7 +19,7 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 
 // chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
-// latest message and 2) system messages
+// latest user message and subsequent messages, and 2) system messages
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
 	var system []api.Message
 
@@ -31,6 +31,17 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	lastMsgIdx := len(msgs) - 1
 	currMsgIdx := 0
+
+	// Find the last user message so truncation never removes it.  Without this
+	// guard, removing the terminal user message can leave a prompt with no user
+	// message which can cause an agent loop to fail.
+	lastUserIdx := -1
+	for i := lastMsgIdx; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
 
 	if truncate {
 		// Start with all messages and remove from the front until it fits in context
@@ -62,6 +73,11 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			if ctxLen <= opts.NumCtx {
 				currMsgIdx = i
+				break
+			}
+
+			if lastUserIdx >= 0 && i >= lastUserIdx {
+				currMsgIdx = lastUserIdx
 				break
 			}
 

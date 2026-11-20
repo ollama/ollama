@@ -74,6 +74,23 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
+			name:     "truncate preserves last user message before tool calls",
+			model:    visionModel,
+			limit:    1,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "system", Content: "You are the Test Who Lived."},
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
+				{Role: "assistant", Content: "I am the test who lived!", ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "expelliarmus"}}}},
+				{Role: "tool", Content: "The bug is disarmed!  It drops its assertion and scurries into the Forbidden Forest.", ToolCallID: "call_1"},
+			},
+			expect: expect{
+				prompt: "You are the Test Who Lived. A test. And a thumping good one at that, I'd wager. I am the test who lived!",
+			},
+		},
+		{
 			name:     "truncate messages with image",
 			model:    visionModel,
 			limit:    64,
