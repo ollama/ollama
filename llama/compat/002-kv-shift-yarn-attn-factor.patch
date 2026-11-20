@@ -1,0 +1,22 @@
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -2094,7 +2094,17 @@
+                 ggml_tensor * shift,
+                 ggml_tensor * rot,
+                    uint32_t   il) const {
+-    const llama_rope_params rp = is_indexer ? model.get_rope_params_indexer(cparams, il) : model.get_rope_params(cparams, il);
++    llama_rope_params rp = is_indexer ? model.get_rope_params_indexer(cparams, il) : model.get_rope_params(cparams, il);
++
++    // A context shift re-ropes keys that are already roped, moving them by a relative
++    // position. Only the rotational delta belongs here: re-applying the YaRN amplitude
++    // scaling multiplies every cached key, including the reused keep prefix, once per
++    // shift and corrupts the cache until the model is reloaded.
++    // ggml rope scales cos/sin by `attn_factor * (1 + 0.1 * log(1 / freq_scale))` when
++    // ext_factor != 0, so cancel that term to keep the shift amplitude-neutral.
++    rp.attn_factor = rp.ext_factor != 0.0f && rp.freq_scale > 0.0f
++                           ? 1.0f / (1.0f + 0.1f * logf(1.0f / rp.freq_scale))
++                           : 1.0f;
+ 
+     const auto rope_type = rp.type == LLAMA_ROPE_TYPE_MROPE || rp.type == LLAMA_ROPE_TYPE_IMROPE
+                                 // @ngxson : this is a workaround
