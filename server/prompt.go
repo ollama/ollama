@@ -19,7 +19,7 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 
 // chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
-// latest message and 2) system messages
+// latest message, 2) system messages, and 3) the most recent user message
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
 	var system []api.Message
 
@@ -31,6 +31,17 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	lastMsgIdx := len(msgs) - 1
 	currMsgIdx := 0
+
+	// Never truncate past the most recent user message. Renderers (e.g. qwen3.8)
+	// reject transcripts without a user query, and multi-step tool loops that
+	// overflow the context window must not lose the original question.
+	lastUserMsgIdx := -1
+	for i := lastMsgIdx; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			lastUserMsgIdx = i
+			break
+		}
+	}
 
 	if truncate {
 		// Start with all messages and remove from the front until it fits in context
@@ -60,14 +71,10 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 				}
 			}
 
-			if ctxLen <= opts.NumCtx {
+			// Stop once the candidate fits or reaches the preservation boundary.
+			// The retained messages may still exceed the context window.
+			if ctxLen <= opts.NumCtx || i == lastUserMsgIdx || i == lastMsgIdx {
 				currMsgIdx = i
-				break
-			}
-
-			// Must always include at least the last message
-			if i == lastMsgIdx {
-				currMsgIdx = lastMsgIdx
 				break
 			}
 		}
