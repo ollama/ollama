@@ -74,6 +74,9 @@ func TestWholeForwardRows(t *testing.T) {
 				}
 			}
 		}
+		if s.snapshotTimer != nil || s.memory != nil {
+			t.Fatal("cacheless evaluation started history maintenance")
+		}
 		if !slices.Equal(m.batches, []int{2, 2}) {
 			t.Fatalf("forward batch sizes %v, want [2 2]", m.batches)
 		}
@@ -166,7 +169,7 @@ func (m *cachedRowTestModel) Forward(b *batch.Batch, layers []cache.Layer) (*mlx
 func TestCachedForwardBatchesAndRestores(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		m := &cachedRowTestModel{}
-		r := &Runner{Model: m, parallel: 2, Requests: make(chan queuedRequest, 2)}
+		r := &Runner{Model: m, parallel: 2}
 		s := &batchScheduler{r: r, slots: make([]*batchSlot, 2)}
 		defer func() {
 			for _, slot := range s.slots {
@@ -175,6 +178,7 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 				}
 			}
 		}()
+		// Retain the fixtures while comparing restored and fresh evaluations.
 		for round, prompts := range [][][]int32{
 			{{1, 2, 3, 4, 5}, {6, 7, 8}},
 			{{1, 2, 9, 10}, {6, 7, 8, 9}},
@@ -185,13 +189,13 @@ func TestCachedForwardBatchesAndRestores(t *testing.T) {
 			cached := make([]int, 2)
 			for id, tokens := range prompts {
 				done[id] = make(chan error, 1)
-				r.Requests <- &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+				req := &evaluationRequest{ctx: context.Background(), done: done[id], open: func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
 					p := r.openEvaluation(slot, &model.PreparedRequest{Tokens: tokens, ScorePrefix: 2 - id}, nil, func(h *mlx.Array) error { got[id] = h.Floats(); return nil })
 					cached[id] = p.position
 					return p, nil
 				}}
+				s.admitEvaluation(req, s.selectSlot(req))
 			}
-			s.admitPending()
 			for s.slots[0].busy() || s.slots[1].busy() {
 				s.step()
 			}
@@ -280,15 +284,16 @@ func TestCachedEvaluationReusesBusyPeer(t *testing.T) {
 		}
 		prefix := []int32{1, 2, 3, 4, 5, 6, 7, 8}
 		warm := open(prefix)
-		s.admitEvaluation(warm)
+		s.admitEvaluation(warm, s.selectSlot(warm))
 		s.stepEvaluation(s.slots[0])
 		if err := <-warm.done; err != nil {
 			t.Fatal(err)
 		}
 		// Slot zero is occupied by another request before the fork arrives.
-		s.admitEvaluation(open(append(slices.Clone(prefix), 30)))
+		next := open(append(slices.Clone(prefix), 30))
+		s.admitEvaluation(next, s.selectSlot(next))
 		fork := open(append(slices.Clone(prefix), 20))
-		s.admitEvaluation(fork)
+		s.admitEvaluation(fork, s.selectSlot(fork))
 		if got := s.slots[1].evaluation.state.position; got != len(prefix) {
 			t.Fatalf("busy-peer cached tokens %d, want %d", got, len(prefix))
 		}
