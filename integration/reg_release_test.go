@@ -132,6 +132,7 @@ func init() {
 	registerModelIntegrationCases("concurrent-chat", testModels(releaseParallelMLXModels), runConcurrentChat)
 	registerModelIntegrationCases("parallel-chat-history", testModels(releaseParallelMLXModels), runParallelChatWithHistory)
 	registerModelIntegrationCases("mlx-batching", testModels(releaseParallelMLXModels), runMLXBatching)
+	registerModelIntegrationCases("mlx-paging", testModels(releaseParallelMLXModels), runMLXPaging)
 
 	// Model-parametric cases
 	registerModelMinVRAM([]integrationModel{releaseUnicodeInputModel, releaseParallelHistoryModel})

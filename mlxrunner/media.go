@@ -1,6 +1,7 @@
 package mlxrunner
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -25,6 +26,22 @@ type mediaItem struct {
 	length int
 	fold   uint32
 	item   *model.PreparedItem
+	digest [32]byte // persistent reuse must not rely on the short trie fold
+}
+
+func persistentMediaDigest(data []byte, dims []int) [32]byte {
+	h := sha256.New()
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(len(data)))
+	h.Write(b[:])
+	h.Write(data)
+	for _, d := range dims {
+		binary.LittleEndian.PutUint64(b[:], uint64(d))
+		h.Write(b[:])
+	}
+	var digest [32]byte
+	copy(digest[:], h.Sum(nil))
+	return digest
 }
 
 // foldValue derives the trie-key substitute for a media item: a hash of the
@@ -241,6 +258,7 @@ func bindItems(prepared *model.PreparedRequest, segments []model.Segment) ([]med
 			length: rg[1] - rg[0],
 			fold:   foldValue(segments[item.Source].Data, item.Dims),
 			item:   item,
+			digest: persistentMediaDigest(segments[item.Source].Data, item.Dims),
 		})
 	}
 	for s, seg := range segments {

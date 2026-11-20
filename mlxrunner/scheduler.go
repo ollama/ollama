@@ -2,6 +2,7 @@ package mlxrunner
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"slices"
 	"time"
@@ -53,6 +54,7 @@ type batchRequest struct {
 	output    *generationOutput
 	responses []CompletionResponse
 	finished  bool
+	restore   *checkpointRestore
 
 	// Captured before waiting for grammar compilation.
 	promptEval time.Duration
@@ -140,7 +142,10 @@ func (r *Runner) onMLX(ctx context.Context, f func() error) error {
 	return f()
 }
 
-func (r *Runner) runBatchRequests(ctx context.Context) error {
+// stop is a local shutdown request. A follower can leave it nil and use ctx
+// for the leader round stream's lifetime instead. Only the top of a round
+// accepts local shutdown; an in-flight forward completes as one unit.
+func (r *Runner) runBatchRequests(ctx context.Context, stop <-chan struct{}) error {
 	s := &batchScheduler{r: r, slots: make([]*batchSlot, max(1, r.parallel))}
 	defer func() {
 		if s.snapshotTimer != nil {
@@ -168,6 +173,23 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 					if slot.speech != nil {
 						s.finishSpeech(slot, context.Canceled)
 					}
+				}
+			})
+			return nil
+		})
+		// Completed idle state must survive until its queued checkpoint is
+		// published. Drain outside the worker: flush dispatches staging onto it.
+		stop, cancel := context.WithTimeout(context.Background(), checkpointShutdownTimeout)
+		if err := r.flushCheckpoints(stop); err != nil {
+			slog.Debug("KV checkpoint drain incomplete at shutdown", "error", err)
+		}
+		cancel()
+		_ = r.onMLX(context.Background(), func() error {
+			mlx.Scoped(func() {
+				for _, slot := range s.slots {
+					if slot == nil {
+						continue
+					}
 					if slot.cache != nil {
 						slot.cache.close()
 					}
@@ -180,7 +202,15 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 		})
 	})
 	slog.Info("MLX request scheduler", "parallel", r.parallel, "drafting", "shared-verification", "attention", "per-request")
+rounds:
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-stop:
+			return context.Canceled
+		default:
+		}
 		snapshotChanged := false
 		var pending queuedRequest
 		var incoming chan queuedRequest
@@ -200,7 +230,11 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
+			case <-stop:
+				continue rounds
 			case pending = <-incoming:
+			case <-r.checkpoints.wake():
+			case <-r.checkpoints.timer():
 			case <-maintenance:
 				snapshotChanged = true
 			}
@@ -208,6 +242,8 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
+			case <-stop:
+				continue rounds
 			case pending = <-incoming:
 			case <-maintenance:
 				snapshotChanged = true
@@ -237,6 +273,8 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 				step := func() {
 					worked := s.step()
 					progressed = progressed || worked
+					caches := s.cacheSlots()
+					r.checkpoints.release(caches, r.checkpoints.maintain(caches))
 				}
 				measure = s.hasPrefixCache() && s.memory != nil
 				if measure {
@@ -274,12 +312,15 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 			}
 			return err
 		}
-		if !progressed {
+		if active && !progressed {
 			// Only backpressure or a grammar compile can leave an admitted request
 			// idle. This bounded wait also notices cancellation without GPU work.
+			// With no active request, the loop already waits for work or disk I/O.
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
+			case <-stop:
+				continue rounds
 			case <-time.After(2 * time.Millisecond):
 			}
 		}
@@ -370,16 +411,151 @@ func (s *batchScheduler) admitGeneration(request request, best int) {
 		}
 	}
 	req.session = slot.cache.begin(request.Tokens, request.MediaItems, peers...)
-	req.media = s.r.openMedia(request)
-	req.spec = slot.speculation.open(request, req.media.rowLayout())
-	req.prefill = s.r.newPrefill(req.session, req.spec, req.media)
 	slot.request = req
+	if event, ok := s.chooseRestore(slot); ok {
+		if err := s.startRestore(event); err == nil {
+			return
+		} else {
+			slog.Debug("KV disk restore missed; recomputing", "error", err)
+		}
+	}
+	s.startPrefill(slot)
+}
+
+// A checkpoint is identified by a prefix of the already admitted request, not
+// by a rank-local filename. Request identity and slot assignment are shared by
+// ranks; the prefix length selects the same tokens and media on each one.
+// Slot uses cacheSlots numbering: generation at slot*2, scoring at slot*2+1.
+type checkpointRestoreStart struct {
+	Slot   int
+	Tokens int
+}
+
+type checkpointRestoreFinished struct {
+	Slot     int
+	Restored bool
+}
+
+func (s *batchScheduler) chooseRestore(slot *batchSlot) (checkpointRestoreStart, bool) {
+	index := 2 * slot.id
+	var session *cacheSession
+	var maxReuse int
+	if slot.evaluation != nil {
+		session = slot.evaluation.state.session
+		if session == nil {
+			return checkpointRestoreStart{}, false
+		}
+		index++
+		maxReuse = len(session.inputs)
+	} else {
+		session = slot.request.session
+		maxReuse = len(session.inputs) - 1
+	}
+	d := s.r.checkpoints.open(session.cache)
+	saved := d.findRestore(session.cache, session.inputs, session.items, maxReuse, len(session.inputs)-len(session.remaining))
+	if saved == nil {
+		return checkpointRestoreStart{}, false
+	}
+	return checkpointRestoreStart{Slot: index, Tokens: len(saved.record.Keys)}, true
+}
+
+func (s *batchScheduler) startRestore(event checkpointRestoreStart) error {
+	slot := s.slots[event.Slot/2]
+	var session *cacheSession
+	if event.Slot%2 == 0 {
+		session = slot.request.session
+	} else {
+		session = slot.evaluation.state.session
+	}
+	d := s.r.checkpoints.open(session.cache)
+	p := d.restore(session.cache, session.inputs, session.items, event.Tokens, event.Tokens-1)
+	if p == nil {
+		return fmt.Errorf("checkpoint for cache slot %d at token %d unavailable", event.Slot, event.Tokens)
+	}
+	if event.Slot%2 == 0 {
+		slot.request.restore = p
+	} else {
+		slot.evaluation.state.restore = p
+	}
+	return nil
+}
+
+// restoreProgress reports only local readiness. A split must combine all ranks'
+// reports before applying one shared completion; a local miss cannot authorize
+// one rank to prefill while another rank resumes decoding.
+func (s *batchScheduler) restoreProgress(slot *batchSlot) (checkpointRestoreFinished, bool) {
+	index := 2 * slot.id
+	var p *checkpointRestore
+	var ctx context.Context
+	if slot.evaluation != nil {
+		index++
+		p, ctx = slot.evaluation.state.restore, slot.evaluation.request.ctx
+	} else {
+		p, ctx = slot.request.restore, slot.request.request.Ctx
+	}
+	var done bool
+	var err error
+	if s.r.restoreAllLayers {
+		done, err = p.stepAll(ctx)
+	} else {
+		done, err = p.step(ctx)
+	}
+	if done && err != nil {
+		slog.Debug("KV disk restore missed; recomputing", "error", err)
+	}
+	return checkpointRestoreFinished{Slot: index, Restored: err == nil}, done
+}
+
+func (s *batchScheduler) finishRestore(event checkpointRestoreFinished) error {
+	slot := s.slots[event.Slot/2]
+	var p *checkpointRestore
+	if event.Slot%2 == 0 {
+		p = slot.request.restore
+	} else {
+		p = slot.evaluation.state.restore
+	}
+	if event.Restored {
+		if err := p.commit(); err != nil {
+			return fmt.Errorf("checkpoint for cache slot %d: %w", event.Slot, err)
+		}
+	}
+	p.close(event.Restored)
+	if event.Slot%2 != 0 {
+		evaluation := slot.evaluation.state
+		evaluation.restore = nil
+		if err := slot.evaluation.request.ctx.Err(); err != nil {
+			return err
+		}
+		evaluation.session = slot.scoreCache.beginScore(evaluation.input.Tokens, evaluation.session.items)
+		evaluation.preparePrefill()
+		return nil
+	}
+	req := slot.request
+	req.restore = nil
+	if err := req.request.Ctx.Err(); err != nil {
+		s.finish(slot, err)
+		return nil
+	}
+	req.session = slot.cache.begin(req.request.Tokens, req.request.MediaItems)
+	s.startPrefill(slot)
+	return nil
+}
+
+func (s *batchScheduler) startPrefill(slot *batchSlot) {
+	req := slot.request
+	req.media = s.r.openMedia(req.request)
+	req.spec = slot.speculation.open(req.request, req.media.rowLayout())
+	req.prefill = s.r.newPrefill(req.session, req.spec, req.media)
 }
 
 func (s *batchScheduler) finish(slot *batchSlot, err error) {
 	req := slot.request
 	if req.finished {
 		return
+	}
+	if req.restore != nil {
+		req.restore.close(false)
+		req.restore = nil
 	}
 	if req.decoder != nil {
 		results, _, _ := req.decoder.drain()
@@ -396,6 +572,9 @@ func (s *batchScheduler) finish(slot *batchSlot, err error) {
 	}
 	req.spec.close()
 	req.session.close()
+	if err == nil {
+		s.r.checkpoints.completed(req.session)
+	}
 	if slog.Default().Enabled(req.request.Ctx, logutil.LevelTrace) {
 		slot.cache.dumpTree()
 	}
@@ -455,6 +634,16 @@ func (s *batchScheduler) step() bool {
 			s.drafting.reset()
 			s.stepEvaluation(slot)
 			progressed = true
+			break
+		}
+		if slot != nil && slot.request != nil && slot.request.restore != nil {
+			if event, ready := s.restoreProgress(slot); ready {
+				if err := s.finishRestore(event); err != nil {
+					s.finish(slot, err)
+				}
+			}
+			progressed = true
+			s.nextPrefill = (i + 1) % len(s.slots)
 			break
 		}
 		if slot == nil || slot.request == nil || slot.request.finished || slot.request.prefill == nil {
@@ -518,7 +707,7 @@ func (s *batchScheduler) step() bool {
 			continue
 		}
 		active++
-		if slot.request.prefill == nil && len(slot.request.responses) == 0 {
+		if slot.request.prefill == nil && slot.request.restore == nil && len(slot.request.responses) == 0 {
 			ready = append(ready, slot)
 		}
 	}
@@ -772,6 +961,18 @@ func (r *Runner) snapshotLimit() int64 {
 		return r.snapshotLimitBytes
 	}
 	return maxPagedOutBytes / int64(max(1, r.parallel))
+}
+
+// cacheSlots keeps stable addresses for generation and scoring caches, even
+// before a slot has been allocated. A replay uses slot*2 and slot*2+1.
+func (s *batchScheduler) cacheSlots() []*prefixCache {
+	caches := make([]*prefixCache, 2*len(s.slots))
+	for i, slot := range s.slots {
+		if slot != nil {
+			caches[2*i], caches[2*i+1] = slot.cache, slot.scoreCache
+		}
+	}
+	return caches
 }
 
 func (s *batchScheduler) hasPrefixCache() bool {

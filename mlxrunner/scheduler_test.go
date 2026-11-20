@@ -635,7 +635,7 @@ func TestBatchSchedulerShutdownWithBlockedReaders(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- r.runBatchRequests(ctx) }()
+	go func() { done <- r.runBatchRequests(ctx, ctx.Done()) }()
 	responses := []chan CompletionResponse{make(chan CompletionResponse, 1), make(chan CompletionResponse, 1)}
 	for i, ch := range responses {
 		req := request{Ctx: context.Background(), Tokens: []int32{int32(i + 1)}, Responses: ch, CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 1000}}}

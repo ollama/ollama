@@ -48,8 +48,9 @@ type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
 	activePath    []*trieNode // current root→leaf path with live MLX arrays
 	caches        []cache.Cache
-	limitBytes    int64 // zero uses the default snapshot budget
-	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
+	limitBytes    int64  // zero uses the default snapshot budget
+	pagedOutBytes int64  // total bytes in paged-out snapshots across the trie
+	epoch         uint64 // a new session invalidates idle write-behind work
 
 	// draftLookahead is how far the draft caches' entries reference past
 	// their own slot; trie keys pack each token with its look-ahead (see key).
@@ -108,6 +109,7 @@ func (c *prefixCache) beginScore(inputs []int32, items []mediaItem, peers ...*pr
 }
 
 func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, peers ...*prefixCache) *cacheSession {
+	c.epoch++
 	c.ensureRoot()
 
 	effInputs := effectiveKeyTokens(inputs, items)
@@ -601,6 +603,7 @@ func (c *prefixCache) close() {
 	if c == nil {
 		return
 	}
+	c.epoch++
 	nodes := []*trieNode{c.root}
 	for len(nodes) > 0 {
 		n := nodes[len(nodes)-1]
@@ -709,14 +712,14 @@ func reclaimColdHistory(caches, idle []*prefixCache, bytes int64, preferred map[
 	before := mlx.ActiveMemory()
 	changed := false
 	for int64(before-mlx.ActiveMemory()) < bytes {
-		owner, node, frontier := oldestColdHistory(caches, idle, preferred)
+		victim, frontier, ok := chooseColdHistory(caches, idle, preferred)
 		// Compression feedback yields checkpoints, but only the physical
 		// headroom target may discard an idle slot's final restore point.
 		// Do not skip that frontier to evict a better incoming match instead.
-		if node == nil || frontier {
+		if !ok || frontier {
 			break
 		}
-		owner.evictNode(node)
+		applyCacheEviction(caches, victim)
 		changed = true
 	}
 	if changed {
@@ -728,6 +731,9 @@ func reclaimColdHistory(caches, idle []*prefixCache, bytes int64, preferred map[
 func pendingHistoryBytes(caches []*prefixCache) int64 {
 	var bytes int64
 	for _, c := range caches {
+		if c == nil {
+			continue
+		}
 		walkNodes(c.root, func(n *trieNode) bool {
 			for _, snap := range n.snapshots {
 				if snap != nil {
@@ -750,6 +756,9 @@ func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int)
 	var owner *prefixCache
 	var oldest *trieNode
 	for _, c := range caches {
+		if c == nil {
+			continue
+		}
 		walkNodes(c.root, func(n *trieNode) bool {
 			if n.parent == nil || len(n.children) > 1 || len(c.activePath) == 0 || n == c.activePath[len(c.activePath)-1] {
 				return true
@@ -799,21 +808,56 @@ func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int)
 	return owner, oldest, idleSelected
 }
 
-func evictColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) bool {
-	owner, oldest, _ := oldestColdHistory(caches, idle, preferred)
+// cacheEviction identifies one trie node in the scheduler's stable cache slots.
+// A leader selects it once; every rank applies the same decision.
+type cacheEviction struct {
+	Slot int
+	Path []int
+	Idle bool
+}
+
+func chooseColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) (cacheEviction, bool, bool) {
+	owner, oldest, frontier := oldestColdHistory(caches, idle, preferred)
 	if oldest == nil {
-		return false
+		return cacheEviction{}, false, false
 	}
-	if len(oldest.children) == 0 {
-		if i := slices.Index(owner.activePath, oldest); i >= 0 {
+	var path []int
+	for n := oldest; n.parent != nil; n = n.parent {
+		path = append(path, slices.Index(n.parent.children, n))
+	}
+	slices.Reverse(path)
+	return cacheEviction{Slot: slices.Index(caches, owner), Path: path, Idle: slices.Contains(idle, owner)}, frontier, true
+}
+
+func evictColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) bool {
+	victim, _, ok := chooseColdHistory(caches, idle, preferred)
+	if ok {
+		applyCacheEviction(caches, victim)
+	}
+	return ok
+}
+
+// applyCacheEviction applies a previously selected victim without consulting
+// this process's pressure, clock or disk. Invalid replay is a scheduler error,
+// not permission to choose a different victim.
+func applyCacheEviction(caches []*prefixCache, victim cacheEviction) {
+	owner := caches[victim.Slot]
+	node := owner.root
+	for _, index := range victim.Path {
+		node = node.children[index]
+	}
+	if node.parent == nil || len(node.children) > 1 {
+		panic("invalid cache eviction")
+	}
+	if len(node.children) == 0 {
+		if i := slices.Index(owner.activePath, node); i >= 0 {
 			owner.activePath = owner.activePath[:i]
 		}
 	}
-	owner.evictNode(oldest)
-	if len(owner.root.children) == 0 && slices.Contains(idle, owner) {
+	owner.evictNode(node)
+	if len(owner.root.children) == 0 && victim.Idle {
 		owner.freeAll()
 	}
-	return true
 }
 
 // liveBytes includes unused attention capacity which a write may copy.

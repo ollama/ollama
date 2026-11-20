@@ -314,7 +314,7 @@ func startTestScheduler(t *testing.T, r *Runner) func() {
 	r.Requests = make(chan queuedRequest)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- r.runBatchRequests(ctx) }()
+	go func() { done <- r.runBatchRequests(ctx, ctx.Done()) }()
 	stop := func() {
 		cancel()
 		select {
