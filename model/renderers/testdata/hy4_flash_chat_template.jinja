@@ -1,0 +1,355 @@
+{#- ----------‑‑‑ special token variables ‑‑‑---------- -#}
+{%- set HYTK = ':opensource' %}
+{%- set hy_start_token = '<｜hy_start{}｜>'.format(HYTK) %}
+{%- set hy_middle_token = '<｜hy_middle{}｜>'.format(HYTK) %}
+{%- set hy_end_token = '<｜hy_end{}｜>'.format(HYTK) %}
+{%- set image_start_token = '<｜hy_image▁start{}｜>'.format(HYTK) %}
+{%- set image_pad_token = '<｜hy_image▁pad{}｜>'.format(HYTK) %}
+{%- set image_end_token = '<｜hy_image▁end{}｜>'.format(HYTK) %}
+{%- set video_start_token = '<｜hy_video▁start{}｜>'.format(HYTK) %}
+{%- set video_pad_token = '<｜hy_video▁pad{}｜>'.format(HYTK) %}
+{%- set video_end_token = '<｜hy_video▁end{}｜>'.format(HYTK) %}
+{%- set think_begin_token = '<think{}>'.format(HYTK) %}
+{%- set think_end_token = '</think{}>'.format(HYTK) %}
+{%- set toolcalls_begin_token = '<tool_calls{}>'.format(HYTK) %}
+{%- set toolcalls_end_token = '</tool_calls{}>'.format(HYTK) %}
+{%- set toolcall_begin_token = '<tool_call{}>'.format(HYTK) %}
+{%- set toolcall_end_token = '</tool_call{}>'.format(HYTK) %}
+{%- set argkey_begin_token = '<arg_key{}>'.format(HYTK) %}
+{%- set argkey_end_token = '</arg_key{}>'.format(HYTK) %}
+{%- set argvalue_begin_token = '<arg_value{}>'.format(HYTK) %}
+{%- set argvalue_end_token = '</arg_value{}>'.format(HYTK) %}
+{%- set toolresponse_begin_token = '<tool_response{}>'.format(HYTK) %}
+{%- set toolresponse_end_token = '</tool_response{}>'.format(HYTK) %}
+{%- set reasoning_mode_token = '<｜reasoning_mode{}｜>'.format(HYTK) %}
+
+{#- ----------‑‑‑ hyperparameters variables ‑‑‑---------- -#}
+{%- if not add_generation_prompt is defined %}
+    {%- set add_generation_prompt = false %}
+{%- endif %}
+{%- if not preserved_thinking is defined %}
+    {%- if not tools %}
+        {%- set preserved_thinking = false %}
+    {%- else %}
+        {%- set preserved_thinking = true %}
+    {%- endif %}
+{%- endif %}
+
+{%- if not reasoning_effort is defined %}
+    {%- set reasoning_effort = 'high' %}
+{%- elif reasoning_effort not in ['max', 'high', 'no_think'] %}
+    {%- if reasoning_effort is none %}
+        {{- raise_exception('reasoning_effort error : None, should be no_think/high/max') }}
+    {%- else %}
+        {{- raise_exception('reasoning_effort error : ' + reasoning_effort + ', should be no_think/high/max') }}
+    {%- endif %}
+{%- endif %}
+
+{%- if fallback_strategy is defined and fallback_strategy == 'reasoning_toolcall_retry' %}
+    {%- set reasoning_effort = 'high' %}
+    {%- set add_generation_prompt = false %}
+{%- endif %}
+{%- if not raw_last_assistant is defined %}
+    {%- set raw_last_assistant = false %}
+{%- endif %}
+{%- if not add_vision_id is defined %}
+    {%- set add_vision_id = false %}
+{%- endif %}
+{%- set image_count = namespace(value=0) %}
+{%- set video_count = namespace(value=0) %}
+
+{%- macro tool_to_json(tool) -%}
+    {%- set ns_tool = namespace(first=true) -%}
+    {{- '{' -}}
+    {%- for k, v in tool.items() -%}
+        {%- if k != 'defer_loading' and k != 'strict' -%}
+            {%- if not ns_tool.first -%}{{- ', ' -}}{%- endif -%}
+            {%- set ns_tool.first = false -%}
+            {{- '"' ~ k ~ '": ' ~ (v | tojson(ensure_ascii=False)) -}}
+        {%- endif -%}
+    {%- endfor -%}
+    {{- '}' -}}
+{%- endmacro -%}
+
+{%- macro render_content(content, do_vision_count=true, is_system_content=false) -%}
+    {%- if content is string -%}
+        {{- content -}}
+    {%- elif content is iterable and content is not mapping -%}
+        {%- for item in content -%}
+            {%- if item is mapping and item.type == 'text' -%}
+                {{- item.text -}}
+            {%- elif item is mapping and ('image' in item or 'image_url' in item or item.type in ['image', 'image_url']) -%}
+                {%- if is_system_content -%}
+                    {{- raise_exception('System message cannot contain images.') -}}
+                {%- endif -%}
+                {%- if do_vision_count -%}
+                    {%- set image_count.value = image_count.value + 1 -%}
+                {%- endif -%}
+                {%- if add_vision_id -%}
+                    {{- 'Picture ' ~ image_count.value ~ ': ' -}}
+                {%- endif -%}
+                {{- image_start_token ~ image_pad_token ~ image_end_token -}}
+            {%- elif item is mapping and ('video' in item or 'video_url' in item or item.type in ['video', 'video_url']) -%}
+                {%- if is_system_content -%}
+                    {{- raise_exception('System message cannot contain videos.') -}}
+                {%- endif -%}
+                {%- if do_vision_count -%}
+                    {%- set video_count.value = video_count.value + 1 -%}
+                {%- endif -%}
+                {%- if add_vision_id -%}
+                    {{- 'Video ' ~ video_count.value ~ ': ' -}}
+                {%- endif -%}
+                {{- video_start_token ~ video_pad_token ~ video_end_token -}}
+            {%- elif item is string -%}
+                {{- item -}}
+            {%- else -%}
+                {{- item | string -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- elif content is none -%}
+        {{- '' -}}
+    {%- else -%}
+        {{- content | string -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_tools_prompt() -%}
+    {{- '# Tools\n\nYou may call one or more functions to assist with the user query.' -}}
+    {{- '\n\nYou are provided with function signatures within <tools></tools> XML tags:' -}}
+    {{- '\n<tools>\n' -}}
+    {%- set tool_ns = namespace(first=true) -%}
+    {%- for tool in tools -%}
+        {%- set t = tool['function'] if tool is mapping and 'function' in tool else tool -%}
+        {%- if t.defer_loading is not defined or not t.defer_loading -%}
+            {%- if not tool_ns.first -%}{{- '\n' -}}{%- endif -%}
+            {%- set tool_ns.first = false -%}
+            {{- tool_to_json(t) -}}
+        {%- endif -%}
+    {%- endfor -%}
+    {{- '\n</tools>\n\n' -}}
+    {{- 'For function call returns, you should first print ' ~ toolcalls_begin_token -}}
+    {{- '\nFor each function call, you should return object like:\n' -}}
+    {{- toolcall_begin_token ~ '{function-name}' -}}
+    {{- argkey_begin_token ~ '{arg-key-1}' ~ argkey_end_token -}}
+    {{- argvalue_begin_token ~ '{arg-value-1}' ~ argvalue_end_token -}}
+    {{- argkey_begin_token ~ '{arg-key-2}' ~ argkey_end_token -}}
+    {{- argvalue_begin_token ~ '{arg-value-2}' ~ argvalue_end_token -}}
+    {{- '...' -}}
+    {{- toolcall_end_token -}}
+    {{- '\nAt the end of function call returns, you should print ' ~ toolcalls_end_token -}}
+{%- endmacro -%}
+
+{#- adjacent tool_search_output parts share one <tools> block, so a tool search result has the same shape as the tools prompt -#}
+{%- macro render_tool_response(message) -%}
+    {%- set content = message['content'] -%}
+    {{- toolresponse_begin_token -}}
+    {%- if content is string -%}
+        {{- content -}}
+    {%- elif content is iterable and content is not mapping -%}
+        {%- set tools_ns = namespace(open=false) -%}
+        {%- for item in content -%}
+            {%- set is_search_output = item is mapping and item.type is defined and item.type == 'tool_search_output' -%}
+            {%- if is_search_output and not tools_ns.open -%}
+                {{- '<tools>\n' -}}
+                {%- set tools_ns.open = true -%}
+            {%- elif not is_search_output and tools_ns.open -%}
+                {{- '</tools>' -}}
+                {%- set tools_ns.open = false -%}
+            {%- endif -%}
+            {%- if is_search_output -%}
+                {%- if item.tools is defined and item.tools is iterable -%}
+                    {%- for tool in item.tools -%}
+                        {%- set t = tool['function'] if tool is mapping and 'function' in tool else tool -%}
+                        {{- tool_to_json(t) ~ '\n' -}}
+                    {%- endfor -%}
+                {%- endif -%}
+            {%- elif item is mapping and item.output is defined -%}
+                {{- render_content(item.output) -}}
+            {%- else -%}
+                {{- render_content([item]) -}}
+            {%- endif -%}
+        {%- endfor -%}
+        {%- if tools_ns.open -%}
+            {{- '</tools>' -}}
+        {%- endif -%}
+    {%- else -%}
+        {{- render_content(content) -}}
+    {%- endif -%}
+    {{- toolresponse_end_token -}}
+{%- endmacro -%}
+
+{#- consecutive tool messages are clustered into a single tool message whose content is the list of the original tool messages; the result is written to merged_ns.messages (a macro cannot return a list) -#}
+{%- set merged_ns = namespace(messages=[]) %}
+{%- macro merge_tool_responses(messages) -%}
+    {%- set merge_ns = namespace(result=[], cluster=[]) -%}
+    {%- for message in messages -%}
+        {%- if message['role'] == 'tool' -%}
+            {%- set merge_ns.cluster = merge_ns.cluster + [message] -%}
+        {%- else -%}
+            {%- if merge_ns.cluster -%}
+                {%- set merge_ns.result = merge_ns.result + [{'role': 'tool', 'content': merge_ns.cluster}] -%}
+                {%- set merge_ns.cluster = [] -%}
+            {%- endif -%}
+            {%- set merge_ns.result = merge_ns.result + [message] -%}
+        {%- endif -%}
+    {%- endfor -%}
+    {%- if merge_ns.cluster -%}
+        {%- set merge_ns.result = merge_ns.result + [{'role': 'tool', 'content': merge_ns.cluster}] -%}
+    {%- endif -%}
+    {%- set merged_ns.messages = merge_ns.result -%}
+{%- endmacro -%}
+
+{#- render one tool cluster, reordered to follow the tool_call order of the preceding assistant turn; any missing / ambiguous id falls back to the original tool message order for the whole cluster -#}
+{%- macro render_tool_responses(tool_messages, tool_call_ids) -%}
+    {%- set order_ns = namespace(ordered=[], matched=true) -%}
+    {%- if tool_call_ids and tool_call_ids | length == tool_messages | length -%}
+        {%- for tool_call_id in tool_call_ids -%}
+            {%- set hit_ns = namespace(count=0, message=none) -%}
+            {%- for tool_message in tool_messages -%}
+                {%- set message_id = tool_message['tool_call_id'] if tool_message['tool_call_id'] is defined else tool_message['id'] -%}
+                {%- if message_id is defined and message_id == tool_call_id -%}
+                    {%- set hit_ns.count = hit_ns.count + 1 -%}
+                    {%- set hit_ns.message = tool_message -%}
+                {%- endif -%}
+            {%- endfor -%}
+            {%- if hit_ns.count == 1 -%}
+                {%- set order_ns.ordered = order_ns.ordered + [hit_ns.message] -%}
+            {%- else -%}
+                {%- set order_ns.matched = false -%}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- else -%}
+        {%- set order_ns.matched = false -%}
+    {%- endif -%}
+    {%- for tool_message in (order_ns.ordered if order_ns.matched else tool_messages) -%}
+        {{- render_tool_response(tool_message) -}}
+    {%- endfor -%}
+{%- endmacro -%}
+
+{%- set _ = merge_tool_responses(messages) %}
+{%- set normed_messages = merged_ns.messages %}
+
+{%- set ns = namespace(last_user_index=-1, has_leading_system=false) %}
+{%- if normed_messages and normed_messages[0].role == 'system' %}
+    {%- set ns.has_leading_system = true %}
+{%- endif %}
+{%- for message in normed_messages %}
+    {%- if message['role'] == 'user' %}
+        {%- set ns.last_user_index = loop.index0 %}
+    {%- endif %}
+{%- endfor %}
+
+{#- no leading system: synthesize one for tools and/or reasoning_mode -#}
+{%- if not ns.has_leading_system %}
+    {{- hy_start_token ~ 'system' ~ hy_middle_token -}}
+    {%- if tools %}
+        {{- render_tools_prompt() -}}
+    {%- endif %}
+    {{- reasoning_mode_token ~ 'reasoning_effort:' ~ reasoning_effort -}}
+    {{- hy_end_token -}}
+{%- endif %}
+
+{%- set last_ns = namespace(last_is_assistant=false) %}
+{%- set prev_ns = namespace(tool_call_ids=[]) %}
+{%- for message in normed_messages %}
+    {%- if message['role'] == 'system' %}
+        {{- hy_start_token ~ 'system' ~ hy_middle_token -}}
+        {#- tools / reasoning_mode only attach to the leading system (messages[0]) -#}
+        {%- if loop.first %}
+            {%- if tools %}
+                {{- render_tools_prompt() -}}
+            {%- endif %}
+            {%- set content = render_content(message['content']) -%}
+            {%- if tools and content -%}
+                {{- '\n\n' -}}
+            {%- endif -%}
+            {{- content -}}
+            {{- reasoning_mode_token ~ 'reasoning_effort:' ~ reasoning_effort -}}
+        {%- else %}
+            {{- render_content(message['content']) -}}
+        {%- endif %}
+        {{- hy_end_token -}}
+    {%- elif message['role'] == 'user' %}
+        {{- hy_start_token ~ 'user' ~ hy_middle_token -}}
+        {{- render_content(message['content']) -}}
+        {{- hy_end_token -}}
+    {%- elif message['role'] == 'assistant' %}
+        {%- set content_body = render_content(message['content']) -%}
+        {#- 'reasoning' takes precedence, fall back to 'reasoning_content' when it is empty -#}
+        {%- set reasoning_text = '' %}
+        {%- if message['reasoning'] is defined and message['reasoning'] is string and message['reasoning'] %}
+            {%- set reasoning_text = message['reasoning'] %}
+        {%- elif message['reasoning_content'] is defined and message['reasoning_content'] is string and message['reasoning_content'] %}
+            {%- set reasoning_text = message['reasoning_content'] %}
+        {%- endif %}
+        {#- no_think overrides preserved_thinking: history is always emitted with empty think tags -#}
+        {%- if reasoning_effort != 'no_think' and (preserved_thinking or loop.index0 > ns.last_user_index) and reasoning_text %}
+            {%- set content = think_begin_token ~ reasoning_text ~ think_end_token ~ content_body %}
+        {%- else %}
+            {%- set content = think_begin_token ~ think_end_token ~ content_body %}
+        {%- endif %}
+        {{- hy_start_token ~ 'assistant' ~ hy_middle_token -}}
+        {%- if message['tool_calls'] is defined and message['tool_calls'] %}
+            {#- remember the tool_call ids of this turn to order the following tool responses; an incomplete id set means "do not reorder" -#}
+            {%- set ids_ns = namespace(ids=[], complete=true) %}
+            {%- for tool in message['tool_calls'] %}
+                {%- set tool_call_id = tool['id'] if tool['id'] is defined and tool['id'] else tool['tool_call_id'] %}
+                {%- if tool_call_id is defined and tool_call_id %}
+                    {%- set ids_ns.ids = ids_ns.ids + [tool_call_id] %}
+                {%- else %}
+                    {%- set ids_ns.complete = false %}
+                {%- endif %}
+            {%- endfor %}
+            {%- set prev_ns.tool_call_ids = ids_ns.ids if ids_ns.complete else [] %}
+            {{- content -}}
+            {{- toolcalls_begin_token -}}
+            {%- for tool in message['tool_calls'] -%}
+                {%- set func = tool['function'] if tool is mapping and 'function' in tool else tool -%}
+                {%- set arguments = func['arguments'] -%}
+                {{- toolcall_begin_token ~ func['name'] -}}
+                {%- for key, value in arguments.items() -%}
+                    {{- argkey_begin_token ~ key ~ argkey_end_token -}}
+                    {%- if value is not string -%}
+                        {%- set value = value | tojson(ensure_ascii=False) -%}
+                    {%- endif -%}
+                    {{- argvalue_begin_token ~ value ~ argvalue_end_token -}}
+                {%- endfor -%}
+                {{- toolcall_end_token -}}
+            {%- endfor -%}
+            {{- toolcalls_end_token -}}
+        {%- else %}
+            {%- if loop.last and raw_last_assistant %}
+                {{- content_body -}}
+            {%- else %}
+                {{- content -}}
+            {%- endif %}
+        {%- endif %}
+        {#- continuation / prefill: last assistant is still open, do not close with hy_end -#}
+        {%- if not (loop.last and raw_last_assistant) and not (loop.last and fallback_strategy is defined and fallback_strategy == 'reasoning_toolcall_retry') %}
+            {{- hy_end_token -}}
+        {%- endif %}
+    {%- elif message['role'] == 'tool' %}
+        {{- hy_start_token ~ 'tool' ~ hy_middle_token -}}
+        {{- render_tool_responses(message['content'], prev_ns.tool_call_ids) -}}
+        {{- hy_end_token -}}
+    {%- else %}
+        {{- hy_start_token ~ message['role'] ~ hy_middle_token -}}
+        {{- render_content(message['content']) -}}
+        {{- hy_end_token -}}
+    {%- endif %}
+    {%- if message['role'] != 'assistant' or not (message['tool_calls'] is defined and message['tool_calls']) %}
+        {%- set prev_ns.tool_call_ids = [] %}
+    {%- endif %}
+    {%- if loop.last and message['role'] == 'assistant' %}
+        {%- set last_ns.last_is_assistant = true %}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {%- if not last_ns.last_is_assistant %}
+        {%- if reasoning_effort == 'no_think' %}
+            {{- hy_start_token ~ 'assistant' ~ hy_middle_token ~ think_begin_token ~ think_end_token -}}
+        {%- else %}
+            {{- hy_start_token ~ 'assistant' ~ hy_middle_token ~ think_begin_token -}}
+        {%- endif %}
+    {%- endif %}
+{%- endif %}

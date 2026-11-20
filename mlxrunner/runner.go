@@ -151,6 +151,11 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 			err = e
 			return nil
 		}
+		defer func() {
+			if err != nil {
+				closeModelResources(m)
+			}
+		}()
 
 		var skippedTensors []string
 		if s, ok := m.(model.SkippedTensorsModel); ok {
@@ -247,6 +252,15 @@ func (r *Runner) Close() {
 	}
 	r.weights.Close()
 	r.weights = nil
+	closeModelResources(r.Model)
+}
+
+func closeModelResources(m model.Model) {
+	if closer, ok := m.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			slog.Warn("close model resources", "error", err)
+		}
+	}
 }
 
 // newDraftCaches returns nil when the model ships no draft.

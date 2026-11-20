@@ -10,8 +10,8 @@ import (
 
 type sparseMoE struct {
 	Gate       nn.LinearLayer
-	GateUp     *expertProjection
-	Down       *expertProjection
+	GateUp     *model.ExpertProjection
+	Down       *model.ExpertProjection
 	SharedGate nn.LinearLayer
 	Shared     *denseMLP
 }
@@ -26,79 +26,16 @@ func (m *denseMLP) Forward(x *mlx.Array) *mlx.Array {
 	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }
 
-// expertProjection keeps a packed expert bank and its quantization companions
-// together. Unquantized weights are transposed once at load for GatherMM.
-type expertProjection struct {
-	Weight      *mlx.Array
-	Scales      *mlx.Array
-	Biases      *mlx.Array
-	GlobalScale *mlx.Array
-	GroupSize   int
-	Bits        int
-	Mode        string
-}
-
-func (p *expertProjection) Forward(x, indices *mlx.Array, sorted bool) *mlx.Array {
-	if p.Scales != nil {
-		return mlx.GatherQMM(x, p.Weight, p.Scales, p.Biases,
-			nil, indices, true, p.GroupSize, p.Bits, p.Mode, p.GlobalScale, sorted)
-	}
-	return mlx.GatherMM(x, p.Weight, nil, indices, sorted)
-}
-
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
-func (m *Model) loadExpertProjection(tensors map[string]*mlx.Array, base string) (*expertProjection, error) {
-	p := &expertProjection{}
-	var key string
-	for _, candidate := range []string{base, base + ".weight"} {
-		if p.Weight = tensors[candidate]; p.Weight != nil {
-			key = candidate
-			break
-		}
-	}
-	if p.Weight == nil {
-		return nil, fmt.Errorf("missing packed expert tensor %q", base)
-	}
-	p.Scales = tensors[key+"_scale"]
-	if p.Scales == nil {
-		p.Weight = mlx.Transpose(p.Weight, 0, 2, 1)
-	} else {
-		p.Biases = tensors[key+"_qbias"]
-		p.GroupSize, p.Bits, p.Mode = model.ResolveLinearQuantParams(m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant, key, p.Weight, p.Scales)
-		if !supportsGatherQMM(p.Mode, p.Bits) {
-			return nil, fmt.Errorf("packed expert tensor %q uses unsupported quantization mode=%q bits=%d", key, p.Mode, p.Bits)
-		}
-	}
-	var err error
-	p.GlobalScale, err = loadExpertGlobalScale(tensors, base, p.Weight.Dim(0), p.Mode)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
 func (m *Model) loadSparseMoE(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix string) (*sparseMoE, error) {
 	moe := &sparseMoE{}
 	var err error
 	if moe.Gate, err = requiredLinear(linears, prefix+".gate"); err != nil {
 		return nil, err
 	}
-	if moe.GateUp, err = m.loadExpertProjection(tensors, prefix+".experts.gate_up_proj"); err != nil {
+	if moe.GateUp, err = model.LoadExpertProjection(tensors, prefix+".experts.gate_up_proj", m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant); err != nil {
 		return nil, err
 	}
-	if moe.Down, err = m.loadExpertProjection(tensors, prefix+".experts.down_proj"); err != nil {
+	if moe.Down, err = model.LoadExpertProjection(tensors, prefix+".experts.down_proj", m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant); err != nil {
 		return nil, err
 	}
 	if moe.SharedGate, err = requiredLinear(linears, prefix+".shared_expert_gate"); err != nil {
@@ -113,20 +50,6 @@ func (m *Model) loadSparseMoE(linears model.LinearFactory, tensors map[string]*m
 		return nil, fmt.Errorf("missing shared expert projection at %s", prefix)
 	}
 	return moe, nil
-}
-
-func loadExpertGlobalScale(tensors map[string]*mlx.Array, base string, experts int, mode string) (*mlx.Array, error) {
-	scale, _ := model.ReadGlobalScale(tensors, base, base+".weight")
-	if scale == nil {
-		return nil, nil
-	}
-	if mode != "nvfp4" {
-		return nil, fmt.Errorf("expert tensor %q has a global scale but uses mode=%q", base, mode)
-	}
-	if scale.Size() != 1 && scale.Size() != experts {
-		return nil, fmt.Errorf("expert tensor %q has %d global scales for %d experts", base, scale.Size(), experts)
-	}
-	return model.PrepareGatherQMMGlobalScale(scale, experts), nil
 }
 
 func (m *sparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
