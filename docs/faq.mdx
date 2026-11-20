@@ -321,6 +321,8 @@ Alternatively, you can change the amount of time all models are loaded into memo
 
 The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endpoints will override the `OLLAMA_KEEP_ALIVE` setting.
 
+On some GPUs, a loaded model holds the GPU in a higher power state, which raises its idle draw until the model is unloaded. If idle power matters more to you than the time it takes to load the model again, unload models you're done with using `ollama stop`, or start the server with `OLLAMA_KEEP_ALIVE=0` to unload each model as soon as its response is done.
+
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
 If too many requests are sent to the local Ollama server, it responds with a `503` overloaded error. Set `OLLAMA_MAX_QUEUE` before starting the server to change the maximum number of queued requests:
