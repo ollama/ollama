@@ -37,7 +37,7 @@ func TestInkling2ExpertBankImport(t *testing.T) {
 				)
 			}
 			dir := t.TempDir()
-			writeConfigJSON(t, dir, `{"architectures":["Inkling2LoopForConditionalGeneration"]}`)
+			writeConfigJSON(t, dir, `{"architectures":["Inkling2LoopForConditionalGeneration"],"text_config":{"model_max_length":32768}}`)
 			createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), tensors)
 			inv, err := ReadInventory(dir)
 			if err != nil {
@@ -50,15 +50,13 @@ func TestInkling2ExpertBankImport(t *testing.T) {
 			if _, err := Classify(inv, tc.mode); err == nil || !strings.Contains(err.Error(), "cannot requantize") {
 				t.Fatalf("Classify(%q) error = %v, want already-quantized source error", tc.mode, err)
 			}
-			specs, err := Plan(inv, class, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
 			store := newCaptureStore()
-			if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
+			writeManifest := func(context.Context, string, ManifestInfo) error { return nil }
+			if err := Create(t.Context(), "inkling2", dir, testPipelineOptions(), store, writeManifest, func(string) {}); err != nil {
 				t.Fatal(err)
 			}
 			want := map[string]io.Reader{
+				"config.json": strings.NewReader(`{"architectures":["Inkling2LoopForConditionalGeneration"],"text_config":{"max_position_embeddings":32768,"model_max_length":32768}}`),
 				bank: st.BuildPackedSafetensorsReaderWithMetadata([]*st.TensorData{
 					st.NewTensorDataFromBytes(bank, "U32", []int32{2, 1, tc.width / 4}, weights),
 					st.NewTensorDataFromBytes(bank+"_scale", "U8", []int32{2, 1, 2}, scales),

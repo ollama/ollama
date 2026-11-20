@@ -1,6 +1,8 @@
 package create
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +11,29 @@ import (
 )
 
 const inkling2Architecture = "Inkling2LoopForConditionalGeneration"
+
+// Expose Inkling's model_max_length as max_position_embeddings for ollama show.
+func inkling2ContextConfig(raw []byte) ([]byte, error) {
+	var config map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&config); err != nil {
+		return nil, err
+	}
+	text, _ := config["text_config"].(map[string]any)
+	limit, _ := text["model_max_length"].(json.Number)
+	if n, err := limit.Int64(); err != nil || n <= 0 {
+		return nil, fmt.Errorf("Inkling 2 requires a positive text_config.model_max_length")
+	}
+	if existing, ok := text["max_position_embeddings"]; ok {
+		if existing != limit {
+			return nil, fmt.Errorf("Inkling 2 text_config.max_position_embeddings disagrees with model_max_length")
+		}
+		return raw, nil
+	}
+	text["max_position_embeddings"] = limit
+	return json.Marshal(config)
+}
 
 func inkling2BankQuantization(name string, inv Inventory) (string, error) {
 	if !strings.HasSuffix(name, ".experts.w13_weight") && !strings.HasSuffix(name, ".experts.w2_weight") {

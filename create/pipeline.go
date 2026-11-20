@@ -102,6 +102,12 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if err != nil {
 		return err
 	}
+	if inv.Config.Architecture() == inkling2Architecture {
+		inv.RawConfig, err = inkling2ContextConfig(inv.RawConfig)
+		if err != nil {
+			return err
+		}
+	}
 	if inv.Config.Architecture() == "KevForDecision" && class.Kind == SourceFloat && class.Quantize == "" {
 		modelConfig.FileType, err = kevFileType(inv)
 		if err != nil {
