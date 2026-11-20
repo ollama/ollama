@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -22,8 +21,8 @@ func TestKevRequestAndAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Render(func([]api.Message) (string, error) { t.Fatal("Kev does not use a chat renderer"); return "", nil }); err != nil {
-		t.Fatal(err)
+	if c.NeedsChatRender() {
+		t.Fatal("Kev must prepare its own prompts")
 	}
 	if want := "subject: Charged twice\ndetails:\n  - café\n  - count: 1000000.0\n    urgent: True"; c.Request.State != want {
 		t.Fatalf("state = %q, want %q", c.Request.State, want)

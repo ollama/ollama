@@ -1,6 +1,8 @@
 package autotrustdecision
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -40,6 +42,20 @@ func TestImageCountLimit(t *testing.T) {
 	_, _, _, _, err := m.prompt(llm.ScoreRequest{Images: images}, &llm.ScoreQuestion{Type: "noul"})
 	if err == nil {
 		t.Fatal("accepted more than the maximum image count")
+	}
+}
+
+func TestRenderScoreBudget(t *testing.T) {
+	m := &Model{}
+	m.head.Bias = make([]float32, 2)
+	m.head.VerbalizerIDs = make([]int32, 2)
+	question := &llm.ScoreQuestion{Type: "noul", Options: []string{"false", "true"}}
+	input := llm.ScoreRequest{
+		State: strings.Repeat("x", 16<<20),
+		Rows:  []llm.ScoreRow{{Question: question}, {Question: question}},
+	}
+	if _, err := m.renderScore(context.Background(), input); !errors.Is(err, llm.ErrScorePromptTooLarge) {
+		t.Fatalf("two rendered prompts exceed the shared budget: got %v", err)
 	}
 }
 

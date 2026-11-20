@@ -35,7 +35,10 @@ func TestCompile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := compiled.Render(func(messages []api.Message) (string, error) {
+	if !compiled.NeedsChatRender() {
+		t.Fatal("generic decision prompts must use the model renderer")
+	}
+	if err := compiled.RenderChat(func(messages []api.Message) (string, error) {
 		if len(messages) != 1 || messages[0].Role != "user" {
 			t.Fatalf("compiler must leave the system prompt to the model: %+v", messages)
 		}
@@ -103,7 +106,7 @@ func TestStructuredStateFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := compiled.Render(func(messages []api.Message) (string, error) {
+	if err := compiled.RenderChat(func(messages []api.Message) (string, error) {
 		return messages[0].Content, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -121,8 +124,44 @@ func TestRenderError(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := errors.New("invalid model template")
-	if err := compiled.Render(func([]api.Message) (string, error) { return "", want }); !errors.Is(err, want) {
+	calls := 0
+	if err := compiled.RenderChat(func([]api.Message) (string, error) {
+		calls++
+		if calls == 2 {
+			return "", want
+		}
+		return "rendered", nil
+	}); !errors.Is(err, want) {
 		t.Fatalf("Render error = %v, want %v", err, want)
+	}
+	for i, row := range compiled.Request.Rows {
+		if row.Prompt != "" {
+			t.Fatalf("row %d retained a prompt after rendering failed", i)
+		}
+	}
+}
+
+func TestRenderContract(t *testing.T) {
+	chat, err := Compile(testRequest(t), "tev1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chat.NeedsChatRender() {
+		t.Fatal("Tev1 must use the model chat renderer")
+	}
+
+	compiled, err := Compile(testRequest(t), "pplx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.NeedsChatRender() {
+		t.Fatal("model-native prompts must not use the server renderer")
+	}
+	if err := compiled.RenderChat(func([]api.Message) (string, error) {
+		t.Fatal("native prompt unexpectedly rendered")
+		return "", nil
+	}); err == nil {
+		t.Fatal("RenderChat silently accepted a model-native request")
 	}
 }
 

@@ -173,8 +173,6 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-decision-only", config, []manifest.Layer{params})
 	config.Renderer = "tev1"
 	createSafetensorsTestModel(t, "safetensors-tev1", config, []manifest.Layer{params})
-	config.Renderer = "d3"
-	createSafetensorsTestModel(t, "safetensors-d3", config, []manifest.Layer{params})
 	config.Renderer = "autotrust-decision"
 	createSafetensorsTestModel(t, "safetensors-autotrust-decision", config, []manifest.Layer{params})
 	config.Renderer = "strands"
@@ -188,6 +186,12 @@ func TestSystemOneHandler(t *testing.T) {
 	config.Renderer = "kev"
 	config.Capabilities = []string{"decision"}
 	createSafetensorsTestModel(t, "safetensors-kev", config, []manifest.Layer{params})
+	config.Renderer = "d3"
+	d3Params, err := manifest.NewLayer(strings.NewReader(`{"num_ctx":262144}`), "application/vnd.ollama.image.params")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createSafetensorsTestModel(t, "safetensors-d3", config, []manifest.Layer{d3Params})
 	config.Renderer = "qwen3.5"
 	config.Capabilities = []string{"completion"}
 	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
@@ -209,10 +213,17 @@ func TestSystemOneHandler(t *testing.T) {
 	}
 	config.Renderer = ""
 	createSafetensorsTestModel(t, "go-template", config, []manifest.Layer{params, system, goTemplate})
+	expandedTemplate, err := manifest.NewLayer(strings.NewReader("custom:{{ range .Messages }}{{ .Content }}{{ .Content }}{{ end }}"), "application/vnd.ollama.image.template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createSafetensorsTestModel(t, "go-template-expanded", config, []manifest.Layer{params, expandedTemplate})
 	for _, gguf := range []struct{ name, architecture, decisionType, renderer string }{
 		{"renamed-clef", "clef", "clef", ""},
 		{"old-clef", "qwen35", "clef", ""},
 		{"laya-native", "modern-bert", "laya", ""},
+		{"gguf-d1", "qwen35", "d1", "d1"},
+		{"gguf-kev", "qwen35", "kev", "kev"},
 		{"renamed-d3", "qwen35", "vllm-d3", ""},
 		{"gguf-tev1", "qwen35", "", "tev1"},
 	} {
@@ -247,6 +258,7 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		return `{"model":"laya-native","state":"x","questions":{` + strings.Join(questions, ",") + `}}`
 	}
+	oversizedPrompts := strings.Replace(nativeQuestions(64), `"model":"laya-native","state":"x"`, `"model":"decision-test","state":"`+strings.Repeat("x", 1<<20)+`"`, 1)
 	type testCase struct {
 		name   string
 		body   string
@@ -304,12 +316,20 @@ func TestSystemOneHandler(t *testing.T) {
 		{"Tev1 empty description", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"choice","instructions":"q","criteria":{"a":"","b":"B"}}}}`, nil, 400, 0, false},
 		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
-		{"at text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
-		{"over text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
+		{"at former text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
+		{"over former text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 200, 1, false},
+		{"expanded prompts over budget", oversizedPrompts, nil, 413, 0, false},
+		{"rendered prompts over budget avoid runner load", `{"model":"go-template-expanded","state":"` + strings.Repeat("x", 12<<20) + `","questions":{"a":{"type":"noul","instructions":"q"},"b":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
 		{"oversized missing model returns not found", strings.Replace(prefix+strings.Repeat("x", stateLimit+32)+suffix, "decision-test", "missing", 1), nil, 404, 0, false},
-		{"Kev above default text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
-		{"Kev above extended text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
-		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},
+		{"Kev above former text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Perplexity above former text limit", `{"model":"safetensors-pplx","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"D3 MLX long context", `{"model":"safetensors-d3","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"D3 GGUF retains text limit", `{"model":"renamed-d3","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
+		{"D1 GGUF retains long text allowance", `{"model":"gguf-d1","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Kev GGUF retains long text allowance", `{"model":"gguf-kev","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"D1 GGUF retains upper text cap", `{"model":"gguf-d1","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
+		{"Kev GGUF retains upper text cap", `{"model":"gguf-kev","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
+		{"image with long text", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 200, 1, false},
 		{"over transport limit", imagePrefix + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 	}
 	for _, model := range []string{"decision-test", "laya-native", "renamed-d3"} {
@@ -410,7 +430,7 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				choiceCase := tt.name == "D3 safetensors" || tt.name == "AutoTrust decision safetensors"
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 || runner.native || ref.model.Load().Config.Renderer == "kev" || ref.model.Load().Config.Renderer == "pplx" || choiceCase {
+				if len(runner.request.Fields) > 0 || runner.native || ref.model.Load().Config.Renderer == "kev" || ref.model.Load().Config.Renderer == "pplx" || ref.model.Load().Config.Renderer == "d3" || choiceCase {
 					outputTokens = 0
 				}
 				if response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens ||
@@ -462,6 +482,9 @@ func TestSystemOneHandler(t *testing.T) {
 					if prompt != "" {
 						t.Fatalf("native scorer received a generic rendered prompt: %q", prompt)
 					}
+					if tt.name == "D3 MLX long context" && len(runner.request.State) != 1<<20 {
+						t.Fatalf("D3 scorer received %d state bytes, want %d", len(runner.request.State), 1<<20)
+					}
 				} else if ref.model.Load().Config.Renderer == "kev" {
 					if prompt != "" || len(runner.request.State) != 70<<10 || runner.request.Rows[0].Question == nil {
 						t.Fatalf("Kev scorer received a rendered prompt or lost the state/question")
@@ -475,8 +498,12 @@ func TestSystemOneHandler(t *testing.T) {
 						t.Fatalf("scorer did not receive the model's rendered prompt: %q", prompt)
 					}
 				}
-				if runner.request.MaxTokens != 8192 {
-					t.Fatalf("scoring context = %d, want model num_ctx 8192", runner.request.MaxTokens)
+				wantContext := 8192
+				if ref.model.Load().Config.Renderer == "d3" {
+					wantContext = 262144
+				}
+				if runner.request.MaxTokens != wantContext {
+					t.Fatalf("scoring context = %d, want model num_ctx %d", runner.request.MaxTokens, wantContext)
 				}
 			}
 		})
