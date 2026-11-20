@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -323,51 +324,21 @@ func TestBuildCloudSignatureChallengePreservesMalformedQuery(t *testing.T) {
 	}
 }
 
-func TestJSONLFramingResponseWriter_SplitsCoalescedLines(t *testing.T) {
+func TestCopyCloudChatResponse(t *testing.T) {
 	rec := &chunkRecorder{header: http.Header{}}
-	w := &jsonlFramingResponseWriter{ResponseWriter: rec}
-
-	payload := []byte("{\"a\":1}\n{\"b\":2}\n")
-	if n, err := w.Write(payload); err != nil {
-		t.Fatalf("write failed: %v", err)
-	} else if n != len(payload) {
-		t.Fatalf("write byte count mismatch: got %d want %d", n, len(payload))
-	}
-
-	if err := w.FlushPending(); err != nil {
-		t.Fatalf("FlushPending failed: %v", err)
+	payload := "{\"message\":{\"content\":\"first\"}}\n\n{\"done\":true}"
+	if err := copyCloudChatResponse(rec, strings.NewReader(payload), true); err != nil {
+		t.Fatal(err)
 	}
 
 	if len(rec.chunks) != 2 {
 		t.Fatalf("expected 2 framed writes, got %d", len(rec.chunks))
 	}
-	if got := string(rec.chunks[0]); got != `{"a":1}` {
+	if got := string(rec.chunks[0]); got != `{"message":{"content":"first"}}` {
 		t.Fatalf("first chunk mismatch: got %q", got)
 	}
-	if got := string(rec.chunks[1]); got != `{"b":2}` {
+	if got := string(rec.chunks[1]); got != `{"done":true}` {
 		t.Fatalf("second chunk mismatch: got %q", got)
-	}
-}
-
-func TestJSONLFramingResponseWriter_FlushPendingWritesTrailingLine(t *testing.T) {
-	rec := &chunkRecorder{header: http.Header{}}
-	w := &jsonlFramingResponseWriter{ResponseWriter: rec}
-
-	if _, err := w.Write([]byte("{\"a\":1")); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-	if len(rec.chunks) != 0 {
-		t.Fatalf("expected no writes before newline/flush, got %d", len(rec.chunks))
-	}
-
-	if err := w.FlushPending(); err != nil {
-		t.Fatalf("FlushPending failed: %v", err)
-	}
-	if len(rec.chunks) != 1 {
-		t.Fatalf("expected 1 write after FlushPending, got %d", len(rec.chunks))
-	}
-	if got := string(rec.chunks[0]); got != `{"a":1` {
-		t.Fatalf("trailing chunk mismatch: got %q", got)
 	}
 }
 

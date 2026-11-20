@@ -276,15 +276,18 @@ func (m *AssistantModel) NewCaches() []cache.Cache { return nil }
 // last target-seen position, so it anchors RoPE and the mask there — from the
 // non-moving target full-attention cache — regardless of the advancing offset
 // in b. The input fuses the target's scaled token embedding with b.Hidden.
-func (m *AssistantModel) Forward(b *batch.Batch, targetCaches, _ []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *AssistantModel) Forward(b *batch.Batch, targetCaches, _ []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	inputsEmbeds := m.target.TokenEmbeddings(b.InputIDs).Concatenate(-1, b.Hidden)
 	dims := inputsEmbeds.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
+	if B != 1 {
+		panic("gemma4 assistant: drafting requires one request")
+	}
 
 	anchor := int32(0)
 	if len(targetCaches) > 0 {
 		if full := targetCaches[len(targetCaches)-1]; full != nil {
-			anchor = int32(full.Offset() - 1)
+			anchor = int32(full.(cache.Cache).Offset() - 1)
 		}
 	}
 	ab := &batch.Batch{
@@ -306,7 +309,7 @@ func (m *AssistantModel) Forward(b *batch.Batch, targetCaches, _ []cache.Cache) 
 	return hidden, auxHidden
 }
 
-func (m *AssistantModel) sharedHistories(b *batch.Batch, caches []cache.Cache) (sliding, full *nn.KVHistory) {
+func (m *AssistantModel) sharedHistories(b *batch.Batch, caches []cache.Layer) (sliding, full *nn.KVHistory) {
 	if len(caches) < 2 {
 		return nil, nil
 	}

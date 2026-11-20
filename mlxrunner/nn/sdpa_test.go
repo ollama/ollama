@@ -30,6 +30,108 @@ func newBatch(seqOffsets []int32, L int, qLens []int32) *batch.Batch {
 	}
 }
 
+func TestRowKVHistoryAttention(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		b := newBatch([]int32{2, 2}, 2, nil)
+		q := mlx.FromValues([]float32{.1, .3, .7, -.2, -.1, .5, .2, .9}, 2, 1, 2, 2)
+		k := mlx.FromValues([]float32{.2, .4, .1, -.3, .8, .2, .3, .1, -.5, .2, .1, .8, .4, -.2, .9, .1}, 2, 1, 4, 2)
+		v := mlx.MulScalar(k, 3)
+		rows := make([]*KVHistory, 2)
+		for i := range rows {
+			rows[i] = NewKVHistory(
+				k.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				v.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()), nil)
+		}
+		array := mlx.FromValues([]float32{0, -.2, .1, -.4, .3, 0, -.7, .2}, 2, 1, 1, 4)
+		arrayRow := func(i int) AttentionMask {
+			return ArrayMask(array.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()))
+		}
+		masks := []struct {
+			batch AttentionMask
+			rows  []AttentionMask
+		}{
+			{CausalMask(), []AttentionMask{CausalMask(), CausalMask()}},
+			{CausalMask().Relax(1, 2, 3, 3, 4), []AttentionMask{CausalMask(), CausalMask().Relax(0, 2, 3, 3, 4)}},
+			{ArrayMask(array), []AttentionMask{arrayRow(0), arrayRow(1)}},
+			{CausalMask().Relax(0, 2, 3, 3, 4).Intersect(ArrayMask(array)), []AttentionMask{
+				CausalMask().Relax(0, 2, 3, 3, 4).Intersect(arrayRow(0)), CausalMask().Intersect(arrayRow(1)),
+			}},
+		}
+		for i, mask := range masks {
+			got := ScaledDotProductAttention(b, q, .7, WithKVHistory(NewRowKVHistory(rows)), WithMask(mask.batch))
+			// The contract is independent requests, which can select different
+			// native kernels than a rectangular batch (including CUDA TF32).
+			// Spell out each mask independently to verify the row remapping.
+			var outputs []*mlx.Array
+			for row, rowMask := range mask.rows {
+				query := q.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+				outputs = append(outputs, ScaledDotProductAttention(b.Row(row), query, .7, WithKVHistory(rows[row]), WithMask(rowMask)))
+			}
+			want := mlx.Concatenate(outputs, 0)
+			mlx.Eval(got, want)
+			g, w := got.Floats(), want.Floats()
+			if len(g) == 0 || len(g) != len(w) {
+				t.Fatalf("mask %d value count = %d, want %d", i, len(g), len(w))
+			}
+			for j := range w {
+				if delta := math.Abs(float64(g[j] - w[j])); math.IsNaN(delta) || delta > 1e-5 {
+					t.Fatalf("mask %d element %d = %g, want %g", i, j, g[j], w[j])
+				}
+			}
+		}
+		// MLA keeps per-row storage while deriving V from the K prefix.
+		got := ScaledDotProductAttention(b, q, .7, WithMLAHistory(NewRowKVHistory(rows), 1), WithMask(CausalMask()))
+		var outputs []*mlx.Array
+		for row, history := range rows {
+			query := q.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+			outputs = append(outputs, ScaledDotProductAttention(b.Row(row), query, .7, WithMLAHistory(history, 1), WithMask(CausalMask())))
+		}
+		want := mlx.Concatenate(outputs, 0)
+		mlx.Eval(got, want)
+		actual, expected := got.Floats(), want.Floats()
+		if len(actual) == 0 || len(actual) != len(expected) {
+			t.Fatalf("MLA value count = %d, want %d", len(actual), len(expected))
+		}
+		for i, value := range expected {
+			if delta := math.Abs(float64(actual[i] - value)); math.IsNaN(delta) || delta > 1e-5 {
+				t.Fatalf("MLA element %d = %g, want %g", i, actual[i], value)
+			}
+		}
+	})
+}
+
+func TestRowKVHistoryMaskMemoization(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		q := mlx.Zeros(mlx.DTypeFloat32, 2, 1, 2, 2)
+		k := mlx.Zeros(mlx.DTypeFloat32, 1, 1, 4, 2)
+		array := mlx.Zeros(mlx.DTypeFloat32, 2, 1, 2, 4)
+		for _, tc := range []struct {
+			name string
+			mask AttentionMask
+		}{
+			{"causal", CausalMask()},
+			{"relaxed", CausalMask().Relax(1, 2, 3, 3, 4)},
+			{"array", ArrayMask(array)},
+			{"relaxed array", CausalMask().Relax(0, 2, 3, 3, 4).Intersect(ArrayMask(array))},
+		} {
+			b := newBatch([]int32{2, 2}, 2, nil)
+			var calls [2]int
+			rows := make([]*KVHistory, len(calls))
+			for i := range rows {
+				rows[i] = NewKVHistory(k, k, recordingApplier{l: 2, K: 4, calls: &calls[i]})
+			}
+			for range 4 {
+				mlx.Eval(ScaledDotProductAttention(b, q, 1, WithKVHistory(NewRowKVHistory(rows)), WithMask(tc.mask)))
+			}
+			for row, n := range calls {
+				if n != 1 {
+					t.Fatalf("%s: row %d prepared its mask %d times, want once", tc.name, row, n)
+				}
+			}
+		}
+	})
+}
+
 func TestAttentionMaskZero(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		var m AttentionMask
@@ -522,7 +624,7 @@ func TestSDPACausalParity(t *testing.T) {
 			WithKV(k, v, []int32{int32(K)}),
 			WithMask(CausalMask()),
 		)
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "causal", nil)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "causal", nil)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -539,7 +641,7 @@ func TestSDPAZeroMaskParity(t *testing.T) {
 		q, k, v := sdpaInputs(L, K)
 		b := newBatch([]int32{0}, L, nil)
 		got := ScaledDotProductAttention(b, q, 1.0, WithKV(k, v, []int32{int32(K)}))
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "", nil)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "", nil)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -564,7 +666,7 @@ func TestSDPAArrayMaskParity(t *testing.T) {
 			WithKV(k, v, []int32{int32(K)}),
 			WithMask(ArrayMask(mask)),
 		)
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "array", mask)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "array", mask)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -585,7 +687,7 @@ func TestSDPARelaxMaskMaterializes(t *testing.T) {
 			WithMask(CausalMask().Relax(0, 3, 5, 2, 5)),
 		)
 		ref := CausalMask().Relax(0, 3, 5, 2, 5).AsArray(b, K, k.DType())
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "array", ref)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "array", ref)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -628,7 +730,7 @@ func TestSDPAMLAHistorySlicesVFromK(t *testing.T) {
 			WithMLAHistory(history, valueDim),
 		)
 		vRef := k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, valueDim))
-		want := mlx.FastScaledDotProductAttention(q, k, vRef, 1.0, "", nil)
+		want := mlx.FastScaledDotProductAttention(q, k, vRef, 1.0, mlx.FastSDPANoWindow, "", nil)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -666,7 +768,7 @@ func fillTensor(seed float32, B, H, T, D int) *mlx.Array {
 // SeqOffsets and SeqQueryLens through ScaledDotProductAttention via
 // the no-cache (WithKV) path, then compares each row's real
 // positions against a B=1 reference at that row's offset and length.
-// Padded-tail outputs are unconstrained and not checked. Pins the
+// Padded-tail outputs must be zero for use by subsequent layers. Pins the
 // central multi-sequence contract: right-padded rows must produce
 // per-row outputs that don't depend on the padded tails.
 func TestSDPAMultiSequenceParity(t *testing.T) {
@@ -711,8 +813,12 @@ func TestSDPAMultiSequenceParity(t *testing.T) {
 
 		// got is [2, H, L, D] = [B=2, 1, 4, 4]. Row 0 is got[0,...] and
 		// must match ref0 over the full [L, D]. Row 1 is got[1,...] and
-		// must match ref1 over [qShort, D] only — padded positions are
-		// unconstrained.
+		// must match ref1 over [qShort, D], with zero padded positions.
+		for i, v := range gotF[H*L*D+qShort*D:] {
+			if v != 0 {
+				t.Fatalf("padded output %d = %g, want zero", i, v)
+			}
+		}
 		rowStride := H * L * D
 		for i := range rowStride {
 			if !approxEqual(gotF[i], ref0F[i], 1e-5) {
@@ -759,6 +865,230 @@ func TestSDPALearnedSinks(t *testing.T) {
 		for i, value := range withoutSinks.Floats() {
 			if !approxEqual(value, 4.5, attentionTolerance) {
 				t.Fatalf("ordinary output[%d] = %v, want 4.5", i, value)
+			}
+		}
+	})
+}
+
+// recordingApplier is a MaskApplier test double offering a native window of
+// size w. Its ApplyMask records the call and materializes a zero tensor, so a
+// dispatch that consults the applier is observable as mode "array"; collapse
+// mimics the rotating cache's L=1 reduction to the no-mask fast path.
+type recordingApplier struct {
+	w        int
+	l        int
+	K        int
+	calls    *int
+	collapse bool
+}
+
+func (r recordingApplier) NativeWindow() int {
+	if r.l > 1 {
+		return r.w
+	}
+	return 0
+}
+
+func (r recordingApplier) ApplyMask(logical AttentionMask) AttentionMask {
+	*r.calls++
+	if r.collapse && (logical.IsZero() || logical.IsCausal()) {
+		return AttentionMask{}
+	}
+	return ArrayMask(mlx.Zeros(mlx.DTypeFloat32, 1, 1, r.l, r.K))
+}
+
+// TestSDPANativeWindowDispatch pins the resolve() contract: a cache-offered
+// native window dispatches {causal, window, no tensor} only when the composed
+// mask is pure causal at L>1 — relaxations, Q/K padding, array masks, a zero
+// logical mask, decode L=1, and appliers without a hint all keep the
+// materialized path.
+//
+// The case table materializes an array mask before the subtests run, and CI
+// boxes have no MLX dylib, so SkipIfUnavailable short-circuits before any cgo
+// call.
+func TestSDPANativeWindowDispatch(t *testing.T) {
+	mlxtest.SkipIfUnavailable(t)
+
+	const L, K, W = 4, 6, 3
+
+	cases := []struct {
+		name     string
+		L        int
+		qLens    []int32
+		mask     AttentionMask
+		w        int
+		collapse bool
+
+		wantMode    string
+		wantWindow  int
+		wantArr     bool
+		wantApplied bool
+	}{
+		{
+			name: "native", L: L, mask: CausalMask(), w: W,
+			wantMode: "causal", wantWindow: W,
+		},
+		{
+			name: "native-device-causal", L: L, mask: DeviceCausalMask(), w: W,
+			wantMode: "causal", wantWindow: W,
+		},
+		{
+			name: "window-wide-as-K", L: L, mask: CausalMask(), w: K,
+			wantMode: "causal", wantWindow: K,
+		},
+		{
+			name: "relax-keeps-array", L: L, mask: CausalMask().Relax(0, 1, 3, 2, 5), w: W,
+			wantMode: "array", wantArr: true, wantApplied: true,
+		},
+		{
+			name: "zero-mask-keeps-array", L: L, mask: AttentionMask{}, w: W,
+			wantMode: "array", wantArr: true, wantApplied: true,
+		},
+		{
+			name: "array-model-mask-keeps-array", L: L, mask: ArrayMask(mlx.Zeros(mlx.DTypeFloat32, 1, 1, L, K)), w: W,
+			wantMode: "array", wantArr: true, wantApplied: true,
+		},
+		{
+			name: "qpadding-keeps-array", L: L, qLens: []int32{L - 1}, mask: CausalMask(), w: W,
+			wantMode: "array", wantArr: true, wantApplied: true,
+		},
+		{
+			name: "decode-L1-no-window", L: 1, mask: CausalMask(), w: W, collapse: true,
+			wantMode: "", wantApplied: true,
+		},
+		{
+			name: "no-hint-applier", L: L, mask: CausalMask(), w: 0,
+			wantMode: "array", wantArr: true, wantApplied: true,
+		},
+	}
+
+	for _, tc := range cases {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
+			q, k, v := sdpaInputs(tc.L, K)
+			b := newBatch([]int32{int32(K - tc.L)}, tc.L, tc.qLens)
+			calls := 0
+			applier := recordingApplier{w: tc.w, l: tc.L, K: K, calls: &calls, collapse: tc.collapse}
+			history := NewKVHistory(k, v, applier)
+
+			ScaledDotProductAttention(b, q, 1.0, WithKVHistory(history), WithMask(tc.mask))
+
+			key := dispatchInputs{batch: b, mask: tc.mask, applier: applier, K: K, dtype: k.DType()}
+			got, ok := b.Memo.Get(key)
+			if !ok {
+				t.Fatal("no memoized dispatch recorded")
+			}
+			d := got.(sdpaDispatch)
+			if d.mode != tc.wantMode || d.window != tc.wantWindow || (d.arr != nil) != tc.wantArr {
+				t.Fatalf("dispatch = {mode:%q window:%d arr:%v}, want {mode:%q window:%d arr-set:%v}",
+					d.mode, d.window, d.arr != nil, tc.wantMode, tc.wantWindow, tc.wantArr)
+			}
+			if (calls > 0) != tc.wantApplied {
+				t.Fatalf("ApplyMask calls = %d, want called=%v", calls, tc.wantApplied)
+			}
+		})
+	}
+}
+
+// windowRefMask builds the additive causal ∩ sliding reference mask for a
+// call whose query rows anchor at the end of the K tensor: row r sits at
+// tensor column (K-L)+r, attending to columns [(K-L)+r-W+1, (K-L)+r].
+func windowRefMask(L, K, W int) *mlx.Array {
+	negInf := float32(math.Inf(-1))
+	vals := make([]float32, L*K)
+	for r := range L {
+		qPos := K - L + r
+		for k := range K {
+			if k > qPos || k < qPos-W+1 {
+				vals[r*K+k] = negInf
+			}
+		}
+	}
+	return mlx.FromValues(vals, 1, 1, L, K)
+}
+
+// TestSDPANativeWindowKernelParity pins the MLX kernel equivalence the native
+// dispatch relies on: window_size with mode "causal" must match a
+// materialized causal ∩ sliding array mask, across first-prefill (K=L) and
+// continuation (K>L) geometries and across head dims.
+func TestSDPANativeWindowKernelParity(t *testing.T) {
+	cases := []struct {
+		name       string
+		L, K, W, D int
+	}{
+		{name: "first-prefill", L: 4, K: 4, W: 2, D: 4},
+		{name: "continuation", L: 4, K: 7, W: 3, D: 4},
+		{name: "window-equals-K", L: 4, K: 6, W: 6, D: 4},
+		{name: "longer-prefill", L: 16, K: 16, W: 8, D: 4},
+		{name: "real-head-dim", L: 8, K: 24, W: 16, D: 64},
+	}
+	for _, tc := range cases {
+		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
+			q := fillTensor(0.5, 1, 1, tc.L, tc.D)
+			k := fillTensor(-0.3, 1, 1, tc.K, tc.D)
+			v := fillTensor(0.7, 1, 1, tc.K, tc.D)
+
+			got := mlx.FastScaledDotProductAttention(q, k, v, 1.0, tc.W, "causal", nil)
+			want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "array", windowRefMask(tc.L, tc.K, tc.W))
+			mlx.Eval(got, want)
+			gs, ws := got.Floats(), want.Floats()
+			for i := range ws {
+				if !approxEqual(gs[i], ws[i], 1e-4) {
+					t.Fatalf("index %d: got %v, want %v", i, gs[i], ws[i])
+				}
+			}
+		})
+	}
+}
+
+// TestSDPANativeWindowSinksKernelParity is the flint gate: sinks (per-head
+// softmax denominator logits) and window_size must compose in the same
+// kernel, at a GQA shape like flint's sliding layers. If this fails, flint's
+// sliding layers must stay on the materialized-mask path.
+func TestSDPANativeWindowSinksKernelParity(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const L, K, W, D = 8, 16, 5, 64
+		q := fillTensor(0.5, 1, 2, L, D)
+		k := fillTensor(-0.3, 1, 1, K, D)
+		v := fillTensor(0.7, 1, 1, K, D)
+		sinks := mlx.FromValues([]float32{0.3, -0.7}, 2)
+
+		got := mlx.FastScaledDotProductAttentionWithSinks(q, k, v, 1.0, W, "causal", nil, sinks)
+		want := mlx.FastScaledDotProductAttentionWithSinks(q, k, v, 1.0, mlx.FastSDPANoWindow, "array", windowRefMask(L, K, W), sinks)
+		mlx.Eval(got, want)
+		gs, ws := got.Floats(), want.Floats()
+		for i := range ws {
+			if !approxEqual(gs[i], ws[i], 1e-3) {
+				t.Fatalf("index %d: got %v, want %v", i, gs[i], ws[i])
+			}
+		}
+	})
+}
+
+// Learned sink logits belong to every query head, including when each request
+// supplies its own history. Flint relies on them in every attention layer.
+func TestSDPARowHistoryPreservesSinks(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const heads, dim = 2, 64
+		q := mlx.Zeros(mlx.DTypeFloat32, 2, heads, 1, dim)
+		sinks := mlx.FromValues([]float32{1, 2}, heads)
+		var histories []*KVHistory
+		var want []*mlx.Array
+		for i, n := range []int{2, 5} {
+			k := mlx.Zeros(mlx.DTypeFloat32, 1, 1, n, dim)
+			v := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, 1, n, dim), float32(i+1))
+			histories = append(histories, NewKVHistory(k, v, nil))
+			b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 1), SeqOffsets: []int32{int32(n - 1)}, SeqQueryLens: []int32{1}}
+			want = append(want, ScaledDotProductAttention(b, q.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()), 1, WithKVHistory(histories[i]), WithSinks(sinks)))
+		}
+		b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 2, 1), SeqOffsets: []int32{1, 4}, SeqQueryLens: []int32{1, 1}}
+		got := ScaledDotProductAttention(b, q, 1, WithKVHistory(NewRowKVHistory(histories)), WithSinks(sinks))
+		values, expected := got.Floats(), mlx.Concatenate(want, 0).Floats()
+		if len(values) == 0 || len(values) != len(expected) {
+			t.Fatalf("sink value count = %d, want %d", len(values), len(expected))
+		}
+		for i, v := range values {
+			if delta := math.Abs(float64(v - expected[i])); math.IsNaN(delta) || delta > 1e-6 {
+				t.Fatalf("value %d = %g, want %g (sink logits lost)", i, v, expected[i])
 			}
 		}
 	})

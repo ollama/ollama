@@ -429,6 +429,7 @@ type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolic
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Qwen3_5Model":                          newPplxImportTransform,
 	"KevForDecision":                        newQwen35DecisionImportTransform,
+	"AutoTrustDecision":                     newQwen35DecisionImportTransform,
 	"StrandsDeciderForDecision":             newQwen35DecisionImportTransform,
 	"ClefForDecision":                       newQwen35DecisionImportTransform,
 	"Qwen3_5ForCausalLM":                    newQwen35ImportTransform,
@@ -457,6 +458,10 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"NemotronH_Omni_Reasoning_V3":           newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
 	"EmbeddingGemma2Model":                  newGemma4EmbeddingImportTransform,
+	"Lfm3VlForConditionalGeneration":        newLFM3ImportTransform,
+	"Lfm3OmniForConditionalGeneration":      newLFM3OmniImportTransform,
+	"Lfm3AudioForConditionalGeneration":     newLFM3AudioImportTransform,
+	"D1Model":                               newLFM3ImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {

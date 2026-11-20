@@ -18,6 +18,9 @@ type Gemma4Renderer struct {
 	// Render assistant content before its tool calls instead of after the
 	// tool responses.
 	contentBeforeToolCalls bool
+	// Ask for speech translation in the model card's transcribe-then-translate
+	// format, which the large models follow and the small ones don't.
+	transcribeThenTranslate bool
 }
 
 const (
@@ -539,18 +542,18 @@ func schemaValueFromToolProperty(prop api.ToolProperty) map[string]any {
 	if len(prop.Required) > 0 {
 		out["required"] = prop.Required
 	}
+	if nullable, ok := prop.Extra["nullable"]; ok {
+		out["nullable"] = nullable
+	}
 	return out
 }
 
 func topLevelTypedSchemaValueFromToolProperty(prop api.ToolProperty) map[string]any {
 	out := make(map[string]any)
 	if len(prop.Type) > 0 {
-		// api.ToolProperty intentionally models nullability through type unions
-		// that include "null" rather than OpenAPI 3.0's nullable:true keyword.
-		// Gemma's template accepts nullable:true as well, but our typed top-level
-		// tool properties do not carry that field. For multi-type unions, the
-		// template stringifies the uppercase list rather than emitting a structured
-		// type array. That is odd, but we match upstream here.
+		// For multi-type unions, the template stringifies the uppercase list
+		// rather than emitting a structured type array. That is odd, but we
+		// match upstream here.
 		out["type"] = upstreamTypedPropertyTypeValue(prop.Type)
 	} else if unionTypes, ok := simpleAnyOfTypes(prop); ok {
 		// Gemma's declaration format does not have a dedicated anyOf construct, so
@@ -572,6 +575,9 @@ func topLevelTypedSchemaValueFromToolProperty(prop api.ToolProperty) map[string]
 	}
 	if len(prop.Required) > 0 {
 		out["required"] = prop.Required
+	}
+	if nullable, ok := prop.Extra["nullable"]; ok {
+		out["nullable"] = nullable
 	}
 	return out
 }

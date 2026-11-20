@@ -41,6 +41,7 @@ func TestAPI(t *testing.T) {
 		"chat-logprobs",
 		"system-one",
 		"system-one-vision",
+		"system-one-audio",
 	)
 }
 
@@ -114,6 +115,9 @@ func TestContext(t *testing.T) {
 func TestConcurrency(t *testing.T) {
 	runIntegrationGroup(t,
 		"concurrent-chat",
+		"concurrent-embed",
+		"concurrent-speech",
+		"mlx-batching",
 		"scheduler-multimodel",
 		"scheduler-max-queue",
 	)

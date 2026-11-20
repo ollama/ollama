@@ -22,8 +22,11 @@ type ConfigV2 struct {
 	Capabilities []string `json:"capabilities,omitempty"`
 	ContextLen   int      `json:"context_length,omitempty"`
 	EmbedLen     int      `json:"embedding_length,omitempty"`
-	BaseName     string   `json:"base_name,omitempty"`
-	Draft        *Draft   `json:"draft,omitempty"`
+	// Voices names the speech voices a model takes that are not stored as
+	// voice tensors.
+	Voices   []string `json:"voices,omitempty"`
+	BaseName string   `json:"base_name,omitempty"`
+	Draft    *Draft   `json:"draft,omitempty"`
 }
 
 // AddCapabilities preserves inherited and inferred capabilities.

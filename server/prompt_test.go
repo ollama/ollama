@@ -468,6 +468,12 @@ func TestChatPromptRendererAddsToolImageTags(t *testing.T) {
 			wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
 			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
 		},
+		{
+			name:            "lfm3",
+			renderer:        "lfm3",
+			wantUserTag:     "<|im_start|>user\n[img-0]look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1]\nattached image\n</tool_response>",
+		},
 	}
 
 	for _, tt := range tests {
@@ -538,6 +544,11 @@ func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
 			renderer:    "nemotron-3-nano",
 			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
 		},
+		{
+			name:        "lfm3",
+			renderer:    "lfm3",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -562,6 +573,30 @@ func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
 				t.Fatalf("prompt missing replaced placeholders, got: %q", prompt)
 			}
 		})
+	}
+}
+
+func TestChatPromptLFM3PreservesIndexedImagePlaceholders(t *testing.T) {
+	msgs := []api.Message{{
+		Role:    "user",
+		Content: "compare [img-0] and [img-1]",
+		Images:  []api.ImageData{[]byte("img-1"), []byte("img-2")},
+	}}
+	m := Model{
+		Config:         model.ConfigV2{Renderer: "lfm3"},
+		ProjectorPaths: []string{"vision"},
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: false}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 2 {
+		t.Fatalf("len(images) = %d, want 2", len(images))
+	}
+	want := "<|startoftext|><|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n<|im_start|>assistant\n<think></think>"
+	if prompt != want {
+		t.Fatalf("prompt = %q, want %q", prompt, want)
 	}
 }
 

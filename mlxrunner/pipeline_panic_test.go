@@ -27,11 +27,11 @@ func (*panicDecoder) close() {}
 func TestDecodePreservesPanic(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		d := &panicDecoder{}
-		request := Request{CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 1}}}
+		request := request{CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 1}}}
 		var failure any
 		func() {
 			defer func() { failure = recover() }()
-			_ = (&Runner{}).decode(context.Background(), request, &cacheSession{inputs: []int32{1}}, d, 0)
+			_ = driveTestDecoder(context.Background(), &Runner{}, request, &cacheSession{inputs: []int32{1}}, d, 0)
 		}()
 		if failure != "decode failed" {
 			t.Fatalf("panic = %v, want original decode failure", failure)
@@ -44,7 +44,7 @@ func TestDecodePreservesPanic(t *testing.T) {
 
 type panicForwardModel struct{ textOnlyModel }
 
-func (panicForwardModel) Forward(_ *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (panicForwardModel) Forward(_ *batch.Batch, caches []cache.Layer) (*mlx.Array, *mlx.Array) {
 	caches[0].(*fakeRewindableCache).feed([]int32{1, 2, 3})
 	panic("forward failed")
 }
@@ -59,7 +59,9 @@ func TestGeneratePreservesPanicWithoutSavingCache(t *testing.T) {
 		func() {
 			defer func() { failure = recover() }()
 			mlx.Scoped(func() {
-				_ = r.generate(context.Background(), Request{Tokens: []int32{1, 2}})
+				s := &batchScheduler{r: r, slots: []*batchSlot{{cache: pc, targets: pc.caches}}}
+				s.admit(request{Ctx: context.Background(), Tokens: []int32{1, 2}})
+				s.step()
 			})
 		}()
 		if failure != "forward failed" {
@@ -82,16 +84,27 @@ func TestGenerateStillSavesCacheOnSuccess(t *testing.T) {
 			Sampler:   sampler.New(4096),
 			cache:     pc,
 		}
-		request := Request{
+		request := request{
+			Ctx:               context.Background(),
 			Tokens:            []int32{1, 2},
 			Responses:         make(chan CompletionResponse, 4),
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 1}},
 		}
-		mlx.Scoped(func() {
-			if err := r.generate(context.Background(), request); err != nil {
-				t.Fatalf("generate: %v", err)
+		s := &batchScheduler{r: r, slots: []*batchSlot{{cache: pc, targets: pc.caches}}}
+		mlx.Scoped(func() { s.admit(request) })
+		for range 10 {
+			mlx.Scoped(func() { s.step() })
+			if s.slots[0].request == nil {
+				break
 			}
-		})
+		}
+		if s.slots[0].request != nil {
+			t.Fatal("request did not finish")
+		}
+		_, final := collectResponses(request.Responses)
+		if !final.Done || final.EvalCount != 1 {
+			t.Fatalf("final response = %+v", final)
+		}
 		if len(pc.root.children) != 1 {
 			t.Fatalf("saved cache paths = %d, want 1", len(pc.root.children))
 		}

@@ -248,6 +248,7 @@ int (*mlx_detail_compile_erase_)(const mlx_compile_cache cache, uintptr_t fun_id
 int (*mlx_disable_compile_)(void) = NULL;
 int (*mlx_enable_compile_)(void) = NULL;
 int (*mlx_set_compile_mode_)(mlx_compile_mode mode) = NULL;
+int (*mlx_cuda_get_arch_list_)(mlx_vector_string* res) = NULL;
 int (*mlx_cuda_is_available_)(bool* res) = NULL;
 mlx_device (*mlx_device_new_)(void) = NULL;
 mlx_device (*mlx_device_new_type_)(mlx_device_type type, int index) = NULL;
@@ -332,8 +333,16 @@ int (*mlx_distributed_init_)(
     mlx_distributed_group* res,
     bool strict,
     const char* bk /* may be null */) = NULL;
-int (*mlx_distributed_group_rank_)(mlx_distributed_group group) = NULL;
-int (*mlx_distributed_group_size_)(mlx_distributed_group group) = NULL;
+int (*mlx_distributed_init_with_all_gather_)(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk,
+    mlx_distributed_all_gather_fn all_gather,
+    void* payload,
+    void (*dtor)(void*)) = NULL;
+int (*mlx_distributed_clear_backends_)(void) = NULL;
+int (*mlx_distributed_group_get_rank_)(int* res, mlx_distributed_group group) = NULL;
+int (*mlx_distributed_group_get_size_)(int* res, mlx_distributed_group group) = NULL;
 int (*mlx_distributed_group_split_)(
     mlx_distributed_group* res,
     mlx_distributed_group group,
@@ -533,6 +542,7 @@ int (*mlx_fast_scaled_dot_product_attention_)(
     const mlx_array keys,
     const mlx_array values,
     float scale,
+    int window_size,
     const char* mask_mode,
     const mlx_array mask_arr /* may be null */,
     const mlx_array sinks /* may be null */,
@@ -882,6 +892,7 @@ int (*mlx_map_string_to_string_iterator_next_)(
     mlx_map_string_to_string_iterator it) = NULL;
 int (*mlx_clear_cache_)(void) = NULL;
 int (*mlx_get_active_memory_)(size_t* res) = NULL;
+int (*mlx_get_array_buffer_size_)(size_t* res, const mlx_vector_array arrays) = NULL;
 int (*mlx_get_cache_memory_)(size_t* res) = NULL;
 int (*mlx_get_memory_limit_)(size_t* res) = NULL;
 int (*mlx_get_peak_memory_)(size_t* res) = NULL;
@@ -1570,6 +1581,7 @@ int (*mlx_matmul_)(
     const mlx_array a,
     const mlx_array b,
     const mlx_stream s) = NULL;
+int (*mlx_matrix_transpose_)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_max_axes_)(
     mlx_array* res,
     const mlx_array a,
@@ -2227,6 +2239,15 @@ int (*mlx_unflatten_)(
     const int* shape,
     size_t shape_num,
     const mlx_stream s) = NULL;
+int (*mlx_unique_)(
+    mlx_vector_array* res,
+    const mlx_array a,
+    int size,
+    bool return_index,
+    bool return_inverse,
+    bool return_counts,
+    const mlx_array fill_value /* may be null */,
+    const mlx_stream s) = NULL;
 int (*mlx_unstack_axis_)(
     mlx_vector_array* res,
     const mlx_array a,
@@ -2702,6 +2723,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_disable_compile);
     CHECK_LOAD(handle, mlx_enable_compile);
     CHECK_LOAD(handle, mlx_set_compile_mode);
+    CHECK_LOAD(handle, mlx_cuda_get_arch_list);
     CHECK_LOAD(handle, mlx_cuda_is_available);
     CHECK_LOAD(handle, mlx_device_new);
     CHECK_LOAD(handle, mlx_device_new_type);
@@ -2734,8 +2756,10 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_distributed_group_new);
     CHECK_LOAD(handle, mlx_distributed_group_free);
     CHECK_LOAD(handle, mlx_distributed_init);
-    CHECK_LOAD(handle, mlx_distributed_group_rank);
-    CHECK_LOAD(handle, mlx_distributed_group_size);
+    CHECK_LOAD(handle, mlx_distributed_init_with_all_gather);
+    CHECK_LOAD(handle, mlx_distributed_clear_backends);
+    CHECK_LOAD(handle, mlx_distributed_group_get_rank);
+    CHECK_LOAD(handle, mlx_distributed_group_get_size);
     CHECK_LOAD(handle, mlx_distributed_group_split);
     CHECK_LOAD(handle, mlx_distributed_is_available);
     CHECK_LOAD(handle, mlx_set_error_handler);
@@ -2876,6 +2900,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_map_string_to_string_iterator_next);
     CHECK_LOAD(handle, mlx_clear_cache);
     CHECK_LOAD(handle, mlx_get_active_memory);
+    CHECK_LOAD(handle, mlx_get_array_buffer_size);
     CHECK_LOAD(handle, mlx_get_cache_memory);
     CHECK_LOAD(handle, mlx_get_memory_limit);
     CHECK_LOAD(handle, mlx_get_peak_memory);
@@ -3023,6 +3048,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_logsumexp);
     CHECK_LOAD(handle, mlx_masked_scatter);
     CHECK_LOAD(handle, mlx_matmul);
+    CHECK_LOAD(handle, mlx_matrix_transpose);
     CHECK_LOAD(handle, mlx_max_axes);
     CHECK_LOAD(handle, mlx_max_axis);
     CHECK_LOAD(handle, mlx_max);
@@ -3142,6 +3168,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_triu);
     CHECK_LOAD(handle, mlx_trunc);
     CHECK_LOAD(handle, mlx_unflatten);
+    CHECK_LOAD(handle, mlx_unique);
     CHECK_LOAD(handle, mlx_unstack_axis);
     CHECK_LOAD(handle, mlx_unstack);
     CHECK_LOAD(handle, mlx_var_axes);

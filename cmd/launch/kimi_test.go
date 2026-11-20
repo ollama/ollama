@@ -313,7 +313,7 @@ func TestKimiRun_RejectsConflictingArgsBeforeInstall(t *testing.T) {
 	}
 }
 
-func TestKimiRun_PassesInlineConfigAndExtraArgs(t *testing.T) {
+func TestKimiRun_LegacyCLIPassesInlineConfigAndExtraArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell fake binary")
 	}
@@ -322,6 +322,10 @@ func TestKimiRun_PassesInlineConfigAndExtraArgs(t *testing.T) {
 	setTestHome(t, tmpDir)
 	logPath := filepath.Join(tmpDir, "kimi-args.log")
 	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "kimi, version 1.50.0"
+  exit 0
+fi
 for arg in "$@"; do
   printf "%%s\n" "$arg" >> %q
 done
@@ -330,11 +334,23 @@ exit 0
 	if err := os.WriteFile(filepath.Join(tmpDir, "kimi"), []byte(script), 0o755); err != nil {
 		t.Fatalf("failed to write fake kimi: %v", err)
 	}
+	writeFakeBinary(t, tmpDir, "curl")
+	writeFakeBinary(t, tmpDir, "bash")
 	t.Setenv("PATH", tmpDir)
 
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	t.Cleanup(func() { isInteractiveSession = oldInteractive })
+
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return false, nil
+	}
+	t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
 
 	k := &Kimi{}
 	if err := k.Run("llama3.2", nil, []string{"--quiet", "--print"}); err != nil {
@@ -481,7 +497,7 @@ exit 0
 		if err != nil {
 			t.Fatalf("failed to read install log: %v", err)
 		}
-		if !strings.Contains(string(logData), "https://code.kimi.com/install.sh") {
+		if !strings.Contains(string(logData), "https://code.kimi.com/kimi-code/install.sh") {
 			t.Fatalf("expected install.sh command in log, got:\n%s", string(logData))
 		}
 	})
@@ -632,5 +648,36 @@ func TestKimiInstallerCommand(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestKimiIntegrationInstallSpec(t *testing.T) {
+	spec, err := LookupIntegrationSpec("kimi")
+	if err != nil {
+		t.Fatalf("LookupIntegrationSpec() error = %v", err)
+	}
+	if !strings.Contains(spec.Install.URL, "kimi-code") {
+		t.Fatalf("install URL = %q, want kimi-code docs", spec.Install.URL)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX executable names")
+	}
+	oldGOOS := kimiGOOS
+	kimiGOOS = runtime.GOOS
+	t.Cleanup(func() { kimiGOOS = oldGOOS })
+
+	homeDir := t.TempDir()
+	setTestHome(t, homeDir)
+	t.Setenv("PATH", "")
+	binPath := filepath.Join(homeDir, ".kimi-code", "bin", "kimi")
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !spec.Install.CheckInstalled() {
+		t.Fatal("CheckInstalled() = false, want true for a ~/.kimi-code/bin install")
 	}
 }

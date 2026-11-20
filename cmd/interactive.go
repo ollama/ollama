@@ -149,6 +149,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			scanner.Prompt.Placeholder = "Enter text to evaluate, then ask yes/no questions (/? for help)"
 		}
 		line, err := scanner.Readline()
+		if err != nil {
+			// Ctrl+C, Ctrl+G and other readline exits abandon any partial
+			// input, including an open """ block.
+			sb.Reset()
+			multiline = MultilineNone
+		}
 		switch {
 		case errors.Is(err, io.EOF):
 			fmt.Println()
@@ -159,11 +165,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 
 			scanner.Prompt.UseAlt = false
-			sb.Reset()
 
 			continue
 		case errors.Is(err, readline.ErrEditPrompt):
-			sb.Reset()
 			content, err := editInExternalEditor(line)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)

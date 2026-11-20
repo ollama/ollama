@@ -166,6 +166,25 @@ func TestAnswers(t *testing.T) {
 	}
 }
 
+func TestConcentration(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		p    []float64
+		want float64
+	}{
+		{"uniform", []float64{0.25, 0.25, 0.25, 0.25}, 0},
+		{"one candidate holds all the mass", []float64{0, 1, 0}, 1},
+		{"single candidate", []float64{1}, 1},
+		{"two candidates", []float64{0.75, 0.25}, 1 - (0.75*math.Log(4.0/3)+0.25*math.Log(4))/math.Log(2)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Concentration(tc.p); math.Abs(got-tc.want) > 1e-12 {
+				t.Errorf("Concentration(%v) = %v, want %v", tc.p, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAnswerLogprobs(t *testing.T) {
 	c, err := Compile(testRequest(t), "")
 	if err != nil {
@@ -250,13 +269,13 @@ func TestContent(t *testing.T) {
 		{` {"z": 9007199254740993, "a": 1e999} `, `{"z": 9007199254740993, "a": Infinity}`},
 		{` [1.0, 1e6, -0, "€"] `, `[1.0, 1000000.0, 0, "€"]`},
 	} {
-		got, err := content(json.RawMessage(tt.input))
+		got, err := Content(json.RawMessage(tt.input))
 		if err != nil || got != tt.want {
-			t.Errorf("content(%s) = %q, %v; want %q", tt.input, got, err, tt.want)
+			t.Errorf("Content(%s) = %q, %v; want %q", tt.input, got, err, tt.want)
 		}
 	}
 	for _, input := range []string{"", "null", "true", "42", `"unterminated`, `{"x":}`, `[1,]`} {
-		if _, err := content(json.RawMessage(input)); err == nil {
+		if _, err := Content(json.RawMessage(input)); err == nil {
 			t.Errorf("accepted invalid content %q", input)
 		}
 	}

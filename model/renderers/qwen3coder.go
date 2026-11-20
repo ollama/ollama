@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -28,13 +29,23 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 		return ""
 	}
 
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return ""
 	}
 
 	var sb strings.Builder
-	for key, value := range m {
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		key, _ := tok.(string)
+		var value any
+		if err := dec.Decode(&value); err != nil {
+			return ""
+		}
 		if handledKeys[key] {
 			continue
 		}
@@ -42,15 +53,24 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 		// Check if value is a map or array (needs JSON serialization)
 		switch v := value.(type) {
 		case map[string]any, []any:
-			jsonBytes, _ := json.Marshal(v)
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			_ = enc.Encode(v)
 			// TODO(drifkin): it would be nice to format the JSON here similarly to
 			// python's default json.dumps behavior (spaces after commas and colons).
 			// This would let us be byte-for-byte compatible with the reference
 			// implementation for most common inputs
-			jsonStr := string(jsonBytes)
+			jsonStr := strings.TrimSuffix(buf.String(), "\n")
 			sb.WriteString("\n<" + key + ">" + jsonStr + "</" + key + ">")
 		case nil:
-			continue
+			sb.WriteString("\n<" + key + ">None</" + key + ">")
+		case bool:
+			if v {
+				sb.WriteString("\n<" + key + ">True</" + key + ">")
+			} else {
+				sb.WriteString("\n<" + key + ">False</" + key + ">")
+			}
 		default:
 			// Simple types, convert to string
 			sb.WriteString("\n<" + key + ">" + fmt.Sprintf("%v", value) + "</" + key + ">")

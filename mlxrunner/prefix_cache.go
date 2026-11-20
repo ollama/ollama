@@ -48,6 +48,7 @@ type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
 	activePath    []*trieNode // current root→leaf path with live MLX arrays
 	caches        []cache.Cache
+	limitBytes    int64 // zero uses the default snapshot budget
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 
 	// draftLookahead is how far the draft caches' entries reference past
@@ -95,17 +96,18 @@ func (c *prefixCache) ensureRoot() {
 }
 
 // begin prepares caches for a new request. It finds the nearest
-// matching cache or creates new caches if none match.
-func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
-	return c.beginAt(inputs, items, max(0, len(inputs)-1))
+// matching cache or creates new caches if none match. Peers belong to the same
+// runner and request kind, with identical cache layouts and draft lookahead.
+func (c *prefixCache) begin(inputs []int32, items []mediaItem, peers ...*prefixCache) *cacheSession {
+	return c.beginAt(inputs, items, max(0, len(inputs)-1), peers...)
 }
 
 // Scoring retains backbone outputs, so an exact hit needs no decode seed.
-func (c *prefixCache) beginScore(inputs []int32, items []mediaItem) *cacheSession {
-	return c.beginAt(inputs, items, len(inputs))
+func (c *prefixCache) beginScore(inputs []int32, items []mediaItem, peers ...*prefixCache) *cacheSession {
+	return c.beginAt(inputs, items, len(inputs), peers...)
 }
 
-func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int) *cacheSession {
+func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, peers ...*prefixCache) *cacheSession {
 	c.ensureRoot()
 
 	effInputs := effectiveKeyTokens(inputs, items)
@@ -127,6 +129,30 @@ func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int) *
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
+	var source *prefixCache
+	var shared []*trieNode
+	for _, peer := range peers {
+		path, end := peer.sharedPrefix(keys, min(maxReuse, len(keys)), items)
+		if end > prefix {
+			source, shared, prefix = peer, path, end
+		}
+	}
+	if source != nil {
+		c.rewind(0)
+		c.restoreSnapshots(shared, prefix, 0)
+		prefix = c.alignCaches()
+		// The destination owns its trie and mutable state. Never install the
+		// source's nodes or snapshots in a second store.
+		c.activePath = []*trieNode{c.root}
+		if prefix > 0 {
+			c.pageOut(c.advancePath(c.root, keys[:prefix], prefix))
+			shared[len(shared)-1].lastUsed = time.Now()
+		}
+		// Cross-cache restores may materialize the source's lazy snapshots.
+		// Trim only after all borrowed snapshots have been consumed.
+		source.enforceEvictionPolicy()
+		originalMatched = max(originalMatched, prefix)
+	}
 	remaining := inputs[prefix:]
 
 	session := &cacheSession{
@@ -234,65 +260,15 @@ func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 		ancestorOffset = c.activePath[commonLen-1].endOffset
 	}
 
-	var pageInCount int
-
 	// Rewind each cache to the target offset or free it. When matched
 	// falls within the ancestor's range (same-path case), we rewind
 	// directly to the match point. Otherwise we rewind to the ancestor
 	// and let page-in bring us forward to matched.
 	rewindTarget := min(ancestorOffset, matched)
-	for _, kv := range c.caches {
-		if kv == nil {
-			continue
-		}
-		if !kv.Restore(nil, rewindTarget) {
-			kv.Free()
-		}
-	}
-
-	// Page in — walk the full new path, restoring from snapshots.
-	// Freed caches naturally pick up the first available snapshot.
-	// Caches already past a node skip it via offset check.
-pageIn:
-	for _, node := range newPath {
-		if !node.hasSnapshots() {
-			continue
-		}
-		nodeTarget := min(node.endOffset, matched)
-		for j, kv := range c.caches {
-			if kv == nil {
-				continue
-			}
-			if j >= len(node.snapshots) || node.snapshots[j] == nil {
-				continue
-			}
-			if kv.Offset() >= nodeTarget {
-				continue
-			}
-			if !kv.Restore(node.snapshots[j], nodeTarget) {
-				// Restore failed — stop page-in and let alignment
-				// bring all caches to a consistent offset.
-				break pageIn
-			}
-		}
-		if node.endOffset > ancestorOffset {
-			pageInCount++
-			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
-		}
-	}
-
-	// Align all caches to the minimum offset.
+	c.rewind(rewindTarget)
+	pageInCount := c.restoreSnapshots(newPath, matched, ancestorOffset)
 	c.activePath = newPath
-	minOff := c.minCacheOffset()
-	for _, kv := range c.caches {
-		if kv != nil && kv.Offset() != minOff {
-			if !kv.Restore(nil, minOff) {
-				slog.Warn("failed to restore cache, freeing all caches", "offset", minOff)
-				c.freeAll()
-				break
-			}
-		}
-	}
+	minOff := c.alignCaches()
 
 	// If the live offset falls inside the last node, split it so the reused
 	// head stays on the active path and only the unused tail can be evicted.
@@ -318,6 +294,78 @@ pageIn:
 	if pageInCount > 0 {
 		slog.Debug("switching cache path", "page_in", pageInCount)
 	}
+}
+
+// sharedPrefix returns complete saved edges that another slot can restore.
+// Live state and partial edges are not borrowed: recurrent and wrapped sliding
+// caches can only resume at a saved boundary. Missing edges break KV continuity.
+func (c *prefixCache) sharedPrefix(keys []trieKey, maxReuse int, items []mediaItem) ([]*trieNode, int) {
+	path, matched := findBestMatch(c.root, keys[:maxReuse])
+	end, count := 0, 1
+	for i := 1; i < len(path); i++ {
+		node := path[i]
+		if node.endOffset > matched || !hasAllSnapshots(node, c.caches) {
+			break
+		}
+		if insideAtomicItem(items, node.endOffset) == nil {
+			end, count = node.endOffset, i+1
+		}
+	}
+	if end == 0 {
+		return nil, 0
+	}
+	return path[:count], end
+}
+
+func (c *prefixCache) rewind(offset int) {
+	for _, kv := range c.caches {
+		if kv != nil && !kv.Restore(nil, offset) {
+			kv.Free()
+		}
+	}
+}
+
+func (c *prefixCache) restoreSnapshots(path []*trieNode, matched, ancestorOffset int) int {
+	count := 0
+	for _, node := range path {
+		if !node.hasSnapshots() {
+			continue
+		}
+		nodeTarget := min(node.endOffset, matched)
+		for j, kv := range c.caches {
+			if kv == nil {
+				continue
+			}
+			if j >= len(node.snapshots) || node.snapshots[j] == nil {
+				continue
+			}
+			if kv.Offset() >= nodeTarget {
+				continue
+			}
+			if !kv.Restore(node.snapshots[j], nodeTarget) {
+				// Restore failed — stop page-in and let alignment
+				// bring all caches to a consistent offset.
+				return count
+			}
+		}
+		if node.endOffset > ancestorOffset {
+			count++
+			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
+		}
+	}
+	return count
+}
+
+func (c *prefixCache) alignCaches() int {
+	offset := c.minCacheOffset()
+	for _, kv := range c.caches {
+		if kv != nil && kv.Offset() != offset && !kv.Restore(nil, offset) {
+			slog.Warn("failed to restore cache, freeing all caches", "offset", offset)
+			c.freeAll()
+			return 0
+		}
+	}
+	return offset
 }
 
 // schedulePrefillSnapshots schedules every cache to capture snapshots as the
@@ -655,13 +703,141 @@ func (s *cacheSession) close() {
 	}
 }
 
+// reclaimColdHistory responds to observed pressure with released owned storage.
+// Removing only a lazy snapshot's possible future copy does not repay pressure.
+func reclaimColdHistory(caches, idle []*prefixCache, bytes int64, preferred map[*trieNode]int) int64 {
+	before := mlx.ActiveMemory()
+	changed := false
+	for int64(before-mlx.ActiveMemory()) < bytes {
+		owner, node, frontier := oldestColdHistory(caches, idle, preferred)
+		// Compression feedback yields checkpoints, but only the physical
+		// headroom target may discard an idle slot's final restore point.
+		// Do not skip that frontier to evict a better incoming match instead.
+		if node == nil || frontier {
+			break
+		}
+		owner.evictNode(node)
+		changed = true
+	}
+	if changed {
+		mlx.ClearCache()
+	}
+	return int64(before - mlx.ActiveMemory())
+}
+
+func pendingHistoryBytes(caches []*prefixCache) int64 {
+	var bytes int64
+	for _, c := range caches {
+		walkNodes(c.root, func(n *trieNode) bool {
+			for _, snap := range n.snapshots {
+				if snap != nil {
+					bytes += int64(cache.PendingCopyBytes(snap))
+				}
+			}
+			return true
+		})
+	}
+	return bytes
+}
+
+// oldestColdHistory selects the oldest eligible checkpoint or inactive leaf.
+// Checkpoint merges must preserve the child's state without allocating. Only
+// after candidates with the same match length are exhausted may an idle slot
+// give up its frontier.
+// Prefer shorter incoming-prefix matches, then older history, without pinning
+// any idle state against pressure.
+func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) (*prefixCache, *trieNode, bool) {
+	var owner *prefixCache
+	var oldest *trieNode
+	for _, c := range caches {
+		walkNodes(c.root, func(n *trieNode) bool {
+			if n.parent == nil || len(n.children) > 1 || len(c.activePath) == 0 || n == c.activePath[len(c.activePath)-1] {
+				return true
+			}
+			if len(n.children) == 1 {
+				child := n.children[0]
+				for i, layer := range c.caches {
+					var parentSnap, childSnap cache.Snapshot
+					if i < len(n.snapshots) {
+						parentSnap = n.snapshots[i]
+					}
+					if i < len(child.snapshots) {
+						childSnap = child.snapshots[i]
+					}
+					if !cache.CanMergeWithoutCopy(layer, parentSnap, childSnap) {
+						return true
+					}
+				}
+			}
+			if oldest == nil || cmp.Or(cmp.Compare(preferred[n], preferred[oldest]), n.lastUsed.Compare(oldest.lastUsed), cmp.Compare(oldest.endOffset, n.endOffset), cmp.Compare(oldest.snapshotBytes(), n.snapshotBytes())) < 0 {
+				owner, oldest = c, n
+			}
+			return true
+		})
+	}
+	// Keep frontiers ahead of ordinary checkpoints at the same match length.
+	// A shorter matching idle history may yield before a better incoming match.
+	idleSelected := false
+	for _, c := range idle {
+		if len(c.activePath) < 2 {
+			continue
+		}
+		n := c.activePath[len(c.activePath)-1]
+		if len(n.children) != 0 {
+			continue
+		}
+		if oldest != nil {
+			if preferred[n] > preferred[oldest] {
+				continue
+			}
+			if preferred[n] == preferred[oldest] && (!idleSelected || !n.lastUsed.Before(oldest.lastUsed)) {
+				continue
+			}
+		}
+		owner, oldest, idleSelected = c, n, true
+	}
+	return owner, oldest, idleSelected
+}
+
+func evictColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) bool {
+	owner, oldest, _ := oldestColdHistory(caches, idle, preferred)
+	if oldest == nil {
+		return false
+	}
+	if len(oldest.children) == 0 {
+		if i := slices.Index(owner.activePath, oldest); i >= 0 {
+			owner.activePath = owner.activePath[:i]
+		}
+	}
+	owner.evictNode(oldest)
+	if len(owner.root.children) == 0 && slices.Contains(idle, owner) {
+		owner.freeAll()
+	}
+	return true
+}
+
+// liveBytes includes unused attention capacity which a write may copy.
+func (c *prefixCache) liveBytes() int {
+	var bytes int
+	mlx.Scoped(func() {
+		for _, kv := range c.caches {
+			bytes += cache.CopyBytes(kv)
+		}
+	})
+	return bytes
+}
+
 // enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
 func (c *prefixCache) enforceEvictionPolicy() {
-	if c.pagedOutBytes <= maxPagedOutBytes {
+	limit := c.limitBytes
+	if limit == 0 {
+		limit = maxPagedOutBytes
+	}
+	if c.pagedOutBytes <= limit {
 		return
 	}
 
-	for c.pagedOutBytes > maxPagedOutBytes {
+	for c.pagedOutBytes > limit {
 		// Evicting the frontier's parent merges the frontier into it, so
 		// resolve the frontier again after every eviction.
 		frontier := c.activePath[len(c.activePath)-1]

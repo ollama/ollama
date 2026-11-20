@@ -115,22 +115,19 @@ func TestCreateRejectsUnknownCapability(t *testing.T) {
 
 func TestDecisionPublicCapabilities(t *testing.T) {
 	for _, format := range []string{"gguf", "safetensors"} {
-		for _, declaredVision := range []bool{false, true} {
-			name := format + "-decision"
-			if declaredVision {
-				name += "-vision"
-			}
+		for _, declared := range [][]string{nil, {"vision"}, {"vision", "audio"}} {
+			name := strings.Join(append([]string{format, "decision"}, declared...), "-")
 			t.Run(name, func(t *testing.T) {
 				t.Setenv("OLLAMA_MODELS", t.TempDir())
-				cfg := model.ConfigV2{ModelFormat: format, Parser: "qwen3.5", Capabilities: []string{"decision"}}
+				cfg := model.ConfigV2{ModelFormat: format, Parser: "qwen3.5", Capabilities: append([]string{"decision"}, declared...)}
 				want := []model.Capability{model.CapabilityDecision}
-				if declaredVision {
-					cfg.Capabilities = append(cfg.Capabilities, "vision")
-				}
 				// The GGUF inherits vision from its base model; the safetensors
 				// fixture ships a projector.
-				if declaredVision || format == "safetensors" {
+				if len(declared) > 0 || format == "safetensors" {
 					want = append(want, model.CapabilityVision)
+				}
+				if slices.Contains(declared, "audio") {
+					want = append(want, model.CapabilityAudio)
 				}
 				_, digest := createBinFile(t, map[string]any{
 					"general.architecture": "qwen35", "qwen35.vision.block_count": uint32(1),

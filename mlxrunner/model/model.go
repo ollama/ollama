@@ -19,16 +19,24 @@ type Model interface {
 	// stacking, quantized layer creation) happens here.
 	LoadWeights(tensors map[string]*mlx.Array) error
 
-	// NewCaches builds the cache slots this model's layers need.
+	// NewCaches builds one request's owned cache slots, usually one per model layer.
 	NewCaches() []cache.Cache
 
 	// Forward returns the hidden state to unembed and the state a draft
 	// model conditions on; plain models return the final hidden for both.
-	Forward(b *batch.Batch, cache []cache.Cache) (hidden, auxHidden *mlx.Array)
+	// Cache slots are borrowed for this call and may span several requests.
+	Forward(b *batch.Batch, cache []cache.Layer) (hidden, auxHidden *mlx.Array)
 	Unembed(x *mlx.Array) *mlx.Array
 
 	Tokenizer() *tokenizer.Tokenizer
 	MaxContextLength() int
+}
+
+// SkippedTensorsModel identifies checkpoint tensors to exclude from MLX loading.
+// Names use the original safetensors namespace, including any quantization
+// companions. The model is responsible for accessing any required skipped tensors.
+type SkippedTensorsModel interface {
+	SkippedTensorNames() []string
 }
 
 // DraftModel is an auxiliary model alongside a target that proposes speculative
@@ -45,7 +53,7 @@ type DraftModel interface {
 	// Forward consumes b.Hidden (the draft-conditioning state) and returns
 	// its hidden plus the aux hidden that seeds the next step. targetCaches
 	// is read-only, for drafts that attend over the target's history.
-	Forward(b *batch.Batch, targetCaches, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array)
+	Forward(b *batch.Batch, targetCaches, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array)
 
 	// Unembed projects a hidden state to vocabulary logits.
 	Unembed(x *mlx.Array) *mlx.Array
@@ -66,6 +74,21 @@ type BlockDraft interface {
 // target weights; it returns the head, or nil when the checkpoint shipped none.
 type SelfDraft interface {
 	SelfDraft() DraftModel
+}
+
+// BlockSelector is a BlockDraft with a learned selector that chooses each
+// proposal conditional on its predecessor. The runner owns sampling policy
+// and RNG; the model owns candidate scores.
+type BlockSelector interface {
+	BlockDraft
+
+	// Select proposes a block from the draft's hidden rows [B,L,H], their
+	// logits [B,L,V] and the anchor token [B] preceding the block. choose
+	// samples one of each row's unique candidate IDs, taking IDs and scores
+	// [N,K] and returning tokens [N] and probabilities [N,K]. Select returns
+	// tokens [B,L] and each position's candidate IDs and probabilities [B,L,K],
+	// which verification uses to correct the proposal.
+	Select(hidden, logits, anchor *mlx.Array, choose func(ids, scores *mlx.Array) (tokens, probs *mlx.Array)) (tokens, ids, probs *mlx.Array)
 }
 
 var (

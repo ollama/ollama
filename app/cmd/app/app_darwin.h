@@ -57,6 +57,7 @@ bool IsClaudeDesktopInstalled(void);
 bool IsClaudeDesktopRunning(void);
 bool IsCodexDesktopInstalled(void);
 bool IsCodexDesktopConnected(void);
+bool IsCodexDesktopDisconnectPending(void);
 bool IsCodexDesktopRunning(void);
 unsigned long long CodexDesktopRequestCount(void);
 bool SetCodexDesktopConnected(bool connected, bool restartConfirmed);

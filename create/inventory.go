@@ -150,6 +150,15 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	if codecDir, err := lfm3CodecDir(dir); err != nil {
+		return nil, err
+	} else if codecDir != "" {
+		file, err := lfm3CodecFile(dir, codecDir, "model.safetensors")
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, file)
+	}
 	if _, err := os.Stat(filepath.Join(dir, "readout.safetensors")); errors.Is(err, os.ErrNotExist) {
 		return files, nil
 	} else if err != nil {
@@ -214,26 +223,34 @@ func SafetensorsConfigFiles(dir string) ([]string, error) {
 			names = append(names, name)
 		}
 	}
+	if codecDir, err := lfm3CodecDir(dir); err != nil {
+		return nil, err
+	} else if codecDir != "" {
+		name, err := lfm3CodecFile(dir, codecDir, "config.json")
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
 	hasSidecar, err := hasPplxSidecar(dir)
 	if err != nil {
 		return nil, err
 	}
-	if !hasSidecar {
+	hasAutoTrustDecisionSidecar := slices.Contains(names, "decision_head.json")
+	if !hasSidecar && !hasAutoTrustDecisionSidecar {
 		return names, nil
 	}
 	cfg, _, err := readSourceModelConfig(dir)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Architecture() != "Qwen3_5Model" {
+	autoTrustDecisionSource := cfg.Architecture() == "AutoTrustDecision"
+	qwenDecisionSource := hasSidecar && cfg.Architecture() == "Qwen3_5Model"
+	if !autoTrustDecisionSource && !qwenDecisionSource {
 		return names, nil
 	}
-	format, err := qwenDecisionFormat(dir)
-	if err != nil {
-		return nil, err
-	}
-	// This checkpoint has extra JSON that does not configure inference. Keep
-	// only the files the importer or runner consumes.
+	// These decision checkpoints may have extra JSON that does not configure
+	// inference. Keep only the files the importer or runner consumes.
 	modelMetadata := map[string]bool{
 		"config.json":                  true,
 		"decision_config.json":         true,
@@ -248,10 +265,24 @@ func SafetensorsConfigFiles(dir string) ([]string, error) {
 		"hf_quant_config.json":         true,
 		"quantization_config.json":     true,
 	}
-	if format == d3FormatID {
+	if autoTrustDecisionSource {
+		modelMetadata["adapter_config.json"] = true
+		modelMetadata["calibration.json"] = true
+		modelMetadata["decision_head.json"] = true
 		modelMetadata["preprocessor_config.json"] = true
 		modelMetadata["video_preprocessor_config.json"] = true
 		modelMetadata["vocab.json"] = true
+	}
+	if qwenDecisionSource {
+		format, err := qwenDecisionFormat(dir)
+		if err != nil {
+			return nil, err
+		}
+		if format == d3FormatID {
+			modelMetadata["preprocessor_config.json"] = true
+			modelMetadata["video_preprocessor_config.json"] = true
+			modelMetadata["vocab.json"] = true
+		}
 	}
 	return slices.DeleteFunc(names, func(name string) bool {
 		return filepath.Ext(name) == ".json" && !modelMetadata[name]

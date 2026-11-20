@@ -1064,7 +1064,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_AutoPullPolicyPullsWithoutPrompt(t *
 	}
 }
 
-func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *testing.T) {
+func TestShowOrPullWithPolicy_CloudModelUnavailable_FailsEarlyForAllPolicies(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatal("confirm prompt should not be called for explicit cloud models")
@@ -1072,41 +1072,51 @@ func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *tes
 	}
 	defer func() { DefaultConfirmPrompt = oldHook }()
 
-	for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelAutoPull, missingModelFail} {
-		t.Run(fmt.Sprintf("policy=%d", policy), func(t *testing.T) {
-			var pullCalled bool
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/show":
-					w.WriteHeader(http.StatusNotFound)
-					fmt.Fprintf(w, `{"error":"model not found"}`)
-				case "/api/status":
-					w.WriteHeader(http.StatusNotFound)
-					fmt.Fprintf(w, `{"error":"not found"}`)
-				case "/api/pull":
-					pullCalled = true
-					w.WriteHeader(http.StatusOK)
-					fmt.Fprintf(w, `{"status":"success"}`)
-				default:
-					w.WriteHeader(http.StatusNotFound)
+	for _, status := range []struct {
+		name string
+		code int
+		body string
+		want string
+	}{
+		{"missing", http.StatusNotFound, `{"error":"model not found"}`, `model "glm-5.1:cloud" not found`},
+		{"retired", http.StatusGone, `{"error":"model was retired; try replacement:cloud"}`, "model was retired; try replacement:cloud"},
+	} {
+		for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelAutoPull, missingModelFail} {
+			t.Run(fmt.Sprintf("%s/policy=%d", status.name, policy), func(t *testing.T) {
+				var pullCalled bool
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/show":
+						w.WriteHeader(status.code)
+						fmt.Fprint(w, status.body)
+					case "/api/status":
+						w.WriteHeader(http.StatusNotFound)
+						fmt.Fprintf(w, `{"error":"not found"}`)
+					case "/api/pull":
+						pullCalled = true
+						w.WriteHeader(http.StatusOK)
+						fmt.Fprintf(w, `{"status":"success"}`)
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				}))
+				defer srv.Close()
+
+				u, _ := url.Parse(srv.URL)
+				client := api.NewClient(u, srv.Client())
+
+				err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true)
+				if err == nil {
+					t.Fatalf("expected cloud model unavailable error for policy %d", policy)
 				}
-			}))
-			defer srv.Close()
-
-			u, _ := url.Parse(srv.URL)
-			client := api.NewClient(u, srv.Client())
-
-			err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true)
-			if err == nil {
-				t.Fatalf("expected cloud model not-found error for policy %d", policy)
-			}
-			if !strings.Contains(err.Error(), `model "glm-5.1:cloud" not found`) {
-				t.Fatalf("expected not-found error for policy %d, got %v", policy, err)
-			}
-			if pullCalled {
-				t.Fatalf("expected pull not to be called for cloud model with policy %d", policy)
-			}
-		})
+				if !strings.Contains(err.Error(), status.want) {
+					t.Fatalf("expected unavailable error containing %q for policy %d, got %v", status.want, policy, err)
+				}
+				if pullCalled {
+					t.Fatalf("expected pull not to be called for cloud model with policy %d", policy)
+				}
+			})
+		}
 	}
 }
 

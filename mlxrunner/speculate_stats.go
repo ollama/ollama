@@ -61,7 +61,7 @@ func (s *speculationSession) logStats() {
 	}
 	slog.Info("speculative decode stats", "iterations", s.stats.iterations, "drafted", s.stats.drafted, "accepted", s.stats.accepted, "acceptance", fmt.Sprintf("%.2f", acceptance), "avg_draft", fmt.Sprintf("%.2f", avgDraft), "max_draft", s.stats.maxDraft, "avg_accepted", fmt.Sprintf("%.2f", avgAccepted), "depth_over_time", s.stats.depthOverTime())
 
-	if !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+	if s.fixedDepth || !slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
 		return
 	}
 
