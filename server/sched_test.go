@@ -851,6 +851,57 @@ func TestSchedUseLoadedRunner(t *testing.T) {
 	require.Equal(t, req, fin)
 }
 
+func TestSchedUseLoadedRunnerDoesNotExtendExpiringRunner(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	finished := make(chan *LlmRequest, 1)
+	req := &LlmRequest{
+		ctx:             ctx,
+		opts:            api.DefaultOptions(),
+		successCh:       make(chan *runnerRef, 1),
+		sessionDuration: &api.Duration{Duration: time.Hour},
+	}
+	runner := &runnerRef{expiring: true, numParallel: 1}
+
+	// The runner is being evicted: the request may still use it, but must not
+	// resurrect its session, otherwise the pending loader waits on an unload
+	// that never comes.
+	req.useLoadedRunner(runner, finished)
+	require.Equal(t, uint(1), runner.refCount)
+	require.Zero(t, runner.sessionDuration)
+	require.Same(t, runner, <-req.successCh)
+
+	done()
+	require.Same(t, req, <-finished)
+}
+
+func TestSchedGetRunnerQueuesExpiringRunner(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+	m := &Model{Name: "expiring-model", ModelPath: "expiring-model"}
+	s.loaded[schedulerModelKey(m)] = &runnerRef{expiring: true}
+
+	// Fast path must refuse an expiring runner so the request queues for a
+	// fresh load instead of resurrecting the runner being evicted.
+	successCh, errCh := s.getRunner(ctx, m, api.DefaultOptions(), nil, false, false, nil)
+	require.Empty(t, successCh)
+	require.Empty(t, errCh)
+	require.Len(t, s.pendingReqCh, 1)
+}
+
+func TestSchedExpireRunnerMarksExpiring(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+	runner := &runnerRef{sessionDuration: 5 * time.Minute}
+	s.loaded["some-model"] = runner
+
+	s.expireRunner(&Model{ModelPath: "some-model"})
+	require.True(t, runner.expiring)
+	require.Zero(t, runner.sessionDuration)
+	require.Len(t, s.expiredCh, 1)
+}
+
 func TestSchedUpdateFreeSpace(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
