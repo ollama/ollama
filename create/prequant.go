@@ -256,6 +256,11 @@ func planPrequantExpertGroup(group string, weights []SourceTensor, fused map[str
 // ok=false when name is not a prequantized weight (a companion or a plain
 // tensor).
 func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
+	if inv.Config.Architecture() == inkling2Architecture {
+		if spec, ok := inkling2ExpertBank(name, inv); ok {
+			return spec, []string{name + "_scale"}, true
+		}
+	}
 	for _, p := range prequantPatterns {
 		base, ok := strings.CutSuffix(name, p.weightSuffix)
 		if !ok {
@@ -319,7 +324,7 @@ func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
 			}
 		}
 
-		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p)}, consumed, true
+		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p.forceQuantType, p.defaultGroupSize)}, consumed, true
 	}
 	return BlobSpec{}, nil, false
 }
@@ -348,17 +353,17 @@ func matchesDtype(dtype string, allowed []string) bool {
 // prequantMetadata builds the fused blob's metadata: the source config's quant
 // metadata, with the pattern's quant_type override and group_size default
 // applied. Returns nil when there is nothing to record.
-func prequantMetadata(inv Inventory, p prequantPattern) map[string]string {
+func prequantMetadata(inv Inventory, quantType, defaultGroupSize string) map[string]string {
 	md := make(map[string]string)
 	for k, v := range inv.Config.QuantMetadata() {
 		md[k] = v
 	}
-	if p.forceQuantType != "" {
-		md["quant_type"] = p.forceQuantType
+	if quantType != "" {
+		md["quant_type"] = quantType
 	}
-	if p.defaultGroupSize != "" {
+	if defaultGroupSize != "" {
 		if _, ok := md["group_size"]; !ok {
-			md["group_size"] = p.defaultGroupSize
+			md["group_size"] = defaultGroupSize
 		}
 	}
 	if len(md) == 0 {

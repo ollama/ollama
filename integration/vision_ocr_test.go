@@ -50,7 +50,7 @@ func runVisionOCRDocument(t *testing.T, model string) {
 			{
 				Role: "user",
 				Content: "Scan the entire document and read the unique FINAL AUDIT CODE field. " +
-					"Reply with only its value.",
+					"Reply with only its value. Use ASCII hyphens between fields.",
 				Images: []api.ImageData{document},
 			},
 		},

@@ -104,7 +104,8 @@ type queuedRequest interface {
 
 type Runner struct {
 	parallel         int
-	fullContextBytes int64 // Estimated per-client storage at the model context limit.
+	parallelContext  int
+	fullContextBytes int64 // Estimated per-client storage at the projected context size.
 	Model            model.Model
 	weights          *mlx.Scope
 	Tokenizer        *tokenizer.Tokenizer
@@ -227,7 +228,7 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		r.spec = newSpeculation(r, pipelineSlot, draftModel, caches, draftCaches)
 		var capacity int
 		if r.parallel <= 0 && mlx.MetalIsAvailable() {
-			capacity = r.contextLength
+			capacity = parallelContextLength(r.contextLength, r.parallelContext)
 		}
 		width, fullContextBytes := modelShapes(m, draftModel, capacity)
 		r.fullContextBytes = fullContextBytes
@@ -259,7 +260,7 @@ func newDraftCaches(draft model.DraftModel) []cache.Cache {
 
 // modelShapes inspects the existing one-token load graph without evaluating it.
 // Cache dimensions come from the same forward used for inference, including the
-// drafter. Budget the actual model limit: num_ctx is only a soft limit in MLX.
+// drafter, at the projected context size.
 func modelShapes(m model.Model, draft model.DraftModel, tokens int) (width int, fullContextBytes int64) {
 	mlx.Scoped(func() {
 		caches := m.NewCaches()

@@ -93,6 +93,82 @@ func mediaTestRunner(t *testing.T) *Runner {
 	}
 }
 
+func TestPrepareMediaTagTransport(t *testing.T) {
+	r := mediaTestRunner(t)
+	tok, err := tokenizer.LoadFromBytes([]byte(`{
+		"model":{"type":"BPE","vocab":{"a":0,"Ā":1,"[":2,"i":3,"m":4,"g":5,"-":6,"9":7,"]":8,"b":9},"merges":[]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Tokenizer = tok
+	attachment := []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}}
+	literal := "a\x00\x00[\x00img-9][img-9]"
+	literalIDs := []int32{0, 1, 1, 2, 1, 3, 4, 5, 6, 7, 8, 2, 3, 4, 5, 6, 7, 8}
+	rawPrefix := "a\x00\x00[\x00img-9]"
+	for _, tc := range []struct {
+		name string
+		req  CompletionRequest
+		want []int32
+	}{
+		{
+			name: "raw text",
+			req:  CompletionRequest{Prompt: literal},
+			want: literalIDs,
+		},
+		{
+			name: "raw with attachment",
+			req:  CompletionRequest{Prompt: rawPrefix + "[img-0]b", Media: attachment},
+			want: append(slices.Clone(literalIDs[:11]), 70, 500, 500, 71, 9),
+		},
+		{
+			name: "rendered with attachment",
+			req:  CompletionRequest{Prompt: literal + "[img-9]b", Media: []llm.MediaData{{ID: 9, Kind: llm.MediaKindImage, Data: []byte("img"), TagOffsets: []int{len(literal)}}}},
+			want: append(slices.Clone(literalIDs), 70, 500, 500, 71, 9),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &request{CompletionRequest: tc.req}
+			if err := r.Prepare(req); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(req.Tokens, tc.want) {
+				t.Errorf("got tokens %v, want %v", req.Tokens, tc.want)
+			}
+			if len(req.MediaItems) != len(tc.req.Media) {
+				t.Errorf("got %d media items, want %d", len(req.MediaItems), len(tc.req.Media))
+			}
+		})
+	}
+}
+
+func TestPreparePositionedMediaOrder(t *testing.T) {
+	r := mediaTestRunner(t)
+	const prefix = "0[img-0]"
+	const tag0, tag1 = "[img-0]", "[img-1]"
+	prompt := prefix + tag1 + tag0 + tag1
+	media := []llm.MediaData{
+		{ID: 0, Kind: llm.MediaKindImage, Data: []byte{1}, TagOffsets: []int{len(prefix + tag1)}},
+		{ID: 1, Kind: llm.MediaKindImage, Data: []byte{2, 3}, TagOffsets: []int{len(prefix), len(prefix + tag1 + tag0)}},
+	}
+	req := &request{CompletionRequest: CompletionRequest{Prompt: prompt, Media: media}}
+	if err := r.Prepare(req); err != nil {
+		t.Fatal(err)
+	}
+	var sizes []int
+	for _, item := range req.MediaItems {
+		sizes = append(sizes, item.item.Opaque.(int))
+	}
+	if !slices.Equal(sizes, []int{2, 1, 2}) {
+		t.Fatalf("media payload sizes in prompt order = %v, want [2 1 2]", sizes)
+	}
+
+	req.Media[0].TagOffsets[0]++
+	if err := r.Prepare(req); err == nil {
+		t.Fatal("accepted an offset pointing inside a tag")
+	}
+}
+
 func TestPrepareExpandsMediaTags(t *testing.T) {
 	r := mediaTestRunner(t)
 	req := &request{

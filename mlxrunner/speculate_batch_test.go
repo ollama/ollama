@@ -1,6 +1,7 @@
 package mlxrunner
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -105,9 +106,21 @@ func TestAcceptDraftBatchGrammarFailureIsolated(t *testing.T) {
 		r.grammarEngine = engine
 		rounds := make([]draftRound, 2)
 		positions := []int{0, 0}
+		var owners [2]*prefixCache
+		var sessions [2]*cacheSession
 		for i := range rounds {
 			cs := m.NewCaches()
-			defer cs[0].Free()
+			owners[i] = newPrefixCache(cs)
+			if i == 0 {
+				// A failed continuation must preserve an unrelated saved turn in this slot.
+				previous := owners[i].begin([]int32{6, 6, 6, 6}, nil)
+				kv := cs[0].(*cache.KVCache)
+				data := mlx.FromValues([]float32{6, 6, 6}, 1, 1, 3, 1)
+				kv.Update(nil, data, data)
+				previous.close()
+			}
+			sessions[i] = owners[i].begin([]int32{1}, nil)
+			defer owners[i].close()
 			r.Sampler.Add(i, sample.Options{Temperature: 0}, nil)
 			drafts := []int32{2, 3}
 			rounds[i] = draftRound{
@@ -118,21 +131,43 @@ func TestAcceptDraftBatchGrammarFailureIsolated(t *testing.T) {
 		}
 		rounds[0].grammar = g
 		out := r.acceptDrafts(rounds)
-		if out[0].err == nil || len(out[0].results) != 0 || positions[0] != 0 || rounds[0].s.spec.targets[0].Offset() != 1 {
+		if out[0].err == nil || len(out[0].results) != 0 || positions[0] != 0 {
 			t.Fatalf("failed row: %+v position %d cache offset %d", out[0], positions[0], rounds[0].s.spec.targets[0].Offset())
 		}
 		if out[1].err != nil || !slices.Equal(resultIDs(out[1].results), []int32{2, 3, 4}) || positions[1] != 3 {
 			t.Fatalf("healthy row: %+v position %d", out[1], positions[1])
 		}
+		scheduler := &batchScheduler{r: r}
 		for i, round := range rounds {
-			if snapshots := round.s.spec.targets[0].TakeSnapshots(); len(snapshots) != 0 {
-				for _, snapshot := range snapshots {
-					if snapshot != nil {
-						snapshot.Close()
-					}
-				}
-				t.Errorf("row %d left %d snapshot slots", i, len(snapshots))
+			req := request{Ctx: context.Background(), Tokens: []int32{1}}
+			sessions[i].outputs = resultIDs(out[i].results)
+			active := &batchRequest{request: req, session: sessions[i], spec: round.s, output: newGenerationOutput(r, req, sessions[i], 0)}
+			scheduler.finish(&batchSlot{id: i, request: active, cache: owners[i]}, out[i].err)
+			if snapshots := owners[i].caches[0].TakeSnapshots(); len(snapshots) != 0 {
+				t.Fatalf("row %d left %d pending snapshots", i, len(snapshots))
 			}
+		}
+		if got := owners[0].minCacheOffset(); got != 0 {
+			t.Fatalf("failed slot kept %d rows", got)
+		}
+		failed := owners[0].begin([]int32{1, 2, 3, 4}, nil)
+		if len(failed.remaining) != 4 {
+			t.Fatal("failed continuation entered the prefix cache")
+		}
+		warm := owners[0].begin([]int32{6, 6, 6, 6}, nil)
+		if !slices.Equal(warm.remaining, []int32{6}) || !slices.Equal(owners[0].caches[0].State()[0].Floats(), []float32{6, 6, 6}) {
+			t.Fatal("older saved turn failed to restore")
+		}
+		retry := owners[0].begin([]int32{1, 2, 3, 4}, nil, owners[1])
+		if !slices.Equal(retry.remaining, []int32{4}) {
+			t.Fatalf("peer reuse left %v", retry.remaining)
+		}
+		got := owners[0].caches[0].State()[0].Floats()
+		if !slices.Equal(got, []float32{1, 2, 3}) {
+			t.Fatalf("peer restored %v", got)
+		}
+		if owners[1].minCacheOffset() != 3 {
+			t.Fatal("peer restore altered healthy slot")
 		}
 	})
 }

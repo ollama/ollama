@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
@@ -388,7 +391,7 @@ func TestParseSafetensorsAllHeaders_Errors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseSafetensorsAllHeaders(bytes.NewReader(tt.data))
+			_, err := parseSafetensorsAllHeaders(bytes.NewReader(tt.data), "")
 			if err == nil {
 				t.Error("expected error, got nil")
 				return
@@ -484,7 +487,7 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 		Layers:        layers,
 	}
 
-	result, err := getTensorInfoFromManifest(mf)
+	result, err := getTensorInfoFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
 	}
@@ -570,7 +573,7 @@ func TestGetTensorInfoFromManifest_Quantized(t *testing.T) {
 		},
 	}
 
-	result, err := getTensorInfoFromManifest(mf)
+	result, err := getTensorInfoFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
 	}
@@ -772,7 +775,7 @@ func TestGetParameterCountFromManifest(t *testing.T) {
 		},
 	}
 
-	paramCount, err := getParameterCountFromManifest(mf)
+	paramCount, err := getParameterCountFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getParameterCountFromManifest() error = %v", err)
 	}
@@ -855,7 +858,7 @@ func TestGetParameterCountFromManifest_MixedQuantizedPacked(t *testing.T) {
 		},
 	}
 
-	paramCount, err := getParameterCountFromManifest(mf)
+	paramCount, err := getParameterCountFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getParameterCountFromManifest() error = %v", err)
 	}
@@ -1044,7 +1047,7 @@ func TestParseSafetensorsAllHeaders(t *testing.T) {
 			}
 			buf.Write(headerJSON)
 
-			results, err := parseSafetensorsAllHeaders(&buf)
+			results, err := parseSafetensorsAllHeaders(&buf, "")
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseSafetensorsAllHeaders() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -1166,7 +1169,7 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 		},
 	}
 
-	result, err := getTensorInfoFromManifest(mf)
+	result, err := getTensorInfoFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
 	}
@@ -1208,30 +1211,30 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 	}
 }
 
+func writeSafetensorsLayer(t *testing.T, header map[string]any, name string) manifest.Layer {
+	t.Helper()
+
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		t.Fatalf("failed to marshal header: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+		t.Fatalf("failed to write header size: %v", err)
+	}
+	buf.Write(headerJSON)
+
+	layer, err := manifest.NewLayer(&buf, manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatalf("failed to create tensor layer: %v", err)
+	}
+	layer.Name = name
+	return layer
+}
+
 func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-
-	writeSafetensorsLayer := func(t *testing.T, header map[string]any, name string) manifest.Layer {
-		t.Helper()
-
-		headerJSON, err := json.Marshal(header)
-		if err != nil {
-			t.Fatalf("failed to marshal header: %v", err)
-		}
-
-		var buf bytes.Buffer
-		if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
-			t.Fatalf("failed to write header size: %v", err)
-		}
-		buf.Write(headerJSON)
-
-		layer, err := manifest.NewLayer(&buf, manifest.MediaTypeImageTensor)
-		if err != nil {
-			t.Fatalf("failed to create tensor layer: %v", err)
-		}
-		layer.Name = name
-		return layer
-	}
 
 	configData, err := json.Marshal(map[string]any{
 		"model_format": "safetensors",
@@ -1329,5 +1332,76 @@ func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 	}
 	if got != "bfloat16" {
 		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want target bfloat16", got)
+	}
+}
+
+func TestShowInkling2Tensors(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	const nv = "model.llm.layers.0.mlp.experts.w13_weight"
+	const mx = "model.llm.layers.1.mlp.experts.w2_weight"
+	const clip = "model.llm.layers.0.attn.q_l2_clip.scale"
+	const bias = "model.visual.backbone.layers.0.ln_1.bias"
+	const draft = "draft.markov_head.hidden_out.bias"
+
+	// The importer stores a packed U32 weight and its U8 block scales in one
+	// blob, and keeps the NVFP4 outer-scale parameters in separate blobs.
+	bank := func(name, mode string, weight, scales []int) map[string]any {
+		return map[string]any{
+			"__metadata__":  map[string]string{"quant_type": mode},
+			name:            map[string]any{"dtype": "U32", "shape": weight},
+			name + "_scale": map[string]any{"dtype": "U8", "shape": scales},
+		}
+	}
+	hfConfig, err := manifest.NewLayer(strings.NewReader(`{"model_type":"inkling2_loop"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hfConfig.Name = "config.json"
+	config, err := createConfigLayer(model.ConfigV2{ModelFormat: manifest.FormatSafetensors, Capabilities: []string{"completion"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := model.ParseName("show-inkling")
+	// Packed headers may name several primaries. The learned clipping scale
+	// and bias retain their own dtype and shape alongside a quantized bank.
+	packed := bank(mx, "mxfp8", []int{2, 4, 8}, []int{2, 4, 1})
+	packed[clip] = map[string]any{"dtype": "F32", "shape": []int{2, 3}}
+	packed[bias] = map[string]any{"dtype": "F32", "shape": []int{3}}
+	layers := []manifest.Layer{
+		hfConfig,
+		writeSafetensorsLayer(t, bank(nv, "nvfp4", []int{2, 3, 4}, []int{2, 3, 2}), nv),
+		writeSafetensorsLayer(t, packed, "model.packed"),
+		createShowSafetensorsLayer(t, nv+"_amax", []int64{2}),
+		createShowSafetensorsLayer(t, nv+"_outer_scale_denominator", []int64{1}),
+		createShowSafetensorsLayer(t, draft, []int64{5}),
+	}
+	if err := manifest.WriteManifestWithMetadata(name, *config, layers, manifest.RunnerMLX, manifest.FormatSafetensors); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, verbose := range []bool{false, true} {
+		resp, err := GetModelInfo(api.ShowRequest{Model: name.String(), Verbose: verbose})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := resp.ModelInfo["general.parameter_count"]; got != int64(457) {
+			t.Fatalf("parameter count = %v, want 457", got)
+		}
+		if got := resp.Details.ParameterSize; got != "457" {
+			t.Fatalf("parameter size = %q, want 457", got)
+		}
+		var want []api.Tensor
+		if verbose {
+			want = []api.Tensor{
+				{Name: draft, Type: "F32", Shape: []uint64{5}},
+				{Name: clip, Type: "F32", Shape: []uint64{2, 3}},
+				{Name: nv, Type: "nvfp4", Shape: []uint64{2, 3, 32}},
+				{Name: mx, Type: "mxfp8", Shape: []uint64{2, 4, 32}},
+				{Name: bias, Type: "F32", Shape: []uint64{3}},
+			}
+		}
+		if diff := cmp.Diff(want, resp.Tensors); diff != "" {
+			t.Fatalf("verbose=%t tensor inventory (-want +got):\n%s", verbose, diff)
+		}
 	}
 }

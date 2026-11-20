@@ -18,6 +18,7 @@ type RotatingKVCache struct {
 	step         int
 	maxSize      int
 	idx          int
+	ordered      bool
 
 	snapshots pendingSnapshots
 
@@ -33,26 +34,36 @@ func NewRotatingKVCache(maxSize int) *RotatingKVCache {
 	return &RotatingKVCache{maxSize: maxSize, step: 256, scope: mlx.NewScope()}
 }
 
+// NewOrderedWindowKVCache keeps the keys in sequence order for both single
+// queries and blocks, so changing query width does not reorder the attention
+// reduction over the window.
+func NewOrderedWindowKVCache(maxSize int) *RotatingKVCache {
+	c := NewRotatingKVCache(maxSize)
+	c.ordered = true
+	return c
+}
+
 // Assumes B = 1; heterogeneous batches are not supported.
 func (c *RotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
 	start := c.offset
 	c.captureStartBoundary(start)
 
-	batched := keys.Dim(2) > 1
+	linearized := keys.Dim(2) > 1 || c.ordered
 	var newK, newV *mlx.Array
-	if batched {
+	if linearized {
 		newK, newV = c.concat(keys, values)
 	} else {
 		newK, newV = c.update(keys, values)
 	}
 
-	c.captureLazySnapshots(start, c.offset, batched)
+	c.captureLazySnapshots(start, c.offset, linearized)
 	return nn.NewKVHistory(newK, newV, rotatingApplier{
 		b:       b,
 		K:       newK.Dim(2),
 		L:       keys.Dim(2),
 		window:  c.maxSize,
 		ringIdx: c.idx,
+		ordered: c.ordered,
 		dtype:   keys.DType(),
 	})
 }
@@ -180,6 +191,7 @@ func (c *RotatingKVCache) View(b *batch.Batch) *nn.KVHistory {
 		L:       1,
 		window:  c.maxSize,
 		ringIdx: ringIdx,
+		ordered: c.ordered,
 		dtype:   k.DType(),
 	})
 }
@@ -229,12 +241,11 @@ func (c *RotatingKVCache) captureStartBoundary(start int) {
 }
 
 // captureLazySnapshots records a snapshot for each scheduled offset the write
-// reached after the start boundary. A batched write (concat) linearizes the
-// buffer into logical order, so each window is a contiguous slot slice captured
-// lazily (lazyRotatingSnapshot). A single-token write (update) leaves the buffer
-// ring-ordered or grown, breaking that slot math, so capture a clone (Snapshot)
-// instead; update only ever reaches the end boundary (o == c.offset).
-func (c *RotatingKVCache) captureLazySnapshots(start, end int, batched bool) {
+// reached after the start boundary. A concat write leaves each window as a
+// contiguous slice in logical order, so it can be captured lazily. A ring
+// write can change that order and reaches only the end boundary, where it
+// captures a clone instead.
+func (c *RotatingKVCache) captureLazySnapshots(start, end int, linearized bool) {
 	if len(c.snapshots.offsets) == 0 {
 		return
 	}
@@ -243,7 +254,7 @@ func (c *RotatingKVCache) captureLazySnapshots(start, end int, batched bool) {
 			continue // captured pre-write by captureStartBoundary
 		}
 		c.snapshots.captureReached(o, func(int) Snapshot {
-			if batched {
+			if linearized {
 				return c.lazyRotatingSnapshot(o)
 			}
 			return c.Snapshot(o - min(o, c.maxSize))
@@ -495,6 +506,7 @@ type rotatingApplier struct {
 	L       int
 	window  int
 	ringIdx int
+	ordered bool
 	dtype   mlx.DType
 }
 
@@ -518,6 +530,12 @@ func (r rotatingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {
 		// reduces to no mask — let SDPA dispatch to mode="".
 		if logical.IsZero() || logical.IsCausal() {
 			return nn.AttentionMask{}
+		}
+
+		// Chronological keys already use the logical mask's column order.
+		// Leave its precision to the attention operation.
+		if r.ordered {
+			return logical
 		}
 
 		// Tensor-backed mask: materialize in logical order, then gather K cols

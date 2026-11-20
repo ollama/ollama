@@ -6,6 +6,26 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
 
+func TestParallelContextLength(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		trained, requested, want int
+	}{
+		{"unknown model size", 0, 4096, 0},
+		{"short model", 8192, 0, 8192},
+		{"short requested window", 1 << 20, 4096, 4096},
+		{"request exceeds model", 8192, 32768, 8192},
+		{"large model default", 1 << 20, 0, 256 << 10},
+		{"large requested window", 1 << 20, 512 << 10, 256 << 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parallelContextLength(tc.trained, tc.requested); got != tc.want {
+				t.Fatalf("projected context = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDefaultParallelism(t *testing.T) {
 	const gib = 1 << 30
 	for _, tc := range []struct {
