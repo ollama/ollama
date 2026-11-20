@@ -242,6 +242,83 @@ func TestOpenRejectsInvalidMagic(t *testing.T) {
 	}
 }
 
+// keysGGUF returns a minimal GGUF file with the given string metadata
+// keys, in order. It is used to reproduce ollama/ollama#19768, where the
+// general.architecture key is written twice with different values.
+func keysGGUF(pairs ...[2]string) []byte {
+	var data []byte
+	data = append(data, 'G', 'G', 'U', 'F')
+	data = binary.LittleEndian.AppendUint32(data, 3)
+	data = binary.LittleEndian.AppendUint64(data, 0)
+	data = binary.LittleEndian.AppendUint64(data, uint64(len(pairs)))
+	for _, pair := range pairs {
+		data = binary.LittleEndian.AppendUint64(data, uint64(len(pair[0])))
+		data = append(data, pair[0]...)
+		data = binary.LittleEndian.AppendUint32(data, 8)
+		data = binary.LittleEndian.AppendUint64(data, uint64(len(pair[1])))
+		data = append(data, pair[1]...)
+	}
+	return data
+}
+
+func TestOpenRejectsDuplicateMetadataKeys(t *testing.T) {
+	data := keysGGUF(
+		[2]string{"general.architecture", "llama"},
+		[2]string{"general.architecture", "llama2"},
+	)
+
+	f, err := gguf.Open(createFile(t, data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	for range f.KeyValues() {
+	}
+
+	if err := f.Err(); err == nil {
+		t.Fatal("draining a GGUF with a duplicate metadata key unexpectedly succeeded")
+	} else if !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("Err() = %v, want duplicate key error", err)
+	}
+}
+
+func TestReadFileMetadataRejectsDuplicateMetadataKeys(t *testing.T) {
+	data := keysGGUF(
+		[2]string{"general.architecture", "llama"},
+		[2]string{"general.architecture", "llama2"},
+	)
+
+	if _, err := gguf.ReadFileMetadata(createFile(t, data), 0); err == nil {
+		t.Fatal("ReadFileMetadata unexpectedly succeeded with a duplicate metadata key")
+	} else if !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("ReadFileMetadata() error = %v, want duplicate key error", err)
+	}
+}
+
+func TestOpenAcceptsUniqueMetadataKeys(t *testing.T) {
+	data := keysGGUF(
+		[2]string{"general.architecture", "llama"},
+		[2]string{"general.name", "test"},
+	)
+
+	f, err := gguf.Open(createFile(t, data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	for range f.KeyValues() {
+	}
+
+	if err := f.Err(); err != nil {
+		t.Fatalf("Err() = %v, want no error for unique metadata keys", err)
+	}
+	if got := f.KeyValue("general.architecture").String(); got != "llama" {
+		t.Errorf(`KeyValue("general.architecture").String() = %q, want %q`, got, "llama")
+	}
+}
+
 func TestOpenDoesNotPreallocateDeclaredArray(t *testing.T) {
 	const allocationLimit = 1 << 20
 
