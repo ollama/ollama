@@ -64,6 +64,56 @@ func TestGlimmerParserSuppressesThinking(t *testing.T) {
 	}
 }
 
+// TestGlimmerThinkingCloseBoundsContent checks that a format, which applies
+// after the first ThinkingClose string in the generated text, applies to
+// exactly the content the parser returns. With thinking off the model still
+// writes its message header first; a format binding before that header puts
+// the header inside the formatted value, and the parser drops everything up
+// to <|message|>, so a JSON reply lost its first field.
+func TestGlimmerThinkingCloseBoundsContent(t *testing.T) {
+	const content = `{"thoughts":"file the bar","intent":"file"}`
+	for _, tt := range []struct {
+		name   string
+		think  *api.ThinkValue
+		prefix string
+	}{
+		{name: "thinking off", think: &api.ThinkValue{Value: false}, prefix: ` to=user<|message|>`},
+		{name: "thinking off, the model thinks anyway", think: &api.ThinkValue{Value: false}, prefix: ` to=self<|message|>Check the facts.<|eom|><|start|>assistant to=user<|message|>`},
+		{name: "thinking off, thinks, then no recipient", think: &api.ThinkValue{Value: false}, prefix: ` to=self<|message|>Check the facts.<|eom|><|start|>assistant<|message|>`},
+		{name: "thinking on", think: nil, prefix: ` to=self<|message|>Check the facts.<|eom|><|start|>assistant to=user<|message|>`},
+		{name: "thinking on, no recipient", think: &api.ThinkValue{Value: "low"}, prefix: ` to=self<|message|>Check the facts.<|eom|><|start|>assistant<|message|>`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &GlimmerParser{}
+			p.Init(nil, nil, tt.think)
+			raw := tt.prefix + content + `<|eot|>`
+
+			// With no closing string, the format binds from the first token.
+			end := -1
+			closings := p.ThinkingClose()
+			if len(closings) == 0 {
+				end = 0
+			}
+			for _, closing := range closings {
+				if i := strings.Index(raw, closing); i >= 0 && (end < 0 || i+len(closing) < end) {
+					end = i + len(closing)
+				}
+			}
+			if end != len(tt.prefix) {
+				t.Fatalf("format would bind at %d of %q, want %d (where the content starts)", end, raw, len(tt.prefix))
+			}
+
+			got, _, _, err := p.Add(raw, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != content {
+				t.Fatalf("content = %q, want %q", got, content)
+			}
+		})
+	}
+}
+
 func TestGlimmerParserStreamingATEMAtEveryBoundary(t *testing.T) {
 	tool := glimmerTestTool("get_weather", map[string]api.ToolProperty{
 		"city": {Type: api.PropertyType{"string"}},

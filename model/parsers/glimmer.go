@@ -54,6 +54,12 @@ func (p *GlimmerParser) HasThinkingSupport() bool { return true }
 // The model opens the message to the user, with or without naming the
 // recipient, before any content; its self message may end implicitly, so
 // the header alone marks the boundary.
+//
+// The model writes that header with thinking off too: the prompt ends at
+// "<|start|>assistant", as the publisher's template does, so the response
+// never starts in content. The first header then continues the one the
+// prompt opened, and only its recipient and <|message|> are generated. A
+// self message the model writes anyway is still followed by a full header.
 func (p *GlimmerParser) ThinkingClose() []string {
 	if p.emitThinking {
 		return []string{
@@ -61,7 +67,10 @@ func (p *GlimmerParser) ThinkingClose() []string {
 			glimmerStartTag + "assistant" + glimmerMessageTag,
 		}
 	}
-	return nil
+	return []string{
+		" to=user" + glimmerMessageTag,
+		glimmerStartTag + "assistant" + glimmerMessageTag,
+	}
 }
 
 func (p *GlimmerParser) PreservedTokens() []string {

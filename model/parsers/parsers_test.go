@@ -111,7 +111,9 @@ func TestThinkingClose(t *testing.T) {
 		{parser: "laguna"},
 		{parser: "ministral", think: think(true)},
 		{parser: "glimmer", want: []string{"<|start|>assistant to=user<|message|>", "<|start|>assistant<|message|>"}},
-		{parser: "glimmer", think: think(false)},
+		// Glimmer's response opens a message header even with thinking off: the
+		// prompt ends at "<|start|>assistant", as the publisher's template does.
+		{parser: "glimmer", think: think(false), want: []string{" to=user<|message|>", "<|start|>assistant<|message|>"}},
 		{parser: "harmony", want: []string{
 			"<|end|><|start|>assistant<|channel|>final<|message|>",
 			"<|end|><|start|>assistant<|channel|>final <|constrain|>json<|message|>",
