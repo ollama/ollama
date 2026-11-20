@@ -39,7 +39,15 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
+if [ -n "${OLLAMA_VERSION:-}" ]; then
+    DOWNLOAD_PARAM="?version=$OLLAMA_VERSION"
+else
+    case "${OLLAMA_CHANNEL:-stable}" in
+        stable) DOWNLOAD_PARAM="" ;;
+        preview) DOWNLOAD_PARAM="?channel=preview" ;;
+        *) error "Unsupported release channel: $OLLAMA_CHANNEL" ;;
+    esac
+fi
 
 ###########################################
 # macOS
@@ -55,7 +63,7 @@ if [ "$OS" = "Darwin" ]; then
         exit 1
     fi
 
-    DOWNLOAD_URL="https://ollama.com/download/Ollama-darwin.zip${VER_PARAM}"
+    DOWNLOAD_URL="https://ollama.com/download/Ollama-darwin.zip${DOWNLOAD_PARAM}"
 
     if pgrep -x Ollama >/dev/null 2>&1; then
         status "Stopping running Ollama instance..."
@@ -133,7 +141,7 @@ download_and_extract() {
     local filename="$3"
 
     # Check if .tar.zst is available
-    if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
+    if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${DOWNLOAD_PARAM}" >/dev/null 2>&1; then
         # zst file exists - check if we have zstd tool
         if ! available zstd; then
             error "This version requires zstd for extraction. Please install zstd and try again:
@@ -144,7 +152,7 @@ download_and_extract() {
 
         status "Downloading ${filename}.tar.zst"
         curl --fail --show-error --location --progress-bar \
-            "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
+            "${url_base}/${filename}.tar.zst${DOWNLOAD_PARAM}" | \
             zstd -d | $SUDO tar -xf - -C "${dest_dir}"
         return 0
     fi
@@ -152,7 +160,7 @@ download_and_extract() {
     # Fall back to .tgz for older versions
     status "Downloading ${filename}.tgz"
     curl --fail --show-error --location --progress-bar \
-        "${url_base}/${filename}.tgz${VER_PARAM}" | \
+        "${url_base}/${filename}.tgz${DOWNLOAD_PARAM}" | \
         $SUDO tar -xzf - -C "${dest_dir}"
 }
 

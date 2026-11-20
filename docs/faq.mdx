@@ -16,6 +16,27 @@ On Linux, re-run the install script:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
+## How do I install a pre-release?
+
+Use the preview channel to install the latest pre-release. If no pre-release is available, the latest stable version is installed.
+
+On macOS or Linux:
+
+```shell
+curl -fsSL 'https://ollama.com/install.sh?channel=preview' | OLLAMA_CHANNEL=preview sh
+```
+
+On Windows, run in PowerShell:
+
+```powershell
+$env:OLLAMA_CHANNEL = "preview"; irm "https://ollama.com/install.ps1?channel=preview" | iex
+```
+
+You can also download the installers directly:
+
+- [macOS](https://ollama.com/download/Ollama.dmg?channel=preview)
+- [Windows](https://ollama.com/download/OllamaSetup.exe?channel=preview)
+
 ## How can I view the logs?
 
 Review the [Troubleshooting](./troubleshooting.mdx) docs for more about using logs.
