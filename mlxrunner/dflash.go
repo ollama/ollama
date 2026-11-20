@@ -17,6 +17,10 @@ const dflashPendingFlushTokens = 256
 // shallower picks lose more accepted tokens than they save in verify time.
 const dflash2Depth = 7
 
+type dflashBatchModel interface {
+	ForwardBatch([]*batch.Batch, [][]cache.Cache) *mlx.Array
+}
+
 // dflashDrafter drafts with a block-diffusion draft model (DFlash): one
 // forward proposes a whole block. A context-cache entry depends only on its
 // own position, so the trie keys need no look-ahead.
@@ -158,46 +162,75 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 	if n <= 0 || d.ctxOffset+d.pendingCount == 0 {
 		return nil
 	}
-	d.commitBlock()
-
 	// Draft only the requested rows, not the full trained block: exact for
 	// causal layers, while a bidirectional draft's proposal distribution
 	// changes; verification uses the actual proposal probabilities.
 	var candidates *draftCandidates
 	mlx.ScopedArrays(func() []*mlx.Array {
-		masks := make([]int32, n)
-		for i := range masks {
-			masks[i] = d.drafter.maskToken
-		}
-		block := current.ExpandDims(-1).Concatenate(1, mlx.FromValues(masks, 1, len(masks)))
-
-		offset := d.ctxOffset
-		features := d.takePending()
-
-		scheduleSpeculation(spec.draftKV, d.ctxOffset, 1)
-		d.blockOutstanding = true
-
-		hidden, _ := spec.draft.Forward(&batch.Batch{
-			InputIDs:     block,
-			SeqOffsets:   []int32{int32(offset)},
-			SeqQueryLens: []int32{int32(n + 1)},
-			Hidden:       features,
-			Layout:       d.layout,
-		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
+		hidden, _ := spec.draft.Forward(d.prepareBlock(current, n), cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 		candidates = d.selectBlock(hidden, current, n)
 		return candidates.Arrays()
 	})
 	return candidates
 }
 
+func (d *dflashDraftSession) prepareBlock(current *mlx.Array, n int) *batch.Batch {
+	d.commitBlock()
+	masks := make([]int32, n)
+	for i := range masks {
+		masks[i] = d.drafter.maskToken
+	}
+	offset := d.ctxOffset
+	features := d.takePending()
+	b := &batch.Batch{
+		InputIDs:     current.ExpandDims(-1).Concatenate(1, mlx.FromValues(masks, 1, n)),
+		SeqOffsets:   []int32{int32(offset)},
+		SeqQueryLens: []int32{int32(n + 1)},
+		Hidden:       features,
+		Layout:       d.layout,
+	}
+	scheduleSpeculation(d.drafter.spec.draftKV, d.ctxOffset, 1)
+	d.blockOutstanding = true
+	return b
+}
+
+// proposeDFlashBatch shares the forward and vocabulary projection, while each
+// row keeps its own selector sampling stream and rollback boundary.
+func proposeDFlashBatch(sessions []*dflashDraftSession, current []*mlx.Array, n int) []*draftCandidates {
+	spec := sessions[0].drafter.spec
+	draft := spec.draft.(dflashBatchModel)
+	candidates := make([]*draftCandidates, len(sessions))
+	mlx.ScopedAsyncEval(func() []*mlx.Array {
+		rows := make([]*batch.Batch, len(sessions))
+		caches := make([][]cache.Cache, len(sessions))
+		for i, session := range sessions {
+			rows[i] = session.prepareBlock(current[i], n)
+			caches[i] = session.drafter.spec.draftKV
+		}
+		hidden := draft.ForwardBatch(rows, caches).Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice())
+		logits := spec.draft.Unembed(hidden)
+		var arrays []*mlx.Array
+		for i, session := range sessions {
+			h := hidden.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice())
+			l := logits.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice())
+			candidates[i] = session.selectCandidates(h, l, current[i])
+			arrays = append(arrays, candidates[i].Arrays()...)
+		}
+		return arrays
+	})
+	return candidates
+}
+
 // selectBlock samples the proposal from a draft forward's block rows.
 func (d *dflashDraftSession) selectBlock(hidden, current *mlx.Array, n int) *draftCandidates {
-	spec := d.drafter.spec
-	r := spec.r
-
 	// Row i predicts the token at its own position; the anchor row is unused.
 	hidden = hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice())
-	logits := spec.draft.Unembed(hidden)
+	return d.selectCandidates(hidden, d.drafter.spec.draft.Unembed(hidden), current)
+}
+
+func (d *dflashDraftSession) selectCandidates(hidden, logits, current *mlx.Array) *draftCandidates {
+	spec := d.drafter.spec
+	r := spec.r
 	if selector, ok := spec.draft.(model.BlockSelector); ok {
 		tokens, ids, probs := selector.Select(hidden, logits, current, func(ids, scores *mlx.Array) (*mlx.Array, *mlx.Array) {
 			tokens, dist := r.Sampler.SampleCandidates(spec.slotID, ids, scores)

@@ -372,6 +372,111 @@ func (d *selectedBlockDraft) Select(_ *mlx.Array, logits *mlx.Array, _ *mlx.Arra
 	return tokens.Reshape(1, n), ids.Reshape(1, n, 2), probs.Reshape(1, n, 2)
 }
 
+type batchedSelectedBlockDraft struct {
+	*selectedBlockDraft
+	batches, headRows []int
+}
+
+func (d *batchedSelectedBlockDraft) ForwardBatch(rows []*batch.Batch, caches [][]cache.Cache) *mlx.Array {
+	d.batches = append(d.batches, len(rows))
+	hidden := make([]*mlx.Array, len(rows))
+	for i, row := range rows {
+		hidden[i], _ = d.Forward(row, nil, cache.Layers(caches[i]))
+	}
+	return mlx.Concatenate(hidden, 0)
+}
+
+func (d *batchedSelectedBlockDraft) Unembed(hidden *mlx.Array) *mlx.Array {
+	d.headRows = append(d.headRows, hidden.Dim(0))
+	return hidden
+}
+
+func TestDFlashBatchPreservesSamplingAndBudgets(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		var schedulers []*batchScheduler
+		var drafts []*batchedSelectedBlockDraft
+		for range 2 {
+			draft := &batchedSelectedBlockDraft{selectedBlockDraft: &selectedBlockDraft{fakeBlockDraft: &fakeBlockDraft{
+				predict: map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 1}, blockSize: 8, maskToken: 6,
+			}}}
+			r := &Runner{Sampler: sampler.New(4096)}
+			defer r.Sampler.Free()
+			r.spec = newSpeculation(r, 0, draft, nil, nil)
+			s := &batchScheduler{r: r}
+			for i, count := range []int{1, 3, 2} {
+				opts := sampler.Options{Temperature: float32(i), UseSeed: true, Seed: 42 + i}
+				r.Sampler.Add(i, opts, nil)
+				kv := cache.NewKVCache()
+				defer kv.Free()
+				spec := newSpeculation(r, i, draft, nil, []cache.Cache{kv}).open(request{SamplerOpts: opts}, nil)
+				defer spec.close()
+				d := spec.drafter.(*dflashDraftSession)
+				ids := make([]int32, count)
+				for j := range ids {
+					ids[j] = int32(i + 1)
+				}
+				d.committed(mlx.FromValues(ids, 1, count), oneHotLogits(ids), 0, nil)
+				decoder := spec.decoder(mlx.FromValues([]int32{int32(i + 1)}, 1), count, nil)
+				defer decoder.scope.Close()
+				budget := 100
+				if i == 2 {
+					budget = dflash2Depth
+				}
+				s.slots = append(s.slots, &batchSlot{id: i, request: &batchRequest{spec: spec, decoder: decoder, output: &generationOutput{limit: budget}}})
+			}
+			schedulers, drafts = append(schedulers, s), append(drafts, draft)
+		}
+		serial, together := schedulers[0], schedulers[1]
+		for round := range 2 {
+			got := together.proposeDFlash(together.slots)
+			if len(got) != 2 || got[together.slots[2]] != nil {
+				t.Fatalf("round %d proposed %d rows, want only the two full-budget rows", round, len(got))
+			}
+			for i := range 2 {
+				d := serial.slots[i].request.decoder.(*speculativeDecoder)
+				want := d.s.drafter.propose(d.current.Token, dflash2Depth)
+				candidate := got[together.slots[i]]
+				if !slices.Equal(candidate.tokens.Ints(), want.tokens.Ints()) || !slices.Equal(candidate.dist.IDs.Ints(), want.dist.IDs.Ints()) {
+					t.Fatalf("round %d row %d batch proposal differs from isolated sampling", round, i)
+				}
+				probabilities := mlx.Contiguous(candidate.dist.Probs, false).Floats()
+				if !slices.Equal(probabilities, mlx.Contiguous(want.dist.Probs, false).Floats()) {
+					t.Fatalf("round %d row %d proposal probabilities differ", round, i)
+				}
+				for _, s := range []*batchScheduler{serial, together} {
+					session := s.slots[i].request.spec.drafter.(*dflashDraftSession)
+					// Different accepted lengths become different pending feature counts.
+					ids := make([]int32, i+1)
+					for j := range ids {
+						ids[j] = int32(i + 2)
+					}
+					session.committed(mlx.FromValues(ids, 1, len(ids)), oneHotLogits(ids), session.ctxOffset, nil)
+				}
+			}
+		}
+		if !slices.Equal(drafts[1].batches, []int{2, 2}) || !slices.Equal(drafts[1].headRows, []int{2, 2}) {
+			t.Fatalf("draft batches %v head rows %v, want two shared two-row forwards", drafts[1].batches, drafts[1].headRows)
+		}
+		for i := range 2 {
+			a := together.slots[i].request.spec.drafter.(*dflashDraftSession)
+			b := serial.slots[i].request.spec.drafter.(*dflashDraftSession)
+			a.settle(nil)
+			b.settle(nil)
+			if a.ctxOffset != b.ctxOffset || !slices.Equal(a.drafter.spec.draftKV[0].State()[0].Floats(), b.drafter.spec.draftKV[0].State()[0].Floats()) {
+				t.Fatalf("row %d batch rollback/context differs from isolated drafting", i)
+			}
+		}
+		short := together.slots[2].request.spec.drafter.(*dflashDraftSession)
+		if short.ctxOffset != 0 || short.pendingCount != 2 || short.blockOutstanding {
+			t.Fatalf("short-budget row was modified: offset %d pending %d outstanding %v", short.ctxOffset, short.pendingCount, short.blockOutstanding)
+		}
+		together.slots[1].request.output.limit = dflash2Depth
+		if got := together.proposeDFlash(together.slots); got != nil || len(drafts[1].batches) != 2 {
+			t.Fatal("singleton proposal should stay on the ordinary path")
+		}
+	})
+}
+
 func TestBlockSelectorProposalAndRejection(t *testing.T) {
 	for _, tc := range []struct {
 		slot        int

@@ -475,22 +475,56 @@ func (r *Runner) acceptDrafts(rounds []draftRound) []draftOutcome {
 		return outcomes
 	}
 
+	var replay *cache.SpeculativeBatch
+	// Short drafts need at most two interior states. Capture those directly
+	// instead of paying for another recurrent pass after acceptance.
+	if draftCount > 2 {
+		replay = cache.NewSpeculativeBatch(layers)
+	}
+	if replay != nil {
+		layers = replay.Layers
+		defer replay.Close()
+	}
+	resolved := false
 	committed := make([]bool, len(rounds))
 	for i, round := range rounds {
 		scheduleSpeculation(round.s.spec.targets, int(offsets[i])+1, draftCount)
 	}
-	defer func() {
+	rollbackUncommitted := func() {
 		for i, round := range rounds {
-			if !committed[i] {
-				commitSpeculation(round.s.spec.targets, 0, draftCount, int(offsets[i])+1)
+			if committed[i] {
+				continue
 			}
+			anchor := int(offsets[i]) + 1
+			for _, c := range round.s.spec.targets {
+				if c == nil {
+					continue
+				}
+				// A deferred write has not computed an anchor on an abort.
+				// Leave its prior owner valid and discard only the schedule.
+				if replay != nil && !resolved && c.Offset() < anchor {
+					for _, snapshot := range c.TakeSnapshots() {
+						if snapshot != nil {
+							snapshot.Close()
+						}
+					}
+					continue
+				}
+				commitSpeculation([]cache.Cache{c}, 0, draftCount, anchor)
+			}
+			committed[i] = true
 		}
-	}()
+	}
+	defer rollbackUncommitted()
 
 	type verification struct {
 		acceptedMask, residualTokens, bonusToken *mlx.Array
 		draftIDs                                 []int32
 		constrained                              bool
+		keep                                     int
+		commitIDs                                []int32
+		nextID                                   int32
+		done                                     bool
 	}
 	verified := make([]verification, len(rounds))
 	var auxHiddenSeq *mlx.Array
@@ -573,9 +607,23 @@ func (r *Runner) acceptDrafts(rounds []draftRound) []draftOutcome {
 				continue
 			}
 		}
+		v.keep, v.commitIDs, v.nextID, v.done = keep, commitIDs, nextID, done
+	}
+	selectedOffsets := make([]int, len(rounds))
+	for i, v := range verified {
+		selectedOffsets[i] = int(offsets[i]) + 1 + v.keep
+	}
+	replay.Resolve(selectedOffsets)
+	resolved = true
+	for i, round := range rounds {
+		out, v := &outcomes[i], &verified[i]
+		if out.err != nil {
+			continue
+		}
+		keep, commitIDs, nextID, done := v.keep, v.commitIDs, v.nextID, v.done
 		before := int(offsets[i])
-		committed[i] = true
 		commitSpeculation(round.s.spec.targets, keep, draftCount, before+1)
+		committed[i] = true
 		*round.position = before + 1 + keep
 		runIDs := append([]int32{round.current.Token.Int()}, commitIDs[:keep]...)
 		features := auxHiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, len(runIDs)), mlx.Slice())
@@ -592,6 +640,7 @@ func (r *Runner) acceptDrafts(rounds []draftRound) []draftOutcome {
 		}
 		r.Sampler.Commit(round.s.spec.slotID, commitIDs)
 	}
+	rollbackUncommitted()
 	if len(rounds) > 1 {
 		// Materialize owned features and cache state before a reader can pause.
 		state := retainedFeatures

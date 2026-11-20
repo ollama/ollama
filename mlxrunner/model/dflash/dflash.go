@@ -627,8 +627,110 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 // call just extends the context, with no context the block drafts from
 // whatever is already cached.
 func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
-	kv := draftCaches
+	return m.forward(b, draftCaches, nil)
+}
 
+// ForwardBatch shares the projections for equal-width proposal blocks. Only
+// the new context features are padded; each cache still receives its own real
+// context and block in one write, with no padded positions in its history.
+func (m *Model) ForwardBatch(rows []*batch.Batch, caches [][]cache.Cache) *mlx.Array {
+	if len(rows) == 0 || len(rows) != len(caches) {
+		panic("dflash: proposal batch has no rows or mismatched caches")
+	}
+	width := rows[0].InputIDs.Dim(1)
+	contextLengths := make([]int, len(rows))
+	ids := make([]*mlx.Array, len(rows))
+	offsets, lengths := make([]int32, len(rows)), make([]int32, len(rows))
+	var feature *mlx.Array
+	maxContext := 0
+	for i, row := range rows {
+		if row.InputIDs.Dim(0) != 1 || row.InputIDs.Dim(1) != width || len(row.SeqOffsets) != 1 ||
+			len(row.SeqQueryLens) != 1 || int(row.SeqQueryLens[0]) != width || len(caches[i]) != len(m.Layers) {
+			panic("dflash: expected equal-width, unpadded proposal rows")
+		}
+		ids[i], offsets[i], lengths[i] = row.InputIDs, row.SeqOffsets[0], int32(width)
+		if row.Hidden != nil {
+			if row.Hidden.Dim(0) != 1 || (feature != nil && (row.Hidden.Dim(2) != feature.Dim(2) || row.Hidden.DType() != feature.DType())) {
+				panic("dflash: incompatible proposal context features")
+			}
+			feature = row.Hidden
+			contextLengths[i] = row.Hidden.Dim(1)
+			maxContext = max(maxContext, contextLengths[i])
+		}
+	}
+	b := &batch.Batch{InputIDs: mlx.Concatenate(ids, 0), SeqOffsets: offsets, SeqQueryLens: lengths}
+	if maxContext > 0 {
+		features := make([]*mlx.Array, len(rows))
+		for i, row := range rows {
+			switch {
+			case contextLengths[i] == 0:
+				features[i] = mlx.Zeros(feature.DType(), 1, maxContext, feature.Dim(2))
+			case contextLengths[i] < maxContext:
+				features[i] = mlx.PadConstant(row.Hidden, []int{1}, []int{0}, []int{maxContext - contextLengths[i]})
+			default:
+				features[i] = row.Hidden
+			}
+		}
+		b.Hidden = mlx.Concatenate(features, 0)
+	}
+	layers := make([]cache.Layer, len(m.Layers))
+	for layer := range layers {
+		owners := make([]cache.Cache, len(rows))
+		for i := range rows {
+			owners[i] = caches[i][layer]
+		}
+		layers[layer] = &proposalCache{rows: owners, contextLengths: contextLengths, paddedContext: maxContext}
+	}
+	hidden, _ := m.forward(b, layers, contextLengths)
+	return hidden
+}
+
+// proposalCache strips feature padding before the combined context/block
+// write. Splitting that write would materialize wrapped rollback snapshots.
+type proposalCache struct {
+	rows           []cache.Cache
+	contextLengths []int
+	paddedContext  int
+}
+
+func (c *proposalCache) State() []*mlx.Array {
+	var state []*mlx.Array
+	for _, row := range c.rows {
+		state = append(state, row.State()...)
+	}
+	return state
+}
+
+func (c *proposalCache) View(b *batch.Batch) *nn.KVHistory {
+	histories := make([]*nn.KVHistory, len(c.rows))
+	for i, row := range c.rows {
+		histories[i] = row.(cache.Attention).View(b.Row(i))
+	}
+	return nn.NewRowKVHistory(histories)
+}
+
+func (c *proposalCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
+	histories := make([]*nn.KVHistory, len(c.rows))
+	for i, row := range c.rows {
+		k := keys.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+		v := values.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+		if n := c.contextLengths[i]; n < c.paddedContext {
+			k = k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, n), mlx.Slice()).Concatenate(2,
+				k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(c.paddedContext, mlx.End), mlx.Slice()))
+			v = v.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, n), mlx.Slice()).Concatenate(2,
+				v.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(c.paddedContext, mlx.End), mlx.Slice()))
+		} else if row.Offset() == 0 {
+			// An empty rotating cache can retain its first write directly.
+			// Give it a compact row so it cannot retain its peers' storage.
+			index := mlx.FromValues([]int32{0}, 1)
+			k, v = k.TakeAxis(index, 0), v.TakeAxis(index, 0)
+		}
+		histories[i] = row.(cache.Attention).Update(b.Row(i), k, v)
+	}
+	return nn.NewRowKVHistory(histories)
+}
+
+func (m *Model) forward(b *batch.Batch, kv []cache.Layer, contextLengths []int) (hidden, auxHidden *mlx.Array) {
 	var hctx *mlx.Array
 	nCtx := int32(0)
 	if b.Hidden != nil {
@@ -644,7 +746,7 @@ func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, a
 		hctx = m.HiddenNorm.Forward(m.FC.Forward(features), m.RMSNormEps)
 		nCtx = int32(b.Hidden.Dim(1))
 	}
-	ctxPositions := mlx.FromValues([]int32{b.SeqOffsets[0]}, 1)
+	ctxPositions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	var h, blockPositions *mlx.Array
 	var bb *batch.Batch
@@ -653,9 +755,16 @@ func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, a
 		dims := b.InputIDs.Dims()
 		B, L = int32(dims[0]), int32(dims[1])
 		h = m.target.TokenEmbeddings(b.InputIDs)
-		blockStart := b.SeqOffsets[0] + nCtx
-		bb = &batch.Batch{InputIDs: b.InputIDs, SeqOffsets: []int32{blockStart}, SeqQueryLens: b.SeqQueryLens}
-		blockPositions = mlx.FromValues([]int32{blockStart}, 1)
+		blockStarts := make([]int32, len(b.SeqOffsets))
+		for i, offset := range b.SeqOffsets {
+			n := nCtx
+			if contextLengths != nil {
+				n = int32(contextLengths[i])
+			}
+			blockStarts[i] = offset + n
+		}
+		bb = &batch.Batch{InputIDs: b.InputIDs, SeqOffsets: blockStarts, SeqQueryLens: b.SeqQueryLens}
+		blockPositions = mlx.FromValues(blockStarts, len(blockStarts))
 	}
 
 	for i, layer := range m.Layers {
