@@ -184,6 +184,30 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 		req.License = licenses
 	}
 
+	// When FROM names a directory, everything in it lands in req.Files —
+	// including files DRAFT marked as the draft model. Drop them from the
+	// target file set so they are not double-wired as main-model layers.
+	if len(req.DraftFiles) > 0 && len(req.Files) > 0 {
+		draftFiles := make(map[string]struct{}, 2*len(req.DraftFiles))
+		for f := range req.DraftFiles {
+			draftFiles[f] = struct{}{}
+			if c, err := canonicalLocalPath(f); err == nil {
+				draftFiles[c] = struct{}{}
+			}
+		}
+		for f := range req.Files {
+			if _, ok := draftFiles[f]; ok {
+				delete(req.Files, f)
+				continue
+			}
+			if c, err := canonicalLocalPath(f); err == nil {
+				if _, ok := draftFiles[c]; ok {
+					delete(req.Files, f)
+				}
+			}
+		}
+	}
+
 	return req, nil
 }
 

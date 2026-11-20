@@ -23,7 +23,10 @@ type PipelineOptions struct {
 	Requires      string
 	DraftDir      string
 	DraftQuantize string
-	Validation    MLXValidationOptions
+	// Parameters holds the Modelfile PARAMETER values so the pipeline can
+	// report which runtime behaviors remain at their defaults.
+	Parameters map[string]any
+	Validation MLXValidationOptions
 }
 
 // Create imports a safetensors model through the full pipeline: read the
@@ -72,7 +75,7 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 			return err
 		}
 	}
-	modelConfig, err := inferSafetensorsConfig(modelDir, inv.Config, opts.Parser, opts.Renderer)
+	modelConfig, inferred, err := inferSafetensorsConfig(modelDir, inv.Config, opts.Parser, opts.Renderer)
 	if err != nil {
 		return err
 	}
@@ -85,6 +88,11 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	// Older releases can't run Phonon, whatever the Modelfile or client says.
 	if isPhononArchitecture(inv.Config.Architecture()) && semver.Compare("v"+modelConfig.Requires, "v"+phononMinOllamaVersion) < 0 {
 		modelConfig.Requires = phononMinOllamaVersion
+	}
+	// Notices describe the config that gets written, so they follow every
+	// architecture floor above rather than reporting the pre-floor default.
+	for _, notice := range safetensorsCreateNotices(inv, modelConfig, inferred, opts) {
+		fn(notice)
 	}
 	if err := validateMLXSource(inv.Config, false, opts.Validation); err != nil {
 		return err

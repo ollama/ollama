@@ -1349,3 +1349,26 @@ func TestFilesForModel(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateRequestDraftInsideFromDir(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "model.gguf"), make([]byte, 512), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "draft.gguf"), make([]byte, 512), 0o644))
+
+	modelfile, err := ParseFile(strings.NewReader(`
+FROM .
+DRAFT ./draft.gguf
+`))
+	require.NoError(t, err)
+
+	req, err := modelfile.CreateRequest(dir)
+	require.NoError(t, err)
+
+	// The draft file is part of the FROM directory glob but must only wire up
+	// as the draft model, never double-listed as a target-model file.
+	assert.Len(t, req.DraftFiles, 1)
+	assert.Contains(t, req.DraftFiles, filepath.Join(dir, "draft.gguf"))
+	assert.Len(t, req.Files, 1)
+	assert.Contains(t, req.Files, filepath.Join(dir, "model.gguf"))
+}

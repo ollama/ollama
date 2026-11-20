@@ -368,7 +368,7 @@ func inferConfigForTest(t *testing.T, modelDir, parser, renderer string) model.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := inferSafetensorsConfig(modelDir, cfg, parser, renderer)
+	config, _, err := inferSafetensorsConfig(modelDir, cfg, parser, renderer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func inferConfigForTest(t *testing.T, modelDir, parser, renderer string) model.C
 func TestStrandsDecisionMetadata(t *testing.T) {
 	cfg := sourceModelConfig{Architectures: []string{"StrandsDeciderForDecision"}, ModelType: "qwen3_5"}
 	// The Qwen backbone must not advertise chat or thinking for a pointer head.
-	got, err := inferSafetensorsConfig(t.TempDir(), cfg, "", "")
+	got, _, err := inferSafetensorsConfig(t.TempDir(), cfg, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +396,7 @@ func TestD1DecisionMetadata(t *testing.T) {
 		{"lfm3_omni", []string{"decision", "vision", "audio"}},
 	} {
 		cfg := sourceModelConfig{Architectures: []string{"D1Model"}, ModelType: tc.modelType}
-		got, err := inferSafetensorsConfig(t.TempDir(), cfg, "", "")
+		got, _, err := inferSafetensorsConfig(t.TempDir(), cfg, "", "")
 		if err != nil {
 			t.Fatal(err)
 		}
