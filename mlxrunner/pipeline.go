@@ -388,6 +388,7 @@ func (t *pipelinedDecoder) close() {
 // with those bytes so Content and Logprobs stay aligned when a chunk does
 // flush.
 type detokenizer struct {
+	started         bool
 	tokenizer       *tokenizer.Tokenizer
 	buf             bytes.Buffer
 	logprobs        []llm.Logprob
@@ -409,8 +410,13 @@ func clampLogprobs(logprobs []llm.Logprob) {
 
 func (d *detokenizer) detokenize(res sampler.Result) (CompletionResponse, bool) {
 	output := res.Token.Int()
-	d.buf.WriteString(d.tokenizer.Decode([]int32{output}))
-	logprobs := buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)
+	piece := d.tokenizer.DecodeRaw([]int32{output})
+	if !d.started {
+		piece = d.tokenizer.Decode([]int32{output})
+		d.started = true
+	}
+	d.buf.WriteString(piece)
+	logprobs := buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.DecodeRaw)
 	clampLogprobs(logprobs)
 	d.logprobs = append(d.logprobs, logprobs...)
 

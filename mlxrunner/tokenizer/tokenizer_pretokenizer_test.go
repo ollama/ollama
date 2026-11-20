@@ -68,7 +68,7 @@ func TestPretokenizerSplits(t *testing.T) {
 				t.Fatal(err)
 			}
 			var got []string
-			tok.forEachPartChunk(tc.text, func(c encodeChunk) { got = append(got, c.text) })
+			tok.forEachPartChunk(tc.text, true, func(c encodeChunk) { got = append(got, c.text) })
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("chunks for %q = %q, want %q", tc.text, got, tc.want)
 			}
@@ -134,7 +134,7 @@ func FuzzPretokenizer(f *testing.F) {
 		}
 		tok := Tokenizer{pretokenizer: stages}
 		var joined strings.Builder
-		tok.forEachPartChunk(text, func(c encodeChunk) { joined.WriteString(c.text) })
+		tok.forEachPartChunk(text, true, func(c encodeChunk) { joined.WriteString(c.text) })
 		if preservesText && joined.String() != text {
 			t.Fatalf("split input %q became %q", text, joined.String())
 		}
