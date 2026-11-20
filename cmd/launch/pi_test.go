@@ -3,6 +3,7 @@ package launch
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -36,6 +37,29 @@ func TestPiInstallSpec_UsesOfficialPackage(t *testing.T) {
 	}
 }
 
+func TestPiSetupOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell")
+	}
+	stderr := captureStderr(t, func() {
+		cmd := exec.Command("sh", "-c", "echo cloning >&2; echo progress; printf 'ollama-pi-ready\\r\\n'")
+		if err := runPiSetupCommand(cmd, "ollama-pi-ready"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if stderr != "" {
+		t.Fatalf("successful setup printed %q", stderr)
+	}
+	cmd := exec.Command("sh", "-c", "echo 'could not access plugin repository' >&2; exit 1")
+	if err := runPiSetupCommand(cmd, "ollama-pi-ready"); err == nil || !strings.Contains(err.Error(), "could not access plugin repository") {
+		t.Fatalf("missing installer diagnostic: %v", err)
+	}
+	cmd = exec.Command("sh", "-c", "echo help; echo 'extension failed to load' >&2")
+	if err := runPiSetupCommand(cmd, "ollama-pi-ready"); err == nil || !strings.Contains(err.Error(), "extension failed to load") {
+		t.Fatalf("missing setup diagnostic: %v", err)
+	}
+}
+
 func TestPiRun_InstallLifecycle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX shell test binaries")
@@ -49,23 +73,11 @@ func TestPiRun_InstallLifecycle(t *testing.T) {
 	}
 	seedPiScript := func(t *testing.T, dir string) {
 		t.Helper()
-		plugin := filepath.Join(dir, "ollama-plugin")
-		if err := os.MkdirAll(plugin, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		for name, data := range map[string]string{
-			"package.json": `{"name":"@ollama/pi"}`,
-			"index.ts":     "",
-		} {
-			if err := os.WriteFile(filepath.Join(plugin, name), []byte(data), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
 		writeScript(t, filepath.Join(dir, "pi"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
+echo "$1" >> %q
 if [ "$1" = "--version" ]; then echo 1.5.2; exit 0; fi
-if [ "$1" = "list" ]; then echo %q; fi
-`, filepath.Join(dir, "pi.log"), plugin))
+if [ "$1" = "--no-extensions" ]; then echo ollama-pi-ready; fi
+`, filepath.Join(dir, "pi.log")))
 	}
 	withConfirm := func(t *testing.T, accept bool) {
 		t.Helper()
@@ -103,7 +115,7 @@ EOS
 			t.Fatalf("unexpected npm calls: %s (%v)", npmCalls, err)
 		}
 		piCalls, err := os.ReadFile(filepath.Join(root, "pi.log"))
-		if err != nil || string(piCalls) != "--version\nlist\n--continue\n" {
+		if err != nil || string(piCalls) != "--version\n--no-extensions\n--continue\n" {
 			t.Fatalf("unexpected Pi calls: %s (%v)", piCalls, err)
 		}
 	})
@@ -136,7 +148,7 @@ EOS
 				t.Fatalf("installed Pi should not require npm: %v", err)
 			}
 			calls, err := os.ReadFile(filepath.Join(root, "pi.log"))
-			if err != nil || string(calls) != "--version\nlist\n--continue\n" {
+			if err != nil || string(calls) != "--version\n--no-extensions\n--continue\n" {
 				t.Fatalf("unexpected Pi calls: %s (%v)", calls, err)
 			}
 		})
@@ -175,7 +187,7 @@ func TestPiRequiresSupportedVersionBeforePluginSetup(t *testing.T) {
 				}
 				return
 			}
-			_, err := preparePi()
+			_, err := preparePi(IntegrationLaunchRequest{})
 			if err == nil || !strings.Contains(err.Error(), "Pi 1.5.2 or newer") || !strings.Contains(err.Error(), "npm install -g "+piNpmPackage+"@latest") {
 				t.Fatalf("expected a manual-upgrade message, got %v", err)
 			}

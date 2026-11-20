@@ -1,48 +1,53 @@
 package launch
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
 	"golang.org/x/mod/semver"
+	"golang.org/x/term"
 )
 
 // Pi implements Runner for Pi (Pi Coding Agent) integration.
 type Pi struct{}
 
 const (
-	piNpmPackage = "@earendil-works/pi-coding-agent"
-	piOllamaPkg  = "@ollama/pi"
-	piMinVersion = "1.5.2"
+	piNpmPackage   = "@earendil-works/pi-coding-agent"
+	piMinVersion   = "1.5.2"
+	piOllamaSource = "git:github.com/ollama/pi-ollama"
 )
-
-var piOllamaSource = "git:github.com/ollama/pi-ollama"
 
 func (p *Pi) String() string { return "Pi" }
 
 func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
 	forward := piLaunchArgs(model, args)
-	bin, err := preparePi()
+	bin, err := preparePi(IntegrationLaunchRequest{ExtraArgs: args})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "\n%sLaunching Pi...%s\n\n", ansiGray, ansiReset)
 	cmd := exec.Command(bin, forward...)
 	cmd.Env = append(os.Environ(), "OLLAMA_LAUNCH_PI=1")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
 }
 
-func preparePi() (string, error) {
-	fmt.Fprintf(os.Stderr, "\n%sPreparing Pi...%s\n", ansiGray, ansiReset)
-
-	fmt.Fprintf(os.Stderr, "%sChecking Pi installation...%s\n", ansiGray, ansiReset)
+func preparePi(req IntegrationLaunchRequest) (string, error) {
+	offlineEnv := strings.ToLower(os.Getenv("PI_OFFLINE"))
+	offline := slices.Contains(req.ExtraArgs, "--offline") || offlineEnv == "1" || offlineEnv == "true" || offlineEnv == "yes"
+	if offline {
+		if _, err := exec.LookPath("pi"); err != nil {
+			return "", fmt.Errorf("Pi is missing and offline setup was requested; install Pi online first")
+		}
+	}
 	bin, err := ensurePiInstalled()
 	if err != nil {
 		return "", err
@@ -50,10 +55,39 @@ func preparePi() (string, error) {
 	if err := checkPiVersion(bin); err != nil {
 		return "", err
 	}
-	if err := ensurePiOllamaPackage(bin); err != nil {
-		return "", err
+	if req.ConfigureOnly || (!offline && !piPluginDeclared()) {
+		if err := configurePi(bin, req, offline); err != nil {
+			return "", err
+		}
 	}
 	return bin, nil
+}
+
+// Recognize the source Launch installs even when its checkout is missing.
+// Pi handles other source formats, manual extensions and project trust.
+func piPluginDeclared() bool {
+	dir := os.Getenv("PI_CODING_AGENT_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		dir = filepath.Join(home, ".pi", "agent")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	var settings struct{ Packages []any }
+	if err != nil || json.Unmarshal(data, &settings) != nil {
+		return false
+	}
+	for _, pkg := range settings.Packages {
+		if filtered, ok := pkg.(map[string]any); ok {
+			pkg = filtered["source"]
+		}
+		if source, ok := pkg.(string); ok && (source == piOllamaSource || strings.HasPrefix(source, piOllamaSource+"@")) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkPiVersion(bin string) error {
@@ -80,73 +114,45 @@ func piLaunchArgs(model string, args []string) []string {
 	return append(forward, args...)
 }
 
-func piOllamaPackageSource(output string) string {
-	var source string
-	for _, line := range strings.Split(output, "\n") {
-		path := strings.TrimSpace(line)
-		// Pi prints a source followed by its resolved path indented four spaces.
-		if !strings.HasPrefix(line, "    ") {
-			source = strings.TrimSuffix(path, " (filtered)")
-		}
-		if !filepath.IsAbs(path) {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(path, "package.json"))
-		if err != nil {
-			continue
-		}
-		var pkg struct{ Name string }
-		if json.Unmarshal(data, &pkg) != nil || pkg.Name != piOllamaPkg {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(path, "index.ts")); err == nil {
-			return source
-		}
-	}
-	return ""
-}
+//go:embed pi_setup.mjs
+var piSetupExtension []byte
 
-func ensurePiOllamaPackage(bin string) error {
-	list := func() (string, error) {
-		cmd := exec.Command(bin, "list")
-		cmd.Env = append(os.Environ(), "FORCE_COLOR=0")
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("could not check Pi packages: %w; run 'pi list' for details", err)
-		}
-		return piOllamaPackageSource(string(output)), nil
+func configurePi(bin string, req IntegrationLaunchRequest, offline bool) error {
+	model := ""
+	if req.ConfigureOnly {
+		model = req.ModelOverride
 	}
-	source, err := list()
+	if model == "ollama/" {
+		return fmt.Errorf("missing model name after ollama/")
+	}
+	dir, err := os.MkdirTemp("", "ollama-pi-setup-")
 	if err != nil {
 		return err
 	}
-	if source != "" {
-		// Local checkouts belong to the user. Pi's updater preserves configured
-		// Git refs and package filters for remote installs.
-		remote := strings.HasPrefix(source, "git:") || strings.HasPrefix(source, "npm:") ||
-			strings.Contains(source, "://") || strings.HasPrefix(source, "git@") || strings.HasPrefix(source, "github.com/")
-		if remote {
-			fmt.Fprintf(os.Stderr, "%sChecking Ollama plugin for updates...%s\n", ansiGray, ansiReset)
-			cmd := exec.Command(bin, "update", source)
-			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-			if err := cmd.Run(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not update the Ollama plugin (%v); using the installed version. Run 'pi update %s' to try again.\n", err, source)
-			}
-		}
-		return nil
+	defer os.RemoveAll(dir)
+	probe := filepath.Join(dir, "setup.mjs")
+	if err := os.WriteFile(probe, piSetupExtension, 0o600); err != nil {
+		return err
 	}
-	fmt.Fprintf(os.Stderr, "%sInstalling Ollama plugin...%s\n", ansiGray, ansiReset)
-	cmd := exec.Command(bin, "install", piOllamaSource)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("could not install the Ollama plugin: %w; try 'pi install %s'", err, piOllamaSource)
-	}
-	source, err = list()
+	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	if source == "" {
-		return fmt.Errorf("the Ollama plugin is missing after installation; run 'pi install %s'", piOllamaSource)
+	input, err := json.Marshal(map[string]any{
+		"cwd": cwd, "agentDir": os.Getenv("PI_CODING_AGENT_DIR"), "args": req.ExtraArgs,
+		"offline": offline, "configureOnly": req.ConfigureOnly, "model": strings.TrimPrefix(model, "ollama/"), "plugin": piOllamaSource,
+	})
+	if err != nil {
+		return err
+	}
+	// Load only our setup extension. It uses the installed Pi SDK to inspect
+	// the real profile without running user extensions or starting a session.
+	cmd := exec.Command(bin, "--no-extensions", "--no-approve", "--no-mcp", "-e", probe, "--help")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PI_CODING_AGENT_DIR="+dir, "PI_OFFLINE=1")
+	cmd.Stdin = bytes.NewReader(input)
+	if err := runPiSetupCommand(cmd, "ollama-pi-ready"); err != nil {
+		return fmt.Errorf("Pi setup failed: %w", err)
 	}
 	return nil
 }
@@ -168,38 +174,37 @@ func ensurePiInstalled() (string, error) {
 		return "", fmt.Errorf("pi installation cancelled")
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Pi...\n")
-	if err := installPiPackage(); err != nil {
-		return "", err
+	if err := runPiSetupCommand(exec.Command("npm", "install", "-g", piNpmPackage+"@latest"), ""); err != nil {
+		return "", fmt.Errorf("failed to install pi: %w", err)
 	}
-	if err := requirePiOnPath(); err != nil {
-		return "", err
+	if _, err := exec.LookPath("pi"); err != nil {
+		return "", fmt.Errorf("pi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
 	}
-	fmt.Fprintf(os.Stderr, "%sPi installed successfully%s\n\n", ansiGreen, ansiReset)
 	return "pi", nil
 }
 
-func requirePiOnPath() error {
-	if _, err := exec.LookPath("pi"); err != nil {
-		return fmt.Errorf("pi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+func runPiSetupCommand(cmd *exec.Cmd, marker string) error {
+	if isInteractiveSession() && term.IsTerminal(int(os.Stderr.Fd())) {
+		// Keep stdin in normal mode so Ctrl+C interrupts the installer.
+		defer defaultSpinner("Preparing Pi").Stop()
 	}
-	return nil
-}
-
-func installPiPackage() error {
-	if err := runQuietCommand("npm", "install", "-g", piNpmPackage+"@latest"); err != nil {
-		return fmt.Errorf("failed to install pi: %w", err)
+	var diagnostics bytes.Buffer
+	cmd.Stderr = &diagnostics
+	out, err := cmd.Output()
+	if err == nil && marker != "" {
+		// Pi can print help and exit successfully if the setup extension failed to load.
+		out = bytes.TrimSpace(out)
+		if string(out[bytes.LastIndexByte(out, '\n')+1:]) != marker {
+			err = fmt.Errorf("Pi did not complete Ollama plugin setup")
+		}
 	}
-	return nil
-}
-
-func runQuietCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return nil
 	}
-	msg := strings.TrimSpace(string(out))
+	msg := strings.TrimSpace(diagnostics.String())
+	if msg == "" && marker == "" {
+		msg = strings.TrimSpace(string(out))
+	}
 	if msg == "" {
 		return err
 	}

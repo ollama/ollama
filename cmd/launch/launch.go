@@ -496,7 +496,7 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		restorePolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
 		defer restorePolicy()
 		if req.ConfigureOnly {
-			_, err := preparePi()
+			_, err := preparePi(req)
 			return err
 		}
 		return pi.Run(req.ModelOverride, nil, req.ExtraArgs)

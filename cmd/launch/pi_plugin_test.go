@@ -2,10 +2,12 @@ package launch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -38,42 +40,22 @@ func TestPiLaunchArgsPreserveExplicitAndResumeArguments(t *testing.T) {
 	}
 }
 
-func TestPiPluginLaunchInstallsOnceUpdatesAndKeepsBareLaunchDefaults(t *testing.T) {
+func TestPiLaunchPreservesDefaultsAndSessionOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX fake Pi executable")
 	}
 	root := t.TempDir()
 	setTestHome(t, root)
-	plugin := filepath.Join(root, "plugin")
 	logPath := filepath.Join(root, "pi.log")
-	if err := os.MkdirAll(plugin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	manifest := filepath.Join(plugin, "package.json")
-	marker := filepath.Join(plugin, "installed")
-	if err := os.WriteFile(manifest, []byte(`{"name":"@ollama/pi"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(plugin, "index.ts"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
 	script := fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
 if [ "$1" = "--version" ]; then echo 1.5.2; exit 0; fi
-if [ "$1" = "list" ]; then
-  if [ -f %q ]; then
-    echo '  '%q
-    if [ "$FORCE_COLOR" = "1" ]; then printf '\033[2m    %%s\033[22m\n' %q; else echo '    '%q; fi
-  fi
-  exit 0
-fi
-if [ "$1" = "install" ] && [ "$2" = %q ]; then : > %q; exit 0; fi
-if [ "$1" = "update" ] && [ "$2" = %q ]; then exit 0; fi
+if [ "$1" = "--no-extensions" ]; then echo "unexpected setup" >&2; exit 1; fi
 echo "color=$FORCE_COLOR" >> %q
-if [ "$#" = 0 ]; then echo launched >> %q; echo "launch=$OLLAMA_LAUNCH_PI" >> %q; exit 0; fi
+if [ "$#" = 0 ]; then echo launched >> %q; echo "launch=$OLLAMA_LAUNCH_PI" >> %q; echo session-output; exit 0; fi
 if [ "$1" = "--model" ]; then echo "launch=$OLLAMA_LAUNCH_PI" >> %q; exit 0; fi
 exit 1
-`, logPath, marker, piOllamaSource, plugin, plugin, piOllamaSource, marker, piOllamaSource, logPath, logPath, logPath, logPath)
+`, logPath, logPath, logPath, logPath, logPath)
 	if err := os.WriteFile(filepath.Join(root, "pi"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +75,7 @@ exit 1
 	if err := os.MkdirAll(filepath.Join(agent, "sessions"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	settings := `{"defaultProvider":"other","defaultModel":"keep","packages":["existing"]}`
+	settings := `{"defaultProvider":"other","defaultModel":"keep","packages":["git:github.com/ollama/pi-ollama@pinned"]}`
 	models := `{"providers":{"ollama":{"baseUrl":"http://old-server/v1","apiKey":"ollama","models":[{"id":"generated","_launch":true},{"id":"manual","contextWindow":8192}]},"other":{"baseUrl":"http://custom","models":[{"id":"keep"}]}}}`
 	files := map[string]string{
 		"settings.json":          settings,
@@ -106,20 +88,27 @@ exit 1
 			t.Fatal(err)
 		}
 	}
+	stdout, err := os.CreateTemp(root, "stdout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousStdout := os.Stdout
+	os.Stdout = stdout
+	t.Cleanup(func() {
+		os.Stdout = previousStdout
+		stdout.Close()
+	})
 	for range 2 {
 		if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "pi"}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if output, err := os.ReadFile(stdout.Name()); err != nil || string(output) != "session-output\nsession-output\n" {
+		t.Fatalf("unexpected session stdout: %q (%v)", output, err)
+	}
 	log, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if strings.Count(string(log), "install "+piOllamaSource+"\n") != 1 {
-		t.Fatalf("plugin was not installed exactly once:\n%s", log)
-	}
-	if strings.Count(string(log), "update "+piOllamaSource+"\n") != 1 {
-		t.Fatalf("the existing plugin must be updated on the second launch:\n%s", log)
 	}
 	if strings.Count(string(log), "launched\n") != 2 {
 		t.Fatalf("ordinary Pi was not launched twice:\n%s", log)
@@ -148,46 +137,6 @@ exit 1
 	log, err = os.ReadFile(logPath)
 	if err != nil || strings.Count(string(log), "launch=1\n") != 3 {
 		t.Fatalf("explicit models must use the same Launch handoff: %s (%v)", log, err)
-	}
-	if strings.Count(string(log), "update "+piOllamaSource+"\n") != 2 {
-		t.Fatalf("explicit model launches must update the plugin too:\n%s", log)
-	}
-}
-
-func TestPiPluginUpdateFailureKeepsInstalledPlugin(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX fake Pi executable")
-	}
-	root := t.TempDir()
-	setTestHome(t, root)
-	t.Setenv("PATH", root)
-	plugin := filepath.Join(root, "plugin")
-	if err := os.MkdirAll(plugin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, data := range map[string]string{"package.json": `{"name":"@ollama/pi"}`, "index.ts": ""} {
-		if err := os.WriteFile(filepath.Join(plugin, name), []byte(data), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	logPath := filepath.Join(root, "pi.log")
-	script := fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-if [ "$1" = "--version" ]; then echo 1.5.2; exit 0; fi
-if [ "$1" = "list" ]; then printf 'User packages:\n  %%s\n    %%s\n' %q %q; exit 0; fi
-if [ "$1" = "update" ]; then echo 'network unavailable' >&2; exit 1; fi
-if [ "$1" = "--continue" ]; then exit 0; fi
-exit 1
-`, logPath, piOllamaSource, plugin)
-	if err := os.WriteFile(filepath.Join(root, "pi"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&Pi{}).Run("", nil, []string{"--continue"}); err != nil {
-		t.Fatal(err)
-	}
-	log, err := os.ReadFile(logPath)
-	if err != nil || string(log) != "--version\nlist\nupdate "+piOllamaSource+"\n--continue\n" {
-		t.Fatalf("a failed update must still launch the installed plugin: %s (%v)", log, err)
 	}
 }
 
@@ -233,47 +182,176 @@ func TestPiLauncherStateLeavesModelsToPi(t *testing.T) {
 	}
 }
 
-func TestPiPluginRecognizesLocalInstallRegardlessOfVersion(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.ts"), nil, 0o644); err != nil {
-		t.Fatal(err)
+func TestPiOfflineSetup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX fake Pi executable")
 	}
-	for _, tc := range []struct {
-		manifest string
-		want     bool
-	}{
-		{`{"name":"@ollama/pi","version":"0.0.0"}`, true},
-		{`{"name":"@ollama/pi","version":"0.1.0"}`, true},
-		{`{"name":"@ollama/pi","version":"0.2.0"}`, true},
-		{`{"name":"@ollama/pi"}`, true},
-		{`{"name":"another-plugin","version":"0.2.0"}`, false},
-	} {
-		if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(tc.manifest), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if installed := piOllamaPackageSource("User packages:\n  "+root+"\n") != ""; installed != tc.want {
-			t.Fatalf("manifest %s: installed %v, want %v", tc.manifest, installed, tc.want)
-		}
+	root := t.TempDir()
+	t.Setenv("PATH", root)
+	t.Setenv("PI_OFFLINE", "")
+	if _, err := preparePi(IntegrationLaunchRequest{ExtraArgs: []string{"--offline"}}); err == nil || !strings.Contains(err.Error(), "Pi is missing") {
+		t.Fatalf("expected an offline prerequisite error, got %v", err)
 	}
 }
 
-func TestPiPluginPackageSourcePreservesConfiguredRefsAndFilters(t *testing.T) {
+func TestPiNativePluginSetup(t *testing.T) {
+	bin, err := exec.LookPath("pi")
+	if err != nil || checkPiVersion(bin) != nil {
+		t.Skip("requires an installed Pi 1.5.2+")
+	}
 	root := t.TempDir()
-	for name, data := range map[string]string{"package.json": `{"name":"@ollama/pi"}`, "index.ts": ""} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0o644); err != nil {
+	setTestHome(t, root)
+	t.Chdir(root)
+	agent := filepath.Join(root, "agent")
+	t.Setenv("PI_CODING_AGENT_DIR", agent)
+	plugin := filepath.Join(root, "plugin")
+	for _, dir := range []string{agent, plugin, filepath.Join(root, ".pi")} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, source := range []string{
-		piOllamaSource,
-		"https://github.com/ollama/pi-ollama",
-		piOllamaSource + "@v0.2.0",
-		piOllamaSource + " (filtered)",
-		"../local-checkout",
+	entry := filepath.Join(plugin, "index.ts")
+	for name, data := range map[string]string{
+		entry:                                 "throw new Error('inventory must not execute user extensions')",
+		filepath.Join(plugin, "package.json"): `{"name":"@ollama/pi","pi":{"extensions":["./index.ts"]}}`,
 	} {
-		output := "User packages:\n  npm:unrelated\n    /missing-package\n  " + source + "\n    " + root + "\n"
-		if got := piOllamaPackageSource(output); got != strings.TrimSuffix(source, " (filtered)") {
-			t.Fatalf("package source = %q, want %q", got, source)
+		if err := os.WriteFile(name, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
+	for _, tc := range []struct {
+		name     string
+		settings any
+		args     []string
+	}{
+		{"manual entry", map[string]any{"extensions": []string{entry}}, nil},
+		{"local file package", map[string]any{"packages": []string{entry}}, nil},
+		{"disabled package", map[string]any{"packages": []any{map[string]any{"source": plugin, "extensions": []string{}}}}, nil},
+		{"disabled missing checkout", map[string]any{"packages": []any{map[string]any{"source": "git:github:ollama/pi-ollama@release", "autoload": false}}}, nil},
+		{"explicit extension", map[string]any{}, []string{"-e", entry}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(agent, "settings.json")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := configurePi(bin, IntegrationLaunchRequest{ConfigureOnly: true, ExtraArgs: tc.args}, true); err != nil {
+				t.Fatal(err)
+			}
+			if after, err := os.ReadFile(path); err != nil || string(after) != string(data) {
+				t.Fatalf("Pi settings changed: %s (%v)", after, err)
+			}
+		})
+	}
+	path := filepath.Join(agent, "settings.json")
+	t.Run("configure saves the user default", func(t *testing.T) {
+		const initial = `{"packages":["git:github.com/ollama/pi-ollama@release"],"defaultProvider":"other","defaultModel":"old","theme":"light","enabledModels":["other/old"]}`
+		if err := os.WriteFile(path, []byte(initial), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := LaunchCmd(func(_ *cobra.Command, _ []string) error {
+			t.Fatal("saving a Pi default must not require the Ollama daemon")
+			return nil
+		}, func(_ *cobra.Command) {})
+		cmd.SetArgs([]string{"pi", "--config", "--model", "ollama/cloud/fixture", "--", "--offline"})
+		for range 2 {
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var settings struct {
+			DefaultProvider string
+			DefaultModel    string
+			Theme           string
+			Packages        []string
+			EnabledModels   []string
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || json.Unmarshal(data, &settings) != nil {
+			t.Fatalf("read settings: %s (%v)", data, err)
+		}
+		if settings.DefaultProvider != "ollama" || settings.DefaultModel != "cloud/fixture" || settings.Theme != "light" ||
+			!slices.Equal(settings.Packages, []string{piOllamaSource + "@release"}) ||
+			!slices.Equal(settings.EnabledModels, []string{"other/old", "ollama/cloud/fixture"}) {
+			t.Fatalf("unexpected saved settings: %s", data)
+		}
+	})
+	t.Run("malformed settings are preserved", func(t *testing.T) {
+		const malformed = `{"theme":`
+		if err := os.WriteFile(path, []byte(malformed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := configurePi(bin, IntegrationLaunchRequest{ConfigureOnly: true, ModelOverride: "local:latest"}, true); err == nil {
+			t.Fatal("saved a model to invalid Pi settings")
+		}
+		if after, err := os.ReadFile(path); err != nil || string(after) != malformed {
+			t.Fatalf("malformed settings changed: %s (%v)", after, err)
+		}
+	})
+	t.Run("local and custom model IDs", func(t *testing.T) {
+		const models = `{"providers":{"ollama":{"baseUrl":"http://localhost:11434/v1","api":"openai-completions","apiKey":"ollama","models":[{"id":"manual"}]}}}`
+		if err := os.WriteFile(filepath.Join(agent, "models.json"), []byte(models), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"packages":["git:github.com/ollama/pi-ollama"]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct{ model, want string }{
+			{"ollama/local", "local:latest"},
+			{"local:7b", "local:7b"},
+			{"manual", "manual"},
+		} {
+			if err := configurePi(bin, IntegrationLaunchRequest{ConfigureOnly: true, ModelOverride: tc.model}, true); err != nil {
+				t.Fatal(err)
+			}
+			var settings struct{ DefaultModel string }
+			data, err := os.ReadFile(path)
+			if err != nil || json.Unmarshal(data, &settings) != nil || settings.DefaultModel != tc.want {
+				t.Fatalf("model %q: expected %q in settings: %s (%v)", tc.model, tc.want, data, err)
+			}
+		}
+	})
+	t.Run("install in an existing custom profile", func(t *testing.T) {
+		if _, err := exec.LookPath("git"); err != nil {
+			t.Skip("requires Git")
+		}
+		for _, args := range [][]string{
+			{"init", "-b", "release"},
+			{"add", "package.json", "index.ts"},
+			{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"},
+		} {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = plugin
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %s: %s (%v)", args[0], out, err)
+			}
+		}
+		t.Setenv("GIT_CONFIG_COUNT", "1")
+		t.Setenv("GIT_CONFIG_KEY_0", "url."+filepath.ToSlash(plugin)+".insteadOf")
+		t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/ollama/pi-ollama")
+		t.Setenv("GIT_ALLOW_PROTOCOL", "file")
+		t.Setenv("npm_config_offline", "true")
+		const custom = `{"theme":"light","extensions":["./my-extension.ts"]}`
+		if err := os.WriteFile(path, []byte(custom), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := preparePi(IntegrationLaunchRequest{}); err != nil {
+			t.Fatal(err)
+		}
+		if !piPluginDeclared() {
+			t.Fatal("Pi did not register the plugin")
+		}
+		cached := filepath.Join(agent, "git", "github.com", "ollama", "pi-ollama", "index.ts")
+		if _, err := os.Stat(cached); err != nil {
+			t.Fatalf("Pi did not install the plugin: %v", err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(data), "my-extension.ts") || !strings.Contains(string(data), "light") {
+			t.Fatalf("existing configuration lost: %s (%v)", data, err)
+		}
+	})
 }

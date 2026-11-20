@@ -1,9 +1,9 @@
 package launch
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -89,21 +89,13 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			binDir := t.TempDir()
 			writeFakeBinary(t, binDir, tt.binary)
 			if tt.name == "pi" {
-				writeFakeBinary(t, binDir, "npm")
-				plugin := filepath.Join(home, "ollama-plugin")
-				if err := os.MkdirAll(plugin, 0o755); err != nil {
-					t.Fatal(err)
+				script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.5.2; fi\nif [ \"$1\" = \"--no-extensions\" ]; then echo ollama-pi-ready; fi\n"
+				path := filepath.Join(binDir, "pi")
+				if runtime.GOOS == "windows" {
+					path += ".cmd"
+					script = "@echo off\r\nif \"%~1\"==\"--version\" echo 1.5.2\r\nif \"%~1\"==\"--no-extensions\" echo ollama-pi-ready\r\nexit /b 0\r\n"
 				}
-				for name, data := range map[string]string{
-					"package.json": `{"name":"@ollama/pi"}`,
-					"index.ts":     "",
-				} {
-					if err := os.WriteFile(filepath.Join(plugin, name), []byte(data), 0o644); err != nil {
-						t.Fatal(err)
-					}
-				}
-				script := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.5.2; exit 0; fi\nif [ \"$1\" = \"list\" ]; then echo %q; fi\n", plugin)
-				if err := os.WriteFile(filepath.Join(binDir, "pi"), []byte(script), 0o755); err != nil {
+				if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
