@@ -352,6 +352,7 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 			if nativeDevice.NVIDIADriverMajor > 0 {
 				dev.NVIDIADriverMajor = nativeDevice.NVIDIADriverMajor
 			}
+			dev.IntelIPVersion = nativeDevice.IntelIPVersion
 			setROCmGFXTarget(&dev, nativeDevice.GFXTarget)
 		}
 		setROCmGFXTarget(&dev, rocmGFXOverride)

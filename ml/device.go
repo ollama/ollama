@@ -72,6 +72,10 @@ type DeviceInfo struct {
 	// device validation. Empty on non-AMD devices.
 	GFXTarget string `json:"gfx_target,omitempty"`
 
+	// IntelIPVersion is the Intel GPU IP version reported by VK_INTEL_device_info,
+	// encoded as arch<<22 | release<<14 | revision. Zero when unavailable.
+	IntelIPVersion uint32 `json:"-"`
+
 	// Where backends were loaded from
 	LibraryPath []string
 
