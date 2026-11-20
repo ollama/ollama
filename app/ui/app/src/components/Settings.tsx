@@ -11,10 +11,6 @@ import {
   type ClaudeDesktopModelsSettingsHandle,
 } from "@/components/ClaudeDesktopModelsSettings";
 import {
-  CodexDesktopModelsSettings,
-  type CodexDesktopModelsSettingsHandle,
-} from "@/components/CodexDesktopModelsSettings";
-import {
   WifiIcon,
   FolderIcon,
   BoltIcon,
@@ -23,7 +19,6 @@ import {
   CogIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
-  Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
@@ -60,7 +55,6 @@ interface SettingsDefaultsActions {
   updateSettings: (settings: SettingsType) => Promise<unknown>;
   updateCloud: (enabled: boolean) => Promise<unknown>;
   updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
-  resetChatGPTModels: () => Promise<boolean>;
   resetClaudeMappings: () => Promise<boolean>;
   currentSettings: SettingsType;
   currentShowAppsInMenu: boolean;
@@ -80,7 +74,6 @@ export async function applySettingsDefaults({
   updateSettings,
   updateCloud,
   updateShowAppsInMenu,
-  resetChatGPTModels,
   resetClaudeMappings,
   currentSettings,
   currentShowAppsInMenu,
@@ -115,9 +108,6 @@ export async function applySettingsDefaults({
     // Reset app-specific model settings only after the rest of the page has
     // succeeded, because those native profile changes cannot be rolled back
     // with the settings API.
-    if (!(await resetChatGPTModels())) {
-      throw new Error("ChatGPT models could not be reset");
-    }
     if (!(await resetClaudeMappings())) {
       throw new Error("Claude model mappings could not be reset");
     }
@@ -144,20 +134,17 @@ export default function Settings() {
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
-  const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
-  const [hasCodexDraftChanges, setHasCodexDraftChanges] = useState(false);
   const claudeModelsSettingsRef =
     useRef<ClaudeDesktopModelsSettingsHandle>(null);
-  const codexModelsSettingsRef = useRef<CodexDesktopModelsSettingsHandle>(null);
   const savedConfirmationTimeoutRef = useRef<number | null>(null);
   useBlocker({
     shouldBlockFn: () =>
       !window.confirm("Discard unapplied app model changes?"),
-    enableBeforeUnload: hasClaudeDraftChanges || hasCodexDraftChanges,
-    disabled: !hasClaudeDraftChanges && !hasCodexDraftChanges,
+    enableBeforeUnload: hasClaudeDraftChanges,
+    disabled: !hasClaudeDraftChanges,
   });
   const {
     user,
@@ -357,23 +344,12 @@ export default function Settings() {
   const updateShowAppsInMenuVisibility = async (checked: boolean) => {
     const previous = showAppsInMenu;
     setShowAppsInMenuState(checked);
-    setShowAppsInMenuPending(true);
     try {
       await window.setShowAppsInMenu?.(checked);
     } catch (error) {
       setShowAppsInMenuState(previous);
       throw error;
-    } finally {
-      setShowAppsInMenuPending(false);
     }
-  };
-
-  const handleShowAppsInMenu = (checked: boolean) => {
-    void updateShowAppsInMenuVisibility(checked)
-      .then(showSavedConfirmation)
-      .catch((error) =>
-        console.error("Failed to update menu app visibility:", error),
-      );
   };
 
   const handleCloudUpdate = (enabled: boolean) => {
@@ -406,8 +382,6 @@ export default function Settings() {
           updateSettingsMutation.mutateAsync(defaultSettings),
         updateCloud: requestCloudUpdate,
         updateShowAppsInMenu: updateShowAppsInMenuVisibility,
-        resetChatGPTModels: async () =>
-          (await codexModelsSettingsRef.current?.resetToDefaults()) ?? true,
         resetClaudeMappings: async () =>
           (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
@@ -629,29 +603,6 @@ export default function Settings() {
                 </div>
               </Field>
 
-              {!isWindows && (
-                <Field>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex flex-1 items-start space-x-3">
-                      <Squares2X2Icon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                      <div>
-                        <Label>Show apps in menu</Label>
-                        <Description>
-                          Show connected apps at the top of the Ollama menu.
-                        </Description>
-                      </div>
-                    </div>
-                    <div className="flex-shrink-0">
-                      <Switch
-                        checked={showAppsInMenu}
-                        disabled={showAppsInMenuPending}
-                        onChange={handleShowAppsInMenu}
-                      />
-                    </div>
-                  </div>
-                </Field>
-              )}
-
               {/* Auto Update */}
               <Field>
                 <div className="flex items-start justify-between gap-4">
@@ -795,11 +746,6 @@ export default function Settings() {
                 }
                 onDraftChange={setHasClaudeDraftChanges}
                 showSectionHeading={false}
-              />
-              <CodexDesktopModelsSettings
-                ref={codexModelsSettingsRef}
-                accountKey={`${user?.id ?? "signed-out"}:${user?.plan ?? ""}:${cloudDisabled ? "cloud-off" : "cloud-on"}`}
-                onDraftChange={setHasCodexDraftChanges}
               />
             </section>
           )}
