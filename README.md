@@ -321,6 +321,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [Meta-Capp](https://github.com/cyyyp100/meta-capp) - AI learning companion for reading PDFs
 
 ### Observability & Monitoring
 
