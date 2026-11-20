@@ -36,3 +36,20 @@ func TestResidualMixPreservesIndependentQueries(t *testing.T) {
 		})
 	})
 }
+
+func TestResidualMixUnnormalizedValues(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.Scoped(func() {
+			const width = 2304
+			zero := mlx.Zeros(mlx.DTypeBFloat16, 1, 2, width)
+			sources := []*mlx.Array{mlx.AddScalar(zero, 2), mlx.AddScalar(zero, 8)}
+			// Equal scores average the original values in this configuration.
+			got := mixResiduals(sources, mlx.Zeros(mlx.DTypeFloat32, width), false)
+			for i, value := range got.Floats() {
+				if value != 5 {
+					t.Fatalf("unnormalized residual[%d] = %g, want 5", i, value)
+				}
+			}
+		})
+	})
+}

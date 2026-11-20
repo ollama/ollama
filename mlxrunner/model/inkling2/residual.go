@@ -12,6 +12,11 @@ const residualEpsilon = 1e-6
 // mixResiduals attends across residual blocks independently at each token.
 // A matrix of queries returns a separate mixture for each input projection.
 func mixResiduals(sources []*mlx.Array, query *mlx.Array, normalizeValues bool) *mlx.Array {
+	if normalizeValues {
+		if mixed := mlx.BlockResidualMix(sources, query, residualEpsilon); mixed != nil {
+			return mixed
+		}
+	}
 	values := mlx.Stack(sources, -2).AsType(mlx.DTypeFloat32)
 	keys := mlx.RMSNormFn(values, nil, residualEpsilon)
 	if normalizeValues {
