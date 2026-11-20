@@ -61,6 +61,13 @@ import (
 
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
+	launch.DefaultClaudeDesktopMappingSelector = func(rows []launch.ClaudeDesktopMapping, current string) (launch.ClaudeDesktopMappingChoice, error) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return launch.ClaudeDesktopMappingChoice{}, fmt.Errorf("editing Claude Desktop mappings requires an interactive terminal; use --model <model> --config to change the primary mapping without launching")
+		}
+		return tui.SelectClaudeDesktopMapping(rows, current)
+	}
+
 	launch.DefaultSingleSelector = func(title string, items []launch.SelectionItem, current string) (string, error) {
 		return runTUISingleSelector(title, items, current, nil)
 	}
@@ -2531,7 +2538,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 
 func launcherActionExitsLoop(integration string) bool {
 	switch integration {
-	case "chatgpt", "codex-app", "vscode":
+	case "chatgpt", "codex-app", "vscode", "claude-desktop":
 		return true
 	default:
 		return false

@@ -89,25 +89,24 @@ func (c *ClaudeDesktop) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error 
 	if err := ensureClaudeDesktopGateway(); err != nil {
 		return err
 	}
+	models, err := fetchClaudeDesktopCatalog(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(claudeDesktopInferenceModels(models)) == 0 {
+		return errors.New("no Claude Desktop models are available; check model access in Ollama Settings")
+	}
 	targets, err := claudeDesktopTargetPaths()
 	if err != nil {
 		return err
 	}
-	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode, claudeDesktopCatalog())
+	return configureClaudeDesktopTargets(targets, claudeDesktopGatewayBaseURL, "ollama", autoMode, models)
 }
 
-// claudeDesktopCatalog reads the routes the gateway advertises so the profile
-// can pin the same names the gateway serves. Claude Desktop names well-known
-// route IDs itself, so discovery alone never renames them in the picker. A
-// failed read is not fatal: the profile then stays on plain discovery.
-func claudeDesktopCatalog() []proxy.ClaudeDesktopCatalogModel {
-	ctx, cancel := context.WithTimeout(context.Background(), claudeDesktopCatalogTimeout)
+func fetchClaudeDesktopCatalog(ctx context.Context) ([]proxy.ClaudeDesktopCatalogModel, error) {
+	ctx, cancel := context.WithTimeout(ctx, claudeDesktopCatalogTimeout)
 	defer cancel()
-	models, err := claudeDesktopFetchCatalog(ctx, nil, claudeDesktopGatewayBaseURL, "ollama")
-	if err != nil {
-		return nil
-	}
-	return models
+	return claudeDesktopFetchCatalog(ctx, nil, claudeDesktopGatewayBaseURL, "ollama")
 }
 
 func (c *ClaudeDesktop) RestoreHint() string {
@@ -137,7 +136,26 @@ func (c *ClaudeDesktop) AutodiscoveryConfiguredWithAutoMode(autoMode bool) bool 
 	if err != nil {
 		return false
 	}
-	return claudeDesktopTargetsConfigured(targets, autoMode)
+	if !claudeDesktopTargetsConfigured(targets, autoMode) {
+		return false
+	}
+	catalog, err := fetchClaudeDesktopCatalog(context.Background())
+	return err == nil && len(catalog) > 0 && claudeDesktopPinnedCatalogMatches(targets, catalog)
+}
+
+func claudeDesktopPinnedCatalogMatches(targets claudeDesktopTargets, catalog []proxy.ClaudeDesktopCatalogModel) bool {
+	wanted, _ := json.Marshal(claudeDesktopInferenceModels(catalog))
+	for _, target := range targets.thirdPartyProfiles {
+		profile, err := readClaudeDesktopJSON(target.profile)
+		if err != nil {
+			return false
+		}
+		actual, _ := json.Marshal(profile["inferenceModels"])
+		if string(actual) != string(wanted) {
+			return false
+		}
+	}
+	return true
 }
 
 // UsesOllamaGateway reports whether Claude Desktop is currently routed through
@@ -381,6 +399,52 @@ func (c *ClaudeDesktop) Run(_ string, _ []LaunchModel, args []string) error {
 	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use Ollama?", c.ConfigureAutodiscovery)
 }
 
+func claudeDesktopContextError(ctx context.Context) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ErrCancelled
+	}
+	return ctx.Err()
+}
+
+func applyClaudeDesktopChangeContext(ctx context.Context, prompt string, change func(context.Context) error, openWhenStopped bool) error {
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	running, err := claudeDesktopIsRunning(probeCtx)
+	contextErr := claudeDesktopContextError(probeCtx)
+	cancel()
+	if contextErr != nil {
+		return contextErr
+	}
+	if err != nil {
+		return err
+	}
+	if running {
+		confirmed, err := ConfirmPrompt(prompt)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return ErrCancelled
+		}
+		return restartClaudeDesktopContext(ctx, change)
+	}
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
+	if err := change(ctx); err != nil {
+		return err
+	}
+	if openWhenStopped {
+		if err := claudeDesktopContextError(ctx); err != nil {
+			return err
+		}
+		return claudeDesktopOpenApp()
+	}
+	return nil
+}
+
 func (c *ClaudeDesktop) Restore() error {
 	if err := claudeDesktopRestoreSupported(); err != nil {
 		return err
@@ -389,13 +453,12 @@ func (c *ClaudeDesktop) Restore() error {
 	if err != nil {
 		return err
 	}
-
-	if err := restoreClaudeDesktopTargets(targets); err != nil {
-		return err
-	}
-	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use the usual Claude profile?", func() error {
+	return applyClaudeDesktopChangeContext(context.Background(), "Restart Claude Desktop to use the usual Claude profile?", func(ctx context.Context) error {
+		if err := claudeDesktopContextError(ctx); err != nil {
+			return err
+		}
 		return restoreClaudeDesktopTargets(targets)
-	})
+	}, false)
 }
 
 func configureClaudeDesktopTargets(targets claudeDesktopTargets, baseURL, apiKey string, autoMode bool, models []proxy.ClaudeDesktopCatalogModel) error {
@@ -1040,22 +1103,36 @@ func claudeDesktopLaunchOrRestart(prompt string, reapplyProfile func() error) er
 }
 
 func restartClaudeDesktop(reapplyProfile func() error) error {
+	return restartClaudeDesktopContext(context.Background(), func(context.Context) error { return reapplyProfile() })
+}
+
+func restartClaudeDesktopContext(parent context.Context, reapplyProfile func(context.Context) error) error {
 	restartAppPath := ""
 	if claudeDesktopGOOS == "windows" {
 		restartAppPath = claudeDesktopRunningAppPath()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
 	if err := claudeDesktopQuitApp(ctx); err != nil {
 		return fmt.Errorf("quit Claude Desktop: %w", err)
 	}
 	if err := waitForClaudeDesktopExit(ctx); err != nil {
 		return err
 	}
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return err
+	}
 	// Claude persists settings while shutting down. Reapply the profile after
 	// exit so its last write cannot restore stale surface or gateway values.
-	if err := reapplyProfile(); err != nil {
-		reapplyErr := fmt.Errorf("reapply Claude Desktop profile: %w", err)
+	profileErr := reapplyProfile(ctx)
+	if err := claudeDesktopContextError(ctx); err != nil {
+		return errors.Join(err, profileErr)
+	}
+	if profileErr != nil {
+		reapplyErr := fmt.Errorf("reapply Claude Desktop profile: %w", profileErr)
 		if openErr := openClaudeDesktopAfterRestart(restartAppPath); openErr != nil {
 			return errors.Join(reapplyErr, fmt.Errorf("reopen Claude Desktop after profile failure: %w", openErr))
 		}
@@ -1073,7 +1150,13 @@ func openClaudeDesktopAfterRestart(restartAppPath string) error {
 
 func waitForClaudeDesktopExit(ctx context.Context) error {
 	for {
+		if err := claudeDesktopContextError(ctx); err != nil {
+			return err
+		}
 		running, err := claudeDesktopIsRunning(ctx)
+		if contextErr := claudeDesktopContextError(ctx); contextErr != nil {
+			return contextErr
+		}
 		if err != nil {
 			return fmt.Errorf("check whether Claude Desktop is running: %w", err)
 		}
@@ -1197,7 +1280,11 @@ func defaultClaudeDesktopQuitApp(ctx context.Context) error {
 		script := `Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
 		return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Run()
 	}
-	return exec.CommandContext(ctx, "osascript", "-e", `tell application "Claude" to quit`).Run()
+	output, err := exec.CommandContext(ctx, "osascript", "-e", `tell application "Claude" to quit`).CombinedOutput()
+	if err != nil && len(output) > 0 {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return err
 }
 
 func quotePowerShellString(s string) string {

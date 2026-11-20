@@ -54,6 +54,7 @@ type ClaudeDesktopConfig struct {
 	Models             []ClaudeDesktopModel
 	Logger             *slog.Logger
 	OnCountsChanged    func(ClaudeDesktopCounts)
+	RefreshLocalModels bool
 	RefreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	ResolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	ListLocalModels    func(context.Context) ([]string, error)
@@ -83,6 +84,7 @@ type ClaudeDesktop struct {
 	models             []ClaudeDesktopModel
 	modelsGeneration   uint64
 	onCountsChanged    func(ClaudeDesktopCounts)
+	refreshLocalModels bool
 	refreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	resolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	listLocalModels    func(context.Context) ([]string, error)
@@ -137,6 +139,7 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		modelsGeneration:   1,
 		onCountsChanged:    config.OnCountsChanged,
 		refreshModels:      config.RefreshModels,
+		refreshLocalModels: config.RefreshLocalModels,
 		resolveAccessState: config.ResolveAccessState,
 		listLocalModels:    config.ListLocalModels,
 		shutdown:           make(chan struct{}),
@@ -326,7 +329,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		if hasCloudClaudeDesktopModel(models) {
+		if p.refreshLocalModels || hasCloudClaudeDesktopModel(models) {
 			if err := p.refreshModelCatalog(r.Context()); err != nil {
 				p.logger.Debug("could not refresh Claude model catalog", "error", err)
 			}
