@@ -31,7 +31,7 @@ func (s *llamaServerRunner) SystemOne(ctx context.Context, state, questions json
 		return nil, nil, err
 	}
 
-	if err := s.sem.Acquire(ctx, 1); err != nil {
+	if err := s.acquire(ctx); err != nil {
 		return nil, nil, err
 	}
 	defer s.sem.Release(1)
