@@ -356,6 +356,59 @@ func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
 	}
 }
 
+func TestLlamaServerChatStreamError(t *testing.T) {
+	const oomStatus = "error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/v1/chat/completions":
+			// llama-server has already sent 200 when decoding fails, so the
+			// error arrives as an event in the stream
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+			fmt.Fprintln(w, `data: {"error":{"code":500,"message":"Compute error.","type":"server_error"}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	status := &StatusWriter{}
+	status.SetLastError(oomStatus)
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+		status:  status,
+	}
+
+	opts := api.DefaultOptions()
+	err := runner.Chat(t.Context(), ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+		Options:  &opts,
+	}, func(cr ChatResponse) {
+		if cr.Done {
+			t.Error("failed stream should not produce a done response")
+		}
+	})
+	if err == nil {
+		t.Fatal("expected an error from the stream's error event")
+	}
+	if want := "Compute error.\n" + oomStatus; err.Error() != want {
+		t.Errorf("error = %q, want %q", err, want)
+	}
+	if !IsOutOfMemory(err) {
+		t.Errorf("IsOutOfMemory(%q) = false, want true so the scheduler expires the runner", err)
+	}
+}
+
 func TestLlamaServerStreamsHandleLargeSSELines(t *testing.T) {
 	tests := []struct {
 		name       string
