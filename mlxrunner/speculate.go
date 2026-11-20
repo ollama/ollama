@@ -176,6 +176,9 @@ func (s *speculationSession) recordRound(drafted, accepted int) {
 	s.stats.maxDraft = max(s.stats.maxDraft, drafted)
 	s.stats.recordRound(drafted)
 	s.stats.iterations++
+	if drafted > 0 {
+		s.stats.draftSteps++
+	}
 	s.stats.drafted += drafted
 	s.stats.accepted += accepted
 }
@@ -323,6 +326,9 @@ func (st *speculativeDecoder) batched(result sampler.Result) {
 	st.s.prevDrafts, st.s.roundDrafts = -1, -1
 	st.s.stats.recordRound(0)
 	st.s.stats.iterations++
+	// The scheduler shared one forward across the rows it advanced, this
+	// request's among them.
+	st.s.countForward()
 }
 
 // drain surrenders the inner decoder's undelivered sample while parked; a
@@ -500,6 +506,11 @@ func (r *Runner) acceptDrafts(rounds []draftRound) []draftOutcome {
 			InputIDs: mlx.Concatenate(ids, 0), SeqOffsets: offsets, SeqQueryLens: lengths, Layout: layout,
 		}, layers)
 		auxHiddenSeq = aux
+		// One verification forward advances every round in the group, so each
+		// owning request counts one step for it.
+		for _, round := range rounds {
+			round.s.countForward()
+		}
 		logits := r.Model.Unembed(hidden)
 		arrays := []*mlx.Array{aux}
 		for i, round := range rounds {

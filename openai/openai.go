@@ -141,6 +141,10 @@ type Timings struct {
 	PredictedMS         float64 `json:"predicted_ms"`
 	PredictedPerTokenMS float64 `json:"predicted_per_token_ms"`
 	PredictedPerSecond  float64 `json:"predicted_per_second"`
+	DraftN              *int    `json:"draft_n,omitempty"`
+	DraftNAccepted      *int    `json:"draft_n_accepted,omitempty"`
+	DraftSteps          *int    `json:"draft_steps,omitempty"`
+	Steps               *int    `json:"steps,omitempty"`
 }
 
 type ChatCompletion struct {
@@ -290,6 +294,10 @@ func ToTimings(m api.Metrics) *Timings {
 		PredictedMS:         predictedMS,
 		PredictedPerTokenMS: safeDiv(predictedMS, float64(m.EvalCount)),
 		PredictedPerSecond:  safeDiv(float64(m.EvalCount)*1000, predictedMS),
+		DraftN:              m.DraftCount,
+		DraftNAccepted:      m.DraftAcceptedCount,
+		DraftSteps:          m.DraftStepCount,
+		Steps:               m.StepCount,
 	}
 }
 

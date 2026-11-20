@@ -750,7 +750,7 @@ func TestLayoutRidesEveryForward(t *testing.T) {
 // tests assert engine mechanics at known widths, so they disable adaptive
 // depth rather than steer what it learns.
 func pinDraftLimit(spec *speculationSession, limit int) {
-	spec.enabled = false
+	spec.fixedDepth = true
 	spec.limit = limit
 }
 

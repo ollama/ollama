@@ -12,6 +12,15 @@ type specStats struct {
 	drafted    int
 	accepted   int
 	maxDraft   int
+	// draftSteps counts the rounds that drafted at least one token; the
+	// other iterations ran plain.
+	draftSteps int
+	// forwards counts target forward passes over the decode window, recorded
+	// where each forward is dispatched. Rounds are not a substitute: the
+	// pipelined decoder dispatches a seed forward before its first round, and
+	// a run that ends parked never spans it with a round, so a short response
+	// completes more forwards than rounds.
+	forwards int
 	// chosen is the draft depth picked each round, in order; split into time
 	// buckets it distinguishes a ramp that holds from one that thrashes shallow.
 	chosen []int
@@ -43,6 +52,34 @@ func (s *specStats) depthOverTime() string {
 		parts = append(parts, fmt.Sprintf("%.1f/%d", float64(sum)/float64(hi-lo), mx))
 	}
 	return strings.Join(parts, " ")
+}
+
+// countForward records one target forward pass for this request. The decode
+// paths that dispatch one call it: the fused verification forward of a
+// drafting round, the parked pipelined decoder's per-token dispatch (and the
+// seed dispatch that primes it), and the scheduler's shared forward when the
+// request is batched.
+func (s *speculationSession) countForward() {
+	if s == nil {
+		return
+	}
+	s.stats.forwards++
+}
+
+// reportCounts attaches the request's speculative counts to its final
+// response. Steps are target forward passes, not decode rounds, so they match
+// the eval window they are divided by. A session that cannot draft (logprobs)
+// reports nothing; an enabled session that never drafted reports zeros, so
+// clients can tell "backed off" apart from "unavailable".
+func (s *speculationSession) reportCounts(resp *CompletionResponse) {
+	if s == nil || !s.enabled {
+		return
+	}
+	drafted, accepted, draftSteps, forwards := s.stats.drafted, s.stats.accepted, s.stats.draftSteps, s.stats.forwards
+	resp.DraftCount = &drafted
+	resp.DraftAcceptedCount = &accepted
+	resp.DraftStepCount = &draftSteps
+	resp.StepCount = &forwards
 }
 
 func (s *speculationSession) logStats() {
