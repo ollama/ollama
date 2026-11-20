@@ -63,7 +63,7 @@ func Execute(args []string) error {
 	defer cancelRunner()
 
 	runner := Runner{
-		parallel:  max(1, int(envconfig.NumParallel())),
+		parallel:  int(envconfig.NumParallel()),
 		Requests:  make(chan queuedRequest),
 		mlxThread: worker,
 	}
