@@ -2547,6 +2547,59 @@ func TestParseGemma4ClosedToolCall_BacktickValues(t *testing.T) {
 	}
 }
 
+func TestParseGemma4ClosedToolCall_TripleQuotedValues(t *testing.T) {
+	tools := []api.Tool{gemma4TestStringTool("edit", "path")}
+	edit := func(newText, oldText string) map[string]any {
+		return map[string]any{"edits": []any{map[string]any{"newText": newText, "oldText": oldText}}, "path": "x.yaml"}
+	}
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			// The call gemma4:e4b wrote twice in eval round 173 (2026-11-20), editing a record file's lines, passed on as content.
+			name: "lines_between_triple_quotes",
+			content: "call:edit{edits:[{newText:\"\"\"    Properties:\n    - MutagenObjectType: ScriptObjectProperty\n      Name: Gold001\n" +
+				"      Object: Gold001\"\"\",oldText:\"\"\"  - Name: StrangeLeverScript\"\"\"}],path:<|\"|>x.yaml<|\"|>}",
+			want: edit("    Properties:\n    - MutagenObjectType: ScriptObjectProperty\n      Name: Gold001\n      Object: Gold001",
+				"  - Name: StrangeLeverScript"),
+		},
+		{
+			name:    "a_quote_at_the_text_end",
+			content: "call:edit{edits:[{newText:\"\"\"Value: \"OK\"\"\"\",oldText: \"\"\"Value: OK\"\"\"}],path:<|\"|>x.yaml<|\"|>}",
+			want:    edit("Value: \"OK\"", "Value: OK"),
+		},
+		{
+			name:    "triple_quotes_inside_a_delimited_string",
+			content: "call:edit{edits:[{newText:<|\"|>a: \"\"\"b\"\"\", c<|\"|>,oldText:<|\"|>a<|\"|>}],path:<|\"|>x.yaml<|\"|>}",
+			want:    edit("a: \"\"\"b\"\"\", c", "a"),
+		},
+		{
+			name:    "unclosed_triple_quotes",
+			content: "call:edit{edits:[{newText:\"\"\"a line,oldText:x}],path:<|\"|>x.yaml<|\"|>}",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tools)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: "edit", Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestParseGemma4ClosedToolCall_ListClosedOverAnObject(t *testing.T) {
 	// The object a list holds left open where the list ends: eval round 172's message+detailed #3.
 	got, err := parseGemma4ClosedToolCall("call:edit{edits:[{newText:<|\"|>a<|\"|>,oldText:<|\"|>b<|\"|>]}", []api.Tool{gemma4TestStringTool("edit", "path")})

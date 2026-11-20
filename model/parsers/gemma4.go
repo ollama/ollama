@@ -459,10 +459,13 @@ func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, 
 	// delimiters are odd in count and a backtick closes a value: the repair that
 	// closes the last delimiter would read the backtick and what follows it as
 	// the value's text, as in remove:[<|"|>Name<|"|>,<|"|>Keywords`].
+	// So too strings written between triple quotes, Python's, as in
+	// call:edit{edits:[{newText:"""  Properties:\n  - Name: Gold001""",oldText:"""  - Name: X"""}],path:<|"|>x.yaml<|"|>}.
 	braceIdx := strings.Index(content, "{")
 	ticked := ""
 	if strings.HasPrefix(content, "call:") && braceIdx != -1 {
-		if repaired := repairGemma4EmptyValues(repairGemma4BacktickValues(content[braceIdx:])); repaired != content[braceIdx:] {
+		args := repairGemma4TripleQuotedValues(content[braceIdx:])
+		if repaired := repairGemma4EmptyValues(repairGemma4BacktickValues(args)); repaired != content[braceIdx:] {
 			ticked = content[:braceIdx] + repaired
 		}
 	}
@@ -1283,6 +1286,60 @@ func repairGemma4BacktickValues(s string) string {
 		}
 		if !closed {
 			continue
+		}
+	}
+	return sb.String()
+}
+
+// gemma4TripleQuote is what gemma4:e4b writes in place of the string delimiter
+// at both ends of a value of several lines: a Python string's.
+const gemma4TripleQuote = `"""`
+
+// repairGemma4TripleQuotedValues writes the string delimiter for each value
+// whose text is between triple quotes, as in
+// call:edit{edits:[{newText:"""  Properties:\n  - Name: Gold001""",oldText:"""  - Name: X"""}],path:<|"|>x.yaml<|"|>}.
+// A value is one after an object's key and its colon, or a list's item after
+// its `[` or `,`, any whitespace after them; its text runs to the first triple
+// quote whose end a `,`, `}` or `]` follows after any whitespace, so a quote
+// that ends the text is the text's. One whose text has the delimiter inside is
+// left as it is, and so is a string the delimiter encloses.
+func repairGemma4TripleQuotedValues(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s))
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				sb.WriteString(s[i:])
+				break
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+		sb.WriteByte(s[i])
+		i++
+		if s[i-1] != ':' && s[i-1] != '[' && s[i-1] != ',' {
+			continue
+		}
+		v := gemma4SkipSpace(s, i)
+		if !strings.HasPrefix(s[v:], gemma4TripleQuote) {
+			continue
+		}
+		start := v + len(gemma4TripleQuote)
+		for k := start; k+len(gemma4TripleQuote) <= len(s); k++ {
+			end := k + len(gemma4TripleQuote)
+			if !strings.HasPrefix(s[k:], gemma4TripleQuote) || !gemma4ListOrValueEnds(s, end) {
+				continue
+			}
+			if text := s[start:k]; !strings.Contains(text, gemma4StringDelimiter) {
+				sb.WriteString(s[i:v])
+				sb.WriteString(gemma4StringDelimiter + text + gemma4StringDelimiter)
+				i = end
+			}
+			break
 		}
 	}
 	return sb.String()
