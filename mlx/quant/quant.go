@@ -16,6 +16,7 @@ type params struct {
 // byType maps each canonical quantization type to its parameters. Aliases are
 // resolved to a canonical name by Canonical before lookup.
 var byType = map[string]params{
+	"int3":  {groupSize: 64, bits: 3, mode: "affine"},
 	"nvfp4": {groupSize: 16, bits: 4, mode: "nvfp4"},
 	"mxfp4": {groupSize: 32, bits: 4, mode: "mxfp4"},
 	"int4":  {groupSize: 64, bits: 4, mode: "affine"},
@@ -34,6 +35,8 @@ func Canonical(quantType string) string {
 		return "mxfp4"
 	case "MXFP8":
 		return "mxfp8"
+	case "INT3", "Q3":
+		return "int3"
 	case "INT4", "FP4", "Q4":
 		return "int4"
 	case "INT8", "FP8", "Q8":
@@ -63,17 +66,6 @@ func Params(quantType string) (groupSize, bits int, mode string) {
 func Bits(quantType string) int {
 	if p, ok := byType[Canonical(quantType)]; ok {
 		return p.bits
-	}
-	return 0
-}
-
-// PackFactor returns how many quantized values are packed into one 32-bit
-// word, or 0 for an empty or unrecognized type. MLX stores quantized weights
-// packed into U32 words, so a tensor's logical last dimension is its stored
-// last dimension times this factor.
-func PackFactor(quantType string) int {
-	if b := Bits(quantType); b > 0 {
-		return 32 / b
 	}
 	return 0
 }

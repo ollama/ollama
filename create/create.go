@@ -284,12 +284,13 @@ func ExpertGroupPrefix(tensorName string) string {
 }
 
 type sourceQuantization struct {
-	Bits            int     `json:"bits"`
-	GroupSize       int     `json:"group_size"`
-	Mode            string  `json:"mode"`
-	Format          string  `json:"format"`
-	QuantMethod     string  `json:"quant_method"`
-	WeightBlockSize []int32 `json:"weight_block_size"`
+	Layers          map[string]sourceQuantization `json:"-"`
+	Bits            int                           `json:"bits"`
+	GroupSize       int                           `json:"group_size"`
+	Mode            string                        `json:"mode"`
+	Format          string                        `json:"format"`
+	QuantMethod     string                        `json:"quant_method"`
+	WeightBlockSize []int32                       `json:"weight_block_size"`
 	ConfigGroups    map[string]struct {
 		Format  string `json:"format"`
 		Weights struct {
@@ -298,6 +299,35 @@ type sourceQuantization struct {
 			Type           string  `json:"type"`
 		} `json:"weights"`
 	} `json:"config_groups"`
+}
+
+func (q *sourceQuantization) UnmarshalJSON(data []byte) error {
+	type config sourceQuantization
+	var parsed config
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+	for name, raw := range entries {
+		if name == "config_groups" || len(raw) == 0 || raw[0] != '{' {
+			continue
+		}
+		var layer config
+		if err := json.Unmarshal(raw, &layer); err != nil {
+			return fmt.Errorf("quantization for %s: %w", name, err)
+		}
+		if layer.Bits != 0 {
+			if parsed.Layers == nil {
+				parsed.Layers = make(map[string]sourceQuantization)
+			}
+			parsed.Layers[name] = sourceQuantization(layer)
+		}
+	}
+	*q = sourceQuantization(parsed)
+	return nil
 }
 
 type sourceModelConfig struct {
@@ -357,6 +387,8 @@ func sourceQuantType(mode string, bits int) string {
 	switch strings.ToLower(mode) {
 	case "affine":
 		switch bits {
+		case 3:
+			return "int3"
 		case 4:
 			return "int4"
 		case 8:
@@ -372,14 +404,18 @@ func sourceQuantType(mode string, bits int) string {
 	return ""
 }
 
-func (cfg sourceModelConfig) QuantMetadata() map[string]string {
-	// Use the first non-empty quantization config found
+func (cfg sourceModelConfig) QuantMetadata(tensorName string) map[string]string {
+	// MLX exports may override the default format for individual modules.
 	var q sourceQuantization
 	for _, candidate := range cfg.quantizationConfigs() {
-		if candidate.Bits != 0 {
+		if layer, ok := candidate.Layers[strings.TrimSuffix(tensorName, ".weight")]; ok {
+			q = layer
+		} else if candidate.Bits != 0 {
 			q = candidate
-			break
+		} else {
+			continue
 		}
+		break
 	}
 
 	quantType := sourceQuantType(q.Mode, q.Bits)

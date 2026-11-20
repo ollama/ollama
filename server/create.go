@@ -749,10 +749,10 @@ func validateCreateOptions(r api.CreateRequest, modelType string) error {
 		return nil
 	}
 
-	if quantize != "" && quant.Canonical(quantize) == "" {
+	if quantize != "" && quant.Bits(quantize) < 4 {
 		return fmt.Errorf("unsupported quantize type %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", quantize)
 	}
-	if r.DraftQuantize != "" && quant.Canonical(r.DraftQuantize) == "" {
+	if r.DraftQuantize != "" && quant.Bits(r.DraftQuantize) < 4 {
 		return fmt.Errorf("unsupported draft quantize type %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", r.DraftQuantize)
 	}
 	return nil

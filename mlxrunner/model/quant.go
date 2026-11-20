@@ -127,6 +127,10 @@ func mainTensorNames(header map[string]json.RawMessage) []string {
 }
 
 func inferQuantTypeFromShapes(header map[string]json.RawMessage, tensorName string, hintQuantType string) (string, int) {
+	// Shape inference only distinguishes the legacy four- and eight-bit formats.
+	if bits := quant.Bits(hintQuantType); bits != 0 && bits != 4 && bits != 8 {
+		return "", 0
+	}
 	type tensorShape struct {
 		Shape []int64 `json:"shape"`
 	}
@@ -249,7 +253,7 @@ func ResolveLinearQuantParams(
 // InferAffineQuantParamsFromShapes infers (groupSize,bits) for affine quantized
 // tensors from packed weight and scale shapes.
 func InferAffineQuantParamsFromShapes(weight, scales *mlx.Array, hintBits int) (groupSize, bits int, ok bool) {
-	if weight == nil || scales == nil {
+	if (hintBits != 0 && hintBits != 4 && hintBits != 8) || weight == nil || scales == nil {
 		return 0, 0, false
 	}
 

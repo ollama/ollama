@@ -178,7 +178,91 @@ func planPrequantized(inv Inventory) ([]BlobSpec, error) {
 		t := inv.Tensors[name]
 		specs = append(specs, BlobSpec{Name: name, Tensors: []TensorSpec{{Name: name, Sources: []SourceTensor{t}}}})
 	}
+	if inv.Config.ModelType == "nemotron_h_puzzle" || inv.Config.LLMConfig.ModelType == "nemotron_h_puzzle" {
+		return stackPrequantExperts(specs)
+	}
 	return specs, nil
+}
+
+func stackPrequantExperts(specs []BlobSpec) ([]BlobSpec, error) {
+	groups := make(map[string]map[string]map[int]BlobSpec)
+	var plain []BlobSpec
+	for _, spec := range specs {
+		group, ok := perExpertGroup(spec.Name)
+		if !ok || !strings.HasSuffix(spec.Name, ".weight") {
+			plain = append(plain, spec)
+			continue
+		}
+		index, projection, err := parseExpertTensor(group, spec.Name)
+		if err != nil {
+			return nil, err
+		}
+		if groups[group] == nil {
+			groups[group] = make(map[string]map[int]BlobSpec)
+		}
+		if groups[group][projection] == nil {
+			groups[group][projection] = make(map[int]BlobSpec)
+		}
+		if _, exists := groups[group][projection][index]; exists {
+			return nil, fmt.Errorf("expert group %s projection %s has duplicate expert index %d", group, projection, index)
+		}
+		groups[group][projection][index] = spec
+	}
+	for _, group := range sortedKeys(groups) {
+		projections := groups[group]
+		count, err := validateExpertProjections(group, projections)
+		if err != nil {
+			return nil, err
+		}
+		for _, projection := range sortedKeys(projections) {
+			stacked, err := stackPrequantProjection(group+"."+projection+".weight", projections[projection], count)
+			if err != nil {
+				return nil, err
+			}
+			plain = append(plain, stacked)
+		}
+	}
+	return plain, nil
+}
+
+// Each projection has one quantization format. Keeping its companions in the
+// same blob preserves that metadata when other projections use different formats.
+func stackPrequantProjection(name string, experts map[int]BlobSpec, count int) (BlobSpec, error) {
+	base := experts[0]
+	stacked := BlobSpec{Name: name, Metadata: base.Metadata}
+	for i := range count {
+		if !maps.Equal(experts[i].Metadata, base.Metadata) || len(experts[i].Tensors) != len(base.Tensors) {
+			return BlobSpec{}, fmt.Errorf("expert projection %s has inconsistent quantization or companions at index %d", name, i)
+		}
+	}
+	for j, tensor := range base.Tensors {
+		suffix := strings.TrimPrefix(tensor.Name, base.Name)
+		sources := make([]SourceTensor, count)
+		for i := range count {
+			other := experts[i].Tensors[j]
+			if other.Name != experts[i].Name+suffix || len(other.Sources) != 1 ||
+				other.Transform != tensor.Transform || other.OutDtype != tensor.OutDtype ||
+				!slices.Equal(other.OutShape, tensor.OutShape) ||
+				other.Sources[0].Dtype != tensor.Sources[0].Dtype ||
+				!slices.Equal(other.Sources[0].Shape, tensor.Sources[0].Shape) {
+				return BlobSpec{}, fmt.Errorf("expert projection %s%s has mismatched layout at index %d", name, suffix, i)
+			}
+			sources[i] = other.Sources[0]
+		}
+		dtype, shape := tensor.OutDtype, tensor.OutShape
+		if dtype == "" {
+			dtype = sources[0].Dtype
+		}
+		if shape == nil {
+			shape = sources[0].Shape
+		}
+		stacked.Tensors = append(stacked.Tensors, TensorSpec{
+			Name: name + suffix, Sources: sources,
+			Transform: TransformStackExperts, SourceTransform: tensor.Transform,
+			OutDtype: dtype, OutShape: append([]int32{int32(count)}, shape...),
+		})
+	}
+	return stacked, nil
 }
 
 func planPrequantExpertGroup(group string, weights []SourceTensor, fused map[string]BlobSpec) ([]BlobSpec, error) {
@@ -319,7 +403,7 @@ func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
 			}
 		}
 
-		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p)}, consumed, true
+		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p, name)}, consumed, true
 	}
 	return BlobSpec{}, nil, false
 }
@@ -348,9 +432,9 @@ func matchesDtype(dtype string, allowed []string) bool {
 // prequantMetadata builds the fused blob's metadata: the source config's quant
 // metadata, with the pattern's quant_type override and group_size default
 // applied. Returns nil when there is nothing to record.
-func prequantMetadata(inv Inventory, p prequantPattern) map[string]string {
+func prequantMetadata(inv Inventory, p prequantPattern, tensorName string) map[string]string {
 	md := make(map[string]string)
-	for k, v := range inv.Config.QuantMetadata() {
+	for k, v := range inv.Config.QuantMetadata(tensorName) {
 		md[k] = v
 	}
 	if p.forceQuantType != "" {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/nn"
@@ -54,7 +55,7 @@ func TestParseConfigNestedWrapper(t *testing.T) {
 	if got, want := cfg.RoutedScalingFactor, float32(2.5); got != want {
 		t.Fatalf("RoutedScalingFactor = %v, want %v", got, want)
 	}
-	if cfg.MambaRoundIntermediates {
+	if cfg.MambaRoundScan || cfg.MambaRoundNorm {
 		t.Fatal("legacy architecture unexpectedly changed Mamba precision")
 	}
 }
@@ -117,8 +118,85 @@ func TestParseSuperConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MoELatentSize != 1024 || cfg.NumHiddenLayers != 3 || string(cfg.LayerTypes) != "ME*" || !cfg.MambaRoundIntermediates {
+	if cfg.MoELatentSize != 1024 || cfg.NumHiddenLayers != 3 || string(cfg.LayerTypes) != "ME*" || !cfg.MambaRoundScan || !cfg.MambaRoundNorm {
 		t.Fatalf("unexpected super config: %+v", cfg)
+	}
+}
+
+func TestParseBlockConfigs(t *testing.T) {
+	cfg, err := parseConfig([]byte(`{
+		"architectures": ["NemotronH_Omni_Reasoning_V3"],
+		"llm_config": {
+			"model_type": "nemotron_h_puzzle",
+			"hidden_size": 4096,
+			"num_attention_heads": 32,
+			"moe_latent_size": 1024,
+			"block_configs": [
+				{"block_type": "mamba"},
+				{"block_type": "moe", "n_routed_experts": 240, "num_experts_per_tok": 9, "moe_intermediate_size": 1536},
+				{"block_type": "attention"},
+				{"block_type": "moe", "n_routed_experts": 496, "num_experts_per_tok": 9, "moe_intermediate_size": 2560}
+			]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MambaRoundScan || cfg.MambaRoundNorm || !cfg.NormInFP32 {
+		t.Fatal("Puzzle must round scan output but retain FP32 normalization")
+	}
+	if cfg.NumHiddenLayers != 4 || string(cfg.LayerTypes) != "ME*E" {
+		t.Fatalf("layer layout = %d/%s, want 4/ME*E", cfg.NumHiddenLayers, cfg.LayerTypes)
+	}
+	for _, tt := range []struct {
+		index, experts, width int
+	}{{1, 240, 1536}, {3, 496, 2560}} {
+		layer := cfg.layerConfig(tt.index)
+		if layer.NRoutedExperts != int32(tt.experts) || layer.MoEIntermediateSize != int32(tt.width) || layer.NumExpertsPerTok != 9 {
+			t.Errorf("layer %d expert config = %d/%d/%d, want %d/%d/9", tt.index, layer.NRoutedExperts, layer.MoEIntermediateSize, layer.NumExpertsPerTok, tt.experts, tt.width)
+		}
+		if layer.HiddenSize != cfg.HiddenSize || layer.MoELatentSize != cfg.MoELatentSize {
+			t.Errorf("layer %d lost shared dimensions", tt.index)
+		}
+	}
+	if cfg.NRoutedExperts != 0 || cfg.MoEIntermediateSize != 0 {
+		t.Fatal("per-layer configuration changed global dimensions")
+	}
+}
+
+func TestBlockConfigValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name, extra, block, want string
+	}{
+		{"global defaults", "", `{"block_type":"moe"}`, ""},
+		{"invalid expert count", "", `{"block_type":"moe","n_routed_experts":0}`, "invalid moe configuration"},
+		{"top-k exceeds experts", "", `{"block_type":"moe","num_experts_per_tok":9}`, "invalid moe configuration"},
+		{"invalid groups", `,"n_group":3`, `{"block_type":"moe","n_routed_experts":5}`, "must be divisible by n_group"},
+		{"non-moe dimensions", "", `{"block_type":"attention","n_routed_experts":4}`, "requires a moe block"},
+		{"conflicting block types", `,"layers_block_type":["mamba"]`, `{"block_type":"moe"}`, "do not match layers_block_type"},
+		{"conflicting pattern", `,"hybrid_override_pattern":"M"`, `{"block_type":"moe"}`, "do not match hybrid_override_pattern"},
+		{"wrong layer count", `,"num_hidden_layers":2`, `{"block_type":"moe"}`, "does not match num_hidden_layers"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseConfig([]byte(fmt.Sprintf(`{
+				"hidden_size":8,"num_attention_heads":2,
+				"n_routed_experts":6,"num_experts_per_tok":2,"moe_intermediate_size":16,
+				"block_configs":[%s]%s
+			}`, tt.block, tt.extra)))
+			if tt.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.want) {
+					t.Fatalf("parseConfig error = %v, want %q", err, tt.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			layer := cfg.layerConfig(0)
+			if layer.NRoutedExperts != 6 || layer.NumExpertsPerTok != 2 || layer.MoEIntermediateSize != 16 {
+				t.Fatal("block did not inherit global expert dimensions")
+			}
+		})
 	}
 }
 
@@ -400,6 +478,7 @@ func TestSupportsGatherQMM(t *testing.T) {
 		bits int
 		want bool
 	}{
+		{mode: "affine", bits: 3, want: true},
 		{mode: "affine", bits: 4, want: true},
 		{mode: "mxfp4", bits: 4, want: true},
 		{mode: "nvfp4", bits: 4, want: true},
@@ -466,7 +545,7 @@ func TestGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {
 func TestMambaIntermediateRounding(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		mlx.EnableCompile()
-		cfg := &Config{MambaNumHeads: 1, MambaHeadDim: 2, NGroups: 1, MambaRoundIntermediates: true}
+		cfg := &Config{MambaNumHeads: 1, MambaHeadDim: 2, NGroups: 1, MambaRoundScan: true, MambaRoundNorm: true}
 		scan := mlx.FromValues([]float32{1.004, 2}, 1, 1, 2)
 		gate := mlx.FromValues([]float32{1, 1}, 1, 1, 2).AsType(mlx.DTypeBFloat16)
 		weight := mlx.FromValues([]float32{1.015625, 1.015625}, 2).AsType(mlx.DTypeBFloat16)
@@ -475,6 +554,16 @@ func TestMambaIntermediateRounding(t *testing.T) {
 		// Scan rounds to [129/128, 2]. Equal gates cancel in RMS normalization
 		// with epsilon zero, giving BF16 [163/256, 81/64] before scaling by 65/64.
 		assertAllClose(t, "intermediate rounding", got.Floats(), []float32{166.0 / 256, 165.0 / 128}, 0)
+
+		cfg.MambaRoundNorm = false
+		got = gatedGroupRMSNorm(scan, gate, weight, cfg, mlx.DTypeBFloat16).AsType(mlx.DTypeFloat32)
+		mlx.Eval(got)
+		assertAllClose(t, "FP32 gated norm scaling", got.Floats(), []float32{165.0 / 256, 164.0 / 128}, 0)
+
+		cfg.NormInFP32 = true
+		got = cfg.normalize(nn.NewRMSNorm(weight, 0), scan.AsType(mlx.DTypeBFloat16)).AsType(mlx.DTypeFloat32)
+		mlx.Eval(got)
+		assertAllClose(t, "FP32 norm scaling", got.Floats(), []float32{165.0 / 256, 164.0 / 128}, 0)
 	})
 }
 
@@ -998,4 +1087,38 @@ func TestNemotronImagePatchGrid(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAuxHiddenLayers(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		cfg := &Config{HiddenSize: 2, LayerNormEpsilon: 1e-5}
+		m := &Model{
+			Config:      cfg,
+			EmbedTokens: nn.NewEmbedding(mlx.FromValues([]float32{1, 2}, 1, 2)),
+			Norm:        nn.NewRMSNorm(mlx.FromValues([]float32{1, 1}, 2), cfg.LayerNormEpsilon),
+		}
+		for _, bias := range [][]float32{{1, 2}, {3, 4}} {
+			m.Layers = append(m.Layers, &Layer{
+				config: cfg, Type: '-',
+				Norm: nn.NewRMSNorm(mlx.FromValues([]float32{1, 1}, 2), cfg.LayerNormEpsilon),
+				Dense: &DenseMLP{
+					UpProj:   nn.NewLinear(mlx.Zeros(mlx.DTypeFloat32, 2, 2), nil),
+					DownProj: nn.NewLinear(mlx.Zeros(mlx.DTypeFloat32, 2, 2), mlx.FromValues(bias, 2)),
+				},
+			})
+		}
+		b := &batch.Batch{InputIDs: mlx.FromValues([]int32{0}, 1, 1)}
+		m.SetAuxHiddenLayers([]int{0, 1})
+		hidden, aux := m.Forward(b, nil)
+		mlx.Eval(hidden, aux)
+		assertAllClose(t, "post-layer residuals", aux.Floats(), []float32{2, 4, 5, 8}, 1e-6)
+		if !slices.Equal(aux.Dims(), []int{1, 1, 4}) {
+			t.Fatalf("aux shape = %v", aux.Dims())
+		}
+		m.SetAuxHiddenLayers(nil)
+		plain, fallback := m.Forward(b, nil)
+		mlx.Eval(plain, fallback)
+		assertAllClose(t, "target output", plain.Floats(), hidden.Floats(), 1e-6)
+		assertAllClose(t, "default auxiliary state", fallback.Floats(), hidden.Floats(), 1e-6)
+	})
 }

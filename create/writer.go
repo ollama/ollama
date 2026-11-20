@@ -158,7 +158,7 @@ func quantizeInputReader(ts TensorSpec, sources []*safetensors.TensorData) (io.R
 		}
 		return safetensors.BuildPackedSafetensorsReader([]*safetensors.TensorData{stackedWeight, stackedScale}), nil
 	case TransformStackExperts:
-		stacked, err := stackExpertTensors(ts.Name, ts.OutDtype, ts.OutShape, sources)
+		stacked, err := applyByteTransform(ts, sources)
 		if err != nil {
 			return nil, err
 		}

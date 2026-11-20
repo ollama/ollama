@@ -109,7 +109,7 @@ func normalizeRequested(requested string) (string, error) {
 		return "", nil
 	}
 	c := quant.Canonical(requested)
-	if c == "" {
+	if c == "" || c == "int3" {
 		return "", fmt.Errorf("unsupported quantize type %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", requested)
 	}
 	return c, nil

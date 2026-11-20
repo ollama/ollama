@@ -61,12 +61,13 @@ const (
 // set the writer runs MLX quantization, which generates the tensor's scale and
 // bias sub-tensors; otherwise the (transformed) bytes are stored as-is.
 type TensorSpec struct {
-	Name      string
-	Sources   []SourceTensor
-	Transform Transform
-	Quantize  string
-	OutDtype  string  // dtype after the transform; "" means same as the single source
-	OutShape  []int32 // shape after the transform; nil means same as the single source
+	Name            string
+	Sources         []SourceTensor
+	Transform       Transform
+	SourceTransform Transform // byte transform applied to each source before stacking experts
+	Quantize        string
+	OutDtype        string  // dtype after the transform; "" means same as the single source
+	OutShape        []int32 // shape after the transform; nil means same as the single source
 }
 
 // BlobSpec describes one output blob: its layer name, the tensors it contains,

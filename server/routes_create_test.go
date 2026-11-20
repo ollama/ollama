@@ -235,11 +235,12 @@ func TestCreateHandlerRejectsInvalidQuantizeOptions(t *testing.T) {
 	var s Server
 
 	validDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	tests := []struct {
+	type testCase struct {
 		name       string
 		req        api.CreateRequest
 		wantErrSub string
-	}{
+	}
+	tests := []testCase{
 		{
 			name: "gguf quantize",
 			req: api.CreateRequest{
@@ -265,6 +266,13 @@ func TestCreateHandlerRejectsInvalidQuantizeOptions(t *testing.T) {
 			},
 			wantErrSub: "unsupported draft quantize",
 		},
+	}
+
+	for _, quantize := range []string{"int3", "Q3"} {
+		tests = append(tests,
+			testCase{"import-only " + quantize, api.CreateRequest{Files: map[string]string{"model.safetensors": validDigest}, Quantize: quantize}, "unsupported quantize"},
+			testCase{"import-only draft " + quantize, api.CreateRequest{Files: map[string]string{"model.safetensors": validDigest}, DraftFiles: map[string]string{"model.safetensors": validDigest}, DraftQuantize: quantize}, "unsupported draft quantize"},
+		)
 	}
 
 	for _, tt := range tests {
