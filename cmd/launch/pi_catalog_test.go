@@ -26,82 +26,85 @@ import (
 func TestPiPrimaryMetadataBudget(t *testing.T) {
 	for _, complete := range []bool{false, true} {
 		t.Run(fmt.Sprint(complete), func(t *testing.T) {
-			home := t.TempDir()
-			setLaunchTestHome(t, home)
-			withLauncherHooks(t)
-			oldTimeout := piModelDiscoveryTimeout
-			piModelDiscoveryTimeout = 50 * time.Millisecond
-			t.Cleanup(func() { piModelDiscoveryTimeout = oldTimeout })
-			if err := config.SaveIntegration("pi", []string{"primary"}); err != nil {
-				t.Fatal(err)
-			}
-			dir := filepath.Join(home, ".pi", "agent")
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			original := `{"providers":{"ollama":{"models":[{"id":"primary","_launch":true,"contextWindow":8192}]}}}`
-			path := filepath.Join(dir, "models.json")
-			if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "primary", nil }
-			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
-			stop := make(chan struct{})
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/status":
-					fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
-				case "/api/experimental/model-recommendations":
-					fmt.Fprint(w, `{"recommendations":[{"model":"primary"}]}`)
-				case "/api/tags":
-					if complete {
-						fmt.Fprint(w, `{"models":[{"name":"primary","details":{"context_length":8192},"capabilities":["completion","tools"]}]}`)
-					} else {
-						fmt.Fprint(w, `{"models":[{"name":"primary"}]}`)
-					}
-				case "/api/show":
-					select {
-					case <-r.Context().Done():
-					case <-stop:
-					}
-				default:
-					http.NotFound(w, r)
+			synctest.Test(t, func(t *testing.T) {
+				home := t.TempDir()
+				setLaunchTestHome(t, home)
+				withLauncherHooks(t)
+				oldTimeout := piModelDiscoveryTimeout
+				piModelDiscoveryTimeout = 50 * time.Millisecond
+				t.Cleanup(func() { piModelDiscoveryTimeout = oldTimeout })
+				if err := config.SaveIntegration("pi", []string{"primary"}); err != nil {
+					t.Fatal(err)
 				}
-			}))
-			defer srv.Close()
-			defer close(stop)
-			t.Setenv("OLLAMA_HOST", srv.URL)
-			c, err := newLauncherClient(defaultLaunchPolicy(true, false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			finished := make(chan error, 1)
-			go func() {
-				saved, _ := config.LoadIntegration("pi")
-				finished <- c.launchPiIntegration(ctx, &Pi{}, saved, IntegrationLaunchRequest{ConfigureOnly: true})
-			}()
-			select {
-			case err := <-finished:
-				if err != nil {
-					t.Fatalf("partial discovery should succeed: %v", err)
+				dir := filepath.Join(home, ".pi", "agent")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
 				}
-			case <-time.After(time.Second):
-				cancel()
-				<-finished
-				t.Fatal("primary /show exceeded the metadata budget")
-			}
-			if !complete {
-				data, err := fileutil.ReadJSON(path)
+				original := `{"providers":{"ollama":{"models":[{"id":"primary","_launch":true,"contextWindow":8192}]}}}`
+				path := filepath.Join(dir, "models.json")
+				if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "primary", nil }
+				DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+				stop := make(chan struct{})
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/status":
+						fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
+					case "/api/experimental/model-recommendations":
+						fmt.Fprint(w, `{"recommendations":[{"model":"primary"}]}`)
+					case "/api/tags":
+						if complete {
+							fmt.Fprint(w, `{"models":[{"name":"primary","details":{"context_length":8192},"capabilities":["completion","tools"]}]}`)
+						} else {
+							fmt.Fprint(w, `{"models":[{"name":"primary"}]}`)
+						}
+					case "/api/show":
+						select {
+						case <-r.Context().Done():
+						case <-stop:
+						}
+					default:
+						http.NotFound(w, r)
+					}
+				})
+				defer close(stop)
+				t.Setenv("OLLAMA_HOST", "http://pi.test")
+				c, err := newLauncherClient(defaultLaunchPolicy(true, false))
 				if err != nil {
 					t.Fatal(err)
 				}
-				models := data["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
-				if len(models) != 1 || models[0].(map[string]any)["contextWindow"] != float64(8192) {
-					t.Fatalf("known metadata changed on timeout: %v", models)
+				c.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "pi.test"}, &http.Client{Transport: piMetadataTestTransport{handler: handler}})
+				c.inventory = newModelInventory(c.apiClient)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				finished := make(chan error, 1)
+				go func() {
+					saved, _ := config.LoadIntegration("pi")
+					finished <- c.launchPiIntegration(ctx, &Pi{}, saved, IntegrationLaunchRequest{ConfigureOnly: true})
+				}()
+				select {
+				case err := <-finished:
+					if err != nil {
+						t.Fatalf("partial discovery should succeed: %v", err)
+					}
+				case <-time.After(time.Second):
+					cancel()
+					<-finished
+					t.Fatal("primary /show exceeded the metadata budget")
 				}
-			}
+				if !complete {
+					data, err := fileutil.ReadJSON(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					models := data["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
+					if len(models) != 1 || models[0].(map[string]any)["contextWindow"] != float64(8192) {
+						t.Fatalf("known metadata changed on timeout: %v", models)
+					}
+				}
+			})
 		})
 	}
 }
@@ -583,70 +586,73 @@ func TestPiMetadataRefreshPreservesKnownCapabilities(t *testing.T) {
 func TestPiAuthRecoversTimedOutInventory(t *testing.T) {
 	for _, refreshSucceeds := range []bool{true, false} {
 		t.Run(fmt.Sprint(refreshSucceeds), func(t *testing.T) {
-			home := t.TempDir()
-			setLaunchTestHome(t, home)
-			withLauncherHooks(t)
-			t.Setenv("PATH", t.TempDir())
-			oldTimeout := piModelDiscoveryTimeout
-			piModelDiscoveryTimeout = 50 * time.Millisecond
-			t.Cleanup(func() { piModelDiscoveryTimeout = oldTimeout })
-			path := filepath.Join(home, ".pi", "agent", "models.json")
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			original := `{"providers":{"ollama":{"models":[{"id":"keep","_launch":true,"contextWindow":8192}]}}}`
-			if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			var authenticated atomic.Bool
-			var tags atomic.Int32
-			DefaultSignIn = func(string, string) (string, error) {
-				authenticated.Store(true)
-				return "fixture", nil
-			}
-			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/status":
-					fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
-				case "/api/tags":
-					if tags.Add(1) == 1 || !refreshSucceeds {
-						<-r.Context().Done()
-						return
-					}
-					fmt.Fprint(w, `{"models":[{"name":"keep","details":{"context_length":8192},"capabilities":["completion"]}]}`)
-				case "/api/experimental/model-recommendations":
-					fmt.Fprint(w, `{"recommendations":[{"model":"vision:cloud"}]}`)
-				case "/api/me":
-					w.WriteHeader(http.StatusUnauthorized)
-					fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
-				case "/api/show":
-					if !authenticated.Load() {
-						w.WriteHeader(http.StatusUnauthorized)
-						fmt.Fprint(w, `{"error":"unauthorized"}`)
-						return
-					}
-					fmt.Fprint(w, `{"capabilities":["completion","vision","thinking"],"model_info":{"fixture.context_length":262144}}`)
-				default:
-					t.Errorf("unexpected path %s", r.URL.Path)
-					http.NotFound(w, r)
+			synctest.Test(t, func(t *testing.T) {
+				home := t.TempDir()
+				setLaunchTestHome(t, home)
+				withLauncherHooks(t)
+				t.Setenv("PATH", t.TempDir())
+				oldTimeout := piModelDiscoveryTimeout
+				piModelDiscoveryTimeout = 50 * time.Millisecond
+				t.Cleanup(func() { piModelDiscoveryTimeout = oldTimeout })
+				path := filepath.Join(home, ".pi", "agent", "models.json")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
 				}
-			}))
-			defer srv.Close()
-			t.Setenv("OLLAMA_HOST", srv.URL)
-			c, err := newLauncherClient(defaultLaunchPolicy(true, false))
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = c.launchPiIntegration(t.Context(), &Pi{}, nil, IntegrationLaunchRequest{ModelOverride: "vision:cloud"})
-			// Stop after writing config; the scratch PATH has no client or installer.
-			if err == nil || !strings.Contains(err.Error(), "npm") {
-				t.Fatalf("launch error = %v, want missing npm dependency", err)
-			}
-			models := (&Pi{}).Models()
-			if tags.Load() != 2 || !slices.Contains(models, "vision:cloud") || !slices.Contains(models, "keep") {
-				t.Fatalf("inventory calls = %d; catalog = %v", tags.Load(), models)
-			}
+				original := `{"providers":{"ollama":{"models":[{"id":"keep","_launch":true,"contextWindow":8192}]}}}`
+				if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				var authenticated atomic.Bool
+				var tags atomic.Int32
+				DefaultSignIn = func(string, string) (string, error) {
+					authenticated.Store(true)
+					return "fixture", nil
+				}
+				DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/status":
+						fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+					case "/api/tags":
+						if tags.Add(1) == 1 || !refreshSucceeds {
+							<-r.Context().Done()
+							return
+						}
+						fmt.Fprint(w, `{"models":[{"name":"keep","details":{"context_length":8192},"capabilities":["completion"]}]}`)
+					case "/api/experimental/model-recommendations":
+						fmt.Fprint(w, `{"recommendations":[{"model":"vision:cloud"}]}`)
+					case "/api/me":
+						w.WriteHeader(http.StatusUnauthorized)
+						fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+					case "/api/show":
+						if !authenticated.Load() {
+							w.WriteHeader(http.StatusUnauthorized)
+							fmt.Fprint(w, `{"error":"unauthorized"}`)
+							return
+						}
+						fmt.Fprint(w, `{"capabilities":["completion","vision","thinking"],"model_info":{"fixture.context_length":262144}}`)
+					default:
+						t.Errorf("unexpected path %s", r.URL.Path)
+						http.NotFound(w, r)
+					}
+				})
+				t.Setenv("OLLAMA_HOST", "http://pi.test")
+				c, err := newLauncherClient(defaultLaunchPolicy(true, false))
+				if err != nil {
+					t.Fatal(err)
+				}
+				c.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "pi.test"}, &http.Client{Transport: piMetadataTestTransport{handler: handler}})
+				c.inventory = newModelInventory(c.apiClient)
+				err = c.launchPiIntegration(t.Context(), &Pi{}, nil, IntegrationLaunchRequest{ModelOverride: "vision:cloud"})
+				// Stop after writing config; the scratch PATH has no client or installer.
+				if err == nil || !strings.Contains(err.Error(), "npm") {
+					t.Fatalf("launch error = %v, want missing npm dependency", err)
+				}
+				models := (&Pi{}).Models()
+				if tags.Load() != 2 || !slices.Contains(models, "vision:cloud") || !slices.Contains(models, "keep") {
+					t.Fatalf("inventory calls = %d; catalog = %v", tags.Load(), models)
+				}
+			})
 		})
 	}
 }
@@ -727,48 +733,52 @@ func TestPiCatalogInventoryErrorPreservesConfig(t *testing.T) {
 }
 
 func TestPiShowBudgetDoesNotChargeStatus(t *testing.T) {
-	setLaunchTestHome(t, t.TempDir())
-	withLauncherHooks(t)
-	oldTimeout := modelShowTimeout
-	modelShowTimeout = 40 * time.Millisecond
-	t.Cleanup(func() { modelShowTimeout = oldTimeout })
-	if err := config.SaveIntegration("pi", []string{"alias"}); err != nil {
-		t.Fatal(err)
-	}
-	DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "alias", nil }
-	DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			time.Sleep(100 * time.Millisecond)
-			fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
-		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"alias","remote_model":"remote","capabilities":["completion","tools"]}]}`)
-		case "/api/show":
-			fmt.Fprint(w, `{"remote_model":"remote","capabilities":["completion","tools"],"model_info":{"test.context_length":8192}}`)
-		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[{"model":"alias"}]}`)
-		case "/api/me":
-			fmt.Fprint(w, `{"name":"fixture"}`)
-		default:
-			http.NotFound(w, r)
+	synctest.Test(t, func(t *testing.T) {
+		setLaunchTestHome(t, t.TempDir())
+		withLauncherHooks(t)
+		oldTimeout := modelShowTimeout
+		modelShowTimeout = 40 * time.Millisecond
+		t.Cleanup(func() { modelShowTimeout = oldTimeout })
+		if err := config.SaveIntegration("pi", []string{"alias"}); err != nil {
+			t.Fatal(err)
 		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	c, err := newLauncherClient(defaultLaunchPolicy(true, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	current, usable, stateErr := c.launcherModelState(ctx, "pi", true)
-	if stateErr != nil || current != "alias" || !usable {
-		t.Errorf("status latency made the root primary unusable: %s/%t, %v", current, usable, stateErr)
-	}
-	if err := LaunchIntegration(ctx, IntegrationLaunchRequest{Name: "pi", ConfigureOnly: true}); err != nil {
-		t.Fatalf("status latency was charged to /show: %v", err)
-	}
+		DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "alias", nil }
+		DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/status":
+				time.Sleep(100 * time.Millisecond)
+				fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+			case "/api/tags":
+				fmt.Fprint(w, `{"models":[{"name":"alias","remote_model":"remote","capabilities":["completion","tools"]}]}`)
+			case "/api/show":
+				fmt.Fprint(w, `{"remote_model":"remote","capabilities":["completion","tools"],"model_info":{"test.context_length":8192}}`)
+			case "/api/experimental/model-recommendations":
+				fmt.Fprint(w, `{"recommendations":[{"model":"alias"}]}`)
+			case "/api/me":
+				fmt.Fprint(w, `{"name":"fixture"}`)
+			default:
+				http.NotFound(w, r)
+			}
+		})
+		originalClient := http.DefaultClient
+		http.DefaultClient = &http.Client{Transport: piMetadataTestTransport{handler: handler}}
+		t.Cleanup(func() { http.DefaultClient = originalClient })
+		t.Setenv("OLLAMA_HOST", "http://pi.test")
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		c, err := newLauncherClient(defaultLaunchPolicy(true, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, usable, stateErr := c.launcherModelState(ctx, "pi", true)
+		if stateErr != nil || current != "alias" || !usable {
+			t.Errorf("status latency made the root primary unusable: %s/%t, %v", current, usable, stateErr)
+		}
+		if err := LaunchIntegration(ctx, IntegrationLaunchRequest{Name: "pi", ConfigureOnly: true}); err != nil {
+			t.Fatalf("status latency was charged to /show: %v", err)
+		}
+	})
 }
 
 func TestPiCatalogMetadataFallback(t *testing.T) {
