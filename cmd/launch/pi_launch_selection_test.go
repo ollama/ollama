@@ -102,10 +102,8 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 				return nil, ErrCancelled
 			}
 			DefaultConfirmPrompt = func(prompt string, _ ConfirmOptions) (bool, error) {
-				if prompt != "Launch Pi now?" || len(tc.args) == 0 {
-					t.Errorf("unexpected confirmation: %s", prompt)
-				}
-				return true, nil
+				t.Errorf("unexpected confirmation: %s", prompt)
+				return false, nil
 			}
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -179,6 +177,12 @@ func TestLaunchCmdPiPickerPolicy(t *testing.T) {
 				if !slices.Equal(models, []string{"chosen", "keep-model"}) {
 					t.Fatalf("Pi catalog = %v, want all available models", models)
 				}
+			}
+			if slices.Contains(tc.args, "--config") {
+				if _, err := os.Stat(argsPath); !os.IsNotExist(err) {
+					t.Fatalf("configure-only started Pi: %v", err)
+				}
+				return
 			}
 
 			data, err := os.ReadFile(argsPath)

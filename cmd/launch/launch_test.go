@@ -3608,13 +3608,9 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 		return []string{"sample-model"}, nil
 	}
 
-	var prompts []string
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		prompts = append(prompts, prompt)
-		if strings.Contains(prompt, "Launch LauncherEditor now?") {
-			return false, nil
-		}
-		return true, nil
+		t.Fatalf("configure-only must not prompt to launch: %s", prompt)
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3644,9 +3640,6 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	}
 	if editor.ranModel != "" {
 		t.Fatalf("expected configure-only flow to skip launch, got %q", editor.ranModel)
-	}
-	if !slices.Contains(prompts, "Launch LauncherEditor now?") {
-		t.Fatalf("expected configure-only launch prompt, got %v", prompts)
 	}
 }
 
@@ -4158,7 +4151,7 @@ func TestLaunchIntegration_ModelOverrideDeprecatedSuggestsLocalWhenCloudDisabled
 	}
 }
 
-func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
+func TestLaunchIntegration_ConfigureOnlyDoesNotPromptOrRun(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -4170,13 +4163,9 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 		return "sample-model", nil
 	}
 
-	var prompts []string
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		prompts = append(prompts, prompt)
-		if strings.Contains(prompt, "Launch StubSingle now?") {
-			return false, nil
-		}
-		return true, nil
+		t.Fatalf("configure-only must not prompt to launch: %s", prompt)
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -4202,10 +4191,7 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
 	if runner.ranModel != "" {
-		t.Fatalf("expected configure-only flow to skip launch when prompt is declined, got %q", runner.ranModel)
-	}
-	if !slices.Contains(prompts, "Launch StubSingle now?") {
-		t.Fatalf("expected launch confirmation prompt, got %v", prompts)
+		t.Fatalf("expected configure-only flow to skip launch, got %q", runner.ranModel)
 	}
 }
 
@@ -4524,6 +4510,93 @@ func TestResolveSingleIntegrationTargetPaymentGuidance(t *testing.T) {
 			}
 			if prompts != tt.wantPrompts {
 				t.Fatalf("payment prompts = %d, want %d", prompts, tt.wantPrompts)
+			}
+		})
+	}
+}
+
+func TestLaunchIntegration_ClaudeFailedStartRestoresModel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell fake executables")
+	}
+
+	for _, tc := range []struct {
+		name, script, wantModel string
+		wantErr                 bool
+	}{
+		{"start failure", "#!/__missing_claude_interpreter__\n", "model-a", true},
+		{"child exit failure", "#!/bin/sh\nexit 23\n", "model-b", true},
+		{"success", "#!/bin/sh\nexit 0\n", "model-b", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			setLaunchTestHome(t, home)
+			bin := t.TempDir()
+			t.Setenv("PATH", bin)
+			if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(tc.script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveIntegration("claude", []string{"model-a", "older-model"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveAliases("claude", map[string]string{"keep": "model-a"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := config.SaveIntegration("codex", []string{"unrelated"}); err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/experimental/model-recommendations":
+					fmt.Fprint(w, `{"recommendations":[]}`)
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"model-a"},{"name":"model-b"}]}`)
+				case "/api/show":
+					fmt.Fprint(w, `{"capabilities":["completion","tools"]}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("OLLAMA_HOST", srv.URL)
+
+			err := LaunchIntegration(t.Context(), IntegrationLaunchRequest{Name: "claude", ModelOverride: "model-b"})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("LaunchIntegration error = %v, wantErr %v", err, tc.wantErr)
+			}
+			saved, err := config.LoadIntegration("claude")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantModels := []string{tc.wantModel}
+			if tc.wantModel == "model-a" {
+				wantModels = append(wantModels, "older-model")
+			}
+			if !slices.Equal(saved.Models, wantModels) || saved.Aliases["keep"] != "model-a" {
+				t.Fatalf("saved config = %+v, want models %v with aliases preserved", saved, wantModels)
+			}
+			if got := config.IntegrationModel("codex"); got != "unrelated" {
+				t.Fatalf("unrelated integration model = %q", got)
+			}
+			if tc.wantModel != "model-a" {
+				return
+			}
+
+			output := filepath.Join(home, "next-model")
+			t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_LAUNCH_TEST_OUTPUT\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := LaunchIntegration(t.Context(), IntegrationLaunchRequest{Name: "claude"}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "--model\nmodel-a\n" {
+				t.Fatalf("next launch arguments = %q, want prior model-a", got)
 			}
 		})
 	}
