@@ -1270,7 +1270,7 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
-		cacheHit, err := downloadBlob(ctx, downloadOpts{
+		cacheHit, verified, err := downloadBlob(ctx, downloadOpts{
 			n:       n,
 			digest:  layer.Digest,
 			regOpts: regOpts,
@@ -1279,15 +1279,18 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 		if err != nil {
 			return err
 		}
-		// If any download of a given digest was not a cache hit,
-		// always verify it. Without this guard, a config entry
-		// sharing a digest with a layer can overwrite the layer's
-		// false (needs verification) with true (cache hit), since
-		// the blob now exists on disk from the first download.
+		// Skip post-download verifyBlob when the blob was a cache hit
+		// (existing behavior) or was already hashed during download.
+		// If any download of a given digest was neither, always verify.
+		// Without this guard, a config entry sharing a digest with a
+		// layer can overwrite the layer's false (needs verification)
+		// with true (cache hit), since the blob now exists on disk
+		// from the first download.
+		canSkip := cacheHit || verified
 		if existing, ok := skipVerify[layer.Digest]; !ok {
-			skipVerify[layer.Digest] = cacheHit
+			skipVerify[layer.Digest] = canSkip
 		} else {
-			skipVerify[layer.Digest] = existing && cacheHit
+			skipVerify[layer.Digest] = existing && canSkip
 		}
 		delete(deleteMap, layer.Digest)
 	}

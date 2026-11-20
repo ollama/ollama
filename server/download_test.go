@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -161,10 +163,12 @@ func TestDownloadDiscoveryRedirectOrigin(t *testing.T) {
 }
 
 func TestDownloadRedirect(t *testing.T) {
+	const body = "x"
+	wantDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(body)))
 	var hits atomic.Int32
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		w.Write([]byte("x"))
+		w.Write([]byte(body))
 	}))
 	t.Cleanup(cdn.Close)
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -173,11 +177,12 @@ func TestDownloadRedirect(t *testing.T) {
 	t.Cleanup(registry.Close)
 	requestURL, _ := url.Parse(strings.Replace(registry.URL, "127.0.0.1", "localhost", 1))
 	for _, insecure := range []bool{false, true} {
+		hits.Store(0)
 		download := &blobDownload{
-			Name: filepath.Join(t.TempDir(), "blob"), Total: 1,
-			Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			Name: filepath.Join(t.TempDir(), "blob"), Total: int64(len(body)),
+			Digest: wantDigest,
 		}
-		if err := download.newPart(0, 1); err != nil {
+		if err := download.newPart(0, int64(len(body))); err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -191,6 +196,152 @@ func TestDownloadRedirect(t *testing.T) {
 			t.Fatalf("download: error = %v, requests = %d, want rejection before request", err, hits.Load())
 		}
 	}
+}
+
+func TestHashCompletedParts(t *testing.T) {
+	const data = "abcdefghijklmnopqrstuvwxyz"
+	want := sha256.Sum256([]byte(data))
+
+	dir := t.TempDir()
+	partial := filepath.Join(dir, "blob-partial")
+	if err := os.WriteFile(partial, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(partial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+
+	download := &blobDownload{
+		Name: filepath.Join(dir, "blob"),
+		Parts: []*blobDownloadPart{
+			{N: 0, Offset: 0, Size: 10},
+			{N: 1, Offset: 10, Size: 10},
+			{N: 2, Offset: 20, Size: 6},
+		},
+	}
+	for _, part := range download.Parts {
+		part.blobDownload = download
+		part.Completed.Store(part.Size)
+	}
+
+	got, err := download.hashCompletedParts(t.Context(), f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want[:]) {
+		t.Fatalf("digest = %x, want %x", got, want)
+	}
+}
+
+func TestHashCompletedPartsResumePrefix(t *testing.T) {
+	const data = "0123456789abcdef"
+	want := sha256.Sum256([]byte(data))
+
+	dir := t.TempDir()
+	partial := filepath.Join(dir, "blob-partial")
+	if err := os.WriteFile(partial, []byte(data[:8]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(partial, os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+
+	download := &blobDownload{
+		Name: filepath.Join(dir, "blob"),
+		Parts: []*blobDownloadPart{
+			{N: 0, Offset: 0, Size: 8},
+			{N: 1, Offset: 8, Size: 8},
+		},
+	}
+	for _, part := range download.Parts {
+		part.blobDownload = download
+	}
+	download.Parts[0].Completed.Store(8)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sum, err := download.hashCompletedParts(t.Context(), f)
+		if err != nil {
+			t.Errorf("hashCompletedParts: %v", err)
+			return
+		}
+		if !bytes.Equal(sum, want[:]) {
+			t.Errorf("digest = %x, want %x", sum, want)
+		}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	if _, err := f.WriteAt([]byte(data[8:]), 8); err != nil {
+		t.Fatal(err)
+	}
+	download.Parts[1].Completed.Store(8)
+	wg.Wait()
+}
+
+func TestDownloadRunVerifiesDigest(t *testing.T) {
+	const data = "hello-ollama-blob"
+	wantDigest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(data)))
+
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte(data))
+	}))
+	t.Cleanup(cdn.Close)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, cdn.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(registry.Close)
+	requestURL, err := url.Parse(strings.Replace(registry.URL, "127.0.0.1", "localhost", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("match", func(t *testing.T) {
+		name := filepath.Join(t.TempDir(), "blob")
+		download := &blobDownload{Name: name, Digest: wantDigest, Total: int64(len(data))}
+		if err := download.newPart(0, int64(len(data))); err != nil {
+			t.Fatal(err)
+		}
+		if err := download.run(t.Context(), requestURL, &registryOptions{Insecure: true}); err != nil {
+			t.Fatalf("run() error = %v", err)
+		}
+		got, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != data {
+			t.Fatalf("blob = %q, want %q", got, data)
+		}
+	})
+
+	t.Run("mismatch", func(t *testing.T) {
+		name := filepath.Join(t.TempDir(), "blob")
+		download := &blobDownload{
+			Name:   name,
+			Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			Total:  int64(len(data)),
+		}
+		if err := download.newPart(0, int64(len(data))); err != nil {
+			t.Fatal(err)
+		}
+		err := download.run(t.Context(), requestURL, &registryOptions{Insecure: true})
+		if !errors.Is(err, errDigestMismatch) {
+			t.Fatalf("run() error = %v, want %v", err, errDigestMismatch)
+		}
+		if _, err := os.Stat(name); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("blob path exists after mismatch: %v", err)
+		}
+		if _, err := os.Stat(name + "-partial"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("partial file remains after mismatch: %v", err)
+		}
+	})
 }
 
 func BenchmarkDownloadChunkCompletion(b *testing.B) {
