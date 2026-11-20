@@ -321,6 +321,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [BenchFleet](https://benchfleet.com) - Control real Android phones and let AI agents use them, with local vision models through Ollama ([docs](https://benchfleet.com/docs/ai))
 
 ### Observability & Monitoring
 
