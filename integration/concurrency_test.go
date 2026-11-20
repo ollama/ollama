@@ -27,7 +27,7 @@ func runConcurrentChat(t *testing.T, modelName string) {
 		req[i].Think = &api.ThinkValue{Value: false}
 		req[i].Options = map[string]any{"num_predict": 256, "num_ctx": 4096}
 	}
-	numParallel := int(envconfig.NumParallel() + 1)
+	numParallel := max(int(envconfig.NumParallel()), 1) + 1
 	iterLimit := 3
 
 	softTimeout, hardTimeout := getTimeouts(t)
