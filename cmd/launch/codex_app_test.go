@@ -52,9 +52,11 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 	oldStartID := codexAppStartID
 	oldCanOpenID := codexAppCanOpenID
 	oldExitTimeout := codexAppExitTimeout
+	oldStopManagedDaemon := codexAppStopDaemon
 	codexAppIsRunning = func(context.Context) bool { return isRunning() }
 	codexAppQuitApp = func(context.Context) error { return quit() }
 	codexAppOpenApp = func([]string) error { return open() }
+	codexAppStopDaemon = func() error { return nil }
 	t.Cleanup(func() {
 		codexAppIsRunning = oldIsRunning
 		codexAppQuitApp = oldQuit
@@ -65,6 +67,7 @@ func withCodexAppProcessHooks(t *testing.T, isRunning func() bool, quit func() e
 		codexAppStartID = oldStartID
 		codexAppCanOpenID = oldCanOpenID
 		codexAppExitTimeout = oldExitTimeout
+		codexAppStopDaemon = oldStopManagedDaemon
 	})
 }
 
