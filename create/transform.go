@@ -52,7 +52,35 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 		}
 		return invertFloat32TensorData(sources[0], ts.Name)
 
+	case TransformFP8ScaleExponent:
+		if len(sources) != 1 {
+			return nil, fmt.Errorf("transform %s expects 1 source, got %d", ts.Transform, len(sources))
+		}
+		return fp8ScaleExponents(sources[0], ts.Name, ts.OutShape)
+
+	case TransformFP8ScaleRemainder:
+		if len(sources) != 1 {
+			return nil, fmt.Errorf("transform %s expects 1 source, got %d", ts.Transform, len(sources))
+		}
+		return fp8ScaleRemainders(sources[0], ts.Name, ts.OutShape)
+
 	case TransformStackExperts:
+		if ts.Each != TransformNone {
+			// Each expert's output is the bank's shape without the expert axis.
+			var eachShape []int32
+			if len(ts.OutShape) > 0 {
+				eachShape = ts.OutShape[1:]
+			}
+			each := make([]*safetensors.TensorData, len(sources))
+			for i, s := range sources {
+				td, err := applyByteTransform(TensorSpec{Name: s.Name, Sources: []SourceTensor{{Name: s.Name}}, Transform: ts.Each, OutDtype: ts.OutDtype, OutShape: eachShape}, []*safetensors.TensorData{s})
+				if err != nil {
+					return nil, fmt.Errorf("stack_experts source %d (%s): %w", i, s.Name, err)
+				}
+				each[i] = td
+			}
+			sources = each
+		}
 		return stackExpertTensors(ts.Name, ts.OutDtype, ts.OutShape, sources)
 
 	default:

@@ -125,8 +125,8 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 
 // GatherQMM multiplies x against the quantized weight banks selected by
 // lhsIndices and rhsIndices, with one globalScale entry per expert. Metal
-// applies it inside the gather kernel, other backends scale the gathered
-// output rows in the wrapper.
+// applies an nvfp4 scale inside the gather kernel; other modes and backends
+// scale the gathered output rows in the wrapper.
 func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, globalScale *Array, sortedIndices bool) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
@@ -145,7 +145,8 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 	}
 	// The wrapper fallback needs rhs indices to map output rows to experts;
 	// without them the native path reports the unsupported combination.
-	applyWrapperScale := globalScale != nil && !MetalIsAvailable() && rhsIndices != nil
+	native := MetalIsAvailable() && mode == "nvfp4"
+	applyWrapperScale := globalScale != nil && !native && rhsIndices != nil
 	if globalScale != nil && !applyWrapperScale {
 		gs = globalScale.ctx
 	}

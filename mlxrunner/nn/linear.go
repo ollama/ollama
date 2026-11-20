@@ -39,7 +39,7 @@ type QuantizedLinear struct {
 	Scales      *mlx.Array // Scale factors for dequantization
 	QBiases     *mlx.Array // Quantization biases (nil for nvfp4)
 	Bias        *mlx.Array // Layer bias [output_dims] or nil
-	GlobalScale *mlx.Array // Per-tensor or per-row global scale for double-scale nvfp4 (nil for standard)
+	GlobalScale *mlx.Array // Per-tensor or per-row global scale, MLX representation (nil for none)
 	GroupSize   int
 	Bits        int
 	Mode        string

@@ -224,7 +224,7 @@ func importConfigBlobs(ctx context.Context, modelDir, namePrefix string, configO
 
 func quantizeStatus(c Classification) string {
 	switch c.Kind {
-	case SourceBlockFP8:
+	case SourceFP8:
 		return ", converting fp8 to mxfp8"
 	case SourcePrequantized:
 		return ", preserving source quantization"

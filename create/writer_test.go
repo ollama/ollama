@@ -479,7 +479,7 @@ func TestWriteBlobsBlockFP8Decode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadInventory() error = %v", err)
 	}
-	specs, err := Plan(inv, Classification{Kind: SourceBlockFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
+	specs, err := Plan(inv, Classification{Kind: SourceFP8, Quantize: "mxfp8"}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}

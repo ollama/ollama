@@ -46,47 +46,51 @@ func (p *expertProjection) Forward(x, indices *mlx.Array, sorted bool) *mlx.Arra
 	return mlx.GatherMM(x, p.Weight, nil, indices, sorted)
 }
 
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
-func (m *Model) loadExpertProjection(tensors map[string]*mlx.Array, base string) (*expertProjection, error) {
-	p := &expertProjection{}
-	var key string
-	for _, candidate := range []string{base, base + ".weight"} {
-		if p.Weight = tensors[candidate]; p.Weight != nil {
-			key = candidate
-			break
-		}
-	}
-	if p.Weight == nil {
-		return nil, fmt.Errorf("missing packed expert tensor %q", base)
-	}
-	p.Scales = tensors[key+"_scale"]
-	if p.Scales == nil {
-		p.Weight = mlx.Transpose(p.Weight, 0, 2, 1)
-	} else {
-		p.Biases = tensors[key+"_qbias"]
-		p.GroupSize, p.Bits, p.Mode = model.ResolveLinearQuantParams(m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant, key, p.Weight, p.Scales)
-		if !supportsGatherQMM(p.Mode, p.Bits) {
-			return nil, fmt.Errorf("packed expert tensor %q uses unsupported quantization mode=%q bits=%d", key, p.Mode, p.Bits)
-		}
-	}
-	var err error
-	p.GlobalScale, err = loadExpertGlobalScale(tensors, base, p.Weight.Dim(0), p.Mode)
-	if err != nil {
+// readExpertBank reads one routed-expert projection, stacked or per expert,
+// and enforces the model's policy: quantized banks must use a gather kernel
+// mode, and only NVFP4 and MXFP8 banks carry a global scale.
+func (m *Model) readExpertBank(tensors map[string]*mlx.Array, prefix, proj string) (*model.ExpertBank, error) {
+	quant := model.QuantDefaults{GroupSize: m.quantGroup, Bits: m.quantBits, Mode: m.quantMode, TensorQuant: m.tensorQuant}
+	bank, err := model.ReadExpertBank(tensors, quant, int(m.NumExperts), proj, prefix+".experts")
+	if err != nil || bank == nil {
 		return nil, err
 	}
-	return p, nil
+	if bank.Quantized() && !model.SupportsGatherQMM(bank.Mode, bank.Bits) {
+		return nil, fmt.Errorf("packed expert tensor %q uses unsupported quantization mode=%q bits=%d", bank.Key, bank.Mode, bank.Bits)
+	}
+	if bank.GlobalScale != nil && bank.Mode != "nvfp4" && bank.Mode != "mxfp8" {
+		return nil, fmt.Errorf("expert tensor %q has a global scale but uses mode=%q", bank.Key, bank.Mode)
+	}
+	return bank, nil
+}
+
+// projection returns a bank as the gather kernels consume it; unquantized
+// banks are transposed for GatherMM.
+func projection(bank *model.ExpertBank) *expertProjection {
+	if !bank.Quantized() {
+		return &expertProjection{Weight: mlx.Transpose(bank.Weight, 0, 2, 1)}
+	}
+	return &expertProjection{Weight: bank.Weight, Scales: bank.Scales, Biases: bank.Biases, GlobalScale: bank.GlobalScale, GroupSize: bank.GroupSize, Bits: bank.Bits, Mode: bank.Mode}
+}
+
+// fuseGateUp joins separate gate and up banks into the fused gate_up bank the
+// forward pass runs, along the output dimension. Quantized banks fuse only
+// when their quantization and global scales match.
+func fuseGateUp(gate, up *model.ExpertBank) (*model.ExpertBank, error) {
+	if gate.Quantized() != up.Quantized() || gate.Mode != up.Mode || gate.Bits != up.Bits || gate.GroupSize != up.GroupSize ||
+		(gate.Biases == nil) != (up.Biases == nil) || !model.SameGlobalScales(gate.GlobalScale, up.GlobalScale) {
+		return nil, fmt.Errorf("expert gate %q and up %q differ in quantization and cannot be fused", gate.Key, up.Key)
+	}
+	concat := func(a, b *mlx.Array) *mlx.Array {
+		if a == nil {
+			return nil
+		}
+		return mlx.Concatenate([]*mlx.Array{a, b}, 1)
+	}
+	return &model.ExpertBank{
+		Weight: concat(gate.Weight, up.Weight), Scales: concat(gate.Scales, up.Scales), Biases: concat(gate.Biases, up.Biases),
+		GlobalScale: gate.GlobalScale, GroupSize: gate.GroupSize, Bits: gate.Bits, Mode: gate.Mode, Key: gate.Key,
+	}, nil
 }
 
 func (m *Model) loadSparseMoE(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix string) (*sparseMoE, error) {
@@ -95,12 +99,34 @@ func (m *Model) loadSparseMoE(linears model.LinearFactory, tensors map[string]*m
 	if moe.Gate, err = requiredLinear(linears, prefix+".gate"); err != nil {
 		return nil, err
 	}
-	if moe.GateUp, err = m.loadExpertProjection(tensors, prefix+".experts.gate_up_proj"); err != nil {
+	gateUp, err := m.readExpertBank(tensors, prefix, "gate_up_proj")
+	if err != nil {
 		return nil, err
 	}
-	if moe.Down, err = m.loadExpertProjection(tensors, prefix+".experts.down_proj"); err != nil {
+	if gateUp == nil {
+		gate, err := m.readExpertBank(tensors, prefix, "gate_proj")
+		if err != nil {
+			return nil, err
+		}
+		up, err := m.readExpertBank(tensors, prefix, "up_proj")
+		if err != nil {
+			return nil, err
+		}
+		if gate == nil || up == nil {
+			return nil, fmt.Errorf("missing packed expert tensor %q", prefix+".experts.gate_up_proj")
+		}
+		if gateUp, err = fuseGateUp(gate, up); err != nil {
+			return nil, err
+		}
+	}
+	down, err := m.readExpertBank(tensors, prefix, "down_proj")
+	if err != nil {
 		return nil, err
 	}
+	if down == nil {
+		return nil, fmt.Errorf("missing packed expert tensor %q", prefix+".experts.down_proj")
+	}
+	moe.GateUp, moe.Down = projection(gateUp), projection(down)
 	if moe.SharedGate, err = requiredLinear(linears, prefix+".shared_expert_gate"); err != nil {
 		return nil, err
 	}
@@ -113,20 +139,6 @@ func (m *Model) loadSparseMoE(linears model.LinearFactory, tensors map[string]*m
 		return nil, fmt.Errorf("missing shared expert projection at %s", prefix)
 	}
 	return moe, nil
-}
-
-func loadExpertGlobalScale(tensors map[string]*mlx.Array, base string, experts int, mode string) (*mlx.Array, error) {
-	scale, _ := model.ReadGlobalScale(tensors, base, base+".weight")
-	if scale == nil {
-		return nil, nil
-	}
-	if mode != "nvfp4" {
-		return nil, fmt.Errorf("expert tensor %q has a global scale but uses mode=%q", base, mode)
-	}
-	if scale.Size() != 1 && scale.Size() != experts {
-		return nil, fmt.Errorf("expert tensor %q has %d global scales for %d experts", base, scale.Size(), experts)
-	}
-	return model.PrepareGatherQMMGlobalScale(scale, experts), nil
 }
 
 func (m *sparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {

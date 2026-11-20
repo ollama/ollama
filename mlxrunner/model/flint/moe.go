@@ -2,6 +2,7 @@ package flint
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/ollama/ollama/mlx"
@@ -101,28 +102,31 @@ type ExpertProjection struct {
 	Mode        string
 }
 
-func loadPackedExpertProjection(tensors map[string]*mlx.Array, path string, out, in int32, cfg *Config) (*ExpertProjection, error) {
-	w := tensors[path]
-	if w == nil {
-		return nil, fmt.Errorf("missing packed %s", path)
+// loadExpertProjection reads one routed-expert projection, stacked or per
+// expert, and checks it against Flint's shapes: an unquantized bank must be
+// BF16 [experts, out, in]; a quantized one must use a gather kernel mode and,
+// for NVFP4, carry a global scale.
+func loadExpertProjection(tensors map[string]*mlx.Array, mlpPrefix, proj string, out, in int32, cfg *Config) (*ExpertProjection, error) {
+	quant := model.QuantDefaults{GroupSize: cfg.QuantGroupSize, Bits: cfg.QuantBits, Mode: cfg.QuantMode, TensorQuant: cfg.TensorQuant}
+	bank, err := model.ReadExpertBank(tensors, quant, int(cfg.NumExperts), proj, mlpPrefix+".experts")
+	if err != nil {
+		return nil, err
 	}
-	if w.NumDims() != 3 || w.Dim(0) != int(cfg.NumExperts) || w.Dim(1) != int(out) {
+	if bank == nil {
+		return nil, fmt.Errorf("missing %s.experts.%s", mlpPrefix, proj)
+	}
+	w, path := bank.Weight, bank.Key
+	if w.Dim(1) != int(out) {
 		return nil, fmt.Errorf("%s has shape %v, want [%d,%d,*]", path, w.Dims(), cfg.NumExperts, out)
 	}
-	p := &ExpertProjection{Weight: w, Scales: tensors[path+"_scale"], Biases: tensors[path+"_qbias"]}
-	if p.Scales == nil {
-		if w.DType() != mlx.DTypeBFloat16 || w.Dim(2) != int(in) || p.Biases != nil {
+	p := &ExpertProjection{Weight: w, Scales: bank.Scales, Biases: bank.Biases, GlobalScale: bank.GlobalScale, GroupSize: bank.GroupSize, Bits: bank.Bits, Mode: bank.Mode}
+	if !bank.Quantized() {
+		if w.DType() != mlx.DTypeBFloat16 || w.Dim(2) != int(in) {
 			return nil, fmt.Errorf("%s has invalid unquantized expert shape or dtype", path)
 		}
 		return p, nil
 	}
-	p.GroupSize, p.Bits, p.Mode = model.ResolveLinearQuantParams(
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
-		path, w, p.Scales)
-	supported := (p.Mode == "affine" && (p.Bits == 4 || p.Bits == 8)) ||
-		(p.Mode == "mxfp8" && p.Bits == 8) ||
-		((p.Mode == "nvfp4" || p.Mode == "mxfp4") && p.Bits == 4)
-	if !supported || p.GroupSize <= 0 ||
+	if !model.SupportsGatherQMM(p.Mode, p.Bits) || p.GroupSize <= 0 ||
 		int(in)%p.GroupSize != 0 || int(in)%(32/p.Bits) != 0 ||
 		w.DType() != mlx.DTypeUint32 || w.Dim(2) != int(in)/(32/p.Bits) ||
 		p.Scales.NumDims() != 3 || p.Scales.Dim(0) != int(cfg.NumExperts) ||
@@ -132,20 +136,12 @@ func loadPackedExpertProjection(tensors map[string]*mlx.Array, path string, out,
 	if p.Mode != "affine" && p.Biases != nil {
 		return nil, fmt.Errorf("%s has bias with floating point quantization %q", path, p.Mode)
 	}
-	if p.Biases != nil && (p.Biases.NumDims() != 3 || p.Biases.Dims()[0] != p.Scales.Dim(0) ||
-		p.Biases.Dims()[1] != p.Scales.Dim(1) || p.Biases.Dims()[2] != p.Scales.Dim(2)) {
+	if p.Biases != nil && !slices.Equal(p.Biases.Dims(), p.Scales.Dims()) {
 		return nil, fmt.Errorf("%s has invalid expert quantization bias shape %v", path, p.Biases.Dims())
 	}
-	global, _ := model.ReadGlobalScale(tensors, path)
-	if p.Mode == "nvfp4" {
-		if global == nil {
-			return nil, fmt.Errorf("%s is missing NVFP4 global scale", path)
-		}
-		if size := global.Size(); size != 1 && size != int(cfg.NumExperts) {
-			return nil, fmt.Errorf("%s has %d NVFP4 global scales, want 1 or %d", path, size, cfg.NumExperts)
-		}
+	if p.Mode == "nvfp4" && p.GlobalScale == nil {
+		return nil, fmt.Errorf("%s is missing NVFP4 global scale", path)
 	}
-	p.GlobalScale = model.PrepareGatherQMMGlobalScale(global, int(cfg.NumExperts))
 	return p, nil
 }
 
@@ -171,54 +167,23 @@ func loadSparseMoE(linears model.LinearFactory, tensors map[string]*mlx.Array, p
 	if m.Router == nil || m.Shared == nil {
 		return nil, fmt.Errorf("missing MoE router or shared expert at %s", mlpPrefix)
 	}
-	packedPrefix := mlpPrefix + ".experts."
-	if tensors[packedPrefix+"gate_proj.weight"] != nil || tensors[packedPrefix+"up_proj.weight"] != nil || tensors[packedPrefix+"down_proj.weight"] != nil {
-		gate, err := loadPackedExpertProjection(tensors, packedPrefix+"gate_proj.weight", cfg.MoeIntermediateSize, cfg.HiddenSize, cfg)
+	var projections [3]*ExpertProjection
+	for k, proj := range []struct {
+		name    string
+		out, in int32
+	}{
+		{"gate_proj", cfg.MoeIntermediateSize, cfg.HiddenSize},
+		{"up_proj", cfg.MoeIntermediateSize, cfg.HiddenSize},
+		{"down_proj", cfg.HiddenSize, cfg.MoeIntermediateSize},
+	} {
+		p, err := loadExpertProjection(tensors, mlpPrefix, proj.name, proj.out, proj.in, cfg)
 		if err != nil {
 			return nil, err
 		}
-		up, err := loadPackedExpertProjection(tensors, packedPrefix+"up_proj.weight", cfg.MoeIntermediateSize, cfg.HiddenSize, cfg)
-		if err != nil {
-			return nil, err
-		}
-		down, err := loadPackedExpertProjection(tensors, packedPrefix+"down_proj.weight", cfg.HiddenSize, cfg.MoeIntermediateSize, cfg)
-		if err != nil {
-			return nil, err
-		}
-		m.Experts = &Experts{Gate: gate, Up: up, Down: down}
-		return m, nil
+		projections[k] = p
 	}
-	projections := map[string][]*mlx.Array{
-		"gate_proj": make([]*mlx.Array, cfg.NumExperts),
-		"up_proj":   make([]*mlx.Array, cfg.NumExperts),
-		"down_proj": make([]*mlx.Array, cfg.NumExperts),
-	}
-	for expert := range cfg.NumExperts {
-		for name, weights := range projections {
-			path := fmt.Sprintf("%s.experts.%d.%s.weight", mlpPrefix, expert, name)
-			w := tensors[path]
-			if w == nil {
-				return nil, fmt.Errorf("missing %s", path)
-			}
-			if tensors[path+"_scale"] != nil || w.DType() != mlx.DTypeBFloat16 {
-				return nil, fmt.Errorf("%s: Flint expert loading currently requires BF16 source weights", path)
-			}
-			wantOut, wantIn := cfg.MoeIntermediateSize, cfg.HiddenSize
-			if name == "down_proj" {
-				wantOut, wantIn = cfg.HiddenSize, cfg.MoeIntermediateSize
-			}
-			if w.NumDims() != 2 || w.Dim(0) != int(wantOut) || w.Dim(1) != int(wantIn) {
-				return nil, fmt.Errorf("%s has shape %v, want [%d,%d]", path, w.Dims(), wantOut, wantIn)
-			}
-			weights[expert] = w
-		}
-	}
-	// Keep stacked tensors in publisher layout; transposition is a view at use.
-	m.Experts = &Experts{
-		Gate: &ExpertProjection{Weight: mlx.Stack(projections["gate_proj"], 0)},
-		Up:   &ExpertProjection{Weight: mlx.Stack(projections["up_proj"], 0)},
-		Down: &ExpertProjection{Weight: mlx.Stack(projections["down_proj"], 0)},
-	}
+	// Unquantized banks stay in publisher layout; transposition is a view at use.
+	m.Experts = &Experts{Gate: projections[0], Up: projections[1], Down: projections[2]}
 	return m, nil
 }
 

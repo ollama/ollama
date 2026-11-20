@@ -19,9 +19,9 @@ func TestPackedNVFP4ExpertRequiresGlobalScale(t *testing.T) {
 			path + "_scale": mlx.FromValues(make([]uint8, 2*1*4), 2, 1, 4),
 		}
 		cfg := &Config{NumExperts: 2, QuantGroupSize: 16, QuantBits: 4, QuantMode: "nvfp4"}
-		_, err := loadPackedExpertProjection(tensors, path, 1, 64, cfg)
+		_, err := loadExpertProjection(tensors, "model.layers.2.mlp", "gate_proj", 1, 64, cfg)
 		if err == nil || !strings.Contains(err.Error(), "missing NVFP4 global scale") {
-			t.Fatalf("loadPackedExpertProjection() error = %v, want missing global scale", err)
+			t.Fatalf("loadExpertProjection() error = %v, want missing global scale", err)
 		}
 	})
 }
