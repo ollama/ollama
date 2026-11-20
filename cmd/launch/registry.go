@@ -33,9 +33,18 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "mux", "droid", "dsh", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
+	{
+		Name:        "mux",
+		Runner:      &Mux{},
+		Description: "Open-source coding agent for the terminal, desktop, and web",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool { _, err := exec.LookPath("mux"); return err == nil },
+			URL:            "https://github.com/jchristn/Mux#installation",
+		},
+	},
 	{
 		Name:        "claude",
 		Runner:      &Claude{},
