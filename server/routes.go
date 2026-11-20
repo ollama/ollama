@@ -2528,8 +2528,6 @@ func Serve(ln net.Listener) error {
 		return err
 	}
 
-	http.Handle("/", h)
-
 	ctx, done := context.WithCancel(context.Background())
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)
@@ -2538,15 +2536,10 @@ func Serve(ln net.Listener) error {
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
-		// Use http.DefaultServeMux so we get net/http/pprof for
-		// free.
-		//
-		// TODO(bmizerany): Decide if we want to make this
-		// configurable so it is not exposed by default, or allow
-		// users to bind it to a different port. This was a quick
-		// and easy way to get pprof, but it may not be the best
-		// way.
-		Handler: nil,
+		// Serve only the API routes. Don't use http.DefaultServeMux:
+		// any package that registers handlers on it, such as
+		// net/http/pprof, would expose them on the API port.
+		Handler: h,
 	}
 
 	// listen for a ctrl+c and stop any loaded llm
