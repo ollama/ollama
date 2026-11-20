@@ -15,7 +15,7 @@
 
     Preview channel:
 
-        $env:OLLAMA_CHANNEL="preview"; irm https://ollama.com/install.ps1 | iex
+        $env:OLLAMA_CHANNEL="preview"; irm "https://ollama.com/install.ps1?channel=preview" | iex
 
     Custom install directory:
 
@@ -40,7 +40,7 @@
     $env:OLLAMA_VERSION = "0.5.7"; irm https://ollama.com/install.ps1 | iex
 
 .EXAMPLE
-    $env:OLLAMA_CHANNEL = "preview"; irm https://ollama.com/install.ps1 | iex
+    $env:OLLAMA_CHANNEL = "preview"; irm "https://ollama.com/install.ps1?channel=preview" | iex
 
 .LINK
     https://ollama.com
