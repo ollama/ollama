@@ -181,6 +181,8 @@ func darwinStartHiddenTasks() {
 }
 
 func init() {
+	exitIfRunningFromTrash()
+
 	// Temporary code to mimic Squirrel ShipIt behavior
 	if len(os.Args) > 2 {
 		if os.Args[1] == "___launch___" {
