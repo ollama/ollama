@@ -79,6 +79,33 @@ func (w *BaseWriter) writeError(data []byte) (int, error) {
 }
 
 func (w *ChatWriter) writeResponse(data []byte) (int, error) {
+	if message, ok := streamErrorMessage(data); ok {
+		if w.stream {
+			w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+			errResp := openai.NewError(http.StatusInternalServerError, message)
+			d, err := json.Marshal(errResp)
+			if err != nil {
+				return 0, err
+			}
+			_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+			if err != nil {
+				return 0, err
+			}
+			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
+			if err != nil {
+				return 0, err
+			}
+			if f, ok := w.ResponseWriter.(http.Flusher); ok {
+				f.Flush()
+			}
+			return len(data), nil
+		}
+
+		w.ResponseWriter.Header().Set("Content-Type", "application/json")
+		errResp := openai.NewError(http.StatusInternalServerError, message)
+		return len(data), json.NewEncoder(w.ResponseWriter).Encode(errResp)
+	}
+
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
 	if err != nil {
@@ -185,6 +212,33 @@ func (w *ChatWriter) Write(data []byte) (int, error) {
 }
 
 func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
+	if message, ok := streamErrorMessage(data); ok {
+		if w.stream {
+			w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+			errResp := openai.NewError(http.StatusInternalServerError, message)
+			d, err := json.Marshal(errResp)
+			if err != nil {
+				return 0, err
+			}
+			_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+			if err != nil {
+				return 0, err
+			}
+			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
+			if err != nil {
+				return 0, err
+			}
+			if f, ok := w.ResponseWriter.(http.Flusher); ok {
+				f.Flush()
+			}
+			return len(data), nil
+		}
+
+		w.ResponseWriter.Header().Set("Content-Type", "application/json")
+		errResp := openai.NewError(http.StatusInternalServerError, message)
+		return len(data), json.NewEncoder(w.ResponseWriter).Encode(errResp)
+	}
+
 	var generateResponse api.GenerateResponse
 	err := json.Unmarshal(data, &generateResponse)
 	if err != nil {

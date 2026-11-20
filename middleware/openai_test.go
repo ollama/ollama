@@ -828,6 +828,93 @@ func TestChatWriter_StreamEmptyCompletionStillEmitsRoleChunk(t *testing.T) {
 	}
 }
 
+func TestChatWriter_StreamErrorMidStreamEmitsErrorAndDone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	firstResp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:    "assistant",
+			Content: "hello",
+		},
+	}
+	firstData, err := json.Marshal(firstResp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := writer.Write(firstData); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	errData := []byte(`{"error":"parse Glimmer call to shell: malformed ATEM parameter"}`)
+	if _, err := writer.Write(errData); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) < 3 {
+		t.Fatalf("expected at least 3 SSE frames (first chunk + error + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	lastFrame := frames[len(frames)-1]
+	if lastFrame != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", lastFrame)
+	}
+	errFrame := frames[len(frames)-2]
+	if !strings.Contains(errFrame, `"error"`) || !strings.Contains(errFrame, "malformed ATEM parameter") {
+		t.Fatalf("expected error frame containing error message, got %s", errFrame)
+	}
+}
+
+func TestCompleteWriter_StreamErrorMidStreamEmitsErrorAndDone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &CompleteWriter{
+		stream:     true,
+		id:         "cmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	firstResp := api.GenerateResponse{
+		Model:    "test-model",
+		Response: "hello",
+	}
+	firstData, err := json.Marshal(firstResp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := writer.Write(firstData); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	errData := []byte(`{"error":"model runner failure"}`)
+	if _, err := writer.Write(errData); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) < 3 {
+		t.Fatalf("expected at least 3 SSE frames (first chunk + error + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	lastFrame := frames[len(frames)-1]
+	if lastFrame != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", lastFrame)
+	}
+	errFrame := frames[len(frames)-2]
+	if !strings.Contains(errFrame, `"error"`) || !strings.Contains(errFrame, "model runner failure") {
+		t.Fatalf("expected error frame containing error message, got %s", errFrame)
+	}
+}
+
 func TestChatMiddleware(t *testing.T) {
 	type testCase struct {
 		name string
