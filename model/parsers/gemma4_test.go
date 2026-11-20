@@ -2547,6 +2547,56 @@ func TestParseGemma4ClosedToolCall_BacktickValues(t *testing.T) {
 	}
 }
 
+func TestParseGemma4ClosedToolCall_BraceTooManyAtTheEnd(t *testing.T) {
+	tools := []api.Tool{gemma4TestStringTool("editRecord", "project", "record")}
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			// The call gemma4:e4b wrote in eval round 174 (2026-11-20), passed on as content.
+			name: "after_a_list",
+			content: "call:editRecord{build:true,project:<|\"|>GoldLever<|\"|>,record:<|\"|>Activators/Lever.yaml<|\"|>," +
+				"set:[{path:<|\"|>EditorID<|\"|>,value:<|\"|>StrangeLever<|\"|>}],remove:[<|\"|>FormKey<|\"|>]}}",
+			want: map[string]any{"build": true, "project": "GoldLever", "record": "Activators/Lever.yaml",
+				"set": []any{map[string]any{"path": "EditorID", "value": "StrangeLever"}}, "remove": []any{"FormKey"}},
+		},
+		{
+			name:    "two_too_many",
+			content: "call:editRecord{project:<|\"|>P<|\"|>,record:<|\"|>R<|\"|>}}}",
+			want:    map[string]any{"project": "P", "record": "R"},
+		},
+		{
+			name:    "a_brace_in_a_string_kept",
+			content: "call:editRecord{project:<|\"|>P}<|\"|>,record:<|\"|>R<|\"|>}}",
+			want:    map[string]any{"project": "P}", "record": "R"},
+		},
+		{
+			name:    "a_bracket_too_many_still_fails",
+			content: "call:editRecord{project:<|\"|>P<|\"|>,record:<|\"|>R<|\"|>}]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tools)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestParseGemma4ClosedToolCall_TripleQuotedValues(t *testing.T) {
 	tools := []api.Tool{gemma4TestStringTool("edit", "path")}
 	edit := func(newText, oldText string) map[string]any {

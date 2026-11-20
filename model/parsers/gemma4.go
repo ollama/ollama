@@ -464,7 +464,7 @@ func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, 
 	braceIdx := strings.Index(content, "{")
 	ticked := ""
 	if strings.HasPrefix(content, "call:") && braceIdx != -1 {
-		args := repairGemma4TripleQuotedValues(content[braceIdx:])
+		args := repairGemma4TrailingBraces(repairGemma4TripleQuotedValues(content[braceIdx:]))
 		if repaired := repairGemma4EmptyValues(repairGemma4BacktickValues(args)); repaired != content[braceIdx:] {
 			ticked = content[:braceIdx] + repaired
 		}
@@ -1289,6 +1289,48 @@ func repairGemma4BacktickValues(s string) string {
 		}
 	}
 	return sb.String()
+}
+
+// repairGemma4TrailingBraces drops the `}`s written after the arguments' own
+// closing brace, as in call:editRecord{…,remove:[<|"|>FormKey<|"|>]}}: where the
+// object the arguments open closes and only braces and whitespace follow it,
+// they close nothing. Strings, gemma4's and JSON-quoted, are skipped, and
+// anything else after the object, or an object never closed, leaves the
+// arguments as they are.
+func repairGemma4TrailingBraces(s string) string {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			end := strings.Index(s[i+len(gemma4StringDelimiter):], gemma4StringDelimiter)
+			if end == -1 {
+				return s
+			}
+			i += len(gemma4StringDelimiter) + end + len(gemma4StringDelimiter) - 1
+			continue
+		}
+		switch s[i] {
+		case '"':
+			end := gemma4JSONQuotedStringEnd(s, i)
+			if end == -1 {
+				return s
+			}
+			i = end - 1
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				if rest := strings.TrimSpace(s[i+1:]); rest != "" && strings.Trim(rest, "} \t\r\n") == "" {
+					return s[:i+1]
+				}
+				return s
+			}
+			if depth < 0 {
+				return s
+			}
+		}
+	}
+	return s
 }
 
 // gemma4TripleQuote is what gemma4:e4b writes in place of the string delimiter
