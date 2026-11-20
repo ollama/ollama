@@ -242,6 +242,34 @@
         {{- '<|channel>thought\n' + thinking_text + '\n<channel|>' -}}
     {%- endif -%}
 
+            {%- set captured_content -%}
+            {%- if message.get('content') is string -%}
+                {%- if role == 'model' -%}
+                    {{- strip_thinking(message['content']) -}}
+                {%- else -%}
+                    {{- message['content'] | trim -}}
+                {%- endif -%}
+            {%- elif message.get('content') is sequence -%}
+                {%- for item in message['content'] -%}
+                    {%- if item.get('type') == 'text' -%}
+                        {%- if role == 'model' -%}
+                            {{- strip_thinking(item['text']) -}}
+                        {%- else -%}
+                            {{- item['text'] | trim -}}
+                        {%- endif -%}
+                    {%- elif item.get('type') in ['image', 'image_url'] -%}
+                        {{- '<|image|>' -}}
+                    {%- elif item.get('type') in ['audio', 'input_audio'] -%}
+                        {{- '<|audio|>' -}}
+                    {%- elif item.get('type') == 'video' -%}
+                        {{- '<|video|>' -}}
+                    {%- endif -%}
+                {%- endfor -%}
+            {%- endif -%}
+            {%- endset -%}
+
+            {{- captured_content -}}
+
             {%- if message.get('tool_calls') -%}
                 {%- for tool_call in message.get('tool_calls') -%}
                     {%- set function = tool_call['function'] -%}
@@ -320,35 +348,6 @@
                 {%- endfor -%}
             {%- endif -%}
 
-            {%- set captured_content -%}
-            {%- if message.get('content') is string -%}
-                {%- if role == 'model' -%}
-                    {{- strip_thinking(message['content']) -}}
-                {%- else -%}
-                    {{- message['content'] | trim -}}
-                {%- endif -%}
-            {%- elif message.get('content') is sequence -%}
-                {%- for item in message['content'] -%}
-                    {%- if item.get('type') == 'text' -%}
-                        {%- if role == 'model' -%}
-                            {{- strip_thinking(item['text']) -}}
-                        {%- else -%}
-                            {{- item['text'] | trim -}}
-                        {%- endif -%}
-                    {%- elif item.get('type') in ['image', 'image_url'] -%}
-                        {{- '<|image|>' -}}
-                    {%- elif item.get('type') in ['audio', 'input_audio'] -%}
-                        {{- '<|audio|>' -}}
-                    {%- elif item.get('type') == 'video' -%}
-                        {{- '<|video|>' -}}
-                    {%- endif -%}
-                {%- endfor -%}
-            {%- endif -%}
-            {%- endset -%}
-
-            {{- captured_content -}}
-            {%- set has_content = captured_content | trim | length > 0 -%}
-
         {#- Forward-scan: find next non-tool message role for continuation detection -#}
         {%- set next_nt = namespace(role=None, found=false) -%}
         {%- for j in range(loop.index0 + 1, loop_messages | length) -%}
@@ -369,7 +368,7 @@
         {%- if ns.prev_message_type == 'tool_call' and not ns_tr_out.flag -%}
             {{- '<|tool_response>' -}}
         {%- elif continues_into_next -%}
-        {%- elif not (ns_tr_out.flag and not has_content and not next_nt.found) -%}
+        {%- elif not (ns_tr_out.flag and not next_nt.found) -%}
             {{- '<turn|>\n' -}}
         {%- endif -%}
 

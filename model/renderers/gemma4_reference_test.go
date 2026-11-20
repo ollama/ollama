@@ -7,12 +7,12 @@ package renderers
 // reference cases below use the small (e2b/e4b-style) baseline, with large
 // (26b/31b-style) checks covered separately in this file.
 //
-// To regenerate expected values, save the E2B template to
-// gemma4_e2b_chat_template.jinja2 and run:
+// The fixtures include assistant content order and tool-turn boundary fixes.
+// To regenerate expected values, use the checked-in E2B fixture:
 //
 //   python3 -c "
 //   from jinja2 import Environment; import json
-//   tmpl = Environment().from_string(open('gemma4_e2b_chat_template.jinja2').read())
+//   tmpl = Environment().from_string(open('testdata/gemma4_e2b_chat_template.jinja2').read())
 //   msgs = [{'role':'user','content':'Hello'}]
 //   print(repr(tmpl.render(messages=msgs, bos_token='<bos>', add_generation_prompt=True)))
 //   "
@@ -31,14 +31,12 @@ import (
 )
 
 const (
-	gemma4E2BTemplate = "testdata/gemma4_e2b_chat_template.jinja2"
-	gemma431BTemplate = "testdata/gemma4_31b_chat_template.jinja2"
-	// Copied byte-for-byte from the publisher's chat_template.jinja.
-	// SHA-256: 35b7d0641b6fb4ee41c3bc623e85bdb7d583c40f6ae9f24514ae58a9d57119f3.
+	gemma4E2BTemplate      = "testdata/gemma4_e2b_chat_template.jinja2"
+	gemma431BTemplate      = "testdata/gemma4_31b_chat_template.jinja2"
 	gemma4NemotronTemplate = "testdata/gemma4_nemotron_chat_template.jinja2"
 )
 
-// The upstream Gemma 4 chat templates are committed by size under testdata/.
+// The Gemma 4 reference templates are committed by size under testdata/.
 // Run with VERIFY_JINJA2=1 to verify expected values against the E2B template using uv + Python.
 
 func bashRefTool() []api.Tool {
@@ -811,7 +809,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			tools: bashRefTool(),
 			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + "<turn|>\n" +
 				"<|turn>user\nList files<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>Let me check.<|tool_response>",
+				"<|turn>model\nLet me check.<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|><|tool_response>",
 		},
 		{
 			// Full round trip: call → response → assistant reply → user follow-up
@@ -909,7 +907,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		// === Additional edge cases ported from original tests ===
 		{
-			// Assistant content with tool call: template emits tool_calls before content
+			// Keep the assistant's explanation before its tool call.
 			name: "assistant_content_with_tool_call",
 			messages: []api.Message{
 				{Role: "user", Content: "Weather?"},
@@ -921,9 +919,8 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			tools: weatherTool(),
 			expected: "<bos><|turn>system\n" + weatherDeclRef + "<turn|>\n" +
 				"<|turn>user\nWeather?<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Paris" + q + "}<tool_call|>" +
-				"<|tool_response>response:get_weather{value:" + q + "Sunny" + q + "}<tool_response|>" +
-				"Let me check.<turn|>\n",
+				"<|turn>model\nLet me check.<|tool_call>call:get_weather{city:" + q + "Paris" + q + "}<tool_call|>" +
+				"<|tool_response>response:get_weather{value:" + q + "Sunny" + q + "}<tool_response|>",
 		},
 		{
 			// Numeric tool call arguments
@@ -1465,9 +1462,9 @@ Hi<turn|>
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nList files<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|turn>model\nLet me list the files.<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
 				"<|tool_response>response:bash{value:" + q + "main.go\ngo.mod" + q + "}<tool_response|>" +
-				"Let me list the files.<turn|>\n" +
+				"<turn|>\n" +
 				"<|turn>user\nOK<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -1585,7 +1582,7 @@ Hi<turn|>
 				assert.Equal(t, jinja2Output, got,
 					"renderer output doesn't match Jinja2 template output")
 
-				nemotron := &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true}
+				nemotron := &Gemma4Renderer{useImgTags: RenderImgTags}
 				nemotronGot, err := nemotron.Render(tt.messages, tt.tools, tt.think)
 				assert.NoError(t, err)
 				assert.Equal(t, renderWithJinja2Template(t, gemma4NemotronTemplate, tt.messages, tt.tools, tt.think), nemotronGot,
@@ -1641,6 +1638,55 @@ func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing
 	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
 }
 
+func TestGemma4RendererToolHistory(t *testing.T) {
+	q := `<|"|>`
+	call := "<|tool_call>call:get_weather{city:" + q + "London" + q + "}<tool_call|>"
+	response := "<|tool_response>response:get_weather{value:" + q + "sunny" + q + "}<tool_response|>"
+	toolResult := api.Message{Role: "tool", ToolCallID: "call_1", Content: "sunny"}
+	for _, rendererName := range []string{"gemma4", "gemma4-small", "gemma4-large", "gemma4-nemotron"} {
+		for _, thinking := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/thinking_%t", rendererName, thinking), func(t *testing.T) {
+				messages := []api.Message{
+					{Role: "user", Content: "Weather?"},
+					{Role: "assistant", Content: "I'll check.", ToolCalls: []api.ToolCall{{
+						ID:       "call_1",
+						Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})},
+					}}},
+				}
+				prefix := "<bos>"
+				cue := ""
+				generation := "<|turn>model\n"
+				if thinking {
+					prefix += "<|turn>system\n<|think|>\n<turn|>\n"
+					cue = "<|channel>thought\n"
+				} else if rendererName == "gemma4-large" {
+					generation += "<|channel>thought\n<channel|>"
+				}
+				prefix += "<|turn>user\nWeather?<turn|>\n<|turn>model\nI'll check." + call
+				cases := []struct {
+					name string
+					tail []api.Message
+					want string
+				}{
+					{name: "pending", want: "<|tool_response>"},
+					{name: "result", tail: []api.Message{toolResult}, want: response + cue},
+					{name: "assistant", tail: []api.Message{toolResult, {Role: "assistant", Content: "It is sunny."}}, want: response + "It is sunny.<turn|>\n" + generation},
+					{name: "user", tail: []api.Message{toolResult, {Role: "user", Content: "Tomorrow?"}}, want: response + "<turn|>\n<|turn>user\nTomorrow?<turn|>\n" + generation},
+					{name: "another_call", tail: []api.Message{toolResult, messages[1], toolResult}, want: response + "I'll check." + call + response + cue},
+				}
+				for _, tc := range cases {
+					t.Run(tc.name, func(t *testing.T) {
+						history := append(append([]api.Message{}, messages...), tc.tail...)
+						got, err := RenderWithRenderer(rendererName, history, nil, &api.ThinkValue{Value: thinking})
+						assert.NoError(t, err)
+						assert.Equal(t, prefix+tc.want, got)
+					})
+				}
+			})
+		}
+	}
+}
+
 func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
 	q := `<|"|>`
 	messages := []api.Message{
@@ -1659,10 +1705,10 @@ func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
 
 	base := "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 		"<|turn>user\nUse the tool<turn|>\n" +
-		"<|turn>model\nFirst." +
+		"<|turn>model\nFirst.Checking." +
 		"<|tool_call>call:bash{command:null}<tool_call|>" +
 		"<|tool_response>response:bash{value:" + q + "done" + q + "}<tool_response|>" +
-		"Checking.Done.<turn|>\n" +
+		"Done.<turn|>\n" +
 		"<|turn>user\nNext<turn|>\n<|turn>model\n"
 
 	tests := []struct {
@@ -1672,13 +1718,7 @@ func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
 	}{
 		{name: "small", renderer: &Gemma4Renderer{}, want: base},
 		{name: "31b", renderer: &Gemma4Renderer{emptyBlockOnNothink: true}, want: base + "<|channel>thought\n<channel|>"},
-		{name: "nemotron", renderer: &Gemma4Renderer{contentBeforeToolCalls: true}, want: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
-			"<|turn>user\nUse the tool<turn|>\n" +
-			"<|turn>model\nFirst.Checking." +
-			"<|tool_call>call:bash{command:null}<tool_call|>" +
-			"<|tool_response>response:bash{value:" + q + "done" + q + "}<tool_response|>" +
-			"Done.<turn|>\n" +
-			"<|turn>user\nNext<turn|>\n<|turn>model\n"},
+		{name: "nemotron", renderer: &Gemma4Renderer{}, want: base},
 	}
 
 	for _, tt := range tests {
@@ -1851,7 +1891,7 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 		},
 		{
 			name:        "nemotron",
-			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true},
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags},
 			templateRel: gemma4NemotronTemplate,
 		},
 	}
