@@ -38,7 +38,7 @@ func TestPiLaunchArgsPreserveExplicitAndResumeArguments(t *testing.T) {
 	}
 }
 
-func TestPiPluginLaunchInstallsOnceAndKeepsBareLaunchDefaults(t *testing.T) {
+func TestPiPluginLaunchInstallsOnceUpdatesAndKeepsBareLaunchDefaults(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX fake Pi executable")
 	}
@@ -62,17 +62,18 @@ echo "$@" >> %q
 if [ "$1" = "--version" ]; then echo 1.5.2; exit 0; fi
 if [ "$1" = "list" ]; then
   if [ -f %q ]; then
-    echo %q
-    if [ "$FORCE_COLOR" = "1" ]; then printf '\033[2m  %%s\033[22m\n' %q; else echo '  '%q; fi
+    echo '  '%q
+    if [ "$FORCE_COLOR" = "1" ]; then printf '\033[2m    %%s\033[22m\n' %q; else echo '    '%q; fi
   fi
   exit 0
 fi
 if [ "$1" = "install" ] && [ "$2" = %q ]; then : > %q; exit 0; fi
+if [ "$1" = "update" ] && [ "$2" = %q ]; then exit 0; fi
 echo "color=$FORCE_COLOR" >> %q
 if [ "$#" = 0 ]; then echo launched >> %q; echo "launch=$OLLAMA_LAUNCH_PI" >> %q; exit 0; fi
 if [ "$1" = "--model" ]; then echo "launch=$OLLAMA_LAUNCH_PI" >> %q; exit 0; fi
 exit 1
-`, logPath, marker, piOllamaSource, plugin, plugin, piOllamaSource, marker, logPath, logPath, logPath, logPath)
+`, logPath, marker, piOllamaSource, plugin, plugin, piOllamaSource, marker, piOllamaSource, logPath, logPath, logPath, logPath)
 	if err := os.WriteFile(filepath.Join(root, "pi"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +118,9 @@ exit 1
 	if strings.Count(string(log), "install "+piOllamaSource+"\n") != 1 {
 		t.Fatalf("plugin was not installed exactly once:\n%s", log)
 	}
+	if strings.Count(string(log), "update "+piOllamaSource+"\n") != 1 {
+		t.Fatalf("the existing plugin must be updated on the second launch:\n%s", log)
+	}
 	if strings.Count(string(log), "launched\n") != 2 {
 		t.Fatalf("ordinary Pi was not launched twice:\n%s", log)
 	}
@@ -144,6 +148,46 @@ exit 1
 	log, err = os.ReadFile(logPath)
 	if err != nil || strings.Count(string(log), "launch=1\n") != 3 {
 		t.Fatalf("explicit models must use the same Launch handoff: %s (%v)", log, err)
+	}
+	if strings.Count(string(log), "update "+piOllamaSource+"\n") != 2 {
+		t.Fatalf("explicit model launches must update the plugin too:\n%s", log)
+	}
+}
+
+func TestPiPluginUpdateFailureKeepsInstalledPlugin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX fake Pi executable")
+	}
+	root := t.TempDir()
+	setTestHome(t, root)
+	t.Setenv("PATH", root)
+	plugin := filepath.Join(root, "plugin")
+	if err := os.MkdirAll(plugin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"package.json": `{"name":"@ollama/pi"}`, "index.ts": ""} {
+		if err := os.WriteFile(filepath.Join(plugin, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logPath := filepath.Join(root, "pi.log")
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "--version" ]; then echo 1.5.2; exit 0; fi
+if [ "$1" = "list" ]; then printf 'User packages:\n  %%s\n    %%s\n' %q %q; exit 0; fi
+if [ "$1" = "update" ]; then echo 'network unavailable' >&2; exit 1; fi
+if [ "$1" = "--continue" ]; then exit 0; fi
+exit 1
+`, logPath, piOllamaSource, plugin)
+	if err := os.WriteFile(filepath.Join(root, "pi"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Pi{}).Run("", nil, []string{"--continue"}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil || string(log) != "--version\nlist\nupdate "+piOllamaSource+"\n--continue\n" {
+		t.Fatalf("a failed update must still launch the installed plugin: %s (%v)", log, err)
 	}
 }
 
@@ -207,8 +251,29 @@ func TestPiPluginRecognizesLocalInstallRegardlessOfVersion(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(tc.manifest), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if installed := piOllamaInstalled("User packages:\n  " + root + "\n"); installed != tc.want {
+		if installed := piOllamaPackageSource("User packages:\n  "+root+"\n") != ""; installed != tc.want {
 			t.Fatalf("manifest %s: installed %v, want %v", tc.manifest, installed, tc.want)
+		}
+	}
+}
+
+func TestPiPluginPackageSourcePreservesConfiguredRefsAndFilters(t *testing.T) {
+	root := t.TempDir()
+	for name, data := range map[string]string{"package.json": `{"name":"@ollama/pi"}`, "index.ts": ""} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, source := range []string{
+		piOllamaSource,
+		"https://github.com/ollama/pi-ollama",
+		piOllamaSource + "@v0.2.0",
+		piOllamaSource + " (filtered)",
+		"../local-checkout",
+	} {
+		output := "User packages:\n  npm:unrelated\n    /missing-package\n  " + source + "\n    " + root + "\n"
+		if got := piOllamaPackageSource(output); got != strings.TrimSuffix(source, " (filtered)") {
+			t.Fatalf("package source = %q, want %q", got, source)
 		}
 	}
 }

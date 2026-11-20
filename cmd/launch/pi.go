@@ -80,9 +80,14 @@ func piLaunchArgs(model string, args []string) []string {
 	return append(forward, args...)
 }
 
-func piOllamaInstalled(output string) bool {
+func piOllamaPackageSource(output string) string {
+	var source string
 	for _, line := range strings.Split(output, "\n") {
 		path := strings.TrimSpace(line)
+		// Pi prints a source followed by its resolved path indented four spaces.
+		if !strings.HasPrefix(line, "    ") {
+			source = strings.TrimSuffix(path, " (filtered)")
+		}
 		if !filepath.IsAbs(path) {
 			continue
 		}
@@ -95,25 +100,40 @@ func piOllamaInstalled(output string) bool {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(path, "index.ts")); err == nil {
-			return true
+			return source
 		}
 	}
-	return false
+	return ""
 }
 
 func ensurePiOllamaPackage(bin string) error {
-	list := func() (bool, error) {
+	list := func() (string, error) {
 		cmd := exec.Command(bin, "list")
 		cmd.Env = append(os.Environ(), "FORCE_COLOR=0")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
-			return false, fmt.Errorf("could not check Pi packages: %w; run 'pi list' for details", err)
+			return "", fmt.Errorf("could not check Pi packages: %w; run 'pi list' for details", err)
 		}
-		return piOllamaInstalled(string(output)), nil
+		return piOllamaPackageSource(string(output)), nil
 	}
-	installed, err := list()
-	if err != nil || installed {
+	source, err := list()
+	if err != nil {
 		return err
+	}
+	if source != "" {
+		// Local checkouts belong to the user. Pi's updater preserves configured
+		// Git refs and package filters for remote installs.
+		remote := strings.HasPrefix(source, "git:") || strings.HasPrefix(source, "npm:") ||
+			strings.Contains(source, "://") || strings.HasPrefix(source, "git@") || strings.HasPrefix(source, "github.com/")
+		if remote {
+			fmt.Fprintf(os.Stderr, "%sChecking Ollama plugin for updates...%s\n", ansiGray, ansiReset)
+			cmd := exec.Command(bin, "update", source)
+			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not update the Ollama plugin (%v); using the installed version. Run 'pi update %s' to try again.\n", err, source)
+			}
+		}
+		return nil
 	}
 	fmt.Fprintf(os.Stderr, "%sInstalling Ollama plugin...%s\n", ansiGray, ansiReset)
 	cmd := exec.Command(bin, "install", piOllamaSource)
@@ -121,11 +141,11 @@ func ensurePiOllamaPackage(bin string) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("could not install the Ollama plugin: %w; try 'pi install %s'", err, piOllamaSource)
 	}
-	installed, err = list()
+	source, err = list()
 	if err != nil {
 		return err
 	}
-	if !installed {
+	if source == "" {
 		return fmt.Errorf("the Ollama plugin is missing after installation; run 'pi install %s'", piOllamaSource)
 	}
 	return nil
