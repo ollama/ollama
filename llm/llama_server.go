@@ -2242,7 +2242,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				resp.EvalCount = lsResp.Timings.PredictN
 				resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
 				toolCalls, err := accumulatedToolCalls(toolCalls)
-				if err != nil {
+				// A length stop can cut off the arguments mid-object. In that
+				// case the decoder returns no calls and we report the length stop.
+				if err != nil && doneReason != DoneReasonLength {
 					return err
 				}
 				resp.Message.ToolCalls = toolCalls
