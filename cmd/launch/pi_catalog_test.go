@@ -23,6 +23,50 @@ import (
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
+func TestPiCatalogCloudAlternativesBeforeLocalInventory(t *testing.T) {
+	setLaunchTestHome(t, t.TempDir())
+	primary := LaunchModel{Name: "selected:cloud", Remote: true, ContextLength: 65536, Capabilities: []modelpkg.Capability{"completion", "tools"}}
+	inventory := []api.ListModelResponse{{Name: primary.Name, RemoteModel: "selected", Details: api.ModelDetails{ContextLength: 65536}, Capabilities: primary.Capabilities}}
+	want := []string{primary.Name, "alternative-a:cloud", "alternative-b:cloud"}
+	for i := range 162 {
+		name := fmt.Sprintf("local-%03d", i)
+		inventory = append(inventory, api.ListModelResponse{Name: name, Details: api.ModelDetails{ContextLength: 65536}, Capabilities: primary.Capabilities})
+		want = append(want, name)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+		case "/api/tags":
+			_ = json.NewEncoder(w).Encode(api.ListResponse{Models: inventory})
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[{"model":"alternative-a:cloud","context_length":65536,"max_output_tokens":8192},{"model":"alternative-b:cloud","context_length":65536,"max_output_tokens":8192}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"capabilities":["completion","tools"],"model_info":{"fixture.context_length":65536}}`)
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+	c, err := newLauncherClient(defaultLaunchPolicy(true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := c.piModelCatalog(t.Context(), primary, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, model := range models {
+		got = append(got, model.Name)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("Pi catalog = %v, want %v", got, want)
+	}
+}
+
 func TestPiPrimaryMetadataBudget(t *testing.T) {
 	for _, complete := range []bool{false, true} {
 		t.Run(fmt.Sprint(complete), func(t *testing.T) {
@@ -1020,7 +1064,7 @@ func TestPiManualEquivalentPrimaryKeepsItsID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "models.json"), []byte(`{"providers":{"ollama":{"models":[{"id":"primary:latest","contextWindow":4096,"custom":true}]}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	primary, err := (&Pi{}).writeConfig([]LaunchModel{{Name: "primary", ContextLength: 32768}}, false)
+	primary, err := (&Pi{}).writeConfig([]LaunchModel{{Name: "primary", ContextLength: 32768}}, false, false)
 	if err != nil || primary != "primary:latest" {
 		t.Fatalf("configured primary = %q, %v", primary, err)
 	}
