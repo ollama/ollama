@@ -284,6 +284,50 @@ func TestChatWriter_StreamSingleChunkPathStillEmitsOneChunk(t *testing.T) {
 	}
 }
 
+func TestChatWriter_StreamMidStreamErrorEmitsErrorAndDone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	firstChunk, err := json.Marshal(api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: "partial "},
+	})
+	if err != nil {
+		t.Fatalf("marshal chunk: %v", err)
+	}
+	if _, err = writer.Write(firstChunk); err != nil {
+		t.Fatalf("write chunk: %v", err)
+	}
+
+	errPayload := []byte(`{"error":"parse Glimmer call to shell: malformed ATEM parameter"}`)
+	if _, err = writer.Write(errPayload); err != nil {
+		t.Fatalf("write error payload: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 SSE data frames (content + error + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if frames[2] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[2])
+	}
+
+	var errResp openai.ErrorResponse
+	if err := json.Unmarshal([]byte(frames[1]), &errResp); err != nil {
+		t.Fatalf("unmarshal error frame: %v", err)
+	}
+	if errResp.Error.Message != "parse Glimmer call to shell: malformed ATEM parameter" {
+		t.Fatalf("unexpected error message: %q", errResp.Error.Message)
+	}
+}
+
 func TestChatWriter_StreamMixedThinkingAndToolCallsWithoutDoneEmitsChunksOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
