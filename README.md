@@ -310,6 +310,7 @@ console.log(response.message.content);
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) - AI collaborative workspace, self-hostable Notion alternative
 - [Screenpipe](https://github.com/mediar-ai/screenpipe) - 24/7 screen and mic recording with AI-powered search
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
+- [merkwerk](https://github.com/ArzelaAscoIi/merkwerk) - Local-first meeting notes and daily work log, with an MCP server
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
