@@ -251,6 +251,7 @@ var (
 	Editor     = String("OLLAMA_EDITOR")
 
 	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
+	AscendVisibleDevices  = String("ASCEND_RT_VISIBLE_DEVICES")
 	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
 	VkVisibleDevices      = String("GGML_VK_VISIBLE_DEVICES")

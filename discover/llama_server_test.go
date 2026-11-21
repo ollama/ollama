@@ -96,6 +96,18 @@ Available devices:
 				}},
 			},
 			{
+				name: "CANN",
+				output: `Available devices:
+  CANN0: Ascend910B3 (62420 MiB, 61990 MiB free)
+`,
+				libDirs: []string{"/lib/ollama", "/lib/ollama/cann"},
+				want: []wantDevice{{
+					name:     "CANN0",
+					library:  "CANN",
+					totalMiB: 62420,
+				}},
+			},
+			{
 				name: "multi GPU",
 				output: `Available devices:
   CUDA0: NVIDIA GeForce RTX 4090 (24564 MiB, 23592 MiB free)

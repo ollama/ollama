@@ -250,6 +250,16 @@ func TestRemapFilterIDForUserVisibleDevices(t *testing.T) {
 			wantFilter: "1",
 		},
 		{
+			name: "cann numeric parent filter",
+			env:  map[string]string{"ASCEND_RT_VISIBLE_DEVICES": "2,5"},
+			device: ml.DeviceInfo{
+				DeviceID: ml.DeviceID{Library: "CANN", ID: "1"},
+				FilterID: "1",
+			},
+			wantID:     "1",
+			wantFilter: "5",
+		},
+		{
 			name: "no parent filter keeps internal filter id",
 			device: ml.DeviceInfo{
 				DeviceID: ml.DeviceID{Library: "CUDA", ID: "0"},

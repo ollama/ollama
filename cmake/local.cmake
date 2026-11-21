@@ -7,7 +7,7 @@
 include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
-    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
+    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;cann;vulkan;cuda_jetpack5;cuda_jetpack6")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_GO_EXTRA_LDFLAGS "" CACHE STRING "Additional flags for the Ollama Go linker")
@@ -884,6 +884,20 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                 TARGETS ggml-hip
                 CMAKE_ARGS ${_rocm_args})
             list(APPEND _backend_targets ollama-llama-server-${_backend})
+        elseif(_backend STREQUAL "cann")
+            set(_cann_args
+                -DBUILD_SHARED_LIBS=ON
+                -DGGML_BACKEND_DL=ON
+                -DGGML_CANN=ON
+                -DOLLAMA_GPU_BACKEND=cann)
+            ollama_append_cache_arg_if_set(_cann_args CANN_INSTALL_DIR)
+            ollama_append_cache_arg_if_set(_cann_args SOC_TYPE)
+            ollama_append_cache_arg_if_set(_cann_args USE_ACL_GRAPH)
+            ollama_add_llama_server_build(cann
+                RUNNER_DIR cann
+                TARGETS ggml-cann
+                CMAKE_ARGS ${_cann_args})
+            list(APPEND _backend_targets ollama-llama-server-cann)
         elseif(_backend STREQUAL "vulkan")
             ollama_add_llama_server_build(vulkan
                 RUNNER_DIR vulkan
