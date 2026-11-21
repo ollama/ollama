@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"time"
 
@@ -21,6 +22,78 @@ import (
 
 func prefillChunkSize() int {
 	return 2 << 10
+}
+
+// prefillPlan holds the absolute batch ends for models that are sensitive to
+// prefill width. Compute it from the prompt before looking at cached state.
+type prefillPlan []int
+
+func planPrefill(length int, items []mediaItem) prefillPlan {
+	end := length - 1 // leave the decode seed
+	offsets := prefillSnapshotOffsets(length)
+	for i, offset := range offsets {
+		offsets[i] = prefillSnapshotOffset(items, offset, 0)
+	}
+	slices.Sort(offsets)
+
+	var plan prefillPlan
+	for pos := 0; pos < end; {
+		n := min(prefillChunkSize(), end-pos)
+		for len(offsets) > 0 && offsets[0] <= pos {
+			offsets = offsets[1:]
+		}
+		if len(offsets) > 0 {
+			n = min(n, offsets[0]-pos)
+		}
+		pos += extendMediaChunk(items, pos, n, end)
+		plan = append(plan, pos)
+	}
+	return plan
+}
+
+// restoreOffset rounds down to a completed batch. An empty plan lets models
+// with width-independent prefill reuse arbitrary prefix lengths.
+func (p prefillPlan) restoreOffset(offset int) int {
+	if len(p) == 0 {
+		return offset
+	}
+	i, exact := slices.BinarySearch(p, offset)
+	if exact {
+		return offset
+	}
+	if i == 0 {
+		return 0
+	}
+	return p[i-1]
+}
+
+func prefillSnapshotOffsets(length int) []int {
+	var offsets []int
+	for offset := prefillSnapshotInterval; offset < length; offset += prefillSnapshotInterval {
+		offsets = append(offsets, offset)
+	}
+	const preThinking = 4
+	if end := length - preThinking; end > 0 {
+		offsets = append(offsets, end)
+	}
+	return offsets
+}
+
+// A longer prompt can reuse states at unchanged prefill widths. Keep the
+// last full batch in addition to the usual periodic and terminal captures.
+func (s *cacheSession) scheduleGenerationSnapshots() {
+	offsets := prefillSnapshotOffsets(len(s.inputs))
+	for i := len(s.prefill) - 1; i >= 0; i-- {
+		start := 0
+		if i > 0 {
+			start = s.prefill[i-1]
+		}
+		if end := s.prefill[i]; end-start == prefillChunkSize() {
+			offsets = append(offsets, end)
+			break
+		}
+	}
+	s.schedulePrefillSnapshots(offsets)
 }
 
 // Prepare tokenizes the prompt and validates it against the model's
@@ -118,15 +191,7 @@ func (r *Runner) newPrefill(session *cacheSession, spec *speculationSession, med
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
 	// thinking/generation can be retried without full reprocessing.
-	var snapshotOffsets []int
-	for offset := prefillSnapshotInterval; offset < len(session.inputs); offset += prefillSnapshotInterval {
-		snapshotOffsets = append(snapshotOffsets, offset)
-	}
-	const preThinking = 4
-	if end := len(session.inputs) - preThinking; end > 0 {
-		snapshotOffsets = append(snapshotOffsets, end)
-	}
-	session.schedulePrefillSnapshots(snapshotOffsets)
+	session.scheduleGenerationSnapshots()
 	// Free restored items' buffers now: on a full cache hit the loop never runs.
 	media.free(p.position)
 	return p
@@ -144,7 +209,17 @@ func (p *prefillCursor) step(ctx context.Context) (bool, error) {
 	if len(tokens)-p.processed <= 1 {
 		return true, nil
 	}
-	n := p.media.extendChunk(p.position, min(prefillChunkSize(), len(tokens)-p.processed-1), len(p.session.inputs)-1)
+	var n int
+	if plan := p.session.prefill; len(plan) > 0 {
+		i, atEnd := slices.BinarySearch(plan, p.position)
+		if atEnd {
+			i++
+		}
+		n = plan[i] - p.position
+	} else {
+		chunk := min(prefillChunkSize(), len(tokens)-p.processed-1)
+		n = p.media.extendChunk(p.position, chunk, len(p.session.inputs)-1)
+	}
 	mlx.Scoped(func() {
 		chunkIDs := mlx.FromValues(tokens[p.processed:p.processed+n], 1, n)
 		chunkMedia := p.media.batchMedia(p.position, n)

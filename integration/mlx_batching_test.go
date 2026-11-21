@@ -17,10 +17,21 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
+// Inkling can spend most of a request's budget reasoning. Give its longer
+// requests their own deadline so earlier cases cannot consume it.
+func inklingBatchContext(t *testing.T, ctx context.Context, info *api.ShowResponse, timeout time.Duration) context.Context {
+	if info.Renderer != "inkling2" {
+		return ctx
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 // runMLXBatching adds cache reuse and slot lifecycle checks to the release
 // concurrency group. Capacity one exercises the same requests serially.
 func runMLXBatching(t *testing.T, modelName string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -47,6 +58,7 @@ func runMLXBatching(t *testing.T, modelName string) {
 		requests[i] = request("What is the capital of "+countries[i]+"? Answer with just the city name.", 128)
 	}
 	t.Run("isolation", func(t *testing.T) {
+		ctx := inklingBatchContext(t, ctx, info, 5*time.Minute)
 		type result struct {
 			text  string
 			final api.GenerateResponse
@@ -82,6 +94,7 @@ func runMLXBatching(t *testing.T, modelName string) {
 		}
 	})
 	t.Run("reuse", func(t *testing.T) {
+		ctx := inklingBatchContext(t, ctx, info, 5*time.Minute)
 		// When every slot is free, a repeat can select its cached prefix. A
 		// concurrent repeat may instead land on another available slot.
 		for _, req := range requests {
@@ -108,17 +121,22 @@ func runMLXBatching(t *testing.T, modelName string) {
 			}
 		}
 	})
+	storyBudget := 256
+	if info.Renderer == "inkling2" {
+		storyBudget = 512
+	}
 	for _, tc := range []struct {
 		name   string
 		cancel bool
 	}{{"cancel", true}, {"finish", false}} {
 		t.Run("join_and_leave/"+tc.name, func(t *testing.T) {
+			ctx := inklingBatchContext(t, ctx, info, 5*time.Minute)
 			longCtx, stop := context.WithCancel(ctx)
 			defer stop()
 			first := make(chan struct{}, 1)
 			finished := make(chan error, 1)
 			var final api.GenerateResponse
-			long := request("Write a detailed 2000-word story about a lighthouse keeper. Start the story immediately and keep writing.", 256)
+			long := request("Write a detailed 2000-word story about a lighthouse keeper. Start the story immediately and keep writing.", storyBudget)
 			go func() {
 				finished <- client.Generate(longCtx, &long, func(chunk api.GenerateResponse) error {
 					if chunk.Response != "" || chunk.Thinking != "" {
@@ -165,7 +183,7 @@ func runMLXBatching(t *testing.T, modelName string) {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancel: %v", err)
 				}
-			} else if err != nil || !final.Done || final.EvalCount != 256 {
+			} else if err != nil || !final.Done || final.EvalCount != storyBudget {
 				t.Fatalf("surviving request: %+v, %v", final, err)
 			}
 			text = ""
@@ -177,6 +195,7 @@ func runMLXBatching(t *testing.T, modelName string) {
 	}
 
 	t.Run("independent_grammar", func(t *testing.T) {
+		ctx := inklingBatchContext(t, ctx, info, 5*time.Minute)
 		errs := make(chan error, 2)
 		for _, city := range cities[:2] {
 			go func() {
@@ -204,7 +223,7 @@ func TestMLXBatchingVision(t *testing.T) {
 	if testModel == "" {
 		t.Skip("set OLLAMA_TEST_MODEL to a published MLX vision model")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -214,6 +233,10 @@ func TestMLXBatchingVision(t *testing.T) {
 	}
 	if !slices.Contains(info.Capabilities, model.CapabilityVision) {
 		t.Skip("model has no vision capability")
+	}
+	answerBudget := 128
+	if info.Renderer == "inkling2" {
+		answerBudget = 1024
 	}
 	road, desk, _ := decodeTestImages(t)
 	cases := []struct {
@@ -225,18 +248,19 @@ func TestMLXBatchingVision(t *testing.T) {
 		{nil, "What is the capital of Japan? Begin with the city name and then describe the city's history in detail.", "tokyo"},
 	}
 	for round := range 2 {
+		roundCtx := inklingBatchContext(t, ctx, info, 8*time.Minute)
 		start := make(chan struct{})
 		results := make(chan error, len(cases))
 		for _, tc := range cases {
 			go func() {
 				<-start
-				req := api.GenerateRequest{Model: testModel, Runner: "mlx", Prompt: tc.prompt, Think: &api.ThinkValue{Value: false}, KeepAlive: &api.Duration{Duration: time.Minute}, Options: map[string]any{"num_predict": 128, "num_ctx": 4096, "temperature": 0}}
+				req := api.GenerateRequest{Model: testModel, Runner: "mlx", Prompt: tc.prompt, Think: &api.ThinkValue{Value: false}, KeepAlive: &api.Duration{Duration: time.Minute}, Options: map[string]any{"num_predict": answerBudget, "num_ctx": 4096, "temperature": 0}}
 				if tc.image != nil {
 					req.Images = []api.ImageData{tc.image}
 				}
 				var text string
 				var final api.GenerateResponse
-				err := client.Generate(ctx, &req, func(chunk api.GenerateResponse) error {
+				err := client.Generate(roundCtx, &req, func(chunk api.GenerateResponse) error {
 					text += chunk.Response
 					if chunk.Done {
 						final = chunk
@@ -268,13 +292,22 @@ func TestMLXBatchingLongPrompts(t *testing.T) {
 	if testModel == "" {
 		t.Skip("set OLLAMA_TEST_MODEL to a published MLX model")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	info, err := client.Show(ctx, &api.ShowRequest{Model: testModel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = inklingBatchContext(t, ctx, info, 15*time.Minute)
 	start := make(chan struct{})
 	cities := []string{"Paris", "Tokyo", "Rome", "Madrid", "London", "Berlin", "Ottawa", "Cairo"}
 	countries := []string{"France", "Japan", "Italy", "Spain", "the United Kingdom", "Germany", "Canada", "Egypt"}
+	historyBudget := 512
+	if info.Renderer == "inkling2" {
+		historyBudget = 3072
+	}
 	rows := max(2, min(len(cities), int(envconfig.NumParallel())))
 	t.Logf("keeping %d requests active across unequal prompt lengths", rows)
 	results := make(chan error, rows)
@@ -285,7 +318,7 @@ func TestMLXBatchingLongPrompts(t *testing.T) {
 				repetitions = 180
 			}
 			prompt := strings.Repeat("The island has an old lighthouse, a harbor, and a village beside the sea. ", repetitions)
-			req := api.GenerateRequest{Model: testModel, Runner: "mlx", Prompt: prompt + "\nIgnore the preceding background. What is the capital of " + countries[i] + "? Begin with the city name, then write a detailed 1000-word history of the city.", Think: &api.ThinkValue{Value: false}, KeepAlive: &api.Duration{Duration: time.Minute}, Options: map[string]any{"num_predict": 512, "num_ctx": 8192, "temperature": 0}}
+			req := api.GenerateRequest{Model: testModel, Runner: "mlx", Prompt: prompt + "\nIgnore the preceding background. What is the capital of " + countries[i] + "? Begin with the city name, then write a detailed 1000-word history of the city.", Think: &api.ThinkValue{Value: false}, KeepAlive: &api.Duration{Duration: time.Minute}, Options: map[string]any{"num_predict": historyBudget, "num_ctx": 8192, "temperature": 0}}
 			<-start
 			var text, thinking string
 			var final api.GenerateResponse

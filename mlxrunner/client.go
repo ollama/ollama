@@ -169,7 +169,24 @@ func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 		schema = json.RawMessage(`{"type":"object"}`)
 	}
 	format := `{"type":"json_schema","json_schema":` + string(schema) + `}`
-	if len(req.ThinkingClose) > 0 {
+	if frames := req.FormatFrames; frames != nil {
+		var elements []string
+		if frames.ThinkingClose != "" {
+			excludes := make([]string, len(frames.ThinkingExcludes))
+			for i, marker := range frames.ThinkingExcludes {
+				excludes[i] = jsonString(marker)
+			}
+			body := `{"type":"any_text","excludes":[` + strings.Join(excludes, ",") + `]}`
+			close := grammarLiteral(frames.ThinkingClose)
+			if frames.ThinkingOpen == "" {
+				elements = append(elements, body, close)
+			} else {
+				thought := grammarSequence(grammarLiteral(frames.ThinkingOpen), body, close)
+				elements = append(elements, `{"type":"optional","content":`+thought+`}`)
+			}
+		}
+		format = grammarSequence(append(elements, grammarLiteral(frames.ContentOpen), format)...)
+	} else if len(req.ThinkingClose) > 0 {
 		excludes := make([]string, len(req.ThinkingClose))
 		closings := make([]string, len(req.ThinkingClose))
 		for i, closing := range req.ThinkingClose {
@@ -185,6 +202,14 @@ func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 			`{"type":"optional","content":{"type":"sequence","elements":[` + closing + `,` + format + `]}}]}`
 	}
 	return json.RawMessage(`{"type":"structural_tag","format":` + format + `}`)
+}
+
+func grammarLiteral(text string) string {
+	return `{"type":"const_string","value":` + jsonString(text) + `}`
+}
+
+func grammarSequence(elements ...string) string {
+	return `{"type":"sequence","elements":[` + strings.Join(elements, ",") + `]}`
 }
 
 // jsonString quotes s without escaping the HTML characters tags carry.
@@ -436,7 +461,7 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	// Spawn subprocess: ollama runner --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port))
+	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port), "--ctx-size", strconv.Itoa(c.softContextLength))
 	cmd.Env = os.Environ()
 	loadedLibraryPath, err := mlx.LoadedLibraryPath()
 	if err != nil {
