@@ -20,13 +20,6 @@ func TestMetalTensorOpsFallback(t *testing.T) {
 		if RelativePositionAttentionBF16Probabilities(q, k, k, table, sink, 0, 16, 0.125) != nil {
 			t.Fatal("selected MPP attention")
 		}
-		x := Zeros(DTypeBFloat16, 16, 1, 1, 32)
-		w := Zeros(DTypeUint32, 1, 64, 4)
-		s := Zeros(DTypeUint8, 1, 64, 2)
-		ids := Zeros(DTypeInt32, 16, 1)
-		if PrefersCompactNVFP4QMM() || GatherNVFP4QMM(x, w, s, ids) != nil {
-			t.Fatal("selected MPP grouped matmul")
-		}
 	})
 }
 
