@@ -13,7 +13,8 @@ func TestDecisionFormatDispatch(t *testing.T) {
 		name, config, wantError string
 	}{
 		{"Perplexity legacy", `{}`, `Perplexity joint config`},
-		{"d3", `{"format_id":"d3-code-readout-v1"}`, `unsupported d3 decision config`},
+		{"d3", `{"format_id":"d3-code-readout-v1"}`, `unsupported decision config (format "d3-code-readout-v1"`},
+		{"AutoTrust", `{"format_id":"jev-code-readout-v1"}`, `unsupported decision config (format "jev-code-readout-v1"`},
 		{"unknown", `{"format_id":"future-format"}`, `unsupported Qwen decision format "future-format"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
