@@ -5,6 +5,37 @@ import (
 	"time"
 )
 
+func TestAdaptiveBlockFollowsCurrentAcceptance(t *testing.T) {
+	slot := newDepthController()
+	slot.drafterLimit = 7
+	for n := 0; n <= slot.drafterLimit; n++ {
+		slot.cost.observe(n, time.Duration(40+10*n)*time.Millisecond)
+	}
+	c := slot.forBlock()
+	for _, phase := range []struct {
+		accept bool
+		want   int
+	}{{false, 0}, {true, 7}, {false, 0}} {
+		for range 128 {
+			n := c.scheduled
+			accepted := 0
+			if phase.accept {
+				accepted = n
+			}
+			c.acc.observe(n, accepted)
+			c.next()
+		}
+		if got := c.selected(c.limit(), c.expectedCommitted); got != phase.want {
+			t.Fatalf("accept=%v: selected %d, want %d", phase.accept, got, phase.want)
+		}
+	}
+
+	next := slot.forBlock()
+	if next.cost != c.cost || next.acc == c.acc || next.frontier() != 0 || next.scheduled != 7 {
+		t.Fatalf("new request: depth %d, frontier %d, shared costs %v", next.scheduled, next.frontier(), next.cost == c.cost)
+	}
+}
+
 // driveDepthController runs the controller for n steps against a regime mirroring
 // the real loop: next() picks a draft depth D; the regime reports the forward time
 // at fused width D+1, fed to the cost model keyed by draft depth D, and how many of
@@ -26,7 +57,7 @@ func driveDepthController(c *depthController, n int, fwdMS func(width int) float
 		}
 		c.acc.observe(d, accepted)
 	}
-	return c.selected()
+	return c.selected(c.limit(), c.expectedCommitted)
 }
 
 // deterministicDraw turns a per-position acceptance rate into a reproducible,
@@ -201,7 +232,7 @@ func TestDepthControllerStaysParkedThroughHostStall(t *testing.T) {
 	// parked baseline remains credible and the controller does not start
 	// drafting against a phantom plain-decode cost.
 	cost.observe(0, 49*time.Millisecond)
-	if selected := c.selected(); selected != 0 {
+	if selected := c.selected(c.limit(), c.expectedCommitted); selected != 0 {
 		t.Errorf("a single stall-inflated depth-0 sample un-parked the controller: selected %d with cost(0)=%.1fms", selected, cost.cost(0))
 	}
 }
@@ -238,8 +269,8 @@ func TestDepthControllerProbeBackoff(t *testing.T) {
 	steep := func(width int) float64 { return 16.0 + 15.0*float64(width-1) }
 	mediocre := deterministicDraw(func(int) float64 { return 0.6 })
 	driveDepthController(c, 600, steep, mediocre)
-	if c.selected() != 0 {
-		t.Fatalf("expected the controller to park at depth 0, got %d", c.selected())
+	if c.selected(c.limit(), c.expectedCommitted) != 0 {
+		t.Fatalf("expected the controller to park at depth 0, got %d", c.selected(c.limit(), c.expectedCommitted))
 	}
 	probes := driveCountingProbes(c, 4096, steep, mediocre)
 	if c.probeInterval != depthProbeIntervalMax {
@@ -283,7 +314,7 @@ func TestDepthControllerTracksAcceptanceDrift(t *testing.T) {
 	}
 	deepFavoring := func(int) float64 { return 0.95 } // deep readily accepted
 	driveDepthController(c, 400, bandwidthBoundCost, deterministicDraw(shallowFavoring))
-	shallow := c.selected()
+	shallow := c.selected(c.limit(), c.expectedCommitted)
 	if shallow > 4 {
 		t.Fatalf("expected shallow selection while deep acceptance is poor, got %d", shallow)
 	}
@@ -291,7 +322,7 @@ func TestDepthControllerTracksAcceptanceDrift(t *testing.T) {
 	// recovery runs at backed-off probe spacing until the first selection
 	// change snaps it back — the drive must span several backed-off intervals.
 	driveDepthController(c, 4096, bandwidthBoundCost, deterministicDraw(deepFavoring))
-	deep := c.selected()
+	deep := c.selected(c.limit(), c.expectedCommitted)
 	if deep <= shallow {
 		t.Errorf("expected selection to deepen after acceptance rose (was %d, now %d)", shallow, deep)
 	}
@@ -305,13 +336,13 @@ func TestDepthControllerIncludesPlainPeers(t *testing.T) {
 	for range acceptanceMinSamples {
 		c.acc.observe(1, 1)
 	}
-	if got := c.selected(); got != 1 {
+	if got := c.selected(c.limit(), c.expectedCommitted); got != 1 {
 		t.Fatalf("draft-only selection = %d, want 1", got)
 	}
 	// Three plain peers produce one token each in every round. Doubling
 	// the drafting row's output no longer pays for a 50% longer batch.
 	c.plainTokens = 3
-	if got := c.selected(); got != 0 {
+	if got := c.selected(c.limit(), c.expectedCommitted); got != 0 {
 		t.Fatalf("mixed selection = %d, want 0", got)
 	}
 }

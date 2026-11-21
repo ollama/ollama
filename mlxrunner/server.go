@@ -26,13 +26,15 @@ func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 
 	var (
-		modelName string
-		port      int
+		modelName   string
+		port        int
+		contextHint int
 	)
 
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
+	flagSet.IntVar(&contextHint, "ctx-size", 0, "Context size for automatic parallelism estimation")
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
 
@@ -63,9 +65,10 @@ func Execute(args []string) error {
 	defer cancelRunner()
 
 	runner := Runner{
-		parallel:  int(envconfig.NumParallel()),
-		Requests:  make(chan queuedRequest),
-		mlxThread: worker,
+		parallelContext: contextHint,
+		parallel:        int(envconfig.NumParallel()),
+		Requests:        make(chan queuedRequest),
+		mlxThread:       worker,
 	}
 
 	if err := worker.Do(context.Background(), func() error {

@@ -59,6 +59,8 @@ func rendererForName(name string) Renderer {
 		return constructor()
 	}
 	switch name {
+	case "inkling2":
+		return &inkling2Renderer{useImgTags: RenderImgTags}
 	case "ripple":
 		return &RippleRenderer{}
 	case "qwen3-coder":

@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 
 	"github.com/ollama/ollama/llm"
@@ -99,9 +100,13 @@ func (m *requestMedia) extendChunk(pos, n, limit int) int {
 	if m == nil {
 		return n
 	}
+	return extendMediaChunk(m.items, pos, n, limit)
+}
+
+func extendMediaChunk(items []mediaItem, pos, n, limit int) int {
 	end := pos + n
-	for i := range m.items {
-		item := &m.items[i]
+	for i := range items {
+		item := &items[i]
 		if !item.atomic() {
 			continue
 		}
@@ -175,35 +180,40 @@ func (m *requestMedia) close() {
 // them in a single PrepareMedia call, and validates the authored items
 // before keying cache identity on them.
 func (r *Runner) expandMedia(mm model.MediaModel, prompt string, media []llm.MediaData) (*model.PreparedRequest, []mediaItem, error) {
-	matches := imgTagPattern.FindAllStringSubmatch(prompt, -1)
-	parts := imgTagPattern.Split(prompt, -1)
-
-	referenced := make([]bool, len(media))
+	// A renderer can identify the genuine attachments even when text contains
+	// identical tags. Raw prompts use every indexed tag as before.
+	positioned := slices.ContainsFunc(media, func(m llm.MediaData) bool { return len(m.TagOffsets) > 0 })
+	references := make([]int, len(media))
 	var segments []model.Segment
-	for i, part := range parts {
-		segments = append(segments, model.Segment{Tokens: r.Tokenizer.Encode(part, i == 0 && r.Tokenizer.AddBOS())})
-		if i >= len(matches) {
-			continue
-		}
-
-		id, _ := strconv.Atoi(matches[i][1])
-		idx := -1
-		for j := range media {
-			if media[j].ID == id {
-				idx = j
-				break
+	start := 0
+	for _, match := range imgTagPattern.FindAllStringSubmatchIndex(prompt, -1) {
+		id, _ := strconv.Atoi(prompt[match[2]:match[3]])
+		idx := slices.IndexFunc(media, func(m llm.MediaData) bool { return m.ID == id })
+		if positioned {
+			if idx < 0 {
+				continue
 			}
-		}
-		if idx < 0 {
+			if _, ok := slices.BinarySearch(media[idx].TagOffsets, match[0]); !ok {
+				continue
+			}
+		} else if idx < 0 {
 			return nil, nil, fmt.Errorf("invalid image index: %d", id)
 		}
-		referenced[idx] = true
-		segments = append(segments, model.Segment{Kind: string(media[idx].Kind), Data: media[idx].Data})
-	}
 
-	for j := range media {
-		if !referenced[j] {
-			slog.Warn("media not referenced by prompt", "id", media[j].ID)
+		tokens := r.Tokenizer.Encode(prompt[start:match[0]], len(segments) == 0 && r.Tokenizer.AddBOS())
+		segments = append(segments, model.Segment{Tokens: tokens}, model.Segment{Kind: string(media[idx].Kind), Data: media[idx].Data})
+		references[idx]++
+		start = match[1]
+	}
+	tokens := r.Tokenizer.Encode(prompt[start:], len(segments) == 0 && r.Tokenizer.AddBOS())
+	segments = append(segments, model.Segment{Tokens: tokens})
+
+	for j, m := range media {
+		if positioned && references[j] != len(m.TagOffsets) {
+			return nil, nil, fmt.Errorf("invalid prompt offsets for image %d", m.ID)
+		}
+		if references[j] == 0 {
+			slog.Warn("media not referenced by prompt", "id", m.ID)
 		}
 	}
 

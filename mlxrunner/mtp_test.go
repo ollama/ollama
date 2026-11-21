@@ -848,6 +848,60 @@ func TestDecodeKVDraft(t *testing.T) {
 	})
 }
 
+func TestDecodeKVDraftFailedRound(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		predict := map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 5: 6}
+		r := mtpTestRunner(t, predict, []int32{7}, sampler.Options{})
+		target := &schedulingModel{fakeMTPModel: fakeMTPModel{tok: r.Tokenizer, predict: predict}}
+		draft := &schedulingDraft{fakeMTPDraft: fakeMTPDraft{predict: predict}}
+		targetKV, draftKV := target.NewCaches(), draft.NewCaches()
+		r.Model, r.cache = target, newPrefixCache(append(targetKV, draftKV...))
+		defer r.cache.close()
+		r.spec = newSpeculation(r, pipelineSlot, draft, targetKV, draftKV)
+
+		req := request{
+			Tokens:            []int32{1, 2, 3, 4},
+			Responses:         make(chan CompletionResponse, 1),
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 8}},
+		}
+		session := r.cache.begin(req.Tokens, nil)
+		spec := r.spec.open(req, nil)
+		pinDraftLimit(spec, 3)
+		p := r.newPrefill(session, spec, r.openMedia(req))
+		if ready, err := p.step(context.Background()); err != nil || !ready {
+			t.Fatalf("prefill: ready %t, err %v", ready, err)
+		}
+		engine, grammar := testDigitGrammar(t, `{"type":"string"}`)
+		r.grammarEngine = engine
+		d := spec.decoder(p.seed(), p.position, grammar)
+		if err := driveTestDecoder(context.Background(), r, req, session, d, 0); err == nil || !strings.Contains(err.Error(), "token mask rejects every vocabulary token") {
+			t.Fatalf("expected the digit-only tokenizer to reject the string grammar, got %v", err)
+		}
+		if !spec.failedVerification || r.cache.root == nil || targetKV[0].Offset() != 0 || draftKV[0].Offset() != 0 {
+			t.Fatalf("failed speculation remained available for reuse")
+		}
+		session = r.cache.begin(req.Tokens, nil)
+		if !slices.Equal(session.remaining, req.Tokens) {
+			t.Fatal("retry used failed state")
+		}
+		spec = r.spec.open(req, nil)
+		pinDraftLimit(spec, 3)
+		p = r.newPrefill(session, spec, r.openMedia(req))
+		if ready, err := p.step(context.Background()); err != nil || !ready {
+			t.Fatalf("retry prefill %t %v", ready, err)
+		}
+		r.Sampler.Add(pipelineSlot, sampler.Options{}, nil)
+		d = spec.decoder(p.seed(), p.position, nil)
+		req.Responses = make(chan CompletionResponse, 20)
+		if err := driveTestDecoder(context.Background(), r, req, session, d, 0); err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+		if len(session.outputs) < 2 || !slices.Equal(session.outputs[:2], []int32{5, 6}) {
+			t.Fatalf("retry produced %v", session.outputs)
+		}
+	})
+}
+
 func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		// The draft mispredicts mid-chain: it proposes 6 where the target's own

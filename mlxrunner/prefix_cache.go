@@ -54,6 +54,7 @@ type prefixCache struct {
 	// draftLookahead is how far the draft caches' entries reference past
 	// their own slot; trie keys pack each token with its look-ahead (see key).
 	draftLookahead int
+	alignPrefill   bool
 }
 
 // pendingSnapshot is a snapshot scheduled to be taken during prefill.
@@ -71,6 +72,7 @@ type cacheSession struct {
 	effInputs []uint32 // inputs' key alphabet, media folds applied
 	items     []mediaItem
 	outputs   []int32
+	prefill   prefillPlan
 
 	caches    []cache.Cache
 	remaining []int32
@@ -111,17 +113,19 @@ func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, p
 	c.ensureRoot()
 
 	effInputs := effectiveKeyTokens(inputs, items)
-	keys := c.key(effInputs)
+	plan := c.prefillPlan(len(inputs), items)
+	keys := plan.tag(c.key(effInputs))
 	matchPath, matched := findBestMatch(c.root, keys)
 	originalMatched := matched
 
 	// Generation leaves a decode seed; scoring can reuse the full row.
-	if matched > maxReuse {
-		matchPath, matched = findBestMatch(c.root, keys[:maxReuse])
-	}
+	reuse := min(matched, maxReuse)
 	// A match ending inside a non-causal media item resumes before it.
-	if item := insideAtomicItem(items, matched); item != nil {
-		matchPath, matched = findBestMatch(c.root, keys[:item.pos])
+	if item := insideAtomicItem(items, reuse); item != nil {
+		reuse = item.pos
+	}
+	if reuse = plan.restoreOffset(reuse); reuse < matched {
+		matchPath, matched = findBestMatch(c.root, keys[:reuse])
 	}
 
 	// Switch to the matched path, paging in/out as needed.
@@ -129,10 +133,15 @@ func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, p
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
+	if plan.restoreOffset(prefix) != prefix {
+		// A partial restore can stop at a split edge inside a batch.
+		c.switchToPath([]*trieNode{c.root}, 0)
+		prefix = 0
+	}
 	var source *prefixCache
 	var shared []*trieNode
 	for _, peer := range peers {
-		path, end := peer.sharedPrefix(keys, min(maxReuse, len(keys)), items)
+		path, end := peer.sharedPrefix(keys, min(maxReuse, len(keys)), items, plan)
 		if end > prefix {
 			source, shared, prefix = peer, path, end
 		}
@@ -141,6 +150,10 @@ func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, p
 		c.rewind(0)
 		c.restoreSnapshots(shared, prefix, 0)
 		prefix = c.alignCaches()
+		if plan.restoreOffset(prefix) != prefix {
+			c.freeAll()
+			prefix = 0
+		}
 		// The destination owns its trie and mutable state. Never install the
 		// source's nodes or snapshots in a second store.
 		c.activePath = []*trieNode{c.root}
@@ -160,6 +173,7 @@ func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, p
 		inputs:    inputs,
 		effInputs: effInputs,
 		items:     items,
+		prefill:   plan,
 		caches:    c.caches,
 		remaining: remaining,
 	}
@@ -207,6 +221,28 @@ func effectiveKeyTokens(tokens []int32, items []mediaItem) []uint32 {
 	return eff
 }
 
+func (c *prefixCache) prefillPlan(length int, items []mediaItem) prefillPlan {
+	if !c.alignPrefill {
+		return nil
+	}
+	if c.draftLookahead != 0 {
+		panic("prefill alignment requires a draft without look-ahead")
+	}
+	return planPrefill(length, items)
+}
+
+// tag encodes each prefill batch width in the first key of that batch. The
+// upper 32 bits are available when caches have no draft look-ahead. Decode
+// keys stay untagged, so they cannot match the start of a prefill batch.
+func (p prefillPlan) tag(keys []trieKey) []trieKey {
+	start := 0
+	for _, end := range p {
+		keys[start] |= trieKey(end-start) << 32
+		start = end
+	}
+	return keys
+}
+
 // key packs (token i, token i+1) per restorable offset: draft caches
 // pair each slot with the next token, so matching k keys verifies k+1
 // tokens and every match is a valid restore point.
@@ -238,7 +274,7 @@ func (s *cacheSession) storedKeys() []trieKey {
 			eff = append(eff, uint32(t))
 		}
 	}
-	return s.cache.key(eff)
+	return s.prefill.tag(s.cache.key(eff))
 }
 
 // switchToPath transitions from the current active path to a new path,
@@ -299,7 +335,7 @@ func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
 // sharedPrefix returns complete saved edges that another slot can restore.
 // Live state and partial edges are not borrowed: recurrent and wrapped sliding
 // caches can only resume at a saved boundary. Missing edges break KV continuity.
-func (c *prefixCache) sharedPrefix(keys []trieKey, maxReuse int, items []mediaItem) ([]*trieNode, int) {
+func (c *prefixCache) sharedPrefix(keys []trieKey, maxReuse int, items []mediaItem, plan prefillPlan) ([]*trieNode, int) {
 	path, matched := findBestMatch(c.root, keys[:maxReuse])
 	end, count := 0, 1
 	for i := 1; i < len(path); i++ {
@@ -307,7 +343,7 @@ func (c *prefixCache) sharedPrefix(keys []trieKey, maxReuse int, items []mediaIt
 		if node.endOffset > matched || !hasAllSnapshots(node, c.caches) {
 			break
 		}
-		if insideAtomicItem(items, node.endOffset) == nil {
+		if plan.restoreOffset(node.endOffset) == node.endOffset && insideAtomicItem(items, node.endOffset) == nil {
 			end, count = node.endOffset, i+1
 		}
 	}
@@ -386,10 +422,7 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 	c := s.cache
 	base := c.minCacheOffset()
 	for _, offset := range offsets {
-		offset -= c.draftLookahead
-		if item := insideAtomicItem(s.items, offset); item != nil {
-			offset = item.pos + item.length
-		}
+		offset = prefillSnapshotOffset(s.items, offset, c.draftLookahead)
 		if offset <= base || offset > len(s.inputs) {
 			continue
 		}
@@ -423,6 +456,14 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 			kv.PrepareSnapshots(prepared)
 		}
 	}
+}
+
+func prefillSnapshotOffset(items []mediaItem, offset, lookahead int) int {
+	offset -= lookahead
+	if item := insideAtomicItem(items, offset); item != nil {
+		return item.pos + item.length
+	}
+	return offset
 }
 
 // attachPrefillSnapshots collects the snapshots captured during prefill and

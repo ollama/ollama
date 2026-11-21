@@ -787,3 +787,52 @@ func TestCompressionPreservesIdleFrontier(t *testing.T) {
 		}
 	})
 }
+
+func TestAdmissionPrefersRestorablePrefillWidth(t *testing.T) {
+	const firstBatch, common = 2048, 2100
+	for _, tc := range []struct {
+		name    string
+		aligned bool
+		want    int
+	}{
+		{"ordinary", false, common},
+		{"aligned", true, firstBatch},
+	} {
+		for _, peer := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/peer=%v", tc.name, peer), func(t *testing.T) {
+				src, dst := newRecurrentEnv().pc, newRecurrentEnv().pc
+				t.Cleanup(src.close)
+				t.Cleanup(dst.close)
+				src.alignPrefill, dst.alignPrefill = tc.aligned, tc.aligned
+				tokens := slices.Repeat([]int32{1}, 4400)
+				// A complete snapshot inside the second prefill batch is usable only
+				// when the model's restoration contract accepts arbitrary widths.
+				simulateRequest(t, src, tokens, nil, firstBatch, common, 4096)
+				tokens[common] = 2
+				req := request{Tokens: tokens}
+				s := &batchScheduler{slots: []*batchSlot{{cache: dst}, {cache: src}}}
+				wantSlot := 1
+				if peer {
+					s.slots[1].request = &batchRequest{finished: true}
+					wantSlot = 0
+				}
+				dest := s.selectSlot(req)
+				if dest != wantSlot {
+					t.Fatalf("selected slot %d, want %d", dest, wantSlot)
+				}
+				longest := 0
+				for _, n := range s.matchingHistory(req, dest) {
+					longest = max(longest, n)
+				}
+				if longest != tc.want {
+					t.Fatalf("preferred %d tokens under pressure, want %d", longest, tc.want)
+				}
+				session := s.slots[dest].cache.begin(tokens, nil, s.slots[1-dest].cache)
+				defer session.close()
+				if got := len(tokens) - len(session.remaining); got != longest {
+					t.Fatalf("restored %d tokens, preferred %d", got, longest)
+				}
+			})
+		}
+	}
+}

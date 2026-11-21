@@ -83,6 +83,12 @@ func newSpeculation(r *Runner, slotID int, draft model.DraftModel, targets, draf
 	s := &speculation{r: r, slotID: slotID, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
 	if bd, ok := draft.(model.BlockDraft); ok {
 		s.drafter = newDFlashDrafter(s, bd)
+		if selector, ok := bd.(interface {
+			model.BlockSelector
+			AdaptiveDraftDepth() bool
+		}); ok {
+			s.depth.block = selector.AdaptiveDraftDepth()
+		}
 	} else {
 		s.drafter = newMTPDrafter(s)
 	}
@@ -100,9 +106,11 @@ type speculationSession struct {
 	limit   int   // current draft length
 	layout  []any // the request's per-row layout state, stamped on every target forward
 	stats   specStats
+	depth   *depthController
 
 	// fixedDepth holds limit for the whole request, bypassing the depth controller.
-	fixedDepth bool
+	fixedDepth         bool
+	failedVerification bool
 
 	// Cost sampling: each round's wall time (start to next start, spanning the
 	// next emit's sync) is attributed to its draft depth only when the depth
@@ -125,12 +133,15 @@ func (s *speculation) open(request request, layout []any) *speculationSession {
 	opts := request.SamplerOpts
 	enabled := !opts.Logprobs && opts.TopLogprobs == 0
 
-	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, depth: s.depth, prevDrafts: -1, roundDrafts: -1}
 	if enabled {
-		spec.limit = s.depth.scheduled
-		if _, ok := s.draft.(model.BlockSelector); ok {
+		if s.depth.block {
+			spec.depth = s.depth.forBlock()
+		} else if _, ok := s.draft.(model.BlockSelector); ok {
 			spec.limit, spec.fixedDepth = dflash2Depth, true
+			return spec
 		}
+		spec.limit = spec.depth.scheduled
 	}
 	return spec
 }
@@ -146,7 +157,7 @@ func (s *speculationSession) beginRound() {
 	now := time.Now()
 	if !s.lastRoundStart.IsZero() && s.roundDrafts >= 0 {
 		if s.roundDrafts == s.prevDrafts {
-			s.spec.depth.cost.observe(s.roundDrafts, now.Sub(s.lastRoundStart))
+			s.depth.cost.observe(s.roundDrafts, now.Sub(s.lastRoundStart))
 		}
 		s.prevDrafts = s.roundDrafts
 	}
@@ -167,9 +178,9 @@ func (s *speculationSession) endRound(drafted, accepted, observed int) {
 		return
 	}
 	if observed > 0 {
-		s.spec.depth.acc.observe(observed, accepted)
+		s.depth.acc.observe(observed, accepted)
 	}
-	s.limit = s.spec.depth.next()
+	s.limit = s.depth.next()
 }
 
 func (s *speculationSession) recordRound(drafted, accepted int) {
@@ -219,9 +230,8 @@ type speculativeDecoder struct {
 	scope    *mlx.Scope // holds current across rounds
 }
 
-// decoder returns the decoder for this engine's session. A speculationSession that
-// cannot draft (logprobs) has no depth controller and permanently parks,
-// running the inner pipelined decoder whose reports keep the draft KV level.
+// A logprobs session keeps its draft cache current using the pipelined decoder.
+// Only sessions that can draft observe acceptance or train the depth controller.
 func (s *speculationSession) decoder(seed *mlx.Array, position int, grammar *grammar) *speculativeDecoder {
 	current := sampler.Result{Token: seed}
 	scope := mlx.NewScope()
@@ -482,6 +492,7 @@ func (r *Runner) acceptDrafts(rounds []draftRound) []draftOutcome {
 	defer func() {
 		for i, round := range rounds {
 			if !committed[i] {
+				round.s.failedVerification = true
 				commitSpeculation(round.s.spec.targets, 0, draftCount, int(offsets[i])+1)
 			}
 		}

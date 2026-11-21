@@ -50,8 +50,21 @@ func Classify(inv Inventory, requested string) (Classification, error) {
 		return Classification{}, fmt.Errorf("unsupported fp8 source: tensor %s is F8_E5M2; only F8_E4M3 block-FP8 sources are supported", name)
 	}
 
-	switch detectKind(inv) {
+	kind := detectKind(inv)
+	if inv.Config.Architecture() == inkling2Architecture {
+		kind, err = classifyInkling2Banks(inv, kind)
+		if err != nil {
+			return Classification{}, err
+		}
+		if kind == SourceFloat && requested != "" {
+			return Classification{}, fmt.Errorf("Inkling 2 requires importing the source weights without --quantize (requested %q)", requested)
+		}
+	}
+	switch kind {
 	case SourceFloat:
+		if requested != "" && inv.Config.Architecture() == "Inkling2ForConditionalGenerationMTP" {
+			return Classification{}, fmt.Errorf("Inkling 2 MTP requires importing the draft weights without --draft-quantize (requested %q)", requested)
+		}
 		return Classification{Kind: SourceFloat, Quantize: requested}, nil
 
 	case SourcePrequantized:

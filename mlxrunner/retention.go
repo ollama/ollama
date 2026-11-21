@@ -115,16 +115,21 @@ func (s *batchScheduler) matchingHistory(incoming queuedRequest, destination int
 		if c == nil || c.root == nil {
 			continue
 		}
-		cacheKeys := c.key(keys)
+		plan := c.prefillPlan(len(tokens), items)
+		cacheKeys := plan.tag(c.key(keys))
 		var path []*trieNode
 		var matched int
 		if i == destination {
 			path, matched = findBestMatch(c.root, cacheKeys[:min(maxReuse, len(cacheKeys))])
-			if item := insideAtomicItem(items, matched); item != nil {
-				path, matched = findBestMatch(c.root, cacheKeys[:item.pos])
+			reuse := matched
+			if item := insideAtomicItem(items, reuse); item != nil {
+				reuse = item.pos
+			}
+			if reuse = plan.restoreOffset(reuse); reuse < matched {
+				path, matched = findBestMatch(c.root, cacheKeys[:reuse])
 			}
 		} else {
-			path, matched = c.sharedPrefix(cacheKeys, min(maxReuse, len(cacheKeys)), items)
+			path, matched = c.sharedPrefix(cacheKeys, min(maxReuse, len(cacheKeys)), items, plan)
 		}
 		for _, n := range path {
 			preferred[n] = matched

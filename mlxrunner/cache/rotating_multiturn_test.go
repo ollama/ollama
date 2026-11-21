@@ -1,10 +1,12 @@
 package cache
 
 import (
+	"math"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
 // singleTokenKV and multiTokenKV fabricate [B=1, H=1, L, D=2] key/value
@@ -334,6 +336,39 @@ func TestRotatingKVCacheOffsetTracking(t *testing.T) {
 		feedMulti(c, nextID, 7)
 		if c.Offset() != 17 {
 			t.Fatalf("after large prefill: offset=%d want 17", c.Offset())
+		}
+	})
+}
+
+func TestRotatingCacheSingleQueryMaskPrecision(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const bias = 1 + 1.0/256 // rounds to 1 at BF16
+		for _, tc := range []struct {
+			name     string
+			newCache func(int) *RotatingKVCache
+			maskBias float64
+		}{
+			{"ring", NewRotatingKVCache, 1},
+			{"ordered", NewOrderedWindowKVCache, bias},
+		} {
+			mlx.Scoped(func() {
+				c := tc.newCache(8)
+				defer c.Free()
+				zero := mlx.Zeros(mlx.DTypeBFloat16, 1, 1, 1, 8)
+				one := mlx.AddScalar(zero, 1)
+				c.Update(newKVBatch(0, 1), zero, zero)
+				b := newKVBatch(1, 1)
+				updated := c.Update(b, zero, one)
+				mask := nn.ArrayMask(mlx.FromValues([]float32{0, bias}, 1, 1, 1, 2))
+				q := zero.AsType(mlx.DTypeFloat32)
+				want := 1 / (1 + math.Exp(-tc.maskBias))
+				for _, history := range []*nn.KVHistory{updated, c.View(b)} {
+					out := nn.ScaledDotProductAttention(b, q, 1, nn.WithKVHistory(history.AsType(mlx.DTypeFloat32)), nn.WithMask(mask))
+					if got := out.Floats()[0]; math.Abs(float64(got)-want) > 1e-5 {
+						t.Fatalf("%s cache: attention to second value = %g, want %g", tc.name, got, want)
+					}
+				}
+			})
 		}
 	})
 }

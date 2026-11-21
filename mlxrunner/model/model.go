@@ -87,7 +87,8 @@ type BlockSelector interface {
 	// samples one of each row's unique candidate IDs, taking IDs and scores
 	// [N,K] and returning tokens [N] and probabilities [N,K]. Select returns
 	// tokens [B,L] and each position's candidate IDs and probabilities [B,L,K],
-	// which verification uses to correct the proposal.
+	// which verification uses to correct the proposal. For probabilities in
+	// full vocabulary order [B,L,V], Select may return nil IDs.
 	Select(hidden, logits, anchor *mlx.Array, choose func(ids, scores *mlx.Array) (tokens, probs *mlx.Array)) (tokens, ids, probs *mlx.Array)
 }
 
