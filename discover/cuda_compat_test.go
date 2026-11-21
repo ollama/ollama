@@ -104,6 +104,44 @@ func TestFilterOldCUDADriver(t *testing.T) {
 			wantIDs: []string{"GPU-0", "GPU-1"},
 		},
 		{
+			// CUDA 12 names the runtime DLL cudart64_12.dll, so the minor version
+			// is unknown. Assume it is new enough to need the driver floor rather
+			// than letting llama-server abort JITing PTX for Pascal.
+			name:       "cuda 12 runtime without a minor version filters older CUDA devices",
+			runtimeLib: "cudart64_12.dll",
+			devices: []ml.DeviceInfo{
+				{
+					DeviceID:          ml.DeviceID{ID: "GPU-0", Library: "CUDA"},
+					Description:       "NVIDIA GeForce GTX 1060 6GB",
+					ComputeMajor:      6,
+					ComputeMinor:      1,
+					NVIDIADriverMajor: 560,
+				},
+				{
+					DeviceID:          ml.DeviceID{ID: "GPU-1", Library: "CUDA"},
+					Description:       "NVIDIA GeForce RTX 4060 Ti",
+					ComputeMajor:      8,
+					ComputeMinor:      9,
+					NVIDIADriverMajor: 560,
+				},
+			},
+			wantIDs: []string{"GPU-1"},
+		},
+		{
+			name:       "cuda 12 runtime without a minor version filters all CUDA devices on a pre-compression driver",
+			runtimeLib: "cudart64_12.dll",
+			devices: []ml.DeviceInfo{
+				{
+					DeviceID:          ml.DeviceID{ID: "GPU-0", Library: "CUDA"},
+					Description:       "NVIDIA V100",
+					ComputeMajor:      7,
+					ComputeMinor:      0,
+					NVIDIADriverMajor: 535,
+				},
+			},
+			wantIDs: []string{},
+		},
+		{
 			name: "unknown driver keeps devices",
 			devices: []ml.DeviceInfo{
 				{
