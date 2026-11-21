@@ -58,42 +58,51 @@ func (s residualStream) afterAttention(attention *mlx.Array, boundary bool) resi
 			partial: attention,
 		}
 	}
-	s.partial = mlx.Add(s.partial.AsType(mlx.DTypeFloat32), attention.AsType(mlx.DTypeFloat32))
+	s.partial = sumFP32(s.partial, attention, mlx.DTypeFloat32)
 	return s
 }
 
+// sumFP32 adds two activations in FP32 and rounds the sum to dtype.
+func sumFP32(a, b *mlx.Array, dtype mlx.DType) *mlx.Array {
+	if dtype == mlx.DTypeBFloat16 {
+		return compiledSumBF16(a, b)
+	}
+	return compiledSumFP32(a, b).AsType(dtype)
+}
+
+var compiledSumFP32 = mlx.Compile2("InklingSumFP32", func(a, b *mlx.Array) *mlx.Array {
+	return mlx.Add(a.AsType(mlx.DTypeFloat32), b.AsType(mlx.DTypeFloat32))
+}, mlx.Shapeless())
+
+var compiledSumBF16 = mlx.Compile2("InklingSumBF16", func(a, b *mlx.Array) *mlx.Array {
+	return mlx.Add(a.AsType(mlx.DTypeFloat32), b.AsType(mlx.DTypeFloat32)).AsType(mlx.DTypeBFloat16)
+}, mlx.Shapeless())
+
 type messageGate struct {
 	Down       *nn.Linear
-	Gain       *nn.Linear
-	Forget     *nn.Linear
-	GainForget *nn.Linear
+	GainForget *nn.Linear // FP32 gain rows, then forget rows
 }
 
 func (g messageGate) apply(input, message *mlx.Array) *mlx.Array {
+	if paired := mlx.RMSNormPairRoundBF16(input, message, residualEpsilon); paired != nil {
+		compressed := projectTarget(g.Down, paired).AsType(mlx.DTypeFloat32)
+		if mixed := mlx.LoopControllerMix(input, message, compressed, g.GainForget.Weight); mixed != nil {
+			return mixed
+		}
+	}
+	return g.applyGraph(input, message)
+}
+
+// applyGraph is apply without the Metal kernels. Both gates stay in FP32 up
+// to the following layer's input normalization.
+func (g messageGate) applyGraph(input, message *mlx.Array) *mlx.Array {
 	normalized := func(x *mlx.Array) *mlx.Array {
 		return mlx.RMSNormFn(x.AsType(mlx.DTypeFloat32), nil, residualEpsilon).AsType(mlx.DTypeBFloat16)
 	}
-	if g.GainForget != nil {
-		paired := normalized(mlx.Stack([]*mlx.Array{input, message}, -2)).Flatten(-2, -1)
-		compressed := projectTarget(g.Down, paired).AsType(mlx.DTypeFloat32)
-		expansion := projectTarget(g.GainForget, compressed)
-		width := input.Dim(-1)
-		gain := expansion.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, width))
-		forget := expansion.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(width, 2*width))
-		return compiledControllerMix(input, message, gain, forget)[0]
-	}
 	compressed := projectTarget(g.Down, mlx.Concatenate([]*mlx.Array{normalized(input), normalized(message)}, -1))
-	// The two expansion projections produce FP32 before applying tanh.
-	compressed = compressed.AsType(mlx.DTypeFloat32)
-	gain := projectTarget(g.Gain, compressed).Tanh()
-	forget := projectTarget(g.Forget, compressed).Tanh()
-	keep := mlx.AddScalar(mlx.MulScalar(forget, -1), 1)
+	expansion := projectTarget(g.GainForget, compressed.AsType(mlx.DTypeFloat32))
+	width := input.Dim(-1)
+	gain := expansion.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, width)).Tanh()
+	keep := mlx.AddScalar(mlx.MulScalar(expansion.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(width, 2*width)).Tanh(), -1), 1)
 	return mlx.Add(mlx.Mul(input, keep), mlx.Mul(message, gain))
 }
-
-// Both output gates are FP32 up to the following layer's input normalization.
-var compiledControllerMix = mlx.Compile("InklingLoopController", func(args ...*mlx.Array) []*mlx.Array {
-	input, message, gain, forget := args[0], args[1], args[2], args[3]
-	keep := mlx.AddScalar(mlx.MulScalar(forget.Tanh(), -1), 1)
-	return []*mlx.Array{mlx.Add(mlx.Mul(input, keep), mlx.Mul(message, gain.Tanh()))}
-}, mlx.Shapeless())

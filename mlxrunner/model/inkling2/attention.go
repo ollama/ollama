@@ -2,6 +2,7 @@ package inkling2
 
 import (
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -10,38 +11,46 @@ import (
 )
 
 type selfAttention struct {
-	Query, Key, Value, Output *nn.Linear
-	Relative, Gate, Sink      *nn.Linear
-	PositionProjection        *mlx.Array
-	QueryScale, RelativeScale *mlx.Array
-	KeyConv, ValueConv        shortConv
-	headDim, heads, kvHeads   int
-	window                    int
-	rmsEpsilon                float32
-	qkClip, relativeClip      float32
-	logFloor, logAlpha        float32
+	// Projection stacks the rows that read the query input (query, relative,
+	// gate, sink), then the key rows and the value rows, each followed by
+	// its dynamic convolution rows. The three groups are views of it.
+	Projection, QueryRows, KeyRows, ValueRows *nn.Linear
+	Output                                    *nn.Linear
+	PositionProjection                        *mlx.Array
+	QueryScale, RelativeScale                 *mlx.Array
+	KeyConv, ValueConv                        shortConv
+	headDim, heads, kvHeads                   int
+	window                                    int
+	rmsEpsilon                                float32
+	qkClip, relativeClip                      float32
+	logFloor, logAlpha                        float32
 }
 
 func (a selfAttention) forward(qInput, kInput, vInput *mlx.Array, b *batch.Batch, kvCache, keyCache, valueCache cache.Layer) *mlx.Array {
 	rows, tokens := qInput.Dim(0), qInput.Dim(1)
-	q := projectTarget(a.Query, qInput).Reshape(rows, tokens, a.heads, a.headDim)
-	k := a.KeyConv.forward(projectTarget(a.Key, kInput), kInput, b, keyCache).Reshape(rows, tokens, a.kvHeads, a.headDim)
-	v := a.ValueConv.forward(projectTarget(a.Value, vInput), vInput, b, valueCache).Reshape(rows, tokens, a.kvHeads, a.headDim)
-	r := projectTarget(a.Relative, qInput).Reshape(rows, tokens, a.heads, a.PositionProjection.Dim(0))
-	var tau *mlx.Array
-	if a.window == 0 && a.logFloor > 0 && a.logAlpha != 0 {
-		offsets := mlx.FromValues(b.SeqOffsets, rows, 1)
-		indices := mlx.Arange(1, float64(tokens+1), 1, mlx.DTypeInt32)
-		length := offsets.Add(indices).AsType(mlx.DTypeFloat32)
-		ratio := mlx.Maximum(mlx.DivScalar(length, a.logFloor), mlx.FromValue(float32(1)))
-		tau = mlx.AddScalar(mlx.MulScalar(mlx.Log(ratio), a.logAlpha), 1).Reshape(rows, tokens, 1, 1)
+	// qp starts with the query, relative, gate and sink columns.
+	qp, kp, vp := a.project(qInput, kInput, vInput)
+	width, relative, kvWidth := a.heads*a.headDim, a.heads*a.PositionProjection.Dim(0), a.kvHeads*a.headDim
+	gate := columns(qp, width+relative, 2*width+relative)
+	k := a.KeyConv.forward(columns(kp, 0, kvWidth), columns(kp, kvWidth, kp.Dim(2)), b, keyCache)
+	v := a.ValueConv.forward(columns(vp, 0, kvWidth), columns(vp, kvWidth, vp.Dim(2)), b, valueCache)
+	tau := a.temperature(b, rows, tokens)
+	var tokenTau *mlx.Array
+	if tau != nil {
+		tokenTau = tau.Reshape(rows, tokens)
 	}
-	q = clipL2(q, a.QueryScale, tau, a.qkClip).Transpose(0, 2, 1, 3)
-	k = clipL2(k, nil, nil, a.qkClip).Transpose(0, 2, 1, 3)
-	v = mlx.RMSNormFn(v, nil, a.rmsEpsilon).Transpose(0, 2, 1, 3)
-	r = clipL2(r, a.RelativeScale, tau, a.relativeClip)
-	table := r.Matmul(a.PositionProjection).Transpose(0, 2, 1, 3)
-	sink := projectTarget(a.Sink, qInput).Transpose(0, 2, 1).ExpandDims(-1)
+	q, k, v, table, sink := mlx.RelativeAttentionInputs(qp, k, v, a.QueryScale, a.RelativeScale, a.PositionProjection,
+		tokenTau, a.heads, a.kvHeads, a.qkClip, a.relativeClip, a.rmsEpsilon)
+	if q == nil {
+		q = columns(qp, 0, width).Reshape(rows, tokens, a.heads, a.headDim)
+		r := columns(qp, width, width+relative).Reshape(rows, tokens, a.heads, a.PositionProjection.Dim(0))
+		sink = columns(qp, 2*width+relative, 2*width+relative+a.heads).Transpose(0, 2, 1).ExpandDims(-1)
+		q = clipL2(q, a.QueryScale, tau, a.qkClip).Transpose(0, 2, 1, 3)
+		k = clipL2(k.Reshape(rows, tokens, a.kvHeads, a.headDim), nil, nil, a.qkClip).Transpose(0, 2, 1, 3)
+		v = mlx.RMSNormFn(v.Reshape(rows, tokens, a.kvHeads, a.headDim), nil, a.rmsEpsilon).Transpose(0, 2, 1, 3)
+		r = clipL2(r, a.RelativeScale, tau, a.relativeClip)
+		table = r.Matmul(a.PositionProjection).Transpose(0, 2, 1, 3)
+	}
 
 	var history *nn.KVHistory
 	if kvCache != nil {
@@ -50,11 +59,47 @@ func (a selfAttention) forward(qInput, kInput, vInput *mlx.Array, b *batch.Batch
 	scale := float32(1 / math.Sqrt(float64(a.headDim)))
 	attended := relativeSDPA(b, q, k, v, table, sink, history, a.window, scale)
 	attended = attended.Transpose(0, 2, 1, 3).Reshape(rows, tokens, a.heads*a.headDim)
-	gate := projectTarget(a.Gate, qInput)
 	if mlx.MetalIsAvailable() && gate.DType() == qInput.DType() {
 		return projectTarget(a.Output, compiledAttentionGate(attended, gate))
 	}
 	return projectTarget(a.Output, gateAttention(attended, gate, qInput.DType()))
+}
+
+// temperature scales global attention queries by the log of their length
+// past the floor. It returns nil when every query is within the floor, where
+// the scale is exactly one.
+func (a selfAttention) temperature(b *batch.Batch, rows, tokens int) *mlx.Array {
+	if a.window != 0 || a.logFloor <= 0 || a.logAlpha == 0 ||
+		!slices.ContainsFunc(b.SeqOffsets, func(offset int32) bool { return float32(int(offset)+tokens) > a.logFloor }) {
+		return nil
+	}
+	offsets := mlx.FromValues(b.SeqOffsets, rows, 1)
+	indices := mlx.Arange(1, float64(tokens+1), 1, mlx.DTypeInt32)
+	length := offsets.Add(indices).AsType(mlx.DTypeFloat32)
+	ratio := mlx.Maximum(mlx.DivScalar(length, a.logFloor), mlx.FromValue(float32(1)))
+	return mlx.AddScalar(mlx.MulScalar(mlx.Log(ratio), a.logAlpha), 1).Reshape(rows, tokens, 1, 1)
+}
+
+// project applies the three row groups to their inputs. Inputs shared by all
+// groups take one product over the whole stack, and q then holds every column.
+func (a selfAttention) project(qInput, kInput, vInput *mlx.Array) (q, k, v *mlx.Array) {
+	if qInput == kInput && kInput == vInput {
+		all := projectTarget(a.Projection, qInput)
+		qRows, kRows := a.QueryRows.Weight.Dim(0), a.KeyRows.Weight.Dim(0)
+		return all, columns(all, qRows, qRows+kRows), columns(all, qRows+kRows, all.Dim(2))
+	}
+	return projectTarget(a.QueryRows, qInput), projectTarget(a.KeyRows, kInput), projectTarget(a.ValueRows, vInput)
+}
+
+// columns returns x[..., start:end], or nil for an empty range.
+func columns(x *mlx.Array, start, end int) *mlx.Array {
+	if start == end {
+		return nil
+	}
+	if start == 0 && end == x.Dim(-1) {
+		return x
+	}
+	return x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, end))
 }
 
 func gateAttention(value, gate *mlx.Array, dtype mlx.DType) *mlx.Array {

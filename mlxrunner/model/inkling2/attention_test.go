@@ -243,3 +243,69 @@ func TestRelativePositionDecodeBias(t *testing.T) {
 		})
 	})
 }
+
+func TestRelativeAttentionInputsMatchGraph(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() {
+			t.Skip("requires Metal")
+		}
+		const heads, kvHeads, width, rel, distances = 24, 8, 128, 16, 1024
+		pattern := func(dtype mlx.DType, scale float32, seed int, shape ...int) *mlx.Array {
+			n := 1
+			for _, d := range shape {
+				n *= d
+			}
+			values := make([]float32, n)
+			for i := range values {
+				values[i] = float32((i*seed)%997-498) * scale
+			}
+			return mlx.FromValues(values, shape...).AsType(dtype)
+		}
+		close := func(name string, got, want *mlx.Array) {
+			g := mlx.Contiguous(got.AsType(mlx.DTypeFloat32), false).Floats()
+			w := mlx.Contiguous(want.AsType(mlx.DTypeFloat32), false).Floats()
+			var peak float64
+			for _, v := range w {
+				peak = max(peak, math.Abs(float64(v)))
+			}
+			for i := range w {
+				// Sums of squares and the table product round in another order.
+				if math.Abs(float64(g[i]-w[i])) > peak/64 {
+					t.Fatalf("%s element %d = %g, want %g", name, i, g[i], w[i])
+				}
+			}
+		}
+		for _, tokens := range []int{1, 9} {
+			for _, temperature := range []bool{false, true} {
+				mlx.Scoped(func() {
+					stride := heads*(2*width+rel+1) + 32
+					source := pattern(mlx.DTypeBFloat16, 0.01, 31, 1, tokens, stride)
+					k := pattern(mlx.DTypeBFloat16, 0.02, 17, 1, tokens, kvHeads*width)
+					v := pattern(mlx.DTypeBFloat16, 0.03, 23, 1, tokens, kvHeads*width)
+					queryScale := pattern(mlx.DTypeBFloat16, 0.002, 7, heads, width)
+					relativeScale := pattern(mlx.DTypeBFloat16, 0.003, 13, heads, rel)
+					projection := pattern(mlx.DTypeBFloat16, 0.001, 19, rel, distances)
+					var tau, tokenTau *mlx.Array
+					if temperature {
+						tokenTau = mlx.AddScalar(mlx.MulScalar(mlx.Arange(0, float64(tokens), 1, mlx.DTypeFloat32), 0.01), 1).Reshape(1, tokens)
+						tau = tokenTau.Reshape(1, tokens, 1, 1)
+					}
+					q, keys, values, table, sink := mlx.RelativeAttentionInputs(source, k, v, queryScale, relativeScale, projection,
+						tokenTau, heads, kvHeads, 22.6, 8, 1e-6)
+					if q == nil {
+						t.Fatal("kernel did not run")
+					}
+					cols := func(a, b int) *mlx.Array { return source.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(a, b)) }
+					wantQ := clipL2(cols(0, heads*width).Reshape(1, tokens, heads, width), queryScale, tau, 22.6).Transpose(0, 2, 1, 3)
+					r := clipL2(cols(heads*width, heads*(width+rel)).Reshape(1, tokens, heads, rel), relativeScale, tau, 8)
+					close("q", q, wantQ)
+					close("k", keys, clipL2(k.Reshape(1, tokens, kvHeads, width), nil, nil, 22.6).Transpose(0, 2, 1, 3))
+					close("v", values, mlx.RMSNormFn(v.Reshape(1, tokens, kvHeads, width), nil, 1e-6).Transpose(0, 2, 1, 3))
+					close("table", table, r.Matmul(projection).Transpose(0, 2, 1, 3))
+					start := heads * (2*width + rel)
+					close("sink", sink, cols(start, start+heads).Transpose(0, 2, 1).ExpandDims(-1))
+				})
+			}
+		}
+	})
+}

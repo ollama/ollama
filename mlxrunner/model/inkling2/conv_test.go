@@ -16,20 +16,17 @@ import (
 func TestDynamicShortConvolutionRetainsHistoryAcrossDecode(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		mlx.Scoped(func() {
-			convolution := shortConv{
-				Weight:  mlx.FromValues([]float32{1, 2}, 2, 1),
-				Dynamic: nn.NewLinear(mlx.FromValues([]float32{0, 1}, 2, 1), nil),
-				heads:   1,
-			}
+			convolution := shortConv{Weight: mlx.FromValues([]float32{1, 2}, 2, 1), heads: 1}
+			taps := nn.NewLinear(mlx.FromValues([]float32{0, 1}, 2, 1), nil)
 			state := cache.NewRecurrentCache(1, 1, 1, 1, 1)
 			defer state.Free()
 			input := mlx.FromValues([]float32{1, 2, 3}, 1, 3, 1)
 			prefill := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 3), SeqQueryLens: []int32{3}}
-			full := convolution.forward(input, input, prefill, nil).Floats()
+			full := convolution.forward(input, taps.Forward(input), prefill, nil).Floats()
 			for index, want := range []float64{2, 8, 16} {
 				chunk := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 1), SeqOffsets: []int32{int32(index)}, SeqQueryLens: []int32{1}}
 				token := input.Slice(mlx.Slice(), mlx.Slice(index, index+1), mlx.Slice())
-				got := convolution.forward(token, token, chunk, state).Floats()[0]
+				got := convolution.forward(token, taps.Forward(token), chunk, state).Floats()[0]
 				if math.Abs(float64(got)-want/math.Sqrt(5)) > 1e-6 || got != full[index] {
 					t.Errorf("token %d: decoded %g, prefill %g, want %g", index, got, full[index], want/math.Sqrt(5))
 				}

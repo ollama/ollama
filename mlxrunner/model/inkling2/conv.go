@@ -11,15 +11,29 @@ import (
 )
 
 type shortConv struct {
-	Weight  *mlx.Array // [taps, channels]
-	Dynamic *nn.Linear
-	heads   int
+	Weight *mlx.Array // [taps, channels]
+	heads  int
 }
 
-func (s shortConv) forward(x, conditioning *mlx.Array, b *batch.Batch, layerCache cache.Layer) *mlx.Array {
+// forward applies the convolution to x. A dynamic convolution also takes its
+// per-token tap projection [rows, tokens, heads*taps].
+func (s shortConv) forward(x, dynamic *mlx.Array, b *batch.Batch, layerCache cache.Layer) *mlx.Array {
 	rows, tokens, channels := x.Dim(0), x.Dim(1), x.Dim(2)
 	taps := s.Weight.Dim(0)
 	tail := taps - 1
+	if recurrent, ok := layerCache.(cache.Recurrent); ok && mlx.MetalIsAvailable() &&
+		len(recurrent.SnapshotSplits(tokens)) == 0 && !slices.ContainsFunc(b.SeqQueryLens, func(n int32) bool { return int(n) != tokens }) {
+		terms := taps + 1
+		if dynamic != nil {
+			terms += taps
+		}
+		history := recurrent.Get(b, x.DType())
+		y, next := mlx.ShortConvolution(history.ConvState(), x, s.Weight, dynamic, s.heads, float32(1/math.Sqrt(float64(terms))))
+		if y != nil {
+			recurrent.Put(b, []*mlx.Array{next}, []*mlx.Array{history.DeltaState()})
+			return y
+		}
+	}
 	var history *nn.RecurrentHistory
 	var options []nn.RecurrentOption
 	if layerCache == nil {
@@ -36,9 +50,8 @@ func (s shortConv) forward(x, conditioning *mlx.Array, b *batch.Batch, layerCach
 	}
 
 	inputs := []*mlx.Array{window, x, s.Weight}
-	if s.Dynamic != nil {
-		perToken := projectTarget(s.Dynamic, conditioning).AsType(mlx.DTypeFloat32).Reshape(rows, tokens, s.heads, taps)
-		inputs = append(inputs, perToken)
+	if dynamic != nil {
+		inputs = append(inputs, dynamic.AsType(mlx.DTypeFloat32).Reshape(rows, tokens, s.heads, taps))
 	}
 	if mlx.MetalIsAvailable() {
 		return compiledConvTaps(inputs...)[0]

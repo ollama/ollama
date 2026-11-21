@@ -112,10 +112,10 @@ func (d *draft) LoadWeights(tensors map[string]*mlx.Array) error {
 	r := weightReader{tensors: tensors}
 	d.Fuse = r.tensor(d.prefix+"fuse_weight", c.NumLayers+1, len(c.Taps))
 	d.Mask = r.tensor(d.prefix+"mask_embed", c.Width)
-	d.Norm = r.tensor(d.prefix+"norm.weight", c.Width)
+	d.Norm = r.float32(d.prefix+"norm.weight", c.Width)
 
 	p := d.prefix + "markov_head."
-	d.RecurrentNorm = r.tensor(p+"dflare_norm.weight", c.Width)
+	d.RecurrentNorm = r.float32(p+"dflare_norm.weight", c.Width)
 	d.Previous = nn.NewEmbedding(r.tensor(p+"markov_w1.weight", d.target.config.VocabSize, c.StateWidth))
 	d.Recurrent = r.projection(p+"rnn_proj", 3*c.StateWidth, 2*(c.StateWidth+c.Width), true)
 	latent := r.projection(p+"hidden_out", c.Width, c.StateWidth, true)
@@ -127,12 +127,12 @@ func (d *draft) LoadWeights(tensors map[string]*mlx.Array) error {
 		kvWidth := c.KVHeads * c.HeadDim
 		d.Layers[i] = draftLayer{
 			local:           slices.Contains(c.LocalLayers, i),
-			InputNorm:       r.tensor(layer+"input_layernorm.weight", c.Width),
-			FfNorm:          r.tensor(layer+"post_attention_layernorm.weight", c.Width),
-			ContextNorm:     r.tensor(layer+"dflare_norm.weight", c.Width),
-			QueryNorm:       r.tensor(a+"q_norm.weight", c.HeadDim),
-			KeyNorm:         r.tensor(a+"k_norm.weight", c.HeadDim),
-			ContextKeyNorm:  r.tensor(a+"k_norm_ctx.weight", c.HeadDim),
+			InputNorm:       r.float32(layer+"input_layernorm.weight", c.Width),
+			FfNorm:          r.float32(layer+"post_attention_layernorm.weight", c.Width),
+			ContextNorm:     r.float32(layer+"dflare_norm.weight", c.Width),
+			QueryNorm:       r.float32(a+"q_norm.weight", c.HeadDim),
+			KeyNorm:         r.float32(a+"k_norm.weight", c.HeadDim),
+			ContextKeyNorm:  r.float32(a+"k_norm_ctx.weight", c.HeadDim),
 			Query:           r.linear(a+"q_proj.weight", c.Heads*c.HeadDim, c.Width),
 			Key:             r.linear(a+"k_proj.weight", kvWidth, c.Width),
 			Value:           r.linear(a+"v_proj.weight", kvWidth, c.Width),
@@ -284,10 +284,8 @@ func draftResidualSum(residual, update *mlx.Array) *mlx.Array {
 
 func (d *draft) Unembed(h *mlx.Array) *mlx.Array {
 	hidden := h.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, d.config.Width))
-	if hidden.Dim(1) == 7 {
-		if logits := d.target.shortVocabularyProjection(hidden); logits != nil {
-			return logits.AsType(mlx.DTypeBFloat16)
-		}
+	if logits := d.target.shortVocabularyProjection(hidden); logits != nil {
+		return logits.AsType(mlx.DTypeBFloat16)
 	}
 	return hidden.AsType(mlx.DTypeFloat32).Matmul(d.target.Output.Weight.AsType(mlx.DTypeFloat32).Transpose(1, 0)).AsType(mlx.DTypeBFloat16)
 }

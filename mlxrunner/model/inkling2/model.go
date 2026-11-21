@@ -24,14 +24,14 @@ type targetModel struct {
 	Vision    *visionEncoder
 	draftTaps []int
 
-	Embed         *nn.Embedding
-	EmbedNorm     *mlx.Array
-	OutputNorm    *mlx.Array
-	OutputQuery   *mlx.Array
-	Output        *nn.Linear
-	CompactOutput *mlx.Array
-	fp32Output    bool
-	Layers        []decoderLayer
+	Embed       *nn.Embedding
+	EmbedNorm   *mlx.Array
+	OutputNorm  *mlx.Array
+	OutputQuery *mlx.Array
+	Output      *nn.Linear
+	ShortOutput *nn.Linear
+	fp32Output  bool
+	Layers      []decoderLayer
 }
 
 type decoderLayer struct {
@@ -193,20 +193,13 @@ func (m *targetModel) Forward(b *batch.Batch, caches []cache.Layer) (hidden, aux
 	return hidden, hidden
 }
 
+// shortVocabularyProjection returns FP32 logits for up to eight positions per
+// row from the BF16 head, or nil where only the FP32 head applies.
 func (m *targetModel) shortVocabularyProjection(hidden *mlx.Array) *mlx.Array {
-	if m.CompactOutput == nil || hidden.NumDims() != 3 {
+	if m.ShortOutput == nil || hidden.NumDims() != 3 || hidden.Dim(1) > shortTargetRows {
 		return nil
 	}
-	b, t, width := hidden.Dim(0), hidden.Dim(1), hidden.Dim(2)
-	if b < 1 || b > 2 || t < 1 || t > shortTargetRows {
-		return nil
-	}
-	scores := mlx.MatmulBF16Weight(hidden.Reshape(b*t, width), m.CompactOutput)
-	if scores == nil {
-		return nil
-	}
-	vocab := m.config.UnpaddedVocab
-	return scores.Slice(mlx.Slice(), mlx.Slice(0, vocab)).Reshape(b, t, vocab)
+	return projectTarget(m.ShortOutput, hidden.AsType(mlx.DTypeFloat32))
 }
 
 func (m *targetModel) Unembed(hidden *mlx.Array) *mlx.Array {
@@ -220,6 +213,9 @@ func (m *targetModel) Unembed(hidden *mlx.Array) *mlx.Array {
 }
 
 func modelRMS(x, weight *mlx.Array, epsilon float32) *mlx.Array {
+	if y := mlx.RMSNormRoundBF16(x, weight, epsilon); y != nil {
+		return y
+	}
 	return mlx.RMSNormFn(x.AsType(mlx.DTypeFloat32), weight.AsType(mlx.DTypeFloat32), epsilon).AsType(mlx.DTypeBFloat16)
 }
 
@@ -235,9 +231,14 @@ func (l decoderLayer) forward(state residualStream, messages *mlx.Array, b *batc
 			}
 		}
 	}
-	for index, input := range inputs {
+	raw := inputs
+	for index, input := range raw {
 		if messages != nil {
 			input = l.MessageProjections[index].apply(input, selectMessage(messages, index))
+		} else if index > 0 && input == raw[index-1] && l.AttentionNorm[index] == l.AttentionNorm[index-1] {
+			// Local layers share one input and norm for all three projections.
+			inputs[index] = inputs[index-1]
+			continue
 		}
 		inputs[index] = modelRMS(input, l.AttentionNorm[index], cfg.NormEps)
 	}
@@ -250,7 +251,7 @@ func (l decoderLayer) forward(state residualStream, messages *mlx.Array, b *batc
 	}
 	ffn := l.FeedForward.forward(modelRMS(ffnInput, l.FeedForwardNorm, cfg.NormEps))
 	ffn = l.FeedForwardOutput.forward(ffn, nil, b, caches[4])
-	subtotal.partial = mlx.Add(subtotal.partial.AsType(mlx.DTypeFloat32), ffn.AsType(mlx.DTypeFloat32)).AsType(state.partial.DType())
+	subtotal.partial = sumFP32(subtotal.partial, ffn, state.partial.DType())
 	return subtotal
 }
 
