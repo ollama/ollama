@@ -27,13 +27,16 @@ type SettingsUpdate = Partial<{
   OnboardingVersion: number;
 }>;
 
-export function useSettings() {
+export function useSettings({
+  refetchInterval,
+}: { refetchInterval?: number } = {}) {
   const queryClient = useQueryClient();
 
   // Fetch settings with useQuery
   const { data: settingsData, error } = useQuery({
     queryKey: ["settings"],
     queryFn: getSettings,
+    refetchInterval,
   });
 
   // Update settings with useMutation

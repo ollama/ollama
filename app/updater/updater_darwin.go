@@ -149,7 +149,7 @@ func DoUpgrade(interactive bool) error {
 		}
 	}
 
-	// Get ready to try to unwind a partial upgade failure during unzip
+	// Get ready to try to unwind a partial upgrade failure during unzip
 	// If something goes wrong, we attempt to put the old version back.
 	anyFailures := false
 	defer func() {

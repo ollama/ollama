@@ -1,4 +1,4 @@
-//go:build integration && (fast || release || library)
+//go:build integration && (fast || release || library || create)
 
 package integration
 
@@ -39,6 +39,9 @@ func TestAPI(t *testing.T) {
 		"api-show-model",
 		"generate-logprobs",
 		"chat-logprobs",
+		"system-one",
+		"system-one-vision",
+		"system-one-audio",
 	)
 }
 
@@ -112,6 +115,9 @@ func TestContext(t *testing.T) {
 func TestConcurrency(t *testing.T) {
 	runIntegrationGroup(t,
 		"concurrent-chat",
+		"concurrent-embed",
+		"concurrent-speech",
+		"mlx-batching",
 		"scheduler-multimodel",
 		"scheduler-max-queue",
 	)
@@ -129,15 +135,12 @@ func TestCreate(t *testing.T) {
 	runIntegrationGroup(t,
 		"create-safetensors",
 		"create-gguf",
+		"create-gguf-blob-transfer",
 	)
 }
 
 func TestQuantization(t *testing.T) {
 	runIntegrationGroup(t, "quantization")
-}
-
-func TestImageGeneration(t *testing.T) {
-	runIntegrationGroup(t, "image-generation")
 }
 
 func testName(s string) string {

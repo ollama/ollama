@@ -98,7 +98,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        chatGPTIntegrationName,
 		Runner:      &CodexApp{},
 		Aliases:     []string{codexAppIntegrationName, "codex-desktop", "codex-gui"},
-		Description: "Complete work with ChatGPT",
+		Description: "Use Ollama models in ChatGPT",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return codexAppInstalled()
@@ -113,14 +113,14 @@ var integrationSpecs = []*IntegrationSpec{
 		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				_, err := exec.LookPath("kimi")
+				_, err := findKimiBinary()
 				return err == nil
 			},
 			EnsureInstalled: func() error {
 				_, err := ensureKimiInstalled()
 				return err
 			},
-			URL: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+			URL: "https://moonshotai.github.io/kimi-code/en/guides/getting-started.html",
 		},
 	},
 	{

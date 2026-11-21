@@ -413,7 +413,7 @@ func runAPIShowModel(t *testing.T) {
 	}
 	// llama3 omits system
 	verifyModelDetails(t, resp.Details)
-	// llama3 ommits messages
+	// llama3 omits messages
 	if len(resp.ModelInfo) == 0 {
 		t.Errorf("%s missing model_info: %#v", modelName, resp)
 	}

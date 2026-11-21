@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -233,6 +234,56 @@ func TestCloudPassthroughMiddleware_ZstdBodyTooLarge(t *testing.T) {
 	}
 }
 
+func TestCloudProxyPreservesHTMLCharacters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	var forwarded []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := `<b>Tom & Jerry</b> if (a < b && c > d)`
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"v1 passthrough", "/v1/chat/completions", `{"model":"test-model:cloud","messages":[{"role":"user","content":"` + content + `"}]}`},
+		{"api re-encode", "/api/generate", `{"model":"test-model:cloud","prompt":"` + content + `","stream":false}`},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			forwarded = nil
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tt.path, bytes.NewBufferString(tt.body)))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if model, _ := extractModelField(forwarded); model != "test-model" {
+				t.Fatalf("expected normalized model %q, got %q", "test-model", model)
+			}
+			if !bytes.Contains(forwarded, []byte(content)) {
+				t.Fatalf("expected content to be forwarded unescaped, got %s", forwarded)
+			}
+		})
+	}
+}
+
 func TestBuildCloudSignatureChallengeOverwritesExistingTimestamp(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://ollama.com/v1/messages?beta=true&ts=999", nil)
 	if err != nil {
@@ -249,51 +300,45 @@ func TestBuildCloudSignatureChallengeOverwritesExistingTimestamp(t *testing.T) {
 	}
 }
 
-func TestJSONLFramingResponseWriter_SplitsCoalescedLines(t *testing.T) {
-	rec := &chunkRecorder{header: http.Header{}}
-	w := &jsonlFramingResponseWriter{ResponseWriter: rec}
-
-	payload := []byte("{\"a\":1}\n{\"b\":2}\n")
-	if n, err := w.Write(payload); err != nil {
-		t.Fatalf("write failed: %v", err)
-	} else if n != len(payload) {
-		t.Fatalf("write byte count mismatch: got %d want %d", n, len(payload))
+func TestBuildCloudSignatureChallengePreservesMalformedQuery(t *testing.T) {
+	for _, rawQuery := range []string{
+		"range=24h;",
+		"range=24h&scope=%zz",
+		"ts=999&range=24h;",
+		"ts=%zz&range=24h",
+	} {
+		t.Run(rawQuery, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/usage?"+rawQuery, nil)
+			challenge := buildCloudSignatureChallenge(req, "123")
+			wantQuery := "ts=123&" + rawQuery
+			if got := req.URL.RawQuery; got != wantQuery {
+				t.Errorf("signed query = %q, want %q", got, wantQuery)
+			}
+			if want := "GET,/api/usage?" + wantQuery; challenge != want {
+				t.Errorf("challenge = %q, want %q", challenge, want)
+			}
+			if got := req.URL.Query().Get("ts"); got != "123" {
+				t.Errorf("verifier timestamp = %q, want 123", got)
+			}
+		})
 	}
+}
 
-	if err := w.FlushPending(); err != nil {
-		t.Fatalf("FlushPending failed: %v", err)
+func TestCopyCloudChatResponse(t *testing.T) {
+	rec := &chunkRecorder{header: http.Header{}}
+	payload := "{\"message\":{\"content\":\"first\"}}\n\n{\"done\":true}"
+	if err := copyCloudChatResponse(rec, strings.NewReader(payload), true); err != nil {
+		t.Fatal(err)
 	}
 
 	if len(rec.chunks) != 2 {
 		t.Fatalf("expected 2 framed writes, got %d", len(rec.chunks))
 	}
-	if got := string(rec.chunks[0]); got != `{"a":1}` {
+	if got := string(rec.chunks[0]); got != `{"message":{"content":"first"}}` {
 		t.Fatalf("first chunk mismatch: got %q", got)
 	}
-	if got := string(rec.chunks[1]); got != `{"b":2}` {
+	if got := string(rec.chunks[1]); got != `{"done":true}` {
 		t.Fatalf("second chunk mismatch: got %q", got)
-	}
-}
-
-func TestJSONLFramingResponseWriter_FlushPendingWritesTrailingLine(t *testing.T) {
-	rec := &chunkRecorder{header: http.Header{}}
-	w := &jsonlFramingResponseWriter{ResponseWriter: rec}
-
-	if _, err := w.Write([]byte("{\"a\":1")); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-	if len(rec.chunks) != 0 {
-		t.Fatalf("expected no writes before newline/flush, got %d", len(rec.chunks))
-	}
-
-	if err := w.FlushPending(); err != nil {
-		t.Fatalf("FlushPending failed: %v", err)
-	}
-	if len(rec.chunks) != 1 {
-		t.Fatalf("expected 1 write after FlushPending, got %d", len(rec.chunks))
-	}
-	if got := string(rec.chunks[0]); got != `{"a":1` {
-		t.Fatalf("trailing chunk mismatch: got %q", got)
 	}
 }
 

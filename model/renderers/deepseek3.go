@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type DeepSeek3Variant int
@@ -158,4 +159,12 @@ func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thi
 	}
 
 	return sb.String(), nil
+}
+
+func (r *DeepSeek3Renderer) Thinking() *model.Thinking {
+	values := []any{false}
+	if r.IsThinking {
+		values = append(values, true)
+	}
+	return &model.Thinking{Values: values, Default: false}
 }

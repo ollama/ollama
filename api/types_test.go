@@ -1,12 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/types/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -210,6 +214,22 @@ func TestMainGPUParsingFromJSON(t *testing.T) {
 				assert.Equal(t, *test.wantGPU, *opts.MainGPU)
 			}
 		})
+	}
+}
+
+func TestGenerationDefaultMappingsAreOptions(t *testing.T) {
+	jsonOpts := make(map[string]struct{})
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(Options{})) {
+		jsonTag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if jsonTag != "" {
+			jsonOpts[jsonTag] = struct{}{}
+		}
+	}
+
+	for _, option := range model.GenerationDefaultOptions() {
+		if _, ok := jsonOpts[option]; !ok {
+			t.Fatalf("%s should be defined on api.Options", option)
+		}
 	}
 }
 
@@ -552,10 +572,9 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			expectedThinking: &ThinkValue{Value: "max"},
 		},
 		{
-			name:             "invalid_string",
-			input:            `{ "think": "invalid" }`,
-			expectedThinking: nil,
-			expectedError:    true,
+			name:             "unknown_string",
+			input:            `{ "think": "future-level" }`,
+			expectedThinking: &ThinkValue{Value: "future-level"},
 		},
 	}
 
@@ -964,5 +983,168 @@ func TestToolPropertiesMap_NestedProperties(t *testing.T) {
 		// Both outer and inner should preserve order
 		expected := `{"outer":{"type":"object","properties":{"z_field":{"type":"string"},"a_field":{"type":"number"}}}}`
 		assert.Equal(t, expected, string(data))
+	})
+}
+
+func TestValidateLegacyThinking(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		valid bool
+	}{
+		{`null`, true},
+		{`true`, true},
+		{`false`, true},
+		{`"low"`, true},
+		{`"medium"`, true},
+		{`"high"`, true},
+		{`"max"`, true},
+		{`"xhigh"`, false},
+		{`"minimal"`, false},
+		{`"future"`, false},
+		{`""`, false},
+		{`"HIGH"`, false},
+		{`" high "`, false},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			var think *ThinkValue
+			if err := json.Unmarshal([]byte(tt.input), &think); err != nil {
+				t.Fatal(err)
+			}
+			if !think.IsValid() {
+				t.Fatal("legacy validation must not restrict transport types")
+			}
+			if err := ValidateLegacyThinking(think); (err == nil) != tt.valid {
+				t.Fatalf("ValidateLegacyThinking(%s) = %v, want valid=%v", tt.input, err, tt.valid)
+			}
+		})
+	}
+}
+
+func TestThinkValueTransportTypes(t *testing.T) {
+	for _, tt := range []struct {
+		input   string
+		want    any
+		invalid bool
+	}{
+		{`null`, nil, false},
+		{`true`, true, false},
+		{`false`, false, false},
+		{`"xhigh"`, "xhigh", false},
+		{`"minimal"`, "minimal", false},
+		{`""`, "", false},
+		{`75`, nil, true},
+		{`0.75`, nil, true},
+		{`[]`, nil, true},
+		{`{}`, nil, true},
+		{`tru`, nil, true},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			var think ThinkValue
+			err := json.Unmarshal([]byte(tt.input), &think)
+			if (err != nil) != tt.invalid {
+				t.Fatalf("error = %v, invalid = %v", err, tt.invalid)
+			}
+			if err != nil {
+				return
+			}
+			if think.Value != tt.want {
+				t.Fatalf("got %#v, want %#v", think.Value, tt.want)
+			}
+			if think.IsString() && !think.Bool() {
+				t.Fatal("named effort must express intent to think")
+			}
+		})
+	}
+}
+
+func TestToolSchemaKeepsUnmodeledKeywords(t *testing.T) {
+	input := `{
+		"type": "function",
+		"function": {
+			"name": "concert_find_details",
+			"description": "Finds details of a concert event.",
+			"parameters": {
+				"type": "object",
+				"description": "Search filters.",
+				"properties": {
+					"artist": {"type": "string", "description": "Name of the artist performing."},
+					"year": {"type": "integer", "description": "Year of the concert.", "default": 2022, "minimum": 1900},
+					"id": {"type": "integer", "default": 9007199254740993},
+					"venue": {
+						"type": "object",
+						"properties": {"city": {"type": "string", "default": "Toronto"}},
+						"required": ["city"],
+						"additionalProperties": false
+					},
+					"when": {"anyOf": [{"type": "string", "format": "date"}, {"type": "null"}], "default": null}
+				},
+				"required": ["artist"],
+				"additionalProperties": false
+			}
+		}
+	}`
+
+	var tool Tool
+	require.NoError(t, json.Unmarshal([]byte(input), &tool))
+
+	params := tool.Function.Parameters
+	assert.Equal(t, map[string]any{"description": "Search filters.", "additionalProperties": false}, params.Extra)
+
+	year, ok := params.Properties.Get("year")
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{"default": json.Number("2022"), "minimum": json.Number("1900")}, year.Extra)
+
+	artist, ok := params.Properties.Get("artist")
+	require.True(t, ok)
+	assert.Nil(t, artist.Extra, "a property with only modeled keys has no Extra")
+
+	venue, _ := params.Properties.Get("venue")
+	city, _ := venue.Properties.Get("city")
+	assert.Equal(t, map[string]any{"default": "Toronto"}, city.Extra)
+
+	when, _ := params.Properties.Get("when")
+	assert.Equal(t, map[string]any{"default": nil}, when.Extra)
+	assert.Equal(t, map[string]any{"format": "date"}, when.AnyOf[0].Extra)
+
+	out, err := json.Marshal(tool)
+	require.NoError(t, err)
+	assert.JSONEq(t, input, string(out))
+	assert.Contains(t, string(out), `"default":9007199254740993`)
+}
+
+func TestToolPropertyExtraMarshalling(t *testing.T) {
+	t.Run("no extra keys marshals as before", func(t *testing.T) {
+		data, err := json.Marshal(ToolProperty{Type: PropertyType{"string"}, Description: "d"})
+		require.NoError(t, err)
+		assert.Equal(t, `{"type":"string","description":"d"}`, string(data))
+	})
+
+	t.Run("extra keys follow the modeled fields, sorted", func(t *testing.T) {
+		data, err := json.Marshal(ToolProperty{
+			Type:  PropertyType{"integer"},
+			Extra: map[string]any{"minimum": 1, "default": 5},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, `{"type":"integer","default":5,"minimum":1}`, string(data))
+	})
+
+	t.Run("extra keys alone", func(t *testing.T) {
+		data, err := json.Marshal(ToolProperty{Extra: map[string]any{"default": "x"}})
+		require.NoError(t, err)
+		assert.Equal(t, `{"default":"x"}`, string(data))
+	})
+
+	t.Run("caller's HTML escaping applies to modeled and extra keys", func(t *testing.T) {
+		p := ToolProperty{Description: "a < b", Extra: map[string]any{"default": "<x>&"}}
+
+		escaped, err := json.Marshal(p)
+		require.NoError(t, err)
+		assert.Equal(t, "{\"description\":\"a \\u003c b\",\"default\":\"\\u003cx\\u003e\\u0026\"}", string(escaped))
+
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		require.NoError(t, enc.Encode(p))
+		assert.Equal(t, `{"description":"a < b","default":"<x>&"}`+"\n", buf.String())
 	})
 }

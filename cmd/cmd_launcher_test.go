@@ -1,7 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -10,6 +16,82 @@ import (
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
 )
+
+func TestRootCommandHelpAndLauncher(t *testing.T) {
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdin, oldInteractive := os.Stdin, isInteractiveTerminal
+	os.Stdin = stdin
+	t.Cleanup(func() {
+		os.Stdin, isInteractiveTerminal = oldStdin, oldInteractive
+		stdin.Close()
+	})
+
+	for _, tt := range []struct {
+		name        string
+		interactive bool
+		args        []string
+		wantHelp    bool
+	}{
+		{name: "noninteractive bare command", args: []string{}, wantHelp: true},
+		{name: "interactive bare command", interactive: true, args: []string{}},
+		{name: "interactive explicit help", interactive: true, args: []string{"--help"}, wantHelp: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			setCmdTestHome(t, home)
+			isInteractiveTerminal = func() bool { return tt.interactive }
+
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				http.Error(w, "launcher heartbeat", http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+
+			var output bytes.Buffer
+			root := NewCLI()
+			root.SetArgs(tt.args)
+			root.SetOut(&output)
+			stderr := captureOutput(t, &os.Stderr, func() {
+				if err := root.Execute(); err != nil {
+					t.Errorf("Execute() = %v", err)
+				}
+			})
+
+			if tt.wantHelp {
+				for _, text := range []string{"Large language model runner", "Usage:", "Available Commands:"} {
+					if !strings.Contains(output.String(), text) {
+						t.Errorf("help missing %q: %s", text, output.String())
+					}
+				}
+				if stderr != "" {
+					t.Errorf("unexpected stderr: %s", stderr)
+				}
+				if got := requests.Load(); got != 0 {
+					t.Errorf("help made %d server requests", got)
+				}
+				entries, err := os.ReadDir(home)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) != 0 {
+					t.Errorf("help wrote to home: %v", entries)
+				}
+			} else {
+				if output.Len() != 0 {
+					t.Errorf("interactive command printed help: %s", output.String())
+				}
+				if got := requests.Load(); got != 1 {
+					t.Errorf("launcher made %d heartbeat requests, want 1", got)
+				}
+			}
+		})
+	}
+}
 
 func setCmdTestHome(t *testing.T, dir string) {
 	t.Helper()

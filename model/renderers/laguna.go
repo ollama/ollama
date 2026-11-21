@@ -5,6 +5,7 @@ import (
 	"unicode"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -279,4 +280,12 @@ func formatLagunaToolCallArgument(value any) string {
 	}
 
 	return formatToolCallArgument(value)
+}
+
+func (r *LagunaRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, true}, Default: false}
+}
+
+func (r *LagunaV8Renderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, true}, Default: false}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/auth"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Error types matching Anthropic API
@@ -179,6 +180,8 @@ type Tool struct {
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 
+	DeferLoading bool `json:"defer_loading,omitempty"`
+
 	// Web search specific fields
 	MaxUses int `json:"max_uses,omitempty"`
 }
@@ -217,8 +220,31 @@ type MessagesResponse struct {
 
 // Usage contains token usage information
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
+}
+
+// UsageFromMetrics separates total prompt tokens into uncached and cache-read counts.
+func UsageFromMetrics(metrics api.Metrics) Usage {
+	total := max(0, metrics.PromptEvalCount)
+	var cached *int
+	if metrics.PromptEvalCachedCount != nil {
+		count := min(max(0, *metrics.PromptEvalCachedCount), total)
+		cached = &count
+	}
+	return Usage{
+		InputTokens:          total - intValue(cached),
+		CacheReadInputTokens: cached,
+		OutputTokens:         metrics.EvalCount,
+	}
+}
+
+func intValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
 
 // Streaming event types
@@ -273,8 +299,9 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens          int  `json:"input_tokens"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens         int  `json:"output_tokens"`
 }
 
 // MessageStopEvent signals the end of the message
@@ -293,8 +320,9 @@ type StreamErrorEvent struct {
 	Error Error  `json:"error"`
 }
 
-// FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest
-func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
+// FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	logutil.Trace("anthropic: converting request", "req", TraceMessagesRequest(r))
 
 	var messages []api.Message
@@ -323,8 +351,9 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
+	conv := newMessageConverter(r.Tools)
 	for i, msg := range r.Messages {
-		converted, err := convertMessage(msg)
+		converted, err := conv.convertMessage(msg)
 		if err != nil {
 			logutil.Trace("anthropic: message conversion failed", "index", i, "role", msg.Role, "err", err)
 			return nil, err
@@ -353,15 +382,15 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	var tools api.Tools
-	hasBuiltinWebSearch := false
-	for _, t := range r.Tools {
-		if strings.HasPrefix(t.Type, "web_search") {
-			hasBuiltinWebSearch = true
-			break
-		}
-	}
+	hasBuiltinWebSearch := hasToolType(r.Tools, "web_search")
+	honorDefer := !hasToolType(r.Tools, "tool_search_tool")
 
 	for _, t := range r.Tools {
+		if t.DeferLoading && honorDefer && !conv.loaded[t.Name] {
+			logutil.Trace("anthropic: deferred tool kept out of tool list", "tool", t.Name)
+			continue
+		}
+
 		// Anthropic built-in web_search maps to Ollama function name "web_search".
 		// If a user-defined tool also uses that name in the same request, drop the
 		// user-defined one to avoid ambiguous tool-call routing.
@@ -378,14 +407,6 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	var think *api.ThinkValue
-	normalizedEffort := ""
-	if r.OutputConfig != nil {
-		normalizedEffort = strings.ToLower(strings.TrimSpace(r.OutputConfig.Effort))
-		if normalizedEffort == "xhigh" {
-			normalizedEffort = "high"
-		}
-	}
-
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
 	}
@@ -393,9 +414,20 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		think = &api.ThinkValue{Value: false}
 	}
 	if think == nil && r.OutputConfig != nil {
-		switch normalizedEffort {
-		case "high", "medium", "low", "max":
-			think = &api.ThinkValue{Value: normalizedEffort}
+		effort := r.OutputConfig.Effort
+		if len(thinking) > 0 && thinking[0].Valid() {
+			if effort != "" {
+				think = &api.ThinkValue{Value: effort}
+			}
+		} else {
+			effort = strings.ToLower(strings.TrimSpace(effort))
+			if effort == "xhigh" {
+				effort = "high"
+			}
+			legacyThink := &api.ThinkValue{Value: effort}
+			if api.ValidateLegacyThinking(legacyThink) == nil {
+				think = legacyThink
+			}
 		}
 	}
 
@@ -413,8 +445,32 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	return convertedRequest, nil
 }
 
+type messageConverter struct {
+	tools  map[string]Tool
+	loaded map[string]bool
+}
+
+func newMessageConverter(tools []Tool) *messageConverter {
+	byName := make(map[string]Tool, len(tools))
+	for _, t := range tools {
+		if _, ok := byName[t.Name]; !ok {
+			byName[t.Name] = t
+		}
+	}
+	return &messageConverter{tools: byName, loaded: map[string]bool{}}
+}
+
+func hasToolType(tools []Tool, prefix string) bool {
+	for _, t := range tools {
+		if strings.HasPrefix(t.Type, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // convertMessage converts an Anthropic MessageParam to Ollama api.Message(s)
-func convertMessage(msg MessageParam) ([]api.Message, error) {
+func (c *messageConverter) convertMessage(msg MessageParam) ([]api.Message, error) {
 	var messages []api.Message
 	role := strings.ToLower(msg.Role)
 
@@ -464,6 +520,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				logutil.Trace("anthropic: tool_use block missing name", "role", role)
 				return nil, errors.New("tool_use block missing required 'name' field")
 			}
+			c.loaded[block.Name] = true
 			toolCalls = append(toolCalls, api.ToolCall{
 				ID: block.ID,
 				Function: api.ToolCallFunction{
@@ -474,18 +531,31 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 		case "tool_result":
 			toolResultBlocks++
-			resultContent, resultImages, err := convertToolResultContent(block.Content)
+			resultContent, resultImages, refs, err := convertToolResultContent(block.Content)
 			if err != nil {
 				logutil.Trace("anthropic: invalid tool_result content", "role", role, "error", err)
 				return nil, err
 			}
 
-			toolResults = append(toolResults, api.Message{
+			result := api.Message{
 				Role:       "tool",
 				Content:    resultContent,
 				Images:     resultImages,
 				ToolCallID: block.ToolUseID,
-			})
+			}
+			if len(refs) > 0 {
+				defs, err := c.renderToolReferences(refs)
+				if err != nil {
+					logutil.Trace("anthropic: invalid tool_reference", "role", role, "error", err)
+					return nil, err
+				}
+				if resultContent == "" {
+					result.Content = defs
+				} else if defs != "" {
+					result.Content = resultContent + "\n\n" + defs
+				}
+			}
+			toolResults = append(toolResults, result)
 
 		case "thinking":
 			thinkingBlocks++
@@ -688,10 +758,7 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 		Model:      r.Model,
 		Content:    content,
 		StopReason: stopReason,
-		Usage: Usage{
-			InputTokens:  r.Metrics.PromptEvalCount,
-			OutputTokens: r.Metrics.EvalCount,
-		},
+		Usage:      UsageFromMetrics(r.Metrics),
 	}
 }
 
@@ -721,6 +788,7 @@ type StreamConverter struct {
 	firstWrite           bool
 	contentIndex         int
 	inputTokens          int
+	cacheReadTokens      *int
 	outputTokens         int
 	estimatedInputTokens int // Estimated tokens from request (used when actual metrics are 0)
 	thinkingStarted      bool
@@ -752,8 +820,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	if c.firstWrite {
 		c.firstWrite = false
 		// Use actual metrics if available, otherwise use estimate
-		c.inputTokens = r.Metrics.PromptEvalCount
-		if c.inputTokens == 0 && c.estimatedInputTokens > 0 {
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		if c.inputTokens == 0 && intValue(c.cacheReadTokens) == 0 && c.estimatedInputTokens > 0 {
 			c.inputTokens = c.estimatedInputTokens
 		}
 
@@ -768,8 +838,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Model:   c.Model,
 					Content: []ContentBlock{},
 					Usage: Usage{
-						InputTokens:  c.inputTokens,
-						OutputTokens: 0,
+						InputTokens:          c.inputTokens,
+						CacheReadInputTokens: c.cacheReadTokens,
+						OutputTokens:         0,
 					},
 				},
 			},
@@ -950,8 +1021,10 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			})
 		}
 
-		c.inputTokens = r.Metrics.PromptEvalCount
-		c.outputTokens = r.Metrics.EvalCount
+		usage := UsageFromMetrics(r.Metrics)
+		c.inputTokens = usage.InputTokens
+		c.cacheReadTokens = usage.CacheReadInputTokens
+		c.outputTokens = usage.OutputTokens
 		stopReason := mapStopReason(r.DoneReason, len(c.toolCallsSent) > 0)
 
 		events = append(events, StreamEvent{
@@ -962,8 +1035,9 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					StopReason: stopReason,
 				},
 				Usage: DeltaUsage{
-					InputTokens:  c.inputTokens,
-					OutputTokens: c.outputTokens,
+					InputTokens:          c.inputTokens,
+					CacheReadInputTokens: c.cacheReadTokens,
+					OutputTokens:         c.outputTokens,
 				},
 			},
 		})
@@ -1007,15 +1081,16 @@ func resolveImageSource(source *ImageSource) (api.ImageData, error) {
 	return decoded, nil
 }
 
-func convertToolResultContent(content any) (string, []api.ImageData, error) {
+func convertToolResultContent(content any) (string, []api.ImageData, []string, error) {
 	switch c := content.(type) {
 	case nil:
-		return "", nil, nil
+		return "", nil, nil, nil
 	case string:
-		return c, nil, nil
+		return c, nil, nil, nil
 	case []any:
 		var text strings.Builder
 		var images []api.ImageData
+		var refs []string
 
 		for _, cb := range c {
 			cbMap, ok := cb.(map[string]any)
@@ -1031,7 +1106,7 @@ func convertToolResultContent(content any) (string, []api.ImageData, error) {
 			case "image":
 				rawSource, ok := cbMap["source"].(map[string]any)
 				if !ok {
-					return "", nil, errors.New("invalid tool_result image source")
+					return "", nil, nil, errors.New("invalid tool_result image source")
 				}
 
 				var source ImageSource
@@ -1047,16 +1122,59 @@ func convertToolResultContent(content any) (string, []api.ImageData, error) {
 
 				img, err := resolveImageSource(&source)
 				if err != nil {
-					return "", nil, err
+					return "", nil, nil, err
 				}
 				images = append(images, img)
+			case "tool_reference":
+				if name, ok := cbMap["tool_name"].(string); ok && name != "" {
+					refs = append(refs, name)
+				}
 			}
 		}
 
-		return text.String(), images, nil
+		return text.String(), images, refs, nil
 	default:
-		return "", nil, nil
+		return "", nil, nil, nil
 	}
+}
+
+type toolSearchDefinition struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+func (c *messageConverter) renderToolReferences(names []string) (string, error) {
+	defs := make([]toolSearchDefinition, 0, len(names))
+	for _, name := range names {
+		t, ok := c.tools[name]
+		if !ok {
+			logutil.Trace("anthropic: tool_reference names an undeclared tool", "tool", name)
+			continue
+		}
+		c.loaded[name] = true
+		def := toolSearchDefinition{Type: "function", Name: name, Description: t.Description}
+		if len(t.InputSchema) > 0 {
+			var b bytes.Buffer
+			if err := json.Compact(&b, t.InputSchema); err != nil {
+				return "", fmt.Errorf("invalid input_schema for tool %q: %w", name, err)
+			}
+			def.Parameters = b.Bytes()
+		}
+		defs = append(defs, def)
+	}
+	if len(defs) == 0 {
+		return "", nil
+	}
+
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(defs); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(out.String(), "\n"), nil
 }
 
 // ptr returns a pointer to the given string value

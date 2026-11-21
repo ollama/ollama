@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -112,7 +112,7 @@ func TestGenerateParseErrorMidStreamDoesNotWedge(t *testing.T) {
 func createParserModel(t *testing.T, s *Server, name, parser string) {
 	t.Helper()
 
-	kv := ggml.KV{
+	kv := gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -123,7 +123,7 @@ func createParserModel(t *testing.T, s *Server, name, parser string) {
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
 	}
-	_, digest := createBinFile(t, kv, []*ggml.Tensor{
+	_, digest := createBinFile(t, kv, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 	})
 

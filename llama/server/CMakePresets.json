@@ -116,7 +116,7 @@
       "inherits": ["llama_cuda_v13_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13_arm64",
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "121",
+        "CMAKE_CUDA_ARCHITECTURES": "103;121",
         "GGML_CPU": "OFF",
         "CMAKE_CUDA_FLAGS": "-target-dir=arm64 -t 4",
         "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"

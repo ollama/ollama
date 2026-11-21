@@ -34,6 +34,13 @@ func (p *Olmo3ThinkParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *Olmo3ThinkParser) ThinkingClose() []string {
+	if p.state == olmo3CollectingThink {
+		return []string{olmo3ThinkCloseTag}
+	}
+	return nil
+}
+
 func (p *Olmo3ThinkParser) PreservedTokens() []string {
 	return []string{
 		olmo3ThinkCloseTag,

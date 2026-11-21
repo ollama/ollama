@@ -2,17 +2,22 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
+
+const responsesUnavailableImageNotice = "[This image is unavailable. Attach the image again, or continue without the image.]"
 
 // ResponsesContent is a discriminated union for input content types.
 // Concrete types: ResponsesTextContent, ResponsesImageContent,
-// ResponsesOutputTextContent, ResponsesFileContent.
+// ResponsesOutputTextContent, ResponsesRefusalContent, ResponsesFileContent,
+// ResponsesEncryptedContent.
 type ResponsesContent interface {
 	responsesContent() // unexported marker method
 }
@@ -43,6 +48,14 @@ type ResponsesOutputTextContent struct {
 
 func (ResponsesOutputTextContent) responsesContent() {}
 
+// ResponsesRefusalContent preserves a prior assistant refusal as visible text.
+type ResponsesRefusalContent struct {
+	Type    string `json:"type"`
+	Refusal string `json:"refusal"`
+}
+
+func (ResponsesRefusalContent) responsesContent() {}
+
 type ResponsesFileContent struct {
 	Type     string `json:"type"` // always "input_file"
 	FileData string `json:"file_data,omitempty"`
@@ -52,6 +65,15 @@ type ResponsesFileContent struct {
 }
 
 func (ResponsesFileContent) responsesContent() {}
+
+// ResponsesEncryptedContent is content a provider labeled as encrypted; for
+// Ollama-native conversations the value is plain text, which we accept as-is.
+type ResponsesEncryptedContent struct {
+	Type             string `json:"type"` // always "encrypted_content"
+	EncryptedContent string `json:"encrypted_content"`
+}
+
+func (ResponsesEncryptedContent) responsesContent() {}
 
 type ResponsesInputMessage struct {
 	Type    string             `json:"type"` // always "message"
@@ -132,8 +154,25 @@ func unmarshalResponsesContent(data []byte) (ResponsesContent, error) {
 			return nil, err
 		}
 		return content, nil
+	case "refusal":
+		var content struct {
+			Refusal *string `json:"refusal"`
+		}
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+		if content.Refusal == nil {
+			return nil, errors.New("refusal content requires refusal")
+		}
+		return ResponsesRefusalContent{Type: "refusal", Refusal: *content.Refusal}, nil
 	case "input_file":
 		var content ResponsesFileContent
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+		return content, nil
+	case "encrypted_content":
+		var content ResponsesEncryptedContent
 		if err := json.Unmarshal(data, &content); err != nil {
 			return nil, err
 		}
@@ -159,16 +198,21 @@ type ResponsesFunctionCall struct {
 	Type      string `json:"type"`         // always "function_call"
 	CallID    string `json:"call_id"`      // the tool call ID
 	Name      string `json:"name"`         // function name
-	Arguments string `json:"arguments"`    // JSON arguments string
+	Namespace string `json:"namespace,omitempty"`
+	Arguments string `json:"arguments"` // JSON arguments string
 }
 
 func (ResponsesFunctionCall) responsesInputItem() {}
 
-// ResponsesFunctionCallOutput represents a function call result from the client.
+// ResponsesFunctionCallOutput represents a paired result or standalone named
+// output from the client.
 type ResponsesFunctionCallOutput struct {
-	Type   string `json:"type"`    // always "function_call_output"
-	CallID string `json:"call_id"` // links to the original function call
-	Output string `json:"output"`  // the function result
+	ID        string `json:"id,omitempty"`
+	Type      string `json:"type"`              // always "function_call_output"
+	CallID    string `json:"call_id,omitempty"` // links to the original function call, if any
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Output    string `json:"output"`
 
 	// OutputItems is populated when output is provided as Responses content
 	// items instead of the string shorthand.
@@ -177,18 +221,36 @@ type ResponsesFunctionCallOutput struct {
 
 func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 	var aux struct {
-		Type   string          `json:"type"`
-		CallID string          `json:"call_id"`
-		Output json.RawMessage `json:"output"`
+		ID        string          `json:"id"`
+		Type      string          `json:"type"`
+		CallID    *string         `json:"call_id"`
+		Name      string          `json:"name"`
+		Namespace string          `json:"namespace"`
+		Output    json.RawMessage `json:"output"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
 
-	o.Type = aux.Type
-	o.CallID = aux.CallID
-	o.Output = ""
-	o.OutputItems = nil
+	if aux.Type == "custom_tool_call_output" {
+		if aux.CallID == nil || strings.TrimSpace(*aux.CallID) == "" {
+			return errors.New("custom tool output requires a non-empty call_id")
+		}
+		if len(aux.Output) == 0 || string(aux.Output) == "null" {
+			return errors.New("custom tool output requires output")
+		}
+	}
+
+	if aux.CallID != nil && strings.TrimSpace(*aux.CallID) == "" {
+		return errors.New("function output call_id must not be empty")
+	}
+	if aux.CallID == nil && strings.TrimSpace(aux.Name) == "" {
+		return errors.New("standalone function output is missing name")
+	}
+	*o = ResponsesFunctionCallOutput{ID: aux.ID, Type: aux.Type, Name: aux.Name, Namespace: aux.Namespace}
+	if aux.CallID != nil {
+		o.CallID = *aux.CallID
+	}
 
 	if len(aux.Output) == 0 {
 		return nil
@@ -219,6 +281,8 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 			outputText.WriteString(v.Text)
 		case ResponsesOutputTextContent:
 			outputText.WriteString(v.Text)
+		case ResponsesRefusalContent:
+			outputText.WriteString(v.Refusal)
 		}
 	}
 	o.Output = outputText.String()
@@ -227,16 +291,125 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 
 func (ResponsesFunctionCallOutput) responsesInputItem() {}
 
+// ResponsesToolSearchCall is a tool_search_call input item.
+type ResponsesToolSearchCall struct {
+	ID        string                        `json:"id,omitempty"`
+	Type      string                        `json:"type"` // always "tool_search_call"
+	CallID    string                        `json:"call_id"`
+	Execution string                        `json:"execution"` // always "client"
+	Status    string                        `json:"status,omitempty"`
+	Arguments api.ToolCallFunctionArguments `json:"arguments"`
+}
+
+func (ResponsesToolSearchCall) responsesInputItem() {}
+
+// ResponsesToolSearchOutput is a tool_search_output input item.
+type ResponsesToolSearchOutput struct {
+	ID        string            `json:"id,omitempty"`
+	Type      string            `json:"type"` // always "tool_search_output"
+	CallID    string            `json:"call_id"`
+	Execution string            `json:"execution"` // always "client"
+	Status    string            `json:"status,omitempty"`
+	Tools     []json.RawMessage `json:"tools"`
+}
+
+func (ResponsesToolSearchOutput) responsesInputItem() {}
+
 // ResponsesReasoningInput represents a reasoning item passed back as input.
 // This is used when the client sends previous reasoning back for context.
 type ResponsesReasoningInput struct {
 	ID               string                      `json:"id,omitempty"`
 	Type             string                      `json:"type"` // always "reasoning"
 	Summary          []ResponsesReasoningSummary `json:"summary,omitempty"`
+	Content          []ResponsesReasoningContent `json:"content,omitempty"`
 	EncryptedContent string                      `json:"encrypted_content,omitempty"`
 }
 
 func (ResponsesReasoningInput) responsesInputItem() {}
+
+type ResponsesReasoningContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func (c *ResponsesReasoningContent) UnmarshalJSON(data []byte) error {
+	var part struct {
+		Type string  `json:"type"`
+		Text *string `json:"text"`
+	}
+	if err := json.Unmarshal(data, &part); err != nil {
+		return err
+	}
+	// Codex history can mix reasoning_text and text parts in the same item.
+	if part.Type != "reasoning_text" && part.Type != "text" {
+		return fmt.Errorf("unsupported reasoning content type %q", part.Type)
+	}
+	if part.Text == nil {
+		return errors.New("reasoning content requires text")
+	}
+	*c = ResponsesReasoningContent{Type: part.Type, Text: *part.Text}
+	return nil
+}
+
+func (r ResponsesReasoningInput) text() string {
+	var parts []string
+	for _, part := range r.Summary {
+		parts = append(parts, part.Text)
+	}
+	for _, part := range r.Content {
+		parts = append(parts, part.Text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// AgentMessageEnvelopeFormat is the routing prefix for converted agent
+// messages; internal/proxy uses the same text (cross-pinned by tests).
+const AgentMessageEnvelopeFormat = "Agent message from %q to %q:\n"
+
+func agentMessageContent(author, recipient, content string) string {
+	if author == "" && recipient == "" {
+		return content
+	}
+	return fmt.Sprintf(AgentMessageEnvelopeFormat+"%s", author, recipient, content)
+}
+
+// ResponsesAgentMessageInput is a message passed between Codex agents in the
+// multi-agent collaboration flow.
+type ResponsesAgentMessageInput struct {
+	ID        string             `json:"id,omitempty"`
+	Type      string             `json:"type"` // always "agent_message"
+	Author    string             `json:"author"`
+	Recipient string             `json:"recipient"`
+	Content   []ResponsesContent `json:"content"`
+}
+
+func (ResponsesAgentMessageInput) responsesInputItem() {}
+
+func (m *ResponsesAgentMessageInput) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		ID        string            `json:"id"`
+		Type      string            `json:"type"`
+		Author    string            `json:"author"`
+		Recipient string            `json:"recipient"`
+		Content   []json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	m.ID = aux.ID
+	m.Type = aux.Type
+	m.Author = aux.Author
+	m.Recipient = aux.Recipient
+	m.Content = make([]ResponsesContent, 0, len(aux.Content))
+	for i, raw := range aux.Content {
+		content, err := unmarshalResponsesContent(raw)
+		if err != nil {
+			return fmt.Errorf("content[%d]: %w", i, err)
+		}
+		m.Content = append(m.Content, content)
+	}
+	return nil
+}
 
 // unmarshalResponsesInputItem unmarshals a single input item from JSON.
 func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
@@ -268,8 +441,45 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return fc, nil
-	case "function_call_output":
+	case "custom_tool_call":
+		var call struct {
+			ResponsesFunctionCall
+			Input *string `json:"input"`
+		}
+		if err := json.Unmarshal(data, &call); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(call.CallID) == "" {
+			return nil, errors.New("custom tool call requires a non-empty call_id")
+		}
+		if strings.TrimSpace(call.Name) == "" {
+			return nil, errors.New("custom tool call requires a non-empty name")
+		}
+		if call.Input == nil {
+			return nil, errors.New("custom tool call requires input")
+		}
+		arguments, err := json.Marshal(map[string]string{"input": *call.Input})
+		if err != nil {
+			return nil, err
+		}
+		call.Type = "function_call"
+		call.Arguments = string(arguments)
+		return call.ResponsesFunctionCall, nil
+	case "function_call_output", "custom_tool_call_output":
 		var output ResponsesFunctionCallOutput
+		if err := json.Unmarshal(data, &output); err != nil {
+			return nil, err
+		}
+		output.Type = "function_call_output"
+		return output, nil
+	case "tool_search_call":
+		var call ResponsesToolSearchCall
+		if err := json.Unmarshal(data, &call); err != nil {
+			return nil, err
+		}
+		return call, nil
+	case "tool_search_output":
+		var output ResponsesToolSearchOutput
 		if err := json.Unmarshal(data, &output); err != nil {
 			return nil, err
 		}
@@ -286,6 +496,24 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return call, nil
+	case "agent_message":
+		var agentMessage ResponsesAgentMessageInput
+		if err := json.Unmarshal(data, &agentMessage); err != nil {
+			return nil, err
+		}
+		return agentMessage, nil
+	case "compaction":
+		var compaction ResponsesCompactionItem
+		if err := json.Unmarshal(data, &compaction); err != nil {
+			return nil, err
+		}
+		return compaction, nil
+	case "compaction_trigger":
+		var trigger ResponsesCompactionTrigger
+		if err := json.Unmarshal(data, &trigger); err != nil {
+			return nil, err
+		}
+		return trigger, nil
 	default:
 		if itemType == "" {
 			return nil, fmt.Errorf("input item missing required 'type' field")
@@ -353,11 +581,13 @@ type ResponsesText struct {
 // ResponsesTool represents a tool in the Responses API format.
 // Note: This differs from api.Tool which nests fields under "function".
 type ResponsesTool struct {
-	Type        string         `json:"type"` // "function", "namespace", or "web_search"
-	Name        string         `json:"name"`
-	Description *string        `json:"description"` // nullable but required
-	Strict      *bool          `json:"strict"`      // nullable but required
-	Parameters  map[string]any `json:"parameters"`  // nullable but required
+	Type         string         `json:"type"` // "function", "namespace", "tool_search", or "web_search"
+	Name         string         `json:"name,omitempty"`
+	Description  *string        `json:"description,omitempty"`
+	Strict       *bool          `json:"strict,omitempty"`
+	Parameters   map[string]any `json:"parameters,omitempty"`
+	Execution    string         `json:"execution,omitempty"`
+	DeferLoading *bool          `json:"defer_loading,omitempty"`
 
 	// Tools carries a "namespace" declaration's member functions. The
 	// Responses API groups related tools by domain under a namespace tool
@@ -390,6 +620,10 @@ type ResponsesRequest struct {
 
 	Reasoning ResponsesReasoning `json:"reasoning"`
 
+	// Think is an Ollama extension used when a model's native thinking control
+	// cannot be represented exactly by OpenAI's string-valued reasoning effort.
+	Think *api.ThinkValue `json:"think,omitempty"`
+
 	// optional, default is 1.0
 	Temperature *float64 `json:"temperature"`
 
@@ -412,9 +646,11 @@ type ResponsesRequest struct {
 	Stream *bool `json:"stream,omitempty"`
 }
 
-// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest
-func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
+// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	var messages []api.Message
+	availableTools := responsesRequestTools(r)
 
 	// Add instructions as system message if present
 	if r.Instructions != "" {
@@ -435,12 +671,53 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 	// Handle array of input items
 	// Track pending reasoning to merge with the next assistant message
 	var pendingThinking string
+	flushThinking := func() {
+		if pendingThinking == "" {
+			return
+		}
+		if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" && len(messages[len(messages)-1].ToolCalls) > 0 {
+			last := &messages[len(messages)-1]
+			if last.Thinking != "" {
+				last.Thinking += "\n"
+			}
+			last.Thinking += pendingThinking
+		} else {
+			messages = append(messages, api.Message{Role: "assistant", Thinking: pendingThinking})
+		}
+		pendingThinking = ""
+	}
 
 	for i, item := range r.Input.Items {
 		switch v := item.(type) {
+		case ResponsesInputMessage:
+			if v.Role != "assistant" {
+				flushThinking()
+			}
+		case ResponsesReasoningInput, ResponsesWebSearchCall, ResponsesFunctionCall, ResponsesToolSearchCall:
+			// These items can carry the preceding reasoning.
+		default:
+			flushThinking()
+		}
+		switch v := item.(type) {
 		case ResponsesReasoningInput:
-			// Store thinking to merge with the next assistant message
-			pendingThinking = v.EncryptedContent
+			// Preserve both readable fields. Another provider's encrypted_content
+			// is opaque and must not be interpreted as plaintext reasoning.
+			if text := v.text(); text != "" {
+				if pendingThinking != "" {
+					pendingThinking += "\n"
+				}
+				pendingThinking += text
+			}
+		case ResponsesAgentMessageInput:
+			content, images, err := convertResponsesContent(v.Content)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, api.Message{
+				Role:    "user",
+				Content: agentMessageContent(v.Author, v.Recipient, content),
+				Images:  images,
+			})
 		case ResponsesInputMessage:
 			msg, err := convertInputMessage(v)
 			if err != nil {
@@ -474,7 +751,10 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 						lastMsg.Content += msg.Content
 						lastMsg.Images = append(lastMsg.Images, msg.Images...)
 						if msg.Thinking != "" {
-							lastMsg.Thinking = msg.Thinking
+							if lastMsg.Thinking != "" {
+								lastMsg.Thinking += "\n"
+							}
+							lastMsg.Thinking += msg.Thinking
 						}
 						merged = true
 						break
@@ -493,33 +773,21 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 					return nil, fmt.Errorf("failed to parse function call arguments: %w", err)
 				}
 			}
+			namespace, name := v.Namespace, v.Name
+			if namespace == "" {
+				if matchedNamespace, matchedName := responsesToolCallName(availableTools, name); matchedNamespace != "" {
+					namespace, name = matchedNamespace, matchedName
+				}
+			}
 			toolCall := api.ToolCall{
 				ID: v.CallID,
 				Function: api.ToolCallFunction{
-					Name:      v.Name,
+					Name:      qualifyNamespaceToolName(namespace, name),
 					Arguments: args,
 				},
 			}
 
-			// Merge tool call into existing assistant message if it has content or tool calls
-			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
-				lastMsg := &messages[len(messages)-1]
-				lastMsg.ToolCalls = append(lastMsg.ToolCalls, toolCall)
-				if pendingThinking != "" {
-					lastMsg.Thinking = pendingThinking
-					pendingThinking = ""
-				}
-			} else {
-				msg := api.Message{
-					Role:      "assistant",
-					ToolCalls: []api.ToolCall{toolCall},
-				}
-				if pendingThinking != "" {
-					msg.Thinking = pendingThinking
-					pendingThinking = ""
-				}
-				messages = append(messages, msg)
-			}
+			messages = appendResponseToolCall(messages, toolCall, &pendingThinking)
 		case ResponsesFunctionCallOutput:
 			content := v.Output
 			var images []api.ImageData
@@ -530,59 +798,105 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 					return nil, err
 				}
 			}
-			messages = append(messages, api.Message{
+			message := api.Message{
 				Role:       "tool",
 				Content:    content,
 				Images:     images,
+				ToolCallID: v.CallID,
+			}
+			if v.CallID == "" {
+				message.ToolName = qualifyNamespaceToolName(v.Namespace, v.Name)
+			}
+			messages = append(messages, message)
+		case ResponsesToolSearchCall:
+			messages = appendResponseToolCall(messages, api.ToolCall{
+				ID: v.CallID,
+				Function: api.ToolCallFunction{
+					Name:      "tool_search",
+					Arguments: v.Arguments,
+				},
+			}, &pendingThinking)
+		case ResponsesToolSearchOutput:
+			tools := v.Tools
+			if tools == nil {
+				tools = []json.RawMessage{}
+			}
+			tools, err := modelToolSearchTools(tools)
+			if err != nil {
+				return nil, err
+			}
+			content, err := json.Marshal(tools)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode tool search output: %w", err)
+			}
+			messages = append(messages, api.Message{
+				Role:       "tool",
+				Content:    string(content),
+				ToolName:   "tool_search",
 				ToolCallID: v.CallID,
 			})
 		case ResponsesWebSearchCall:
 			// Built-in tool calls are history metadata. The assistant message
 			// that follows carries the model-visible result of the prior search.
+		case ResponsesCompactionItem:
+			return nil, errors.New("compaction items must be expanded before Responses conversion")
+		case ResponsesCompactionTrigger:
+			return nil, errors.New("compaction_trigger must be handled before Responses conversion")
 		}
 	}
 
-	// If there's trailing reasoning without a following message, emit it
-	if pendingThinking != "" {
-		messages = append(messages, api.Message{
-			Role:     "assistant",
-			Thinking: pendingThinking,
-		})
-	}
+	flushThinking()
 
 	options := make(map[string]any)
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else { //nolint:staticcheck // SA9003: empty branch
-		// TODO(drifkin): OpenAI defaults to 1.0 here, but we don't follow that here
-		// in case the model has a different default. It would be best if we
-		// understood whether there was a model-specific default and if not, we
-		// should also default to 1.0, but that will require some additional
-		// plumbing
 	}
 
 	if r.MaxOutputTokens != nil {
 		options["num_predict"] = *r.MaxOutputTokens
 	}
 
-	think, err := thinkFromReasoningEffort(r.Reasoning.Effort)
-	if err != nil {
-		return nil, err
+	think := r.Think
+	if think != nil {
+		if !think.IsValid() {
+			return nil, fmt.Errorf("invalid think value")
+		}
+		if len(thinking) == 0 || !thinking[0].Valid() {
+			if err := api.ValidateLegacyThinking(think); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		converted, err := ThinkingFromReasoningEffort(r.Reasoning.Effort, thinking...)
+		if err != nil {
+			return nil, err
+		}
+		think = converted
 	}
 
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool
 	hasWebSearch := HasWebSearchTool(r.Tools)
+	hasToolSearch := HasToolSearchTool(r.Tools)
 	for _, t := range r.Tools {
 		if isWebSearchTool(t) {
 			tools = append(tools, WebSearchFunctionTool())
+			continue
+		}
+		if isToolSearchTool(t) {
+			if t.Execution != "" && t.Execution != "client" {
+				return nil, fmt.Errorf("tool_search execution %q is not supported; use client execution", t.Execution)
+			}
+			tool, err := ToolSearchFunctionTool(t)
+			if err != nil {
+				return nil, err
+			}
+			tools = append(tools, tool)
 			continue
 		}
 		expanded, err := convertTools(t)
@@ -592,7 +906,8 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		for _, tool := range expanded {
 			// The built-in tool owns this name. Keeping a user-declared function
 			// with the same name makes a model call ambiguous.
-			if hasWebSearch && tool.Function.Name == "web_search" {
+			if (hasWebSearch && tool.Function.Name == "web_search") ||
+				(hasToolSearch && tool.Function.Name == "tool_search") {
 				continue
 			}
 			tools = append(tools, tool)
@@ -610,6 +925,23 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
+	var truncate *bool
+	if r.Truncation != nil {
+		switch *r.Truncation {
+		case "auto":
+			t := true
+			truncate = &t
+		case "disabled":
+			t := false
+			truncate = &t
+		default:
+			return nil, fmt.Errorf("unknown truncation strategy: %q", *r.Truncation)
+		}
+	} else {
+		t := false
+		truncate = &t
+	}
+
 	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
@@ -617,10 +949,35 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		Tools:    tools,
 		Format:   format,
 		Think:    think,
+		Truncate: truncate,
 	}, nil
 }
 
+func appendResponseToolCall(messages []api.Message, toolCall api.ToolCall, pendingThinking *string) []api.Message {
+	if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		last := &messages[len(messages)-1]
+		last.ToolCalls = append(last.ToolCalls, toolCall)
+		if *pendingThinking != "" {
+			if last.Thinking != "" {
+				last.Thinking += "\n"
+			}
+			last.Thinking += *pendingThinking
+			*pendingThinking = ""
+		}
+		return messages
+	}
+
+	msg := api.Message{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}}
+	if *pendingThinking != "" {
+		msg.Thinking = *pendingThinking
+		*pendingThinking = ""
+	}
+	return append(messages, msg)
+}
+
 func isWebSearchTool(t ResponsesTool) bool { return t.Type == "web_search" }
+
+func isToolSearchTool(t ResponsesTool) bool { return t.Type == "tool_search" }
 
 // HasWebSearchTool reports whether a request declares the built-in Responses
 // web-search tool.
@@ -633,9 +990,24 @@ func HasWebSearchTool(tools []ResponsesTool) bool {
 	return false
 }
 
-// WebSearchFunctionTool is the private function contract passed to local
-// models. Responses clients must only ever see their original web_search
-// declaration echoed back.
+// HasToolSearchTool reports whether tools include tool_search.
+func HasToolSearchTool(tools []ResponsesTool) bool {
+	for _, tool := range tools {
+		if isToolSearchTool(tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// ToolSearchFunctionTool converts a tool_search declaration to an api.Tool.
+func ToolSearchFunctionTool(t ResponsesTool) (api.Tool, error) {
+	t.Type = "function"
+	t.Name = "tool_search"
+	return convertTool(t)
+}
+
+// WebSearchFunctionTool returns the web search function declaration.
 func WebSearchFunctionTool() api.Tool {
 	properties := api.NewToolPropertiesMap()
 	properties.Set("query", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "The search query."})
@@ -653,12 +1025,7 @@ func WebSearchFunctionTool() api.Tool {
 	}
 }
 
-// convertTools converts one Responses-API tool declaration to api.Tools. A
-// "namespace" declaration groups member functions under a common name; it
-// expands to those members with namespace-qualified names, since api.Tool
-// carries only a flat function name. Dropping the members instead would
-// leave the model with one schema-less pseudo-function and make every
-// namespaced call undeclarable.
+// convertTools converts one Responses API tool declaration to api.Tools.
 func convertTools(t ResponsesTool) ([]api.Tool, error) {
 	if t.Type != "namespace" {
 		tool, err := convertTool(t)
@@ -675,13 +1042,105 @@ func convertTools(t ResponsesTool) ([]api.Tool, error) {
 			return nil, err
 		}
 		for i := range expanded {
-			if prefix := t.Name + "."; t.Name != "" && !strings.HasPrefix(expanded[i].Function.Name, prefix) {
-				expanded[i].Function.Name = prefix + expanded[i].Function.Name
-			}
+			expanded[i].Function.Name = qualifyNamespaceToolName(t.Name, expanded[i].Function.Name)
 		}
 		tools = append(tools, expanded...)
 	}
 	return tools, nil
+}
+
+func qualifyNamespaceToolName(namespace, member string) string {
+	if namespace == "" || member == "" {
+		return member
+	}
+	if strings.HasPrefix(member, namespace+".") || strings.HasPrefix(member, namespace+"_") {
+		return member
+	}
+	if strings.HasPrefix(member, "_") {
+		return namespace + member
+	}
+	return namespace + "." + member
+}
+
+func responsesToolCallName(tools []ResponsesTool, qualified string) (namespace, name string) {
+	for _, tool := range tools {
+		if tool.Type != "namespace" || tool.Name == "" {
+			continue
+		}
+		for _, member := range tool.Tools {
+			if member.Type == "namespace" {
+				continue
+			}
+			native := qualifyNamespaceToolName(tool.Name, member.Name)
+			dotted := tool.Name + "." + member.Name
+			colon := tool.Name + ":" + member.Name
+			if native == qualified || dotted == qualified || colon == qualified {
+				return tool.Name, member.Name
+			}
+		}
+	}
+	return "", qualified
+}
+
+// modelToolSearchTools flattens namespace members.
+func modelToolSearchTools(tools []json.RawMessage) ([]json.RawMessage, error) {
+	flattened := make([]json.RawMessage, 0, len(tools))
+	for _, raw := range tools {
+		var tool struct {
+			Type  string            `json:"type"`
+			Name  string            `json:"name"`
+			Tools []json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(raw, &tool); err != nil {
+			return nil, fmt.Errorf("failed to decode tool search result: %w", err)
+		}
+		if tool.Type != "namespace" {
+			flattened = append(flattened, raw)
+			continue
+		}
+		if tool.Name == "" {
+			return nil, fmt.Errorf("tool search namespace is missing a name")
+		}
+
+		for _, rawMember := range tool.Tools {
+			var member map[string]json.RawMessage
+			if err := json.Unmarshal(rawMember, &member); err != nil {
+				return nil, fmt.Errorf("failed to decode tool search namespace %q member: %w", tool.Name, err)
+			}
+			var name string
+			if err := json.Unmarshal(member["name"], &name); err != nil || name == "" {
+				return nil, fmt.Errorf("tool search namespace %q has a member without a name", tool.Name)
+			}
+			qualifiedName, err := json.Marshal(tool.Name + "." + name)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode tool search namespace %q member name: %w", tool.Name, err)
+			}
+			member["name"] = qualifiedName
+			encoded, err := json.Marshal(member)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode tool search namespace %q member: %w", tool.Name, err)
+			}
+			flattened = append(flattened, encoded)
+		}
+	}
+	return flattened, nil
+}
+
+func responsesRequestTools(r ResponsesRequest) []ResponsesTool {
+	tools := append([]ResponsesTool(nil), r.Tools...)
+	for _, item := range r.Input.Items {
+		output, ok := item.(ResponsesToolSearchOutput)
+		if !ok {
+			continue
+		}
+		for _, raw := range output.Tools {
+			var tool ResponsesTool
+			if err := json.Unmarshal(raw, &tool); err == nil {
+				tools = append(tools, tool)
+			}
+		}
+	}
+	return tools
 }
 
 func convertTool(t ResponsesTool) (api.Tool, error) {
@@ -730,15 +1189,23 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 	var content string
 	var images []api.ImageData
 
-	for _, c := range contents {
+	for i, c := range contents {
 		switch v := c.(type) {
 		case ResponsesTextContent:
 			content += v.Text
 		case ResponsesOutputTextContent:
 			content += v.Text
+		case ResponsesRefusalContent:
+			content += v.Refusal
+		case ResponsesEncryptedContent:
+			content += v.EncryptedContent
 		case ResponsesImageContent:
 			if v.ImageURL == "" {
-				continue // Skip if no URL (FileID not supported)
+				if strings.TrimSpace(v.FileID) != "" {
+					content += "\n\n" + responsesUnavailableImageNotice + "\n\n"
+					continue
+				}
+				return "", nil, fmt.Errorf("content[%d]: image input requires image_url as a base64 data URL", i)
 			}
 			img, err := decodeImageURL(v.ImageURL)
 			if err != nil {
@@ -779,6 +1246,8 @@ type ResponsesIncompleteDetails struct {
 	Reason string `json:"reason"`
 }
 
+// ResponsesResponse is a Responses API response. TopP and Temperature are nil
+// (null) when the request left them to the model's defaults.
 type ResponsesResponse struct {
 	ID                 string                      `json:"id"`
 	Object             string                      `json:"object"`
@@ -796,11 +1265,11 @@ type ResponsesResponse struct {
 	Truncation         string                      `json:"truncation"`
 	ParallelToolCalls  bool                        `json:"parallel_tool_calls"`
 	Text               ResponsesTextField          `json:"text"`
-	TopP               float64                     `json:"top_p"`
+	TopP               *float64                    `json:"top_p"`
 	PresencePenalty    float64                     `json:"presence_penalty"`
 	FrequencyPenalty   float64                     `json:"frequency_penalty"`
 	TopLogprobs        int                         `json:"top_logprobs"`
-	Temperature        float64                     `json:"temperature"`
+	Temperature        *float64                    `json:"temperature"`
 	Reasoning          *ResponsesReasoningOutput   `json:"reasoning"`
 	Usage              *ResponsesUsage             `json:"usage"`
 	MaxOutputTokens    *int                        `json:"max_output_tokens"`
@@ -815,13 +1284,15 @@ type ResponsesResponse struct {
 
 type ResponsesOutputItem struct {
 	ID        string                    `json:"id"`
-	Type      string                    `json:"type"` // "message", "function_call", or "reasoning"
+	Type      string                    `json:"type"` // "message", "function_call", "tool_search_call", or "reasoning"
 	Status    string                    `json:"status,omitempty"`
 	Role      string                    `json:"role,omitempty"`      // for message
 	Content   []ResponsesOutputContent  `json:"content,omitempty"`   // for message
-	CallID    string                    `json:"call_id,omitempty"`   // for function_call
+	CallID    string                    `json:"call_id,omitempty"`   // for function_call or tool_search_call
 	Name      string                    `json:"name,omitempty"`      // for function_call
-	Arguments string                    `json:"arguments,omitempty"` // for function_call
+	Namespace string                    `json:"namespace,omitempty"` // for namespaced function_call
+	Execution string                    `json:"execution,omitempty"` // for tool_search_call
+	Arguments any                       `json:"arguments,omitempty"` // string for function_call, object for tool_search_call
 	Action    *ResponsesWebSearchAction `json:"action,omitempty"`    // for web_search_call
 
 	// Reasoning fields
@@ -885,16 +1356,17 @@ type ResponsesUsage struct {
 	OutputTokensDetails ResponsesOutputTokensDetails `json:"output_tokens_details"`
 }
 
-// derefFloat64 returns the value of a float64 pointer, or a default if nil.
-func derefFloat64(p *float64, def float64) float64 {
-	if p != nil {
-		return *p
+func intValue(v *int) int {
+	if v == nil {
+		return 0
 	}
-	return def
+	return *v
 }
 
 // ToResponse converts an api.ChatResponse to a Responses API response.
-// The request is used to echo back request parameters in the response.
+// The request is used to echo back request parameters in the response; a
+// caller that knows the model's resolved sampling defaults sets them on the
+// request so the response reports what ran.
 func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse, request ResponsesRequest) ResponsesResponse {
 	var output []ResponsesOutputItem
 
@@ -915,13 +1387,27 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
+		availableTools := responsesRequestTools(request)
 		for i, tc := range toolCalls {
+			if HasToolSearchTool(request.Tools) && tc.Function.Name == "tool_search" {
+				output = append(output, ResponsesOutputItem{
+					ID:        fmt.Sprintf("tsc_%s_%d", responseID, i),
+					Type:      "tool_search_call",
+					Status:    "completed",
+					CallID:    tc.ID,
+					Execution: "client",
+					Arguments: toolSearchArguments(tc.Function.Arguments),
+				})
+				continue
+			}
+			namespace, name := responsesToolCallName(availableTools, tc.Function.Name)
 			output = append(output, ResponsesOutputItem{
 				ID:        fmt.Sprintf("fc_%s_%d", responseID, i),
 				Type:      "function_call",
 				Status:    "completed",
 				CallID:    tc.ID,
-				Name:      tc.Function.Name,
+				Namespace: namespace,
+				Name:      name,
 				Arguments: tc.Function.Arguments,
 			})
 		}
@@ -994,18 +1480,17 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		Truncation:         truncation,
 		ParallelToolCalls:  true, // Default value
 		Text:               text,
-		TopP:               derefFloat64(request.TopP, 1.0),
+		TopP:               request.TopP,
 		PresencePenalty:    0, // Default value
 		FrequencyPenalty:   0, // Default value
 		TopLogprobs:        0, // Default value
-		Temperature:        derefFloat64(request.Temperature, 1.0),
+		Temperature:        request.Temperature,
 		Reasoning:          reasoning,
 		Usage: &ResponsesUsage{
-			InputTokens:  chatResponse.PromptEvalCount,
-			OutputTokens: chatResponse.EvalCount,
-			TotalTokens:  chatResponse.PromptEvalCount + chatResponse.EvalCount,
-			// TODO(drifkin): wire through the actual values
-			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: 0},
+			InputTokens:        chatResponse.PromptEvalCount,
+			OutputTokens:       chatResponse.EvalCount,
+			TotalTokens:        chatResponse.PromptEvalCount + chatResponse.EvalCount,
+			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: intValue(chatResponse.PromptEvalCachedCount)},
 			// TODO(drifkin): wire through the actual values
 			OutputTokensDetails: ResponsesOutputTokensDetails{ReasoningTokens: 0},
 		},
@@ -1018,6 +1503,13 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		SafetyIdentifier: nil, // Not supported
 		PromptCacheKey:   nil, // Not supported
 	}
+}
+
+func toolSearchArguments(arguments string) json.RawMessage {
+	if !json.Valid([]byte(arguments)) {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(arguments)
 }
 
 // Streaming events: <https://platform.openai.com/docs/api-reference/responses-streaming>
@@ -1046,6 +1538,7 @@ type ResponsesStreamConverter struct {
 	toolCallsSent   bool
 	accumulatedText string
 	sequenceNumber  int
+	terminated      bool
 
 	// Reasoning/thinking state
 	accumulatedThinking string
@@ -1054,6 +1547,10 @@ type ResponsesStreamConverter struct {
 
 	// Items completed before the final message, in streamed output-index order.
 	completedItems []any
+
+	// A server-side search reserves its output index before execution finishes.
+	webSearchCall        *ResponsesWebSearchCall
+	webSearchOutputIndex int
 }
 
 // newEvent creates a ResponsesStreamEvent with the sequence number included in the data.
@@ -1067,7 +1564,9 @@ func (c *ResponsesStreamConverter) newEvent(eventType string, data map[string]an
 	}
 }
 
-// NewResponsesStreamConverter creates a new converter with the given configuration.
+// NewResponsesStreamConverter creates a new converter with the given
+// configuration. As with ToResponse, the request's sampling settings are
+// reported, null when left to the model's defaults.
 func NewResponsesStreamConverter(responseID, itemID, model string, request ResponsesRequest) *ResponsesStreamConverter {
 	return &ResponsesStreamConverter{
 		responseID: responseID,
@@ -1082,6 +1581,9 @@ func NewResponsesStreamConverter(responseID, itemID, model string, request Respo
 // Events are returned in order. The caller is responsible for serializing
 // and sending these events.
 func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
 	var events []ResponsesStreamEvent
 
 	hasToolCalls := len(r.Message.ToolCalls) > 0
@@ -1113,6 +1615,7 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// Done - emit closing events
 	if r.Done {
 		events = append(events, c.processCompletion(r)...)
+		c.terminated = true
 	}
 
 	return events
@@ -1130,20 +1633,9 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		truncation = *c.request.Truncation
 	}
 
-	var tools []any
-	if c.request.Tools != nil {
-		for _, t := range c.request.Tools {
-			tools = append(tools, map[string]any{
-				"type":        t.Type,
-				"name":        t.Name,
-				"description": t.Description,
-				"strict":      t.Strict,
-				"parameters":  t.Parameters,
-			})
-		}
-	}
+	tools := c.request.Tools
 	if tools == nil {
-		tools = []any{}
+		tools = []ResponsesTool{}
 	}
 
 	textFormat := map[string]any{"type": "text"}
@@ -1178,16 +1670,6 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		reasoning = r
 	}
 
-	// Build top_p and temperature with defaults
-	topP := 1.0
-	if c.request.TopP != nil {
-		topP = *c.request.TopP
-	}
-	temperature := 1.0
-	if c.request.Temperature != nil {
-		temperature = *c.request.Temperature
-	}
-
 	return map[string]any{
 		"id":                   c.responseID,
 		"object":               "response",
@@ -1205,11 +1687,11 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"truncation":           truncation,
 		"parallel_tool_calls":  true,
 		"text":                 map[string]any{"format": textFormat},
-		"top_p":                topP,
+		"top_p":                c.request.TopP,
 		"presence_penalty":     0,
 		"frequency_penalty":    0,
 		"top_logprobs":         0,
-		"temperature":          temperature,
+		"temperature":          c.request.Temperature,
 		"reasoning":            reasoning,
 		"usage":                usage,
 		"max_output_tokens":    c.request.MaxOutputTokens,
@@ -1308,7 +1790,10 @@ func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
 }
 
 func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
+	events := c.finishReasoning()
+	// A preceding text item must close before a tool uses the next output index.
+	events = append(events, c.FinishMessageItem()...)
+	return append(events, c.emitFunctionCallEvents(toolCalls)...)
 }
 
 // emitFunctionCallEvents emits function_call stream events for the given tool
@@ -1316,32 +1801,72 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCall) []ResponsesStreamEvent {
 	var events []ResponsesStreamEvent
 	converted := ToToolCalls(toolCalls)
+	availableTools := responsesRequestTools(c.request)
 
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
+		if HasToolSearchTool(c.request.Tools) && tc.Function.Name == "tool_search" {
+			itemID := fmt.Sprintf("tsc_%d_%d", rand.Intn(999999), i)
+			arguments := toolSearchArguments(tc.Function.Arguments)
+			item := map[string]any{
+				"id":        itemID,
+				"type":      "tool_search_call",
+				"status":    "completed",
+				"call_id":   tc.ID,
+				"execution": "client",
+				"arguments": arguments,
+			}
+			c.completedItems = append(c.completedItems, item)
+			events = append(events,
+				c.newEvent("response.output_item.added", map[string]any{
+					"output_index": outputIndex,
+					"item": map[string]any{
+						"id":        itemID,
+						"type":      "tool_search_call",
+						"status":    "in_progress",
+						"call_id":   tc.ID,
+						"execution": "client",
+						"arguments": json.RawMessage(`{}`),
+					},
+				}),
+				c.newEvent("response.output_item.done", map[string]any{
+					"output_index": outputIndex,
+					"item":         item,
+				}),
+			)
+			continue
+		}
 		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
+		namespace, name := responsesToolCallName(availableTools, tc.Function.Name)
 
 		toolCallItem := map[string]any{
 			"id":        fcItemID,
 			"type":      "function_call",
 			"status":    "completed",
 			"call_id":   tc.ID,
-			"name":      tc.Function.Name,
+			"name":      name,
 			"arguments": tc.Function.Arguments,
+		}
+		if namespace != "" {
+			toolCallItem["namespace"] = namespace
 		}
 		c.completedItems = append(c.completedItems, toolCallItem)
 
+		inProgressItem := map[string]any{
+			"id":        fcItemID,
+			"type":      "function_call",
+			"status":    "in_progress",
+			"call_id":   tc.ID,
+			"name":      name,
+			"arguments": "",
+		}
+		if namespace != "" {
+			inProgressItem["namespace"] = namespace
+		}
 		events = append(events,
 			c.newEvent("response.output_item.added", map[string]any{
 				"output_index": outputIndex,
-				"item": map[string]any{
-					"id":        fcItemID,
-					"type":      "function_call",
-					"status":    "in_progress",
-					"call_id":   tc.ID,
-					"name":      tc.Function.Name,
-					"arguments": "",
-				},
+				"item":         inProgressItem,
 			}),
 			c.newEvent("response.function_call_arguments.delta", map[string]any{
 				"item_id":      fcItemID,
@@ -1369,6 +1894,8 @@ func (c *ResponsesStreamConverter) StartWebSearchCall(call ResponsesWebSearchCal
 	events := c.finishReasoning()
 	outputIndex := c.outputIndex
 	c.outputIndex++
+	c.webSearchCall = &call
+	c.webSearchOutputIndex = outputIndex
 	events = append(events,
 		c.newEvent("response.output_item.added", map[string]any{
 			"output_index": outputIndex,
@@ -1389,6 +1916,7 @@ func (c *ResponsesStreamConverter) StartWebSearchCall(call ResponsesWebSearchCal
 
 // FinishWebSearchCall emits the events that follow a successful server-side search.
 func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCall, outputIndex int) []ResponsesStreamEvent {
+	c.webSearchCall = nil
 	item := webSearchCallMap(call)
 	c.completedItems = append(c.completedItems, item)
 	return []ResponsesStreamEvent{
@@ -1402,9 +1930,34 @@ func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCa
 	}
 }
 
-// ResponseFailed emits a terminal failure using this stream's sequence counter.
-func (c *ResponsesStreamConverter) ResponseFailed(response map[string]any) ResponsesStreamEvent {
-	return c.newEvent("response.failed", map[string]any{"response": response})
+// ResponseFailed closes open output items and ends the response, preserving
+// partial output and the supplied error/usage metadata. Late failures are ignored.
+func (c *ResponsesStreamConverter) ResponseFailed(details map[string]any) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
+	// A failure can arrive before the first model chunk.
+	events := c.Process(api.ChatResponse{})
+	events = append(events, c.finishReasoning()...)
+	events = append(events, c.finishMessageItem("incomplete")...)
+	if c.webSearchCall != nil {
+		item := webSearchCallMap(*c.webSearchCall)
+		item["status"] = "failed"
+		c.completedItems = append(c.completedItems, item)
+		events = append(events, c.newEvent("response.output_item.done", map[string]any{
+			"output_index": c.webSearchOutputIndex,
+			"item":         item,
+		}))
+		c.webSearchCall = nil
+	}
+	output := c.buildFinalOutput()
+	response := c.buildResponseObject("failed", output, nil)
+	for key, value := range details {
+		response[key] = value
+	}
+	response["output"] = output
+	c.terminated = true
+	return append(events, c.newEvent("response.failed", map[string]any{"response": response}))
 }
 
 func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
@@ -1421,6 +1974,10 @@ func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
 // and reserves its place in the final output. This allows pre-search content
 // to be emitted as a distinct message item before web_search_call events.
 func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
+	return c.finishMessageItem("completed")
+}
+
+func (c *ResponsesStreamConverter) finishMessageItem(status string) []ResponsesStreamEvent {
 	if !c.contentStarted {
 		return nil
 	}
@@ -1434,7 +1991,7 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	item := map[string]any{
 		"id":     itemID,
 		"type":   "message",
-		"status": "completed",
+		"status": status,
 		"role":   "assistant",
 		"content": []map[string]any{{
 			"type":        "output_text",
@@ -1474,12 +2031,11 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	}
 }
 
-// EmitFunctionCallItems emits function_call events for client-provided tool
-// calls that accompanied a web_search call (mixed responses). Unlike
-// processToolCalls, this does not set toolCallsSent, so subsequent text
-// content can still be processed.
+// EmitFunctionCallItems emits client-provided tool calls from the web-search
+// wrapper, closing any open reasoning item first. It does not set toolCallsSent,
+// so subsequent text content can still be processed.
 func (c *ResponsesStreamConverter) EmitFunctionCallItems(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return c.emitFunctionCallEvents(toolCalls)
+	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
 }
 
 func (c *ResponsesStreamConverter) processTextContent(content string) []ResponsesStreamEvent {
@@ -1534,7 +2090,7 @@ func (c *ResponsesStreamConverter) processTextContent(content string) []Response
 }
 
 func (c *ResponsesStreamConverter) buildFinalOutput() []any {
-	output := append([]any(nil), c.completedItems...)
+	output := append([]any{}, c.completedItems...)
 	if c.contentStarted {
 		// Add message item if we had text content
 		output = append(output, map[string]any{
@@ -1608,7 +2164,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 		"output_tokens": r.EvalCount,
 		"total_tokens":  r.PromptEvalCount + r.EvalCount,
 		"input_tokens_details": map[string]any{
-			"cached_tokens": 0,
+			"cached_tokens": intValue(r.PromptEvalCachedCount),
 		},
 		"output_tokens_details": map[string]any{
 			"reasoning_tokens": 0,

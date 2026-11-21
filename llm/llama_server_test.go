@@ -22,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/ml"
 
 	"github.com/ollama/ollama/api"
@@ -154,13 +155,13 @@ func TestContextShiftPromptLimit(t *testing.T) {
 func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	// Simulate llama-server SSE streaming response
 	sseLines := []string{
-		`data: {"content":"Hello","stop":false}`,
+		`data: {"content":"Hello","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":1,"predicted_ms":9.1}}`,
 		``,
 		`:`,
-		`data: {"content":" world","stop":false}`,
+		`data: {"content":" world","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
 		`:`,
-		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":5,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
+		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
 	}
 
@@ -244,6 +245,9 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[2].PromptEvalCount != 5 {
 		t.Errorf("PromptEvalCount = %d, want 5", responses[2].PromptEvalCount)
 	}
+	if got := responses[2].PromptEvalCachedCount; got == nil || *got != 2 {
+		t.Errorf("PromptEvalCachedCount = %v, want 2", got)
+	}
 	if responses[2].EvalCount != 2 {
 		t.Errorf("EvalCount = %d, want 2", responses[2].EvalCount)
 	}
@@ -290,6 +294,9 @@ func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	}
 	if responses[0].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[0].PromptEvalCount)
+	}
+	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 12 {
+		t.Errorf("PromptEvalCachedCount = %v, want 12", got)
 	}
 	if responses[0].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[0].PromptEvalDuration)
@@ -340,6 +347,9 @@ func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
 	}
 	if responses[1].PromptEvalCount != 17 {
 		t.Errorf("PromptEvalCount = %d, want 17", responses[1].PromptEvalCount)
+	}
+	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 12 {
+		t.Errorf("PromptEvalCachedCount = %v, want 12", got)
 	}
 	if responses[1].PromptEvalDuration != 10*time.Millisecond {
 		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[1].PromptEvalDuration)
@@ -459,7 +469,9 @@ func writeLargeLlamaServerEvent(t *testing.T, w io.Writer, chat bool, payload st
 	}
 }
 
-func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
+// repeat_last_n reaches llama-server unchanged, except Ollama's -1 (the whole
+// context), which llama-server rejects and so becomes the context size.
+func TestLlamaServerForwardsRepeatLastN(t *testing.T) {
 	var completionBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -495,21 +507,27 @@ func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
 		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 	}
 
-	opts := api.DefaultOptions()
-	opts.RepeatLastN = 0
-	if err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:  "test prompt",
-		Options: &opts,
-	}, func(CompletionResponse) {}); err != nil {
-		t.Fatalf("Completion error: %v", err)
-	}
+	for _, tt := range []struct{ repeatLastN, want int }{{0, 0}, {64, 64}, {-1, 2048}} {
+		t.Run(fmt.Sprint(tt.repeatLastN), func(t *testing.T) {
+			opts := api.DefaultOptions()
+			opts.RepeatLastN = tt.repeatLastN
 
-	value, ok := completionBody["repeat_last_n"]
-	if !ok {
-		t.Fatal("repeat_last_n missing from llama-server completion request")
-	}
-	if value != float64(0) {
-		t.Fatalf("repeat_last_n = %v, want 0", value)
+			completionBody = nil
+			if err := runner.Completion(t.Context(), CompletionRequest{Prompt: "test prompt", Options: &opts}, func(CompletionResponse) {}); err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+			if value, ok := completionBody["repeat_last_n"]; !ok || value != float64(tt.want) {
+				t.Errorf("completion repeat_last_n = %v (present %v), want %d", value, ok, tt.want)
+			}
+
+			chat, err := runner.llamaServerChatRequest(ChatRequest{Options: &opts}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if chat["repeat_last_n"] != tt.want {
+				t.Errorf("chat repeat_last_n = %v, want %d", chat["repeat_last_n"], tt.want)
+			}
+		})
 	}
 }
 
@@ -635,6 +653,7 @@ func TestLlamaServerCompletionContextShiftAllowsPromptWithHeadroom(t *testing.T)
 		Prompt:   prompt,
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -706,6 +725,7 @@ func TestLlamaServerCompletionContextShiftTruncatesPromptOverContext(t *testing.
 		Prompt:   prompt,
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -783,7 +803,7 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 		cmd:     fakeRunningCmd(),
 		sem:     semaphore.NewWeighted(1),
 		options: api.Options{Runner: api.Runner{NumCtx: 4096}},
-		ggml: loadTestGGML(t, ggml.KV{
+		metadata: loadTestGGUF(t, gguftest.KV{
 			"general.architecture":         "gemma3",
 			"tokenizer.ggml.add_bos_token": true,
 		}),
@@ -798,6 +818,7 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 		Prompt:   strings.Repeat("long prompt ", 500),
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -941,8 +962,8 @@ func TestLlamaServerStatusErrorMessageIncludesOOMStatus(t *testing.T) {
 	}
 
 	got := runner.statusErrorMessage([]byte(`{"error":{"message":"Compute error."}}`))
-	if !strings.Contains(got, "Compute error") {
-		t.Fatalf("expected original response body, got %q", got)
+	if !strings.HasPrefix(got, "Compute error.\n") {
+		t.Fatalf("expected llama-server's error message, got %q", got)
 	}
 	if !IsOutOfMemoryMessage(got) {
 		t.Fatalf("expected OOM status detail to be detectable, got %q", got)
@@ -1398,7 +1419,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		name             string
 		leadingBOS       string
 		tokenizerAddsBOS bool
-		ggmlKV           ggml.KV
+		ggufKV           gguftest.KV
 		prompt           string
 		wantPrompt       string
 	}{
@@ -1441,7 +1462,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 llama.cpp runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.pre":              "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1455,7 +1476,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 model runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.model":            "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1467,13 +1488,28 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 			wantPrompt: "<|turn>user\nhello<turn|>\n<|turn>model\n",
 		},
 		{
-			name:       "lfm2 strips renderer bos",
+			// llama.cpp honors an explicit add_bos_token=false for lfm2, so the
+			// renderer's BOS is the only one.
+			name:       "lfm2 explicit add_bos false keeps renderer bos",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":         "lfm2",
 				"tokenizer.ggml.model":         "gpt2",
 				"tokenizer.ggml.pre":           "lfm2",
 				"tokenizer.ggml.add_bos_token": false,
+				"tokenizer.ggml.bos_token_id":  uint32(0),
+			},
+			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+			wantPrompt: "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:       "lfm2 explicit add_bos true strips renderer bos",
+			leadingBOS: "<|startoftext|>",
+			ggufKV: gguftest.KV{
+				"general.architecture":         "lfm2",
+				"tokenizer.ggml.model":         "gpt2",
+				"tokenizer.ggml.pre":           "lfm2",
+				"tokenizer.ggml.add_bos_token": true,
 				"tokenizer.ggml.bos_token_id":  uint32(0),
 			},
 			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
@@ -1482,7 +1518,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "lfm2 missing bos metadata uses llama.cpp default",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":        "lfm2",
 				"tokenizer.ggml.model":        "gpt2",
 				"tokenizer.ggml.pre":          "lfm2",
@@ -1524,10 +1560,10 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 				sem:     semaphore.NewWeighted(1),
 				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 			}
-			if tt.ggmlKV != nil {
-				runner.ggml = loadTestGGML(t, tt.ggmlKV)
+			if tt.ggufKV != nil {
+				runner.metadata = loadTestGGUF(t, tt.ggufKV)
 			} else if tt.tokenizerAddsBOS {
-				runner.ggml = loadTestGGML(t, ggml.KV{
+				runner.metadata = loadTestGGUF(t, gguftest.KV{
 					"general.architecture":         "gemma3",
 					"tokenizer.ggml.add_bos_token": true,
 				})
@@ -1703,7 +1739,7 @@ func TestLlamaServerEmbedding(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, count, err := runner.Embedding(t.Context(), "hello")
+	embedding, count, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1715,15 +1751,30 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 }
 
+func TestLlamaServerSystemOnePromptOverContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"code":500,"message":"input (9000 tokens) is too large to process. increase the physical batch size (current batch size: 8192)","type":"server_error"}}`)
+	}))
+	defer srv.Close()
+	runner := &llamaServerRunner{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client(), cmd: fakeRunningCmd(), sem: semaphore.NewWeighted(1)}
+
+	_, _, err := runner.SystemOne(t.Context(), json.RawMessage(`"x"`), json.RawMessage(`{"q":{"type":"noul","instructions":"q"}}`), nil)
+	var serr api.StatusError
+	if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest || serr.ErrorMessage != promptTooLongMessage {
+		t.Fatalf("err = %v, want 400 %q", err, promptTooLongMessage)
+	}
+}
+
 func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 	tests := []struct {
 		name string
-		kv   ggml.KV
+		kv   gguftest.KV
 		want bool
 	}{
 		{
 			name: "bert t5 raw like bge-m3",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture": "bert",
 				"bert.pooling_type":    uint32(1),
 				"tokenizer.ggml.model": "t5",
@@ -1732,7 +1783,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 		},
 		{
 			name: "nomic bert default raw",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture":    "nomic-bert",
 				"nomic-bert.pooling_type": uint32(1),
 			},
@@ -1740,7 +1791,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 		},
 		{
 			name: "qwen3 remains normalized",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture": "qwen3",
 				"qwen3.pooling_type":   uint32(1),
 			},
@@ -1749,7 +1800,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := legacyEmbeddingsWereRaw(tt.kv); got != tt.want {
+			if got := legacyEmbeddingsWereRaw(loadTestGGUF(t, tt.kv).KV()); got != tt.want {
 				t.Fatalf("legacyEmbeddingsWereRaw() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1777,7 +1828,7 @@ func TestLlamaServerEmbeddingFallbackFormat(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1810,7 +1861,7 @@ func TestLlamaServerEmbeddingFlatArrayFallback(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1841,17 +1892,17 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	_, _, err := runner.Embedding(t.Context(), "very long input")
+	_, _, err := runner.Embedding(t.Context(), "very long input", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// Should be normalized to 400 for the embed handler's truncation retry
+	// Should be normalized to 413 for the embed handler's truncation retry
 	var statusErr api.StatusError
 	if !errors.As(err, &statusErr) {
 		t.Fatalf("expected api.StatusError, got %T: %v", err, err)
 	}
-	if statusErr.StatusCode != 400 {
-		t.Errorf("status code = %d, want 400", statusErr.StatusCode)
+	if statusErr.StatusCode != 413 {
+		t.Errorf("status code = %d, want 413", statusErr.StatusCode)
 	}
 }
 
@@ -1900,6 +1951,40 @@ func TestEmbeddingBatchSize(t *testing.T) {
 			opts.NumBatch = tt.numBatch
 			if got := embeddingBatchSize(opts, tt.numParallel); got != tt.want {
 				t.Fatalf("embeddingBatchSize = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLlamaServerBatch(t *testing.T) {
+	tests := []struct {
+		name                 string
+		headBlocks, trainCtx uint64
+		numCtx, numBatch     int
+		completion           bool
+		wantBatch            int
+		wantMemory           uint64
+	}{
+		{"default generation", 0, 8192, 8192, 512, true, 512, 0},
+		{"medium generation", 0, 8192, 8192, 1024, true, 1024, 768 << 20},
+		{"large generation", 0, 8192, 8192, 2048, true, 2048, 2 << 30},
+		{"other non-completion models", 0, 8192, 8192, 2048, false, 2048, 0},
+		{"decision uses requested context", 4, 32768, 8192, 512, false, 8192, 2 << 30},
+		{"decision caps at trained context", 4, 1024, 8192, 512, false, 1024, 768 << 20},
+		{"decision without trained context", 4, 0, 8192, 512, false, 8192, 2 << 30},
+		{"decision with an already matching batch", 4, 8192, 8192, 8192, false, 8192, 2 << 30},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := loadTestGGUF(t, gguftest.KV{
+				"general.architecture":      "clef",
+				"clef.context_length":       tt.trainCtx,
+				"clef.decision.block_count": tt.headBlocks,
+			})
+			opts := api.Options{Runner: api.Runner{NumCtx: tt.numCtx, NumBatch: tt.numBatch}}
+			batch, memory := LlamaServerBatch(f, opts, tt.completion)
+			if batch != tt.wantBatch || memory != tt.wantMemory {
+				t.Fatalf("batch=%d memory=%d, want batch=%d memory=%d", batch, memory, tt.wantBatch, tt.wantMemory)
 			}
 		})
 	}
@@ -2070,15 +2155,23 @@ func TestAppendLoadModeArgs(t *testing.T) {
 
 	integratedCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}}
 	integratedROCm := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "rocm"}, Integrated: true}}
+	integratedVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true}}
 	discreteCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	discreteVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}}}
 	integratedMetal := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}}
 
 	// Direct I/O is only selected on Linux, so the expectation depends on the host.
 	dio := []string{"base"}
 	dioWithMMapOff := []string{"base", "--load-mode", "none"}
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		dio = []string{"base", "--load-mode", "dio"}
 		dioWithMMapOff = []string{"base", "--load-mode", "dio"}
+	case "windows":
+		// Windows iGPUs keep CPU-side weights out of pinned host memory,
+		// which shares the GPU's WDDM shared-memory budget.
+		dio = []string{"base", "--no-host"}
+		dioWithMMapOff = []string{"base", "--no-host", "--load-mode", "none"}
 	}
 
 	tests := []struct {
@@ -2124,6 +2217,24 @@ func TestAppendLoadModeArgs(t *testing.T) {
 			want: []string{"base"},
 		},
 		{
+			name: "integrated vulkan selects mmap",
+			opts: api.DefaultOptions(),
+			gpus: integratedVulkan,
+			want: []string{"base", "--load-mode", "mmap"},
+		},
+		{
+			name: "discrete vulkan does not select mmap",
+			opts: api.DefaultOptions(),
+			gpus: discreteVulkan,
+			want: []string{"base"},
+		},
+		{
+			name: "vulkan mmap wins over disabled mmap",
+			opts: mmapOff,
+			gpus: integratedVulkan,
+			want: []string{"base", "--load-mode", "mmap"},
+		},
+		{
 			name: "discrete cuda does not select dio",
 			opts: api.DefaultOptions(),
 			gpus: discreteCUDA,
@@ -2164,6 +2275,7 @@ func TestAppendMMProjArgs(t *testing.T) {
 
 	tests := []struct {
 		name         string
+		modelArch    string
 		projectors   []string
 		opts         api.Options
 		gpus         []ml.DeviceInfo
@@ -2268,12 +2380,23 @@ func TestAppendMMProjArgs(t *testing.T) {
 			retry:        true,
 			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
+		{
+			name:         "gemma3n keeps projector offload under partial text offload",
+			modelArch:    "gemma3n",
+			projectors:   []string{"model.gguf"},
+			opts:         partialOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := appendMMProjArgs([]string{"base"}, llamaServerLaunchConfig{
 				modelPath:            "model.gguf",
+				modelArch:            tt.modelArch,
 				projectors:           tt.projectors,
 				mmprojMemory:         tt.mmprojMemory,
 				opts:                 tt.opts,
@@ -2283,6 +2406,45 @@ func TestAppendMMProjArgs(t *testing.T) {
 			})
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendMMProjArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldRetryMMProjCPUOffload(t *testing.T) {
+	launch := func(modelArch string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			modelArch:    modelArch,
+			projectors:   []string{"mmproj.gguf"},
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+		}
+	}
+
+	tests := []struct {
+		name   string
+		launch llamaServerLaunchConfig
+		want   bool
+	}{
+		{
+			name:   "oom retries with projector on cpu",
+			launch: launch("qwen3vl"),
+			want:   true,
+		},
+		{
+			name:   "gemma3n oom does not retry with projector on cpu",
+			launch: launch("gemma3n"),
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &llamaServerRunner{launch: tt.launch}
+			if got := s.shouldRetryMMProjCPUOffload(errors.New("out of memory")); got != tt.want {
+				t.Fatalf("shouldRetryMMProjCPUOffload = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -2362,21 +2524,32 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 		t.Fatalf("no projector memory = %d, %v; want 0, nil", got, err)
 	}
 
-	modelPath, model := writeTestGGML(t, ggml.KV{"general.architecture": "gemma3"}, []*ggml.Tensor{
-		testGGMLTensor("blk.0.attn_q.weight", ggml.TensorTypeF32, []uint64{4}),
-		testGGMLTensor("v.patch_embd.weight", ggml.TensorTypeF16, []uint64{16}),
-		testGGMLTensor("mm.0.weight", ggml.TensorTypeF32, []uint64{8}),
-		testGGMLTensor("a.encoder.weight", ggml.TensorTypeF32, []uint64{2}),
+	modelPath, model := writeTestGGUF(t, gguftest.KV{"general.architecture": "gemma3"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{4}),
+		testGGUFTensor("v.patch_embd.weight", gguf.TensorTypeF16, []uint64{16}),
+		testGGUFTensor("mm.0.weight", gguf.TensorTypeF32, []uint64{8}),
+		testGGUFTensor("a.encoder.weight", gguf.TensorTypeF32, []uint64{2}),
 	})
 
 	wantInline := uint64(16*2 + 8*4 + 2*4)
 	if got, err := mmprojMemoryRequirement(modelPath, model, []string{modelPath}); err != nil || got != wantInline {
 		t.Fatalf("inline mmproj memory = %d, %v; want %d, nil", got, err, wantInline)
 	}
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("v.split.weight", gguf.TensorTypeF16, []uint64{8}),
+	})
+	splitModel, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSplitInline := wantInline + 8*2
+	if got, err := mmprojMemoryRequirement(modelPath, splitModel, []string{modelPath}); err != nil || got != wantSplitInline {
+		t.Fatalf("split inline mmproj memory = %d, %v; want %d, nil", got, err, wantSplitInline)
+	}
 
-	projectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, []*ggml.Tensor{
-		testGGMLTensor("vision.weight", ggml.TensorTypeF16, []uint64{32}),
-		testGGMLTensor("audio.weight", ggml.TensorTypeF32, []uint64{4}),
+	projectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, []*gguftest.Tensor{
+		testGGUFTensor("vision.weight", gguf.TensorTypeF16, []uint64{32}),
+		testGGUFTensor("audio.weight", gguf.TensorTypeF32, []uint64{4}),
 	})
 	wantProjector := uint64(32*2 + 4*4)
 	if got, err := mmprojMemoryRequirement(modelPath, model, []string{projectorPath}); err != nil || got != wantProjector {
@@ -2390,7 +2563,7 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 		t.Fatal("missing projector error = nil, want error")
 	}
 
-	emptyProjectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, nil)
+	emptyProjectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, nil)
 	if _, err := mmprojMemoryRequirement(modelPath, model, []string{emptyProjectorPath}); err == nil {
 		t.Fatal("empty projector error = nil, want error")
 	}
@@ -2489,15 +2662,20 @@ func TestAppendDraftArgs(t *testing.T) {
 			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
-			name:      "DFlash draft omits MTP backend sampling",
-			draftType: draftTypeDFlash,
+			name:      "Eagle3 draft passes its type without MTP backend sampling",
+			draftType: draftTypeEagle3,
 			draftPath: "draft.gguf",
 			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
-			want:      []string{"base", "--spec-type", "draft-dflash", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+			want:      []string{"base", "--spec-type", "draft-eagle3", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+		},
+		{
+			name:      "untyped draft leaves the type to llama-server",
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
 		},
 		{
 			name:      "zero draft depth disables speculative decoding",
-			draftType: draftTypeDFlash,
 			draftPath: "draft.gguf",
 			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 0}},
 			want:      []string{"base"},
@@ -2516,17 +2694,46 @@ func TestAppendDraftArgs(t *testing.T) {
 
 func TestExternalDraftType(t *testing.T) {
 	tests := []struct {
-		architecture string
-		want         string
+		name    string
+		kv      gguftest.KV
+		tensors []*gguftest.Tensor
+		want    string
 	}{
-		{architecture: "dflash", want: draftTypeDFlash},
-		{architecture: "qwen35", want: draftTypeMTP},
-		{architecture: "unknown", want: draftTypeMTP},
+		{
+			name: "dflash family is inferred by llama-server",
+			kv:   gguftest.KV{"general.architecture": "dflash"},
+		},
+		{
+			name: "eagle3",
+			kv:   gguftest.KV{"general.architecture": "eagle3"},
+			want: draftTypeEagle3,
+		},
+		{
+			name: "MTP sidecar by nextn key",
+			kv:   gguftest.KV{"general.architecture": "gemma4-assistant", "gemma4-assistant.nextn_predict_layers": uint32(4)},
+			want: draftTypeMTP,
+		},
+		{
+			name: "legacy qwen35 MTP sidecar",
+			kv:   gguftest.KV{"general.architecture": "qwen35"},
+			tensors: []*gguftest.Tensor{
+				testGGUFTensor("mtp.fc.weight", gguf.TensorTypeF32, []uint64{1}),
+			},
+			want: draftTypeMTP,
+		},
+		{
+			name: "qwen35 without MTP markers is inferred by llama-server",
+			kv:   gguftest.KV{"general.architecture": "qwen35"},
+		},
+		{
+			name: "unknown",
+			kv:   gguftest.KV{"general.architecture": "unknown"},
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.architecture, func(t *testing.T) {
-			path, _ := writeTestGGML(t, ggml.KV{"general.architecture": tt.architecture}, nil)
+		t.Run(tt.name, func(t *testing.T) {
+			path, _ := writeTestGGUF(t, tt.kv, tt.tensors)
 			got, err := externalDraftType(path)
 			if err != nil {
 				t.Fatal(err)
@@ -2536,25 +2743,39 @@ func TestExternalDraftType(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("MTP marker in a later shard", func(t *testing.T) {
+		path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, nil)
+		shard, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+			testGGUFTensor("mtp.fc.weight", gguf.TensorTypeF32, []uint64{1}),
+		})
+		got, err := externalDraftType(path, shard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != draftTypeMTP {
+			t.Fatalf("externalDraftType = %q, want %q", got, draftTypeMTP)
+		}
+	})
 }
 
 func TestHasLegacyQwenMTPDraft(t *testing.T) {
 	tests := []struct {
 		name    string
 		arch    string
-		tensors []*ggml.Tensor
+		tensors []gguf.TensorInfo
 		want    bool
 	}{
 		{
 			name:    "qwen35 legacy mtp marker",
 			arch:    "qwen35",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    true,
 		},
 		{
 			name:    "qwen35moe legacy mtp marker",
 			arch:    "qwen35moe",
-			tensors: []*ggml.Tensor{{Name: "mtp.layers.0.attn_q.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.layers.0.attn_q.weight"}},
 			want:    true,
 		},
 		{
@@ -2566,7 +2787,7 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 		{
 			name:    "other arch with mtp prefix",
 			arch:    "qwen3next",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    false,
 		},
 	}
@@ -2577,6 +2798,22 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 				t.Fatalf("hasLegacyQwenMTPDraft() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHasMTPDraftAcrossShards(t *testing.T) {
+	modelPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("mtp.0.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	model, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasMTPDraft(model) {
+		t.Fatal("hasMTPDraft() = false, want true for MTP tensors in a later shard")
 	}
 }
 
@@ -2615,21 +2852,21 @@ func TestNormalizeEmbeddingError(t *testing.T) {
 			name:       "physical batch size",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":{"code":500,"message":"input (103 tokens) is too large to process. increase the physical batch size (current batch size: 30)"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "context length string error",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":"input length exceeds the context length"}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "available context",
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"request (302 tokens) exceeds the available context size (256 tokens), try increasing it"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
@@ -2929,6 +3166,24 @@ func TestMemoryParsingWriter(t *testing.T) {
 			lines:     []string{"some random log line\n"},
 			wantGPU:   0,
 			wantTotal: 0,
+		},
+		{
+			name: "new b12111 kinds: layer input + rotation",
+			lines: []string{
+				"llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)\n",
+				"init_rotation:         CUDA0 rotation buffer size =    23.04 MiB\n",
+				"init_rotation:     CUDA_Host rotation buffer size =     2.00 MiB\n",
+			},
+			wantGPU:   4.00 + 23.04,
+			wantTotal: 4.00 + 23.04 + 2.00,
+		},
+		{
+			name: "new b12257 kind: h_nextn",
+			lines: []string{
+				"h_nextn_dev_alloc:       MTL0 h_nextn buffer size =    16.01 MiB\n",
+			},
+			wantGPU:   16.01,
+			wantTotal: 16.01,
 		},
 		{
 			name: "fit probe buffers are replaced by final load",
@@ -3688,21 +3943,21 @@ func TestFindLlamaServer(t *testing.T) {
 	_ = err
 }
 
-func loadTestGGML(t *testing.T, kv ggml.KV) *ggml.GGML {
+func loadTestGGUF(t *testing.T, kv gguftest.KV) *gguf.Model {
 	t.Helper()
 
-	_, model := writeTestGGML(t, kv, nil)
+	_, model := writeTestGGUF(t, kv, nil)
 	return model
 }
 
-func writeTestGGML(t *testing.T, kv ggml.KV, tensors []*ggml.Tensor) (string, *ggml.GGML) {
+func writeTestGGUF(t *testing.T, kv gguftest.KV, tensors []*gguftest.Tensor) (string, *gguf.Model) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "*.gguf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ggml.WriteGGUF(f, kv, tensors); err != nil {
+	if err := gguftest.Write(f, kv, tensors); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
@@ -3716,10 +3971,10 @@ func writeTestGGML(t *testing.T, kv ggml.KV, tensors []*ggml.Tensor) (string, *g
 	return f.Name(), model
 }
 
-func testGGMLTensor(name string, kind ggml.TensorType, shape []uint64) *ggml.Tensor {
-	tensor := &ggml.Tensor{
+func testGGUFTensor(name string, kind gguf.TensorType, shape []uint64) *gguftest.Tensor {
+	tensor := &gguftest.Tensor{
 		Name:  name,
-		Kind:  uint32(kind),
+		Type:  kind,
 		Shape: shape,
 	}
 	tensor.WriterTo = bytes.NewReader(make([]byte, tensor.Size()))
@@ -3736,4 +3991,269 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+// TestLlamaServerCompletionThinkingFormat checks that a format on a thinking
+// response is one request carrying a grammar: a schema is converted by an
+// empty completion once per schema, "json" needs no conversion, the grammar
+// wraps the format rules behind the closing string, and content and metrics
+// pass through unchanged.
+func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	converted := "root ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
+	sseLines := []string{
+		`data: {"content":"Let me think.</think>","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":3,"predicted_ms":15}}`,
+		`data: {"content":"{}","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
+		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
+	}
+
+	var conversions atomic.Int32
+	grammars := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		var reqBody struct {
+			Prompt         any             `json:"prompt"`
+			NPredict       *int            `json:"n_predict"`
+			JsonSchema     json.RawMessage `json:"json_schema"`
+			Grammar        string          `json:"grammar"`
+			ResponseFields []string        `json:"response_fields"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("invalid request body: %v", err)
+			return
+		}
+		if len(reqBody.ResponseFields) > 0 {
+			conversions.Add(1)
+			if !reflect.DeepEqual(reqBody.Prompt, []any{[]any{}}) || reqBody.NPredict == nil || *reqBody.NPredict != 0 {
+				t.Errorf("conversion request prompt %v n_predict %v, want an empty token prompt and no generation", reqBody.Prompt, reqBody.NPredict)
+			}
+			if !bytes.Equal(reqBody.JsonSchema, schema) || !reflect.DeepEqual(reqBody.ResponseFields, []string{"generation_settings/grammar"}) {
+				t.Errorf("conversion request schema %s fields %v", reqBody.JsonSchema, reqBody.ResponseFields)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"generation_settings/grammar": converted})
+			return
+		}
+		if reqBody.JsonSchema != nil {
+			t.Errorf("completion carried schema %s", reqBody.JsonSchema)
+		}
+		grammars <- reqBody.Grammar
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, line := range sseLines {
+			fmt.Fprintln(w, line)
+			fmt.Fprintln(w)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	complete := func(format json.RawMessage) string {
+		var responses []CompletionResponse
+		opts := api.DefaultOptions()
+		err := runner.Completion(t.Context(), CompletionRequest{
+			Prompt:        "test prompt",
+			Format:        format,
+			ThinkingClose: []string{"</think>"},
+			Options:       &opts,
+		}, func(cr CompletionResponse) {
+			responses = append(responses, cr)
+		})
+		if err != nil {
+			t.Fatalf("Completion error: %v", err)
+		}
+		var content strings.Builder
+		for _, resp := range responses[:len(responses)-1] {
+			content.WriteString(resp.Content)
+		}
+		if got := content.String(); got != "Let me think.</think>{}" {
+			t.Errorf("streamed content = %q", got)
+		}
+		final := responses[len(responses)-1]
+		if !final.Done || final.DoneReason != DoneReasonStop || final.EvalCount != 4 || final.PromptEvalCount != 5 {
+			t.Errorf("final response = %+v, want done with 4 generated and 5 prompt tokens", final)
+		}
+		return <-grammars
+	}
+
+	for range 2 {
+		grammar := complete(schema)
+		if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format ::= \"{\" space \"}\"\n") {
+			t.Errorf("grammar does not wrap the converted schema:\n%s", grammar)
+		}
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("schema converted %d times, want once", got)
+	}
+
+	grammar := complete(json.RawMessage(`"json"`))
+	if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format   ::= object\n") {
+		t.Errorf("grammar does not wrap the json grammar:\n%s", grammar)
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+}
+
+func TestNoShiftNumPredict(t *testing.T) {
+	tests := []struct {
+		name         string
+		numPredict   int
+		promptTokens int
+		want         int
+		wantErr      bool
+	}{
+		{name: "open-ended generation stops at the context limit", numPredict: -1, promptTokens: 3, want: 5},
+		{name: "budget larger than the remaining context is capped", numPredict: 100, promptTokens: 3, want: 5},
+		{name: "budget that fits is kept", numPredict: 2, promptTokens: 3, want: 2},
+		{name: "prompt leaving one token of room", numPredict: -1, promptTokens: 7, want: 1},
+		{name: "prompt filling the context is rejected", numPredict: -1, promptTokens: 8, wantErr: true},
+		{name: "prompt over the context is rejected", numPredict: -1, promptTokens: 9, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := noShiftNumPredict(tt.numPredict, 8, tt.promptTokens)
+			if tt.wantErr {
+				var serr api.StatusError
+				if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
+					t.Fatalf("err = %v, want 400 status error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("noShiftNumPredict = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func noShiftTestServer(t *testing.T, promptTokens int) (*llamaServerRunner, *int, *bool) {
+	t.Helper()
+
+	nPredict := -100
+	generated := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/apply-template":
+			fmt.Fprint(w, `{"prompt":"rendered chat"}`)
+		case "/tokenize":
+			json.NewEncoder(w).Encode(map[string][]int{"tokens": make([]int, promptTokens)})
+		case "/completion":
+			var req llamaServerCompletionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			generated, nPredict = true, req.NPredict
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		case "/v1/chat/completions":
+			var req struct {
+				NPredict int `json:"n_predict"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("invalid chat request body: %v", err)
+				return
+			}
+			generated, nPredict = true, req.NPredict
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	runner := &llamaServerRunner{
+		port:    srv.Listener.Addr().(*net.TCPAddr).Port,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+	return runner, &nPredict, &generated
+}
+
+func TestLlamaServerShiftDisabledOnShiftRunner(t *testing.T) {
+	type call func(r *llamaServerRunner, shift bool, opts *api.Options) error
+	calls := map[string]call{
+		"completion": func(r *llamaServerRunner, shift bool, opts *api.Options) error {
+			return r.Completion(t.Context(), CompletionRequest{Prompt: "hi", Options: opts, Truncate: true, Shift: shift}, func(CompletionResponse) {})
+		},
+		"chat": func(r *llamaServerRunner, shift bool, opts *api.Options) error {
+			return r.Chat(t.Context(), ChatRequest{Messages: []api.Message{{Role: "user", Content: "hi"}}, Options: opts, Shift: shift}, func(ChatResponse) {})
+		},
+	}
+
+	for name, run := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Run("shift false caps generation at the context limit", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				opts := api.DefaultOptions()
+				if err := run(runner, false, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if *nPredict != 5 {
+					t.Fatalf("n_predict = %d, want 5", *nPredict)
+				}
+			})
+
+			t.Run("shift false rejects a prompt that fills the context", func(t *testing.T) {
+				runner, _, generated := noShiftTestServer(t, 8)
+				opts := api.DefaultOptions()
+				err := run(runner, false, &opts)
+				var serr api.StatusError
+				if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
+					t.Fatalf("err = %v, want 400 status error", err)
+				}
+				if *generated {
+					t.Fatal("generation request was sent for a prompt that does not fit")
+				}
+			})
+
+			t.Run("shift true is not capped", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				opts := api.DefaultOptions()
+				if err := run(runner, true, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if want := boundedNumPredict(-1, 8); *nPredict != want {
+					t.Fatalf("n_predict = %d, want %d", *nPredict, want)
+				}
+			})
+
+			t.Run("shift false on a projector runner is not capped", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				runner.launch.projectors = []string{"mmproj.gguf"}
+				opts := api.DefaultOptions()
+				if err := run(runner, false, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if want := boundedNumPredict(-1, 8); *nPredict != want {
+					t.Fatalf("n_predict = %d, want %d", *nPredict, want)
+				}
+			})
+		})
+	}
 }

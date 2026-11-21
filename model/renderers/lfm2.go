@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type LFM2Renderer struct {
@@ -333,4 +334,8 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 	}
 
 	return sb.String(), nil
+}
+
+func (r *LFM2Renderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{r.IsThinking}, Default: r.IsThinking}
 }

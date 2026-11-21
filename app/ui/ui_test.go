@@ -17,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/ui/responses"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/cmd/launch"
 )
@@ -135,6 +136,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 
 	var got []struct {
 		ID        string `json:"id"`
+		Name      string `json:"name"`
 		Installed *bool  `json:"installed"`
 		Action    string `json:"action"`
 		Command   string `json:"command"`
@@ -146,7 +148,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 	if len(got) < 5 {
 		t.Fatalf("got %d integrations, want the full registry", len(got))
 	}
-	if got[0].ID != "claude-desktop" || got[0].Action != "connect" || got[0].Command != "" {
+	if got[0].ID != "claude-desktop" || got[0].Name != "Claude Code (Desktop)" || got[0].Action != "connect" || got[0].Command != "" {
 		t.Fatalf("first integration = %+v, want command-free Claude Desktop connect", got[0])
 	}
 	wantPrefix := []string{"claude-desktop", "claude", "codex", "openclaw", "opencode", "hermes", "hermes-desktop", "droid", "pi", "cline"}
@@ -197,6 +199,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 func TestHandlePostApiCloudSetting(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome) // os.UserHomeDir uses USERPROFILE on Windows.
 	t.Setenv("OLLAMA_NO_CLOUD", "")
 
 	testStore := &store.Store{
@@ -258,6 +261,7 @@ func TestHandlePostApiCloudSetting(t *testing.T) {
 func TestHandleGetApiCloudSetting(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome) // os.UserHomeDir uses USERPROFILE on Windows.
 	t.Setenv("OLLAMA_NO_CLOUD", "")
 
 	testStore := &store.Store{
@@ -466,6 +470,94 @@ func TestAuthenticationMiddleware(t *testing.T) {
 				if response["error"] != tt.wantError {
 					t.Errorf("handler returned wrong error message: got %v want %v", response["error"], tt.wantError)
 				}
+			}
+		})
+	}
+}
+
+func TestGetErrorServerResponse(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		message   string
+		wantError string
+		wantCode  string
+	}{
+		{
+			name:      "model not included in free usage",
+			status:    http.StatusPaymentRequired,
+			message:   "this model is not included in your free usage, add usage credits to pay as you go: https://ollama.com/settings or upgrade for included usage: https://ollama.com/upgrade",
+			wantError: "This model is not included in your free usage. Upgrade your plan: https://ollama.com/upgrade or add usage credits to pay as you go: https://ollama.com/settings",
+		},
+		{
+			name:      "model not included in free usage with reference",
+			status:    http.StatusPaymentRequired,
+			message:   "this model is not included in your free usage, add usage credits to pay as you go: https://ollama.com/settings or upgrade for included usage: https://ollama.com/upgrade (ref: test-request)",
+			wantError: "This model is not included in your free usage. Upgrade your plan: https://ollama.com/upgrade or add usage credits to pay as you go: https://ollama.com/settings",
+		},
+		{
+			name:    "free usage text in an unrelated error",
+			status:  http.StatusBadRequest,
+			message: "this model is not included in your free usage",
+		},
+		{
+			name:    "empty usage credit balance",
+			status:  http.StatusPaymentRequired,
+			message: "this model uses usage credits only (not included plan usage) and your usage credit balance is empty, add usage credits or turn on auto reload at https://ollama.com/settings",
+		},
+		{
+			name:    "credit auto reload payment failed",
+			status:  http.StatusPaymentRequired,
+			message: "usage credits auto reload payment failed, update your payment method or add usage credits at https://ollama.com/settings",
+		},
+		{
+			name:    "usage limit",
+			status:  http.StatusTooManyRequests,
+			message: "you've reached your session usage limit, please wait or upgrade to continue",
+		},
+		{
+			name:    "unrelated error containing 402",
+			status:  http.StatusBadRequest,
+			message: "invalid request (ref: request-402)",
+		},
+		{
+			name:      "sign in required",
+			status:    http.StatusUnauthorized,
+			message:   "unauthorized",
+			wantError: "Could not verify you are signed in. Please sign in and try again.",
+			wantCode:  "cloud_unauthorized",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				json.NewEncoder(w).Encode(map[string]string{"error": tt.message})
+			}))
+			defer ts.Close()
+			t.Setenv("OLLAMA_HOST", ts.URL)
+
+			server := &Server{}
+			client := server.inferenceClient()
+			err := client.Chat(context.Background(), &api.ChatRequest{Model: "test"}, func(api.ChatResponse) error {
+				return nil
+			})
+			if err == nil {
+				t.Fatal("chat request succeeded, want an error")
+			}
+
+			want := responses.ErrorEvent{
+				EventName: "error",
+				Error:     err.Error(),
+				Code:      tt.wantCode,
+			}
+			if tt.wantError != "" {
+				want.Error = tt.wantError
+			}
+			if got := server.getError(err); got != want {
+				t.Errorf("getError() = %+v, want %+v", got, want)
 			}
 		})
 	}
@@ -997,7 +1089,7 @@ func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testi
 	}
 }
 
-func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) {
+func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
 	}
@@ -1026,12 +1118,6 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
 	}}
 	defer upd.Store.Close()
-
-	// Initialize the checkNow channel by starting (and immediately stopping) the checker
-	// so TriggerImmediateCheck doesn't panic on nil channel
-	ctx, cancel := context.WithCancel(t.Context())
-	upd.StartBackgroundUpdaterChecker(ctx, func(string) error { return nil })
-	defer cancel()
 
 	var notificationCalled atomic.Bool
 	server := &Server{
@@ -1064,5 +1150,156 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 	// UpdateAvailableFunc should NOT be called since there's no pending update
 	if notificationCalled.Load() {
 		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
+	}
+}
+
+func TestSettingsPreservesCodexDesktopUsedWhenOmitted(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.MarkCodexDesktopUsed(); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "CodexDesktopUsed")
+	payload, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{Store: testStore, Restart: func() {}}
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(payload))
+	rr := httptest.NewRecorder()
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.CodexDesktopUsed {
+		t.Fatal("expected CodexDesktopUsed to be preserved")
+	}
+}
+
+func TestSettingsPreservesCodexDesktopUsedWithStaleValue(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.MarkCodexDesktopUsed(); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["CodexDesktopUsed"] = false
+	payload, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{Store: testStore, Restart: func() {}}
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(payload))
+	rr := httptest.NewRecorder()
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.CodexDesktopUsed {
+		t.Fatal("expected CodexDesktopUsed to be preserved")
+	}
+}
+
+type settingsBodyReadHook struct {
+	io.Reader
+	onRead func()
+}
+
+func (r *settingsBodyReadHook) Read(p []byte) (int, error) {
+	if r.onRead != nil {
+		onRead := r.onRead
+		r.onRead = nil
+		onRead()
+	}
+	return r.Reader.Read(p)
+}
+
+func TestSettingsPreservesConcurrentCodexDesktopAcknowledgment(t *testing.T) {
+	testStore := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Browser = !settings.Browser
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := &settingsBodyReadHook{
+		Reader: bytes.NewReader(payload),
+		onRead: func() {
+			// The handler has read the old settings but has not saved the request yet.
+			if err := testStore.MarkCodexDesktopUsed(); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	server := &Server{Store: testStore, Restart: func() {}}
+	req := httptest.NewRequest("POST", "/api/v1/settings", body)
+	rr := httptest.NewRecorder()
+	if err := server.settings(rr, req); err != nil {
+		t.Fatal(err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.CodexDesktopUsed {
+		t.Error("overlapping settings save erased the acknowledgment")
+	}
+	if saved.Browser != settings.Browser {
+		t.Error("overlapping acknowledgment lost the requested setting")
+	}
+	var response responses.SettingsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Settings.CodexDesktopUsed {
+		t.Error("settings response returned a stale acknowledgment")
 	}
 }
