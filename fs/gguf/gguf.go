@@ -44,6 +44,7 @@ type File struct {
 	keyValues *lazy[KeyValue]
 	tensors   *lazy[TensorInfo]
 	offset    int64
+	seenKeys  map[string]struct{}
 
 	file   *os.File
 	reader *bufferedReader
@@ -224,6 +225,13 @@ func (f *File) readKeyValue() (KeyValue, error) {
 	if err != nil {
 		return KeyValue{}, err
 	}
+	if f.seenKeys == nil {
+		f.seenKeys = make(map[string]struct{})
+	}
+	if _, ok := f.seenKeys[key]; ok {
+		return KeyValue{}, fmt.Errorf("%w duplicate key %q", ErrUnsupported, key)
+	}
+	f.seenKeys[key] = struct{}{}
 
 	return KeyValue{
 		Key:   key,
