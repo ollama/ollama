@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
@@ -548,7 +549,8 @@ func (m *FunctionNameMap) convertToValidChars(userFunctionName string) string {
 
 	// if the candidate starts with a number, prepend an underscore to make it a
 	// valid identifier
-	if unicode.IsDigit(rune(candidate[0])) {
+	first, _ := utf8.DecodeRuneInString(candidate)
+	if unicode.IsDigit(first) {
 		candidate = "_" + candidate
 	}
 
