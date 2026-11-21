@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [CoWork OS](https://github.com/CoWork-OS/CoWork-OS) - Open-source desktop agent where every action is visible and approvable; detects local Ollama models
 
 #### Mobile
 
