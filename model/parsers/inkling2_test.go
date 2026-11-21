@@ -98,6 +98,36 @@ func TestInkling2ParserChunkBoundaries(t *testing.T) {
 	}
 }
 
+func TestInkling2TruncatedToolCall(t *testing.T) {
+	const complete = inklingModel + "save" + inklingTool + `{"name":"save","args":{}}` + inklingEnd
+	const header = inklingModel + "lookup" + inklingTool
+	const payload = `{"name":"lookup","args":{"text":"before <|end_message|> after","id":[17]}}`
+	for end := range len(payload) + 1 {
+		p := inkling2Parser{}
+		_, _, calls, err := p.Add(complete+header+payload[:end], false)
+		if err != nil || len(calls) != 1 || calls[0].Function.Name != "save" {
+			t.Fatalf("offset %d before done: calls %v, error %v", end, calls, err)
+		}
+		content, thinking, calls, err := p.Add("", true)
+		if err != nil || content != "" || thinking != "" {
+			t.Fatalf("offset %d on done: content %q, thinking %q, error %v", end, content, thinking, err)
+		}
+		if end == len(payload) {
+			if len(calls) != 1 || calls[0].Function.Name != "lookup" {
+				t.Fatalf("complete call: %v", calls)
+			}
+		} else if len(calls) != 0 {
+			t.Fatalf("offset %d emitted a truncated call: %v", end, calls)
+		}
+	}
+	for _, body := range []string{`{"name":!}`, `{"name":!`, `{"name":` + inklingEnd, `{}`, `tru`, `["`} {
+		p := inkling2Parser{}
+		if _, _, _, err := p.Add(header+body, true); err == nil {
+			t.Errorf("expected error for malformed call %q", body)
+		}
+	}
+}
+
 func TestInkling2ParserJinjaToolCalls(t *testing.T) {
 	// The Jinja template leaves literal control spellings in JSON strings and
 	// accepts an empty string as a function name.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 
@@ -149,8 +150,17 @@ func (p *inkling2Parser) Add(s string, done bool) (string, string, []api.ToolCal
 			// Only search for a terminator after the tool call object.
 			tokens = []string{inklingEnd, inklingEndSample}
 			searchFrom = findJSONEnd(p.buffer) + 1
-			if searchFrom == 0 && !done {
-				break
+			if searchFrom == 0 {
+				if !done {
+					break
+				}
+				// A token limit can end the stream inside a valid tool call.
+				var raw json.RawMessage
+				err := json.NewDecoder(strings.NewReader(p.buffer)).Decode(&raw)
+				if err == io.EOF || (err == io.ErrUnexpectedEOF && strings.HasPrefix(strings.TrimSpace(p.buffer), "{")) {
+					p.buffer = ""
+					break
+				}
 			}
 		}
 		marker, index := "", len(p.buffer)
