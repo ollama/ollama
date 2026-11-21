@@ -6,7 +6,6 @@ import (
 
 type gptossMigrator struct{}
 
-// Mirrors detect_ollama_gptoss in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (gptossMigrator) NeedsMigration(src *SourceModel) bool {
 	return src.GGUF.KeyValue("general.architecture").String() == "gptoss"
 }

@@ -11,7 +11,6 @@ import (
 
 type qwen35Migrator struct{}
 
-// Mirrors detect_ollama_qwen35 and detect_ollama_qwen35moe in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (qwen35Migrator) NeedsMigration(src *SourceModel) bool {
 	arch := src.GGUF.KeyValue("general.architecture").String()
 	if arch != "qwen35" && arch != "qwen35moe" {
