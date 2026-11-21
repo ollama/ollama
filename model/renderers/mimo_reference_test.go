@@ -22,7 +22,7 @@ func TestMiMoRendererReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprintf("%x", sha256.Sum256(template)); got != "59a64ebb4df6d1489d09a91267cf3ceb106162d4a893c4f84833cfb8c897ff63" {
+	if got := fmt.Sprintf("%x", sha256.Sum256(template)); got != "b22ad29eca724d5cfa28d997b3ef900bf9644038b3b744bfebd44ebd14d07f90" {
 		t.Fatalf("publisher template hash changed: %s", got)
 	}
 

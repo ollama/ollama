@@ -68,7 +68,10 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 		switch c.Name {
 		case "model":
 			paths, err := expandPaths(c.Args, relativeDir)
-			if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				req.From = c.Args
+				continue
+			} else if err != nil {
 				return nil, err
 			}
 
@@ -198,6 +201,13 @@ func expandPaths(path, relativeDir string) ([]string, error) {
 		return nil, err
 	}
 	if len(matches) == 0 {
+		// When the path contains glob metacharacters but matched nothing,
+		// return ErrNotExist rather than the unexpanded pattern. On Windows,
+		// os.Stat of a path containing '*' or '?' returns ERROR_INVALID_NAME
+		// rather than ErrNotExist, breaking the caller's os.ErrNotExist check.
+		if strings.ContainsAny(path, "*?[") {
+			return nil, os.ErrNotExist
+		}
 		return []string{path}, nil
 	}
 	return matches, nil
