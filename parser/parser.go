@@ -198,9 +198,9 @@ func expandPaths(path, relativeDir string) ([]string, error) {
 		return nil, err
 	}
 	if len(matches) == 0 {
-		return []string{path}, nil
+		matches = []string{path}
 	}
-	return matches, nil
+	return expandSplitGGUFShards(matches)
 }
 
 func fileDigestMapForPaths(paths []string) (map[string]string, error) {

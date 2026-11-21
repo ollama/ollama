@@ -40,11 +40,17 @@ To import a single-file GGUF model, create a `Modelfile` containing:
 FROM /path/to/file.gguf
 ```
 
-For a split GGUF model, keep the original split filenames and use a wildcard that matches every shard.
+For a split (multi-file) GGUF model, keep the original split filenames. Pointing `FROM` at any single shard automatically imports every shard in the same directory, so all of the following work:
+
+```dockerfile
+FROM /path/to/model-00001-of-00002.gguf
+```
 
 ```dockerfile
 FROM /path/to/model-*.gguf
 ```
+
+Shards can also be listed with separate `FROM` instructions. If a shard is missing, `ollama create` fails with an error naming the missing file.
 
 Once you have created your `Modelfile`, use the `ollama create` command to build the model.
 

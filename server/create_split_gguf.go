@@ -2,9 +2,9 @@ package server
 
 import (
 	"fmt"
+	"math"
 	"path"
-	"regexp"
-	"strconv"
+	"strings"
 
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
@@ -14,8 +14,6 @@ const (
 	maxSplitGGUFParts         = maxCreateFiles
 	splitGGUFMinOllamaVersion = "0.35.0"
 )
-
-var splitGGUFNameRe = regexp.MustCompile(`^(.*)-(\d{5})-of-(\d{5})\.gguf$`)
 
 type splitGGUFSlot struct {
 	layer    *modelLayer
@@ -82,21 +80,15 @@ func invalidSplitGGUF(err error) error {
 	return fmt.Errorf("%w: %w", errInvalidSplitGGUF, err)
 }
 
+// splitGGUFName parses a llama.cpp split GGUF shard filename, returning the
+// shard prefix, zero-based shard index, and total shard count. Shard numbers
+// that do not fit in a uint16 are rejected, matching historical behavior.
 func splitGGUFName(name string) (prefix string, index, count uint16, ok bool) {
-	matches := splitGGUFNameRe.FindStringSubmatch(path.Base(name))
-	if len(matches) != 4 {
+	p, i, c, ok := gguf.SplitShardName(name)
+	if !ok || i > math.MaxUint16 || c > math.MaxUint16 {
 		return "", 0, 0, false
 	}
-
-	idx, err := strconv.ParseUint(matches[2], 10, 16)
-	if err != nil || idx == 0 {
-		return "", 0, 0, false
-	}
-	n, err := strconv.ParseUint(matches[3], 10, 16)
-	if err != nil || n == 0 {
-		return "", 0, 0, false
-	}
-	return matches[1], uint16(idx - 1), uint16(n), true
+	return p, uint16(i), uint16(c), true
 }
 
 func splitGGUFGroupKey(layer *modelLayer) (splitGGUFKey, bool, error) {
@@ -170,6 +162,48 @@ func groupManifestSplitGGUFLayers(layers []*modelLayer) ([]*modelLayer, error) {
 	return grouped, nil
 }
 
+// missingSplitGGUFShards names the shards absent from a split GGUF group, e.g.
+// " (missing model-00002-of-00002.gguf)". It returns an empty string when the
+// missing shards cannot be derived from the shard filenames.
+func missingSplitGGUFShards(layers []*modelLayer, count uint16) string {
+	if len(layers) == 0 || layers[0] == nil {
+		return ""
+	}
+	filename := layers[0].splitFile
+	if filename == "" {
+		filename = layers[0].From
+	}
+	prefix, _, nameCount, ok := splitGGUFName(filename)
+	if !ok || nameCount != count {
+		return ""
+	}
+
+	seen := make([]bool, count)
+	for _, layer := range layers {
+		if layer == nil {
+			continue
+		}
+		name := layer.splitFile
+		if name == "" {
+			name = layer.From
+		}
+		if _, index, _, ok := splitGGUFName(name); ok && index < count {
+			seen[index] = true
+		}
+	}
+
+	var missing []string
+	for i := range count {
+		if !seen[i] {
+			missing = append(missing, gguf.SplitShardFileName(prefix, int(i), int(count)))
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (missing %s)", strings.Join(missing, ", "))
+}
+
 func groupSplitGGUFLayers(layers []*modelLayer) (*modelLayer, error) {
 	if len(layers) == 0 {
 		return nil, fmt.Errorf("split GGUF has no shards")
@@ -187,7 +221,7 @@ func groupSplitGGUFLayers(layers []*modelLayer) (*modelLayer, error) {
 	}
 	count := uint16(countValue)
 	if len(layers) != int(count) {
-		return nil, fmt.Errorf("split GGUF %q has %d shards, expected %d", layers[0].From, len(layers), count)
+		return nil, fmt.Errorf("split GGUF %q has %d shards, expected %d%s", layers[0].From, len(layers), count, missingSplitGGUFShards(layers, count))
 	}
 
 	parts := make([]manifest.Layer, count)

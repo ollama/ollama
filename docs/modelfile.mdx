@@ -127,7 +127,7 @@ FROM ./ollama-model.gguf
 
 The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
 
-For a split GGUF model, keep the original split filenames and use a wildcard that matches every shard. Shards can also be listed with separate `FROM` instructions.
+For a split (multi-file) GGUF model, keep the original split filenames. Pointing `FROM` at any single shard (e.g. `FROM ./model-00001-of-00002.gguf`) automatically imports every shard in the same directory, as does a wildcard that matches every shard. Shards can also be listed with separate `FROM` instructions.
 
 ```
 FROM ./model-*.gguf
