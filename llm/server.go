@@ -211,6 +211,7 @@ type CompletionRequest struct {
 	Truncate        bool
 	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners
 	ToolCallTag     string   // raw generic tool parser tag, if any
+	ToolCallStarts  []string // strings that may begin a tool call instead of formatted content
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
 	// ThinkingClose holds the strings any of which ends the thinking the
 	// response begins with, which Format leaves free; none when the response

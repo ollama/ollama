@@ -169,6 +169,21 @@ func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 		schema = json.RawMessage(`{"type":"object"}`)
 	}
 	format := `{"type":"json_schema","json_schema":` + string(schema) + `}`
+	if len(req.ToolCallStarts) > 0 {
+		choices := []string{format}
+		seen := map[string]bool{}
+		for _, start := range req.ToolCallStarts {
+			if start == "" || seen[start] {
+				continue
+			}
+			seen[start] = true
+			choices = append(choices, `{"type":"sequence","elements":[{"type":"const_string","value":`+
+				jsonString(start)+`},{"type":"any_text"}]}`)
+		}
+		if len(choices) > 1 {
+			format = `{"type":"or","elements":[` + strings.Join(choices, ",") + `]}`
+		}
+	}
 	if len(req.ThinkingClose) > 0 {
 		excludes := make([]string, len(req.ThinkingClose))
 		closings := make([]string, len(req.ThinkingClose))
