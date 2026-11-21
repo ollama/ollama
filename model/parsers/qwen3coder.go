@@ -21,6 +21,13 @@ type qwenParserState int
 const (
 	toolOpenTag  = "<tool_call>"
 	toolCloseTag = "</tool_call>"
+
+	// qwen3-coder sometimes omits the <tool_call> opener, most often when it
+	// writes a sentence before the call, but still emits the rest of the call
+	// (and usually the </tool_call> closer). When tools are available, a bare
+	// <function= is treated as the start of a tool call.
+	implicitToolOpenTag  = "<function="
+	implicitToolCloseTag = "</function>"
 )
 
 const (
@@ -33,6 +40,11 @@ type Qwen3CoderParser struct {
 	acc       strings.Builder
 	tools     []api.Tool
 	callIndex int
+	// implicit is true while collecting a tool call that started with a bare
+	// <function= instead of <tool_call>. implicitSpace holds the whitespace
+	// trimmed before it, which is restored if it turns out to be plain text.
+	implicit      bool
+	implicitSpace string
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -57,6 +69,8 @@ func (p *Qwen3CoderParser) PreservedTokens() []string {
 func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
+	p.implicit = false
+	p.implicitSpace = ""
 	return tools // Qwen doesn't modify tools
 }
 
@@ -71,10 +85,16 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 				events = append(events, qwenEventContent{content: p.acc.String()})
 			}
 		case qwenParserState_CollectingToolContent:
-			events = append(events, qwenEventContent{content: toolOpenTag + p.acc.String()})
+			if p.implicit {
+				events = append(events, finishImplicitToolCall(p.implicitSpace, p.acc.String())...)
+			} else {
+				events = append(events, qwenEventContent{content: toolOpenTag + p.acc.String()})
+			}
 		}
 		p.acc.Reset()
 		p.state = qwenParserState_LookingForToolStart
+		p.implicit = false
+		p.implicitSpace = ""
 	}
 
 	var toolCalls []api.ToolCall
@@ -83,6 +103,13 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
+			if err != nil && event.implicit {
+				// the model may simply have written "<function=" as text, so an
+				// implicit tool call that doesn't parse is returned as content
+				slog.Debug("qwen implicit tool call parsing failed, returning as content", "error", err)
+				sb.WriteString(event.fallback)
+				continue
+			}
 			if err != nil {
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
@@ -133,6 +160,11 @@ type qwenEvent interface {
 
 type qwenEventRawToolCall struct {
 	raw string
+	// implicit is set when the call started with a bare <function= (no
+	// <tool_call>); fallback is then the original text, returned as content if
+	// the call doesn't parse
+	implicit bool
+	fallback string
 }
 
 type qwenEventContent struct {
@@ -151,7 +183,28 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 
 	switch p.state {
 	case qwenParserState_LookingForToolStart:
-		if strings.Contains(p.acc.String(), toolOpenTag) {
+		acc := p.acc.String()
+		openIdx := strings.Index(acc, toolOpenTag)
+		implicitIdx := -1
+		if len(p.tools) > 0 {
+			implicitIdx = strings.Index(acc, implicitToolOpenTag)
+		}
+		if implicitIdx >= 0 && (openIdx < 0 || implicitIdx < openIdx) {
+			// a bare <function= before any <tool_call>: an implicit tool call.
+			// Emit the content before it and keep the <function= tag, since it
+			// is part of the call itself
+			before := strings.TrimRightFunc(acc[:implicitIdx], unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventContent{content: before})
+			}
+			p.acc.Reset()
+			p.acc.WriteString(acc[implicitIdx:])
+			p.state = qwenParserState_CollectingToolContent
+			p.implicit = true
+			p.implicitSpace = acc[len(before):implicitIdx]
+			return events, true
+		}
+		if openIdx >= 0 {
 			// we found a full tool open tag, so we can emit the content before the
 			// tag, being sure to trim any trailing whitespace
 			split := strings.SplitN(p.acc.String(), toolOpenTag, 2)
@@ -165,7 +218,7 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
+		} else if overlap := p.toolStartOverlap(acc); overlap > 0 {
 			// we found a partial tool open tag, so we can emit the unambiguous part,
 			// which is the (trailing-whitespace trimmed) content before the partial
 			// tool open tag
@@ -205,8 +258,15 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
 			p.acc.Reset()
 			p.acc.WriteString(after)
-			events = append(events, qwenEventRawToolCall{raw: before})
+			event := qwenEventRawToolCall{raw: before}
+			if p.implicit {
+				event.implicit = true
+				event.fallback = p.implicitSpace + before + toolCloseTag
+			}
+			events = append(events, event)
 			p.state = qwenParserState_LookingForToolStart
+			p.implicit = false
+			p.implicitSpace = ""
 			return events, true
 		} else {
 			// note that we don't need to check the overlap here because we only plan
@@ -218,6 +278,34 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 	default:
 		panic("unreachable")
 	}
+}
+
+// toolStartOverlap returns how many bytes at the end of s could be the start of
+// a tool call opener that hasn't been fully streamed yet
+func (p *Qwen3CoderParser) toolStartOverlap(s string) int {
+	n := overlap(s, toolOpenTag)
+	if len(p.tools) > 0 {
+		n = max(n, overlap(s, implicitToolOpenTag))
+	}
+	return n
+}
+
+// finishImplicitToolCall handles an implicit tool call that was still open when
+// generation ended, i.e. the model also left out </tool_call>. If the function
+// block is complete it becomes a tool call, and anything after it is content.
+// Otherwise everything is returned as content, unchanged.
+func finishImplicitToolCall(space, acc string) []qwenEvent {
+	end := strings.Index(acc, implicitToolCloseTag)
+	if end < 0 {
+		return []qwenEvent{qwenEventContent{content: space + acc}}
+	}
+	end += len(implicitToolCloseTag)
+	raw := acc[:end]
+	events := []qwenEvent{qwenEventRawToolCall{raw: raw, implicit: true, fallback: space + raw}}
+	if after := strings.TrimSpace(acc[end:]); after != "" {
+		events = append(events, qwenEventContent{content: after})
+	}
+	return events
 }
 
 type XMLFunctionCall struct {
