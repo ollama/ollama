@@ -18,13 +18,7 @@ type MLXValidationOptions struct {
 }
 
 func validateMLXSource(cfg sourceModelConfig, draft bool, opts MLXValidationOptions) error {
-	var arch string
-	if len(cfg.Architectures) > 0 {
-		arch = cfg.Architectures[0]
-	}
-	if draft && arch == "" {
-		arch = cfg.ModelType
-	}
+	arch := cfg.declaredArchitecture()
 
 	var architectureErr error
 	if arch == "" {
