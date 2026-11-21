@@ -75,15 +75,6 @@ type MLP struct {
 	DownProj nn.LinearLayer
 }
 
-func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
-	for _, prefix := range []string{"", "language_model."} {
-		if tensors[prefix+"model.embed_tokens.weight"] != nil {
-			return prefix
-		}
-	}
-	return ""
-}
-
 func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
@@ -124,34 +115,11 @@ func newModel(root *model.Root) (model.Model, error) {
 	}
 	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
 
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
-	}
-
-	tokConfig := &tokenizer.TokenizerConfig{
-		ConfigJSON: configData,
-	}
-	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = genConfigData
-	}
-	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = tokConfigData
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 
 	m := &Model{
@@ -166,7 +134,7 @@ func newModel(root *model.Root) (model.Model, error) {
 // LoadWeights receives all tensors loaded from the manifest and assigns them
 // to model fields.
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
-	m.weightPrefix = resolveWeightPrefix(tensors)
+	m.weightPrefix, _ = model.WeightPrefix(tensors, "model.embed_tokens.weight", "", "language_model.")
 	prefix := m.weightPrefix
 	linears := model.NewLinearFactory(tensors, m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
 

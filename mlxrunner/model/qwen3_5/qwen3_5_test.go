@@ -103,28 +103,6 @@ func TestLayerSelectionHelpers(t *testing.T) {
 	}
 }
 
-func TestSupportsGatherQMM(t *testing.T) {
-	tests := []struct {
-		mode string
-		bits int
-		want bool
-	}{
-		{mode: "affine", bits: 4, want: true},
-		{mode: "affine", bits: 8, want: true},
-		{mode: "mxfp8", bits: 8, want: true},
-		{mode: "nvfp4", bits: 4, want: true},
-		{mode: "mxfp4", bits: 4, want: true},
-		{mode: "mxfp8", bits: 4, want: false},
-		{mode: "affine", bits: 3, want: false},
-	}
-
-	for _, tt := range tests {
-		if got := supportsGatherQMM(tt.mode, tt.bits); got != tt.want {
-			t.Fatalf("supportsGatherQMM(%q, %d) = %v, want %v", tt.mode, tt.bits, got, tt.want)
-		}
-	}
-}
-
 // Gate and up fuse into one quantized bank when their global scales agree,
 // since gather_qmm applies one scale per expert across the whole bank row.
 // Scales that disagree cannot share a bank and stay on separate projections.
