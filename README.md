@@ -177,6 +177,7 @@ console.log(response.message.content);
 
 #### Desktop
 
+- [Murmur Sphere](https://murmursphere.com/) - Free Windows desktop app for local character chat with Ollama.
 - [Dify.AI](https://github.com/langgenius/dify) - LLM app development platform
 - [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) - All-in-one AI app for Mac, Windows, and Linux
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid) - Cross-platform mobile and desktop client
