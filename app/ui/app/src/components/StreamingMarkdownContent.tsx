@@ -4,6 +4,9 @@ import {
   defaultRehypePlugins,
   defaultRemarkPlugins,
 } from "streamdown";
+import type { Pluggable } from "unified";
+import remarkMath from "remark-math";
+import remarkSingleDollarMathGuard from "@/utils/remarkSingleDollarMathGuard";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
@@ -132,11 +135,13 @@ const CodeBlock = React.memo(
 
 const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
   React.memo(({ content, isStreaming = false, size, browserToolResult }) => {
-    // Build the remark plugins array - keep default GFM and Math, add citations
-    const remarkPlugins = React.useMemo(() => {
+    // Build the remark plugins array - keep default GFM, enable single-dollar
+    // math (guarded against currency text), add citations
+    const remarkPlugins = React.useMemo<Pluggable[]>(() => {
       return [
         defaultRemarkPlugins.gfm,
-        defaultRemarkPlugins.math,
+        [remarkMath, { singleDollarTextMath: true }],
+        remarkSingleDollarMathGuard,
         remarkCitationParser,
       ];
     }, []);
