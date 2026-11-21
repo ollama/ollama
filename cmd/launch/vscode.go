@@ -61,7 +61,7 @@ func (v *VSCode) IsRunning() bool {
 		return err == nil && len(out) > 0
 	case "windows":
 		// Match VS Code by executable path to avoid matching Cursor or other forks.
-		out, err := exec.Command("powershell", "-NoProfile", "-Command",
+		out, err := backgroundCommandContext(context.Background(), "powershell", "-NoProfile", "-Command",
 			`Get-Process Code -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*Microsoft VS Code*' } | Select-Object -First 1`).Output()
 		return err == nil && len(strings.TrimSpace(string(out))) > 0
 	default:
