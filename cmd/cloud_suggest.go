@@ -80,19 +80,20 @@ func cloudSuggestionName(name string, insecure bool) (string, bool) {
 // a confirmation prompt, or by augmenting the returned error when not at a
 // terminal. It returns the name that was actually pulled. `verb` is the
 // user-facing command ("run" or "pull") used in the hint text.
-func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name, runner string, insecure bool, verb string) (string, error) {
+func pullWithCloudSuggestion(ctx context.Context, client *api.Client, request api.PullRequest, verb string) (string, error) {
+	name := request.Model
 	// If a suggestion prompt may follow a failed pull, erase the failed
 	// attempt's progress display instead of leaving its "pulling manifest"
 	// line to stack up against the accepted pull's identical one.
-	_, eligible := cloudSuggestionName(name, insecure)
+	_, eligible := cloudSuggestionName(name, request.Insecure)
 	clearNotFound := eligible && isInteractiveTerminal()
 
-	pullErr := pullModelWithProgress(ctx, client, name, runner, insecure, clearNotFound)
+	pullErr := pullModelWithProgress(ctx, client, request, clearNotFound)
 	if pullErr == nil {
 		return name, nil
 	}
 
-	cloudName, ok := cloudSuggestionCandidate(name, pullErr, insecure)
+	cloudName, ok := cloudSuggestionCandidate(name, pullErr, request.Insecure)
 	if !ok || ctx.Err() != nil {
 		return "", pullErr
 	}
@@ -100,7 +101,7 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name, runn
 	// Showing a ":cloud" model is proxied to ollama.com and mirrors its status,
 	// so this reliably answers "does a cloud version exist?". Any error (no
 	// cloud tag, cloud disabled, older server, offline) means no suggestion.
-	if _, err := client.Show(ctx, &api.ShowRequest{Model: cloudName, Runner: runner}); err != nil {
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: cloudName, Runner: request.Runner}); err != nil {
 		return "", pullErr
 	}
 
@@ -114,7 +115,7 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name, runn
 		return "", pullErr
 	}
 
-	if err := pullModelWithProgress(ctx, client, cloudName, runner, insecure, false); err != nil {
+	if err := pullModelWithProgress(ctx, client, api.PullRequest{Model: cloudName, Runner: request.Runner, Insecure: request.Insecure}, false); err != nil {
 		return "", err
 	}
 	return cloudName, nil
