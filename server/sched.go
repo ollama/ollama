@@ -54,10 +54,7 @@ type LlmRequest struct {
 	// explicitly requested.
 	useMMapAuto bool
 
-	// contextShift is a llama-server launch attribute resolved from the
-	// request-level shift option before scheduling.
-	contextShift bool
-	shift        *bool
+	shift *bool
 }
 
 type Scheduler struct {
@@ -78,7 +75,7 @@ type Scheduler struct {
 
 	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
 	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
-	newMLXServerFn  func(modelName string, numCtx int) (mlxServer, error)
+	newMLXServerFn  func(modelName string, numCtx int, numCtxAuto bool) (mlxServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
@@ -92,8 +89,8 @@ type mlxServer interface {
 	Predicted() mlxrunner.MemoryEstimate
 }
 
-func newMLXServer(modelName string, numCtx int) (mlxServer, error) {
-	client, err := mlxrunner.NewClient(modelName, numCtx)
+func newMLXServer(modelName string, numCtx int, numCtxAuto bool) (mlxServer, error) {
+	client, err := mlxrunner.NewClient(modelName, numCtx, numCtxAuto)
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +185,26 @@ func schedulerModelKey(m *Model) string {
 }
 
 func resolveContextShift(shift *bool, m *Model) bool {
+	if !canContextShift(m) {
+		return false
+	}
 	if shift != nil {
 		return *shift
 	}
 
 	return supportsContextShift(m)
+}
+
+// launchContextShift ignores shift:false so that clients with different
+// shift settings share a runner; llm enforces shift:false per request.
+func launchContextShift(shift *bool, m *Model) bool {
+	return resolveContextShift(shift, m) || resolveContextShift(nil, m)
+}
+
+// canContextShift is false for models with a projector: llama-server disables
+// context shift whenever one is loaded, even when explicitly requested.
+func canContextShift(m *Model) bool {
+	return m == nil || len(m.ProjectorPaths) == 0
 }
 
 func supportsContextShift(m *Model) bool {
@@ -237,11 +249,6 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
-	contextShift := false
-	if m.ModelPath != "" {
-		contextShift = resolveContextShift(shift, m)
-	}
-
 	req := &LlmRequest{
 		ctx:             c,
 		model:           m,
@@ -251,7 +258,6 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		errCh:           make(chan error, 1),
 		numCtxAuto:      numCtxAuto,
 		numBatchAuto:    numBatchAuto,
-		contextShift:    contextShift,
 		shift:           shift,
 	}
 
@@ -314,8 +320,8 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				s.loadedMu.Unlock()
 
 				if runner != nil {
-					if runner.needsReload(ctx, pending) {
-						slog.Debug("reloading", "runner", runner)
+					if reason := runner.reloadReason(ctx, pending); reason != "" {
+						slog.Info("reloading model", "reason", reason, "runner", runner)
 						runnerToExpire = runner
 					} else {
 						// Runner is usable, return it
@@ -558,16 +564,10 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	numParallel := max(int(envconfig.NumParallel()), 1)
 	completion := req.model.CheckCapabilities(model.CapabilityCompletion) == nil
 
-	// Embedding models should always be loaded with parallel=1
-	if !completion {
+	// MLX owns batching for generation, scoring, embeddings and speech.
+	// Keep the existing serial load for llama.cpp non-completion models.
+	if !completion && !req.model.IsMLX() {
 		numParallel = 1
-	}
-
-	// Some architectures are not safe with num_parallel > 1.
-	// ref: https://github.com/ollama/ollama/issues/4165
-	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe", "qwen3next", "lfm2", "lfm2moe", "nemotron_h", "nemotron_h_moe", "nemotron_h_omni"}, req.model.Config.ModelFamily) && numParallel != 1 {
-		numParallel = 1
-		slog.Warn("model architecture does not currently support parallel requests", "architecture", req.model.Config.ModelFamily)
 	}
 
 	sessionDuration := envconfig.KeepAlive()
@@ -633,10 +633,9 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 
 			launchOpts = s.applyLlamaServerMmapDefaults(req, launchOpts, systemInfo, loadGpus, f, numParallel)
-			req.contextShift = resolveContextShift(req.shift, req.model)
 
 			config := llamaServerConfigForModel(req.model)
-			config.ContextShift = req.contextShift
+			config.ContextShift = launchContextShift(req.shift, req.model)
 			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel, config)
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
@@ -648,7 +647,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 		} else {
 			var mlx mlxServer
-			mlx, err = s.newMLXServerFn(req.model.ShortName, req.opts.NumCtx)
+			mlx, err = s.newMLXServerFn(req.model.ShortName, req.opts.NumCtx, req.numCtxAuto)
 			if err == nil {
 				// Pre-flight check: the runner reports only what it holds, which
 				// at load time is the weights, so without a prediction the cache
@@ -765,7 +764,6 @@ iGPUScan:
 	trainContext := modelTrainContext(f)
 	if effectiveNumCtx := llama.ContextLength(); req.model.ModelPath != "" && effectiveNumCtx > 0 {
 		req.opts.NumCtx = effectiveNumCtx
-		req.contextShift = resolveContextShift(req.shift, req.model)
 	}
 	runnerName := req.model.Runner
 	if req.model.IsMLX() && runnerName == "" {
@@ -791,7 +789,7 @@ iGPUScan:
 		numCtxAuto:      req.numCtxAuto,
 		numBatchAuto:    req.numBatchAuto,
 		useMMapAuto:     req.useMMapAuto,
-		contextShift:    req.contextShift,
+		contextShift:    req.model.ModelPath != "" && launchContextShift(req.shift, req.model),
 		trainContext:    trainContext,
 	}
 	runner.model.Store(req.model)
@@ -1486,6 +1484,11 @@ func (runner *runnerRef) unload() {
 }
 
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
+	return runner.reloadReason(ctx, req) != ""
+}
+
+// reloadReason returns why the loaded runner cannot serve req, or "" if it can.
+func (runner *runnerRef) reloadReason(ctx context.Context, req *LlmRequest) string {
 	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
@@ -1496,7 +1499,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	}
 
 	if runner.Options == nil {
-		return true
+		return "runner has no options"
 	}
 
 	// Don't reload runner if num_gpu=-1 was provided
@@ -1517,26 +1520,28 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		optsNew.NumGPU = -1
 	}
 
-	contextShift := req.contextShift
-	if req.model.ModelPath != "" {
-		contextShift = resolveContextShift(req.shift, req.model)
-	}
-	if runner.contextShift != contextShift {
-		return true
+	if req.model.ModelPath != "" && resolveContextShift(req.shift, req.model) && !runner.contextShift {
+		return "request needs context shift, which the loaded runner was launched without"
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	loaded := runner.model.Load()
-	if loaded == nil ||
-		!reflect.DeepEqual(loaded.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(loaded.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		(!loaded.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
-		runner.llama.Ping(ctx) != nil {
-		return true
+	switch {
+	case loaded == nil:
+		return "no model loaded"
+	case !reflect.DeepEqual(loaded.AdapterPaths, req.model.AdapterPaths):
+		return "adapters changed"
+	case !reflect.DeepEqual(loaded.ProjectorPaths, req.model.ProjectorPaths):
+		return "projectors changed"
+	case !loaded.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew):
+		return "runner options changed"
+	}
+	if err := runner.llama.Ping(ctx); err != nil {
+		return "runner did not respond: " + err.Error()
 	}
 
-	return false
+	return ""
 }
 
 // Free memory reporting on GPUs can lag for a while even after the runner

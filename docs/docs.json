@@ -118,8 +118,7 @@
             "group": "Get started",
             "pages": [
               "index",
-              "quickstart",
-              "/cloud"
+              "quickstart"
             ]
           },
           {
@@ -134,6 +133,17 @@
               "/capabilities/speech",
               "/capabilities/tool-calling",
               "/capabilities/web-search"
+            ]
+          },
+          {
+            "group": "Cloud",
+            "pages": [
+              "/cloud",
+              "/cloud/api",
+              "/cloud/models",
+              "/cloud/usage",
+              "/cloud/model-lifecycle",
+              "/cloud/faq"
             ]
           },
           {

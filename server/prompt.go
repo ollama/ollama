@@ -82,8 +82,19 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		return "", nil, err
 	}
 
-	// truncate any messages that do not fit into the context window
-	p, err := renderPrompt(m, append(system, renderMsgs[currMsgIdx:]...), tools, think)
+	renderMsgs = append(system, renderMsgs[currMsgIdx:]...)
+	if len(media) > 0 && m.IsMLX() && m.Config.Renderer == "inkling2" {
+		prompt, offsets, err := renderers.RenderInkling2WithImages(renderMsgs, tools, think)
+		if err != nil {
+			return "", nil, err
+		}
+		for i := range media {
+			media[i].TagOffsets = offsets[media[i].ID]
+		}
+		return prompt, media, nil
+	}
+
+	p, err := renderPrompt(m, renderMsgs, tools, think)
 	if err != nil {
 		return "", nil, err
 	}

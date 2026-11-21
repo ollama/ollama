@@ -161,7 +161,7 @@ func TestPrepareGrammarUnavailable(t *testing.T) {
 		Tokenizer:     newTestTokenizer(t, []int32{7}),
 		contextLength: 32,
 	}
-	request := &Request{CompletionRequest: CompletionRequest{
+	request := &request{CompletionRequest: CompletionRequest{
 		Prompt: "0",
 		Format: json.RawMessage(schemaTag(`{"type":"object"}`)),
 	}}
@@ -190,19 +190,19 @@ func (grammarTestDraftSession) close()            {}
 
 func TestSpeculationGating(t *testing.T) {
 	s := &speculation{drafter: grammarTestDrafter{}, depth: newDepthController()}
-	constrained := s.open(Request{Grammar: resolvedGrammarCompilation(&xgrammar.Matcher{})}, nil)
+	constrained := s.open(request{Grammar: resolvedGrammarCompilation(&xgrammar.Matcher{})}, nil)
 	defer constrained.close()
 	if !constrained.enabled {
 		t.Fatal("structured output request disabled speculative decoding")
 	}
 
-	logprobs := s.open(Request{SamplerOpts: sampler.Options{Logprobs: true}}, nil)
+	logprobs := s.open(request{SamplerOpts: sampler.Options{Logprobs: true}}, nil)
 	defer logprobs.close()
 	if logprobs.enabled {
 		t.Fatal("logprobs request enabled speculative decoding")
 	}
 
-	unconstrained := s.open(Request{}, nil)
+	unconstrained := s.open(request{}, nil)
 	defer unconstrained.close()
 	if !unconstrained.enabled {
 		t.Fatal("ordinary request unexpectedly disabled speculative decoding")
@@ -257,8 +257,8 @@ func TestDecodeGrammarTransitions(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
-		req := Request{
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
+		req := request{
 			Tokens:            []int32{1},
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 			SamplerOpts:       sampler.Options{},
@@ -268,7 +268,7 @@ func TestDecodeGrammarTransitions(t *testing.T) {
 			t.Fatalf("want a drafting speculationSession, got %+v", spec)
 		}
 		pinDraftLimit(spec, 0)
-		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, g).(*speculativeDecoder)
+		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, g)
 
 		check := func(want []int32) {
 			t.Helper()
@@ -315,10 +315,10 @@ func TestRunMTPDecodeGrammar(t *testing.T) {
 		draft := &fakeMTPDraft{predict: predict}
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 
-		req := Request{
+		req := request{
 			Responses:         ch,
 			Tokens:            []int32{0},
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
@@ -327,11 +327,9 @@ func TestRunMTPDecodeGrammar(t *testing.T) {
 		spec := r.spec.open(req, nil)
 		pinDraftLimit(spec, 4)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, g)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := driveTestDecoder(context.Background(), r, req, session, d, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		d.close()
-		spec.close()
 
 		content, final := collectResponses(ch)
 		if content != "234" {
@@ -356,10 +354,10 @@ func TestRunMTPDecodeGrammarRejectsInvalidDraft(t *testing.T) {
 		draft := &fakeMTPDraft{predict: predict}
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 
-		req := Request{
+		req := request{
 			Responses:         ch,
 			Tokens:            []int32{1},
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
@@ -368,11 +366,9 @@ func TestRunMTPDecodeGrammarRejectsInvalidDraft(t *testing.T) {
 		spec := r.spec.open(req, nil)
 		pinDraftLimit(spec, 2)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, g)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := driveTestDecoder(context.Background(), r, req, session, d, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		d.close()
-		spec.close()
 
 		content, final := collectResponses(ch)
 		if content != "12" {

@@ -34,7 +34,6 @@ func TestExtendChunk(t *testing.T) {
 			{pos: 40, length: 8, item: &model.PreparedItem{Causal: true}},
 			{pos: 96, length: 4, item: &model.PreparedItem{}},
 		},
-		inputLen: 100,
 	}
 
 	cases := []struct{ pos, n, want int }{
@@ -49,13 +48,13 @@ func TestExtendChunk(t *testing.T) {
 		{96, 2, 3},  // trailing expansion at chunk start: clip one short of the prompt
 	}
 	for _, c := range cases {
-		if got := m.extendChunk(c.pos, c.n); got != c.want {
+		if got := m.extendChunk(c.pos, c.n, 99); got != c.want {
 			t.Errorf("extendChunk(%d, %d) = %d, want %d", c.pos, c.n, got, c.want)
 		}
 	}
 
 	var nilMedia *requestMedia
-	if got := nilMedia.extendChunk(0, 12); got != 12 {
+	if got := nilMedia.extendChunk(0, 12, 99); got != 12 {
 		t.Errorf("nil extendChunk = %d, want 12", got)
 	}
 }
@@ -82,12 +81,12 @@ func TestBatchMediaLifecycle(t *testing.T) {
 			Opaque:    7,
 		}
 		r := &Runner{Model: encodeCountingModel{calls: &calls}}
-		request := Request{
+		req := request{
 			Tokens:     make([]int32, 8),
 			MediaItems: []mediaItem{{pos: 2, length: 4, item: prepared}},
 		}
 
-		m := r.openMedia(request)
+		m := r.openMedia(req)
 		if m == nil {
 			t.Fatal("openMedia returned nil for a media request")
 		}
@@ -115,7 +114,7 @@ func TestBatchMediaLifecycle(t *testing.T) {
 		}
 		m.close()
 
-		if r.openMedia(Request{Tokens: make([]int32, 8)}) != nil {
+		if r.openMedia(request{Tokens: make([]int32, 8)}) != nil {
 			t.Fatal("openMedia returned non-nil for a text-only request")
 		}
 	})

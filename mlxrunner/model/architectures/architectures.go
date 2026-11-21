@@ -1,6 +1,7 @@
 package architectures
 
 import (
+	_ "github.com/ollama/ollama/mlxrunner/model/autotrustdecision"
 	_ "github.com/ollama/ollama/mlxrunner/model/clef"
 	_ "github.com/ollama/ollama/mlxrunner/model/cohere2_moe"
 	_ "github.com/ollama/ollama/mlxrunner/model/d1"
@@ -11,6 +12,7 @@ import (
 	_ "github.com/ollama/ollama/mlxrunner/model/gemma4embedding"
 	_ "github.com/ollama/ollama/mlxrunner/model/glimmer"
 	_ "github.com/ollama/ollama/mlxrunner/model/glm4_moe_lite"
+	_ "github.com/ollama/ollama/mlxrunner/model/inkling2"
 	_ "github.com/ollama/ollama/mlxrunner/model/kev"
 	_ "github.com/ollama/ollama/mlxrunner/model/laguna"
 	_ "github.com/ollama/ollama/mlxrunner/model/laya"
@@ -22,5 +24,6 @@ import (
 	_ "github.com/ollama/ollama/mlxrunner/model/qwen3_5"
 	_ "github.com/ollama/ollama/mlxrunner/model/qwen3_5_moe"
 	_ "github.com/ollama/ollama/mlxrunner/model/qwen4_exp"
+	_ "github.com/ollama/ollama/mlxrunner/model/ripple"
 	_ "github.com/ollama/ollama/mlxrunner/model/strands"
 )

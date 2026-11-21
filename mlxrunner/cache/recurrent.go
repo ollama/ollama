@@ -8,6 +8,14 @@ import (
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
+// Recurrent is the read/write state needed by a recurrent model layer.
+type Recurrent interface {
+	Layer
+	Get(b *batch.Batch, dtype mlx.DType) *nn.RecurrentHistory
+	Put(b *batch.Batch, convStates, deltaStates []*mlx.Array)
+	SnapshotSplits(forwardLen int) []int
+}
+
 // RecurrentCache stores state for linear-recurrent layers.
 //
 // Conv state takes its dtype from the first Get call (the activation dtype).

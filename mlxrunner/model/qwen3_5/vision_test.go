@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/mlxrunner/batch"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
@@ -178,6 +181,25 @@ func TestVisionPatchLookups(t *testing.T) {
 		}
 		if sum < 0.999 || sum > 1.001 {
 			t.Fatalf("patch %d weights sum %f", i, sum)
+		}
+	}
+}
+
+func TestMRopeMixedDecodeRows(t *testing.T) {
+	a := &visionLayout{promptLen: 69, delta: -56}
+	b := &visionLayout{promptLen: 103, delta: -80}
+	for _, tc := range []struct {
+		offsets []int32
+		layouts []any
+		want    []int32
+	}{
+		{[]int32{70, 12, 105}, []any{a, nil, b}, []int32{14, 14, 14, 12, 12, 12, 25, 25, 25}},
+		{[]int32{106, 71}, []any{b, a}, []int32{26, 26, 26, 15, 15, 15}},
+		{[]int32{13}, nil, nil},
+	} {
+		got := ropePositions(&batch.Batch{SeqOffsets: tc.offsets, Layout: tc.layouts}, 1)
+		if !slices.Equal(got, tc.want) {
+			t.Fatalf("offsets %v positions %v want %v", tc.offsets, got, tc.want)
 		}
 	}
 }

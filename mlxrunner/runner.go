@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxthread"
@@ -24,14 +26,13 @@ import (
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
-// Request is a short-lived struct that carries a completion request through
+// request is a short-lived struct that carries a completion request through
 // a channel from the HTTP handler to the runner goroutine. The ctx field
 // must travel with the request so that cancellation propagates across the
 // channel boundary.
-type Request struct {
+type request struct {
 	CompletionRequest
 	Responses chan CompletionResponse
-	Pipeline  func(context.Context, Request) error
 
 	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
@@ -41,24 +42,87 @@ type Request struct {
 	Grammar     *grammarCompilation
 }
 
+func (r request) context() context.Context { return r.Ctx }
+
+func (r request) reject(err error) {
+	r.Grammar.close()
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// An unadmitted request has no queued responses, so the production
+		// buffer accepts this error without blocking scheduler teardown.
+		select {
+		case r.Responses <- CompletionResponse{Error: completionStatusError(err)}:
+		default:
+		}
+	}
+	close(r.Responses)
+}
+
+func completionStatusError(err error) *api.StatusError {
+	var statusErr api.StatusError
+	if !errors.As(err, &statusErr) {
+		statusErr = api.StatusError{
+			StatusCode:   http.StatusInternalServerError,
+			ErrorMessage: err.Error(),
+		}
+	}
+	return &statusErr
+}
+
+// An evaluation computes embeddings or decision scores from the supplied input without
+// entering the token decode loop. Its callback runs on the MLX worker.
+type evaluationRequest struct {
+	ctx    context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
+	tokens []int32
+	items  []mediaItem
+	open   func(*batchSlot, []*prefixCache) (*evaluationState, error)
+	done   chan error
+}
+
+func (r *evaluationRequest) reject(err error) { r.done <- err }
+
+func (r *evaluationRequest) context() context.Context { return r.ctx }
+
+type speechRequest struct {
+	ctx   context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
+	input llm.SpeechRequest
+	state model.SpeechState
+	queue *audioQueue
+	done  chan error
+}
+
+func (r *speechRequest) reject(err error) { r.done <- err }
+
+func (r *speechRequest) context() context.Context { return r.ctx }
+
+// All request types share admission and the same slot limit. Once admitted,
+// the scheduler advances each type using its own model operations.
+type queuedRequest interface {
+	context() context.Context
+	// reject releases a request that has not acquired a slot.
+	reject(error)
+}
+
 type Runner struct {
-	Model         model.Model
-	weights       *mlx.Scope
-	Tokenizer     *tokenizer.Tokenizer
-	Requests      chan Request
-	EmbedRequests chan EmbeddingRequest
-	Sampler       *sample.Sampler
-	cache         *prefixCache
-	scoreCache    *prefixCache
-	scoreHidden   *cache.HiddenCache
-	contextLength int
-	mlxThread     *mlxthread.Thread
+	parallel         int
+	parallelContext  int
+	fullContextBytes int64 // Estimated per-client storage at the projected context size.
+	Model            model.Model
+	weights          *mlx.Scope
+	Tokenizer        *tokenizer.Tokenizer
+	Requests         chan queuedRequest
+	Sampler          *sample.Sampler
+	cache            *prefixCache
+	contextLength    int
+	mlxThread        *mlxthread.Thread
 	// grammarEngine is the structured-output subsystem; nil when the grammar
 	// library or vocabulary failed to load.
 	grammarEngine *grammarEngine
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
+
+	// Last retention observation for new slots; accessed on the MLX worker.
+	snapshotLimitBytes int64
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -71,6 +135,7 @@ func (r *Runner) Load(modelName string) error {
 	r.weights = mlx.NewScope()
 	r.weights.Attach(weights...)
 	configureWiredMemory()
+	r.configureParallelism()
 	return nil
 }
 
@@ -88,8 +153,11 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 			return nil
 		}
 
-		// Load all tensor blobs from manifest
-		tensors, e := loadTensorsFromManifest(root)
+		var skippedTensors []string
+		if s, ok := m.(model.SkippedTensorsModel); ok {
+			skippedTensors = s.SkippedTensorNames()
+		}
+		tensors, e := loadTensorsFromManifest(root, skippedTensors)
 		if e != nil {
 			err = e
 			return nil
@@ -137,6 +205,7 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		}
 
 		r.Model = m
+		mlx.EnableCompile()
 		// Speech-only models have no tokenizer; models that also chat need
 		// the text pipeline.
 		if _, ok := m.(model.SpeechModel); ok && m.Tokenizer() == nil {
@@ -144,14 +213,26 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		}
 		r.Tokenizer = m.Tokenizer()
 		r.contextLength = m.MaxContextLength()
+		// Decision and embedding models read hidden states directly. They do
+		// not need a text sampler or a synthetic generation forward for grammar.
+		if _, ok := m.(model.Scorer); ok {
+			return w
+		}
+		if _, ok := m.(interface{ EmbeddingDim() int }); ok {
+			return w
+		}
 		caches := m.NewCaches()
 		draftCaches := newDraftCaches(draftModel)
 		r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
 		r.Sampler = sample.New(r.contextLength)
-		r.spec = newSpeculation(r, draftModel, caches, draftCaches)
-		r.grammarEngine = newGrammarEngine(logitsWidth(m), r.Tokenizer)
-
-		mlx.EnableCompile()
+		r.spec = newSpeculation(r, pipelineSlot, draftModel, caches, draftCaches)
+		var capacity int
+		if r.parallel <= 0 && mlx.MetalIsAvailable() {
+			capacity = parallelContextLength(r.contextLength, r.parallelContext)
+		}
+		width, fullContextBytes := modelShapes(m, draftModel, capacity)
+		r.fullContextBytes = fullContextBytes
+		r.grammarEngine = newGrammarEngine(width, r.Tokenizer)
 
 		return w
 	})
@@ -159,8 +240,8 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 }
 
 func (r *Runner) Close() {
-	r.scoreCache.close()
-	r.scoreCache, r.scoreHidden = nil, nil
+	r.cache.close()
+	r.cache = nil
 	if r.grammarEngine != nil {
 		r.grammarEngine.close()
 		r.grammarEngine = nil
@@ -177,26 +258,72 @@ func newDraftCaches(draft model.DraftModel) []cache.Cache {
 	return draft.NewCaches()
 }
 
-// logitsWidth reads a model's logits width off a one-token forward's static
-// shape — the same Forward and Unembed path decode logits take. Nothing is
-// evaluated.
-func logitsWidth(m model.Model) (width int) {
+// modelShapes inspects the existing one-token load graph without evaluating it.
+// Cache dimensions come from the same forward used for inference, including the
+// drafter, at the projected context size.
+func modelShapes(m model.Model, draft model.DraftModel, tokens int) (width int, fullContextBytes int64) {
 	mlx.Scoped(func() {
 		caches := m.NewCaches()
-		hidden, _ := m.Forward(&batch.Batch{
+		var draftCaches []cache.Cache
+		if tokens > 0 {
+			draftCaches = newDraftCaches(draft)
+		}
+		defer func() {
+			for _, c := range slices.Concat(caches, draftCaches) {
+				if c != nil {
+					c.Free()
+				}
+			}
+		}()
+		b := &batch.Batch{
 			InputIDs:     mlx.FromValues([]int32{0}, 1, 1),
 			SeqOffsets:   []int32{0},
 			SeqQueryLens: []int32{1},
-		}, caches)
+		}
+		hidden, aux := m.Forward(b, cache.Layers(caches))
 		logits := m.Unembed(hidden)
 		width = logits.Dim(logits.NumDims() - 1)
-		for _, c := range caches {
-			if c != nil {
-				c.Free()
-			}
+		if tokens <= 0 {
+			return
 		}
+		if len(draftCaches) > 0 {
+			if aux == nil {
+				return
+			}
+			b.Hidden = aux
+			draft.Forward(b, cache.Layers(caches), cache.Layers(draftCaches))
+		}
+		checkpoints := (tokens + prefillSnapshotInterval - 1) / prefillSnapshotInterval
+		for _, c := range caches {
+			bytes, ok := cache.EstimateMemory(c, tokens, checkpoints)
+			if !ok || bytes > math.MaxInt64-fullContextBytes {
+				fullContextBytes = 0
+				return
+			}
+			fullContextBytes += bytes
+		}
+		if fullContextBytes == 0 {
+			return
+		}
+		// Scoring keeps the target's hidden outputs and briefly holds both
+		// sides of a growing concatenation. It does not run the drafter.
+		hiddenBytes := int64(hidden.NumBytes())
+		if hiddenBytes > (math.MaxInt64-fullContextBytes)/int64(tokens)/2 {
+			fullContextBytes = 0
+			return
+		}
+		scoreBytes := fullContextBytes + 2*hiddenBytes*int64(tokens)
+		for _, c := range draftCaches {
+			bytes, ok := cache.EstimateMemory(c, tokens, checkpoints)
+			if !ok || bytes > math.MaxInt64-fullContextBytes {
+				fullContextBytes = 0
+				return
+			}
+			fullContextBytes += bytes
+		}
+		fullContextBytes = max(fullContextBytes, scoreBytes)
 	})
-	return width
+	return width, fullContextBytes
 }
 
 func configureWiredMemory() {
@@ -234,14 +361,19 @@ func configureWiredMemory() {
 		"previous", mlx.PrettyBytes(previous))
 }
 
-// loadTensorsFromManifest loads all tensor blobs from the manifest into a
-// flat map, deduplicating by digest and remapping safetensors key suffixes.
+// loadTensorsFromManifest loads tensor blobs into a flat map, excluding specified
+// tensors, deduplicating by digest and remapping key suffixes.
 //
 // Uses a two-phase approach: first loads all raw tensors, then remaps
 // .bias → _qbias with complete knowledge of which base names have .scale
 // entries. This avoids a race condition where Go map iteration order could
 // cause .bias to be processed before .scale within the same blob.
-func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
+func loadTensorsFromManifest(root *model.Root, skippedTensors []string) (map[string]*mlx.Array, error) {
+	skip := make(map[string]bool, len(skippedTensors))
+	for _, name := range skippedTensors {
+		skip[name] = true
+	}
+	skipped, skippedBytes := 0, 0
 	// Phase 1: Load all tensors raw from all blobs
 	rawTensors := make(map[string]*mlx.Array)
 	seen := make(map[string]bool)
@@ -255,6 +387,14 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 			return nil, err
 		}
 		for name, arr := range mlx.Load(blobPath) {
+			// Native safetensors loads are lazy. Filter excluded arrays before
+			// the Metal pre-pass materializes their payloads, including when a
+			// blob also contains tensors needed by the target or draft model.
+			if skip[name] {
+				skipped++
+				skippedBytes += arr.NumBytes()
+				continue
+			}
 			rawTensors[name] = arr
 		}
 	}
@@ -288,49 +428,16 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 	}
 
 	slog.Info("Loaded tensors from manifest", "count", len(allTensors))
+	if skipped > 0 {
+		slog.Debug("Skipped tensors from manifest", "count", skipped, "bytes", skippedBytes)
+	}
 	return allTensors, nil
 }
 
 func (r *Runner) Run(host, port string, mux http.Handler) error {
 	g, ctx := errgroup.WithContext(context.Background())
 
-	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case request := <-r.Requests:
-				err := r.runRequest(request)
-				if err != nil {
-					slog.Info("Request terminated", "error", err)
-					var statusErr api.StatusError
-					if !errors.As(err, &statusErr) {
-						statusErr = api.StatusError{
-							StatusCode:   http.StatusInternalServerError,
-							ErrorMessage: err.Error(),
-						}
-					}
-					select {
-					case request.Responses <- CompletionResponse{Error: &statusErr}:
-					case <-request.Ctx.Done():
-					}
-				}
-
-				close(request.Responses)
-			case erequest := <-r.EmbedRequests:
-				run := func() error { return r.runEmbed(erequest.Ctx, erequest) }
-				var err error
-				if r.mlxThread == nil {
-					err = run()
-				} else {
-					err = r.mlxThread.Do(erequest.Ctx, run)
-				}
-				if err != nil {
-					slog.Info("Embedding request terminated", "error", err)
-				}
-			}
-		}
-	})
+	g.Go(func() error { return r.runBatchRequests(ctx) })
 
 	g.Go(func() error {
 		slog.Info("Starting HTTP server", "host", host, "port", port)
@@ -338,15 +445,4 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 	})
 
 	return g.Wait()
-}
-
-func (r *Runner) runRequest(request Request) error {
-	defer request.Grammar.close()
-	if r.mlxThread == nil {
-		return request.Pipeline(request.Ctx, request)
-	}
-
-	return r.mlxThread.Do(request.Ctx, func() error {
-		return request.Pipeline(request.Ctx, request)
-	})
 }

@@ -69,6 +69,16 @@ func (c *Claude) envVars(model string, models []LaunchModel) []string {
 		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
+		// Keep provider routing scoped to this launch, including when Claude
+		// settings contain a different endpoint or credentials.
+		"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1",
+		"CLAUDE_CODE_USE_BEDROCK=",
+		"CLAUDE_CODE_USE_VERTEX=",
+		"CLAUDE_CODE_USE_FOUNDRY=",
+		"CLAUDE_CODE_USE_ANTHROPIC_AWS=",
+		"CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD=",
+		"CLAUDE_CODE_USE_MANTLE=",
+		"CLAUDE_CODE_USE_GATEWAY=",
 		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
 		"CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off",

@@ -36,6 +36,35 @@ type Batch struct {
 	Memo Memo
 }
 
+type rowKey int
+
+// Row returns a single row with its own per-forward memo. Repeated calls reuse
+// the same view, so cache mask dispatch remains memoized across model layers.
+func (b *Batch) Row(i int) *Batch {
+	if v, ok := b.Memo.Get(rowKey(i)); ok {
+		return v.(*Batch)
+	}
+	row := &Batch{
+		InputIDs:     b.InputIDs.Slice(mlx.Slice(i, i+1), mlx.Slice()),
+		SeqOffsets:   b.SeqOffsets[i : i+1],
+		SeqQueryLens: b.SeqQueryLens[i : i+1],
+	}
+	if b.Hidden != nil {
+		row.Hidden = b.Hidden.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice())
+	}
+	if len(b.Layout) > 0 {
+		row.Layout = b.Layout[i : i+1]
+	}
+	for _, item := range b.Media {
+		if item.Seq == i {
+			item.Seq = 0
+			row.Media = append(row.Media, item)
+		}
+	}
+	b.Memo.Put(rowKey(i), row)
+	return row
+}
+
 // MediaItem is one media occurrence in a row's sequence. The runner
 // knows only where the expansion was spliced; which positions bear
 // features is the model's, derived from Pos and Opaque.

@@ -293,7 +293,7 @@ See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [di
   - [x] Image `content` (base64)
   - [x] Array of content blocks
   - [x] `tool_use` blocks
-  - [x] `tool_result` blocks
+  - [x] `tool_result` blocks (including `tool_reference` blocks from client-side tool search)
   - [x] `thinking` blocks
 - [x] `system` (string or array)
 - [x] `stream`
@@ -302,6 +302,7 @@ See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [di
 - [x] `top_k`
 - [x] `stop_sequences`
 - [x] `tools`
+  - [x] `defer_loading` (a deferred tool is offered to the model only after a `tool_reference` loads it)
 - [x] `thinking`
 - [x] `output_config`
   - [x] `effort` (model-defined names)
@@ -329,7 +330,7 @@ See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [di
 - [x] `ping`
 - [x] `error`
 
-Use `/api/show` to discover a model's supported thinking values and default. `thinking.type: "enabled"` and `"disabled"` act as explicit on/off controls. When a model uses its metadata to resolve named levels, supported `output_config.effort` names are applied exactly and unsupported names resolve to the model default. Models without metadata keep the existing compatibility behavior, which trims and lowercases effort names and maps `"xhigh"` to `"high"`.
+Use `/api/show` to discover a model's supported thinking values and default. `thinking.type: "enabled"` and `"disabled"` act as explicit on/off controls. Models that cannot disable thinking use their lowest supported level for `"disabled"`. When a model uses its metadata to resolve named levels, supported `output_config.effort` names are applied exactly and unsupported names resolve to the model default. Models without metadata keep the existing compatibility behavior, which trims and lowercases effort names and maps `"xhigh"` to `"high"`.
 
 ## Models
 

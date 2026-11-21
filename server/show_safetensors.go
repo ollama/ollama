@@ -17,6 +17,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+const inkling2ModelType = "inkling2_loop"
+
 func canonicalQuantType(quantType string) string {
 	return strings.ToLower(strings.TrimSpace(quantType))
 }
@@ -70,7 +72,7 @@ func getSafetensorsLLMInfoForRunner(name model.Name, runner string) (map[string]
 
 	// For quantized models, byte-based estimation can significantly undercount
 	// parameters. Prefer exact counting from tensor shapes in safetensors headers.
-	if paramCount, err := getParameterCountFromManifest(mf); err == nil && paramCount > 0 {
+	if paramCount, err := getParameterCountFromManifest(mf, config.ModelType); err == nil && paramCount > 0 {
 		info["general.parameter_count"] = paramCount
 	}
 
@@ -174,14 +176,18 @@ func buildModelInfo(config modelConfig, totalTensorBytes, tensorCount int64) map
 // getParameterCountFromManifest counts model parameters from tensor shapes.
 // This accounts for quantized tensors by using unpacked shapes from
 // getTensorInfoFromManifest.
-func getParameterCountFromManifest(mf *manifest.Manifest) (int64, error) {
-	tensors, err := getTensorInfoFromManifest(mf)
+func getParameterCountFromManifest(mf *manifest.Manifest, modelType string) (int64, error) {
+	tensors, err := getTensorInfoFromManifest(mf, modelType)
 	if err != nil {
 		return 0, err
 	}
 
 	var total int64
 	for _, tensor := range tensors {
+		// Inkling packages its separate DSpark draft in the same manifest.
+		if modelType == inkling2ModelType && strings.HasPrefix(tensor.Name, "draft.") {
+			continue
+		}
 		if len(tensor.Shape) == 0 {
 			continue
 		}
@@ -225,14 +231,14 @@ func getSafetensorsTensorInfoForRunner(name model.Name, runner string) ([]api.Te
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	return getTensorInfoFromManifest(mf)
+	return getTensorInfoFromManifest(mf, "")
 }
 
 // getTensorInfoFromManifest extracts tensor info from a manifest.
 // This is separated for testability.
 // For quantized tensors, reads quant_type from blob __metadata__.
 // For packed blobs (multiple tensors per blob), enumerates all tensors in the blob.
-func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
+func getTensorInfoFromManifest(mf *manifest.Manifest, modelType string) ([]api.Tensor, error) {
 	var tensors []api.Tensor
 
 	for _, layer := range mf.Layers {
@@ -251,7 +257,7 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 			continue
 		}
 
-		allInfos, err := parseSafetensorsAllHeaders(f)
+		allInfos, err := parseSafetensorsAllHeaders(f, modelType)
 		f.Close()
 		if err != nil {
 			continue
@@ -267,7 +273,8 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 				tensorName = info.Name
 			}
 
-			if info.QuantType != "" {
+			// Inkling's dense tensors retain their own dtype in a quantized blob.
+			if info.QuantType != "" && (modelType != inkling2ModelType || info.Dtype == "U32") {
 				quantType := canonicalQuantType(info.QuantType)
 
 				shape := make([]uint64, len(info.Shape))
@@ -335,7 +342,7 @@ func getSafetensorsDtypeForRunner(name model.Name, runner string) (string, error
 		if err != nil {
 			continue
 		}
-		infos, err := parseSafetensorsAllHeaders(f)
+		infos, err := parseSafetensorsAllHeaders(f, "")
 		_ = f.Close()
 		if err != nil {
 			continue
@@ -392,7 +399,7 @@ type safetensorsTensorInfo struct {
 // For packed blobs this returns multiple entries; for single-tensor blobs, one entry.
 // Each tensor's quant type is inferred from its shape and the presence of .scale/.bias entries
 // when no global __metadata__ quant_type is present.
-func parseSafetensorsAllHeaders(r io.Reader) ([]safetensorsTensorInfo, error) {
+func parseSafetensorsAllHeaders(r io.Reader, modelType string) ([]safetensorsTensorInfo, error) {
 	var headerSize uint64
 	if err := binary.Read(r, binary.LittleEndian, &headerSize); err != nil {
 		return nil, fmt.Errorf("failed to read header size: %w", err)
@@ -431,7 +438,11 @@ func parseSafetensorsAllHeaders(r io.Reader) ([]safetensorsTensorInfo, error) {
 	// Collect all main tensor entries (sorted for deterministic output)
 	var mainNames []string
 	for name := range header {
-		if isSafetensorsCompanionTensor(name) {
+		if modelType == inkling2ModelType {
+			if isInkling2CompanionTensor(name, headerKeys) {
+				continue
+			}
+		} else if isSafetensorsCompanionTensor(name) {
 			continue
 		}
 		mainNames = append(mainNames, name)
@@ -470,6 +481,17 @@ func isSafetensorsCompanionTensor(name string) bool {
 		strings.HasSuffix(name, ".scale") ||
 		strings.HasSuffix(name, ".bias") ||
 		strings.HasSuffix(name, ".global_scale")
+}
+
+func isInkling2CompanionTensor(name string, keys map[string]bool) bool {
+	// Inkling has learned biases and clipping scales. A quantization companion
+	// shares the header with its parent weight.
+	if isSafetensorsCompanionTensor(name) {
+		dot := strings.LastIndexByte(name, '.')
+		return dot < 0 || keys[name[:dot]]
+	}
+	return strings.HasSuffix(name, "_weight_scale") && keys[strings.TrimSuffix(name, "_scale")] ||
+		strings.HasSuffix(name, "_weight_amax") || strings.HasSuffix(name, "_weight_outer_scale_denominator")
 }
 
 // inferQuantType infers the quantization type for a tensor from its shape and scale shape.

@@ -134,7 +134,7 @@ func attention(b *batch.Batch, qkv *mlx.Array, heads int, theta float32, mask nn
 	return nn.ScaledDotProductAttention(b, q, float32(1/math.Sqrt(float64(width/heads))), nn.WithKV(k, v, b.SeqQueryLens), nn.WithMask(mask)).Transpose(0, 2, 1, 3).Reshape(B, n, width)
 }
 
-func (m *Model) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
 	h := m.encoderForward(b)
 	// The question type is model-owned row metadata. A missing layout denotes
 	// the choice type for load-time probes.

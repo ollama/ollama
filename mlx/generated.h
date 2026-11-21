@@ -117,6 +117,7 @@
 #define mlx_disable_compile mlx_disable_compile_mlx_gen_orig_
 #define mlx_enable_compile mlx_enable_compile_mlx_gen_orig_
 #define mlx_set_compile_mode mlx_set_compile_mode_mlx_gen_orig_
+#define mlx_cuda_get_arch_list mlx_cuda_get_arch_list_mlx_gen_orig_
 #define mlx_cuda_is_available mlx_cuda_is_available_mlx_gen_orig_
 #define mlx_device_new mlx_device_new_mlx_gen_orig_
 #define mlx_device_new_type mlx_device_new_type_mlx_gen_orig_
@@ -149,8 +150,10 @@
 #define mlx_distributed_group_new mlx_distributed_group_new_mlx_gen_orig_
 #define mlx_distributed_group_free mlx_distributed_group_free_mlx_gen_orig_
 #define mlx_distributed_init mlx_distributed_init_mlx_gen_orig_
-#define mlx_distributed_group_rank mlx_distributed_group_rank_mlx_gen_orig_
-#define mlx_distributed_group_size mlx_distributed_group_size_mlx_gen_orig_
+#define mlx_distributed_init_with_all_gather mlx_distributed_init_with_all_gather_mlx_gen_orig_
+#define mlx_distributed_clear_backends mlx_distributed_clear_backends_mlx_gen_orig_
+#define mlx_distributed_group_get_rank mlx_distributed_group_get_rank_mlx_gen_orig_
+#define mlx_distributed_group_get_size mlx_distributed_group_get_size_mlx_gen_orig_
 #define mlx_distributed_group_split mlx_distributed_group_split_mlx_gen_orig_
 #define mlx_distributed_is_available mlx_distributed_is_available_mlx_gen_orig_
 #define mlx_set_error_handler mlx_set_error_handler_mlx_gen_orig_
@@ -798,6 +801,7 @@
 #undef mlx_disable_compile
 #undef mlx_enable_compile
 #undef mlx_set_compile_mode
+#undef mlx_cuda_get_arch_list
 #undef mlx_cuda_is_available
 #undef mlx_device_new
 #undef mlx_device_new_type
@@ -830,8 +834,10 @@
 #undef mlx_distributed_group_new
 #undef mlx_distributed_group_free
 #undef mlx_distributed_init
-#undef mlx_distributed_group_rank
-#undef mlx_distributed_group_size
+#undef mlx_distributed_init_with_all_gather
+#undef mlx_distributed_clear_backends
+#undef mlx_distributed_group_get_rank
+#undef mlx_distributed_group_get_size
 #undef mlx_distributed_group_split
 #undef mlx_distributed_is_available
 #undef mlx_set_error_handler
@@ -1607,6 +1613,7 @@ extern int (*mlx_detail_compile_erase_)(const mlx_compile_cache cache, uintptr_t
 extern int (*mlx_disable_compile_)(void);
 extern int (*mlx_enable_compile_)(void);
 extern int (*mlx_set_compile_mode_)(mlx_compile_mode mode);
+extern int (*mlx_cuda_get_arch_list_)(mlx_vector_string* res);
 extern int (*mlx_cuda_is_available_)(bool* res);
 extern mlx_device (*mlx_device_new_)(void);
 extern mlx_device (*mlx_device_new_type_)(mlx_device_type type, int index);
@@ -1691,8 +1698,16 @@ extern int (*mlx_distributed_init_)(
     mlx_distributed_group* res,
     bool strict,
     const char* bk /* may be null */);
-extern int (*mlx_distributed_group_rank_)(mlx_distributed_group group);
-extern int (*mlx_distributed_group_size_)(mlx_distributed_group group);
+extern int (*mlx_distributed_init_with_all_gather_)(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk,
+    mlx_distributed_all_gather_fn all_gather,
+    void* payload,
+    void (*dtor)(void*));
+extern int (*mlx_distributed_clear_backends_)(void);
+extern int (*mlx_distributed_group_get_rank_)(int* res, mlx_distributed_group group);
+extern int (*mlx_distributed_group_get_size_)(int* res, mlx_distributed_group group);
 extern int (*mlx_distributed_group_split_)(
     mlx_distributed_group* res,
     mlx_distributed_group group,
@@ -4428,6 +4443,9 @@ static inline int mlx_enable_compile(void) {
 static inline int mlx_set_compile_mode(mlx_compile_mode mode) {
     return mlx_set_compile_mode_(mode);
 }
+static inline int mlx_cuda_get_arch_list(mlx_vector_string* res) {
+    return mlx_cuda_get_arch_list_(res);
+}
 static inline int mlx_cuda_is_available(bool* res) {
     return mlx_cuda_is_available_(res);
 }
@@ -4576,11 +4594,23 @@ static inline int mlx_distributed_init(
     const char* bk /* may be null */) {
     return mlx_distributed_init_(res, strict, bk);
 }
-static inline int mlx_distributed_group_rank(mlx_distributed_group group) {
-    return mlx_distributed_group_rank_(group);
+static inline int mlx_distributed_init_with_all_gather(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk,
+    mlx_distributed_all_gather_fn all_gather,
+    void* payload,
+    void (*dtor)(void*)) {
+    return mlx_distributed_init_with_all_gather_(res, strict, bk, all_gather, payload, dtor);
 }
-static inline int mlx_distributed_group_size(mlx_distributed_group group) {
-    return mlx_distributed_group_size_(group);
+static inline int mlx_distributed_clear_backends(void) {
+    return mlx_distributed_clear_backends_();
+}
+static inline int mlx_distributed_group_get_rank(int* res, mlx_distributed_group group) {
+    return mlx_distributed_group_get_rank_(res, group);
+}
+static inline int mlx_distributed_group_get_size(int* res, mlx_distributed_group group) {
+    return mlx_distributed_group_get_size_(res, group);
 }
 static inline int mlx_distributed_group_split(
     mlx_distributed_group* res,

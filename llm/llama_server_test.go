@@ -653,6 +653,7 @@ func TestLlamaServerCompletionContextShiftAllowsPromptWithHeadroom(t *testing.T)
 		Prompt:   prompt,
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -724,6 +725,7 @@ func TestLlamaServerCompletionContextShiftTruncatesPromptOverContext(t *testing.
 		Prompt:   prompt,
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -816,6 +818,7 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 		Prompt:   strings.Repeat("long prompt ", 500),
 		Options:  &opts,
 		Truncate: true,
+		Shift:    true,
 	}, func(cr CompletionResponse) {})
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
@@ -2152,15 +2155,23 @@ func TestAppendLoadModeArgs(t *testing.T) {
 
 	integratedCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}}
 	integratedROCm := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "rocm"}, Integrated: true}}
+	integratedVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}, Integrated: true}}
 	discreteCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	discreteVulkan := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}}}
 	integratedMetal := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}}
 
 	// Direct I/O is only selected on Linux, so the expectation depends on the host.
 	dio := []string{"base"}
 	dioWithMMapOff := []string{"base", "--load-mode", "none"}
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		dio = []string{"base", "--load-mode", "dio"}
 		dioWithMMapOff = []string{"base", "--load-mode", "dio"}
+	case "windows":
+		// Windows iGPUs keep CPU-side weights out of pinned host memory,
+		// which shares the GPU's WDDM shared-memory budget.
+		dio = []string{"base", "--no-host"}
+		dioWithMMapOff = []string{"base", "--no-host", "--load-mode", "none"}
 	}
 
 	tests := []struct {
@@ -2204,6 +2215,24 @@ func TestAppendLoadModeArgs(t *testing.T) {
 			opts: api.DefaultOptions(),
 			gpus: integratedMetal,
 			want: []string{"base"},
+		},
+		{
+			name: "integrated vulkan selects mmap",
+			opts: api.DefaultOptions(),
+			gpus: integratedVulkan,
+			want: []string{"base", "--load-mode", "mmap"},
+		},
+		{
+			name: "discrete vulkan does not select mmap",
+			opts: api.DefaultOptions(),
+			gpus: discreteVulkan,
+			want: []string{"base"},
+		},
+		{
+			name: "vulkan mmap wins over disabled mmap",
+			opts: mmapOff,
+			gpus: integratedVulkan,
+			want: []string{"base", "--load-mode", "mmap"},
 		},
 		{
 			name: "discrete cuda does not select dio",
@@ -3139,6 +3168,24 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantTotal: 0,
 		},
 		{
+			name: "new b12111 kinds: layer input + rotation",
+			lines: []string{
+				"llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)\n",
+				"init_rotation:         CUDA0 rotation buffer size =    23.04 MiB\n",
+				"init_rotation:     CUDA_Host rotation buffer size =     2.00 MiB\n",
+			},
+			wantGPU:   4.00 + 23.04,
+			wantTotal: 4.00 + 23.04 + 2.00,
+		},
+		{
+			name: "new b12257 kind: h_nextn",
+			lines: []string{
+				"h_nextn_dev_alloc:       MTL0 h_nextn buffer size =    16.01 MiB\n",
+			},
+			wantGPU:   16.01,
+			wantTotal: 16.01,
+		},
+		{
 			name: "fit probe buffers are replaced by final load",
 			lines: []string{
 				"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
@@ -4056,5 +4103,157 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 	if got := conversions.Load(); got != 1 {
 		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+}
+
+func TestNoShiftNumPredict(t *testing.T) {
+	tests := []struct {
+		name         string
+		numPredict   int
+		promptTokens int
+		want         int
+		wantErr      bool
+	}{
+		{name: "open-ended generation stops at the context limit", numPredict: -1, promptTokens: 3, want: 5},
+		{name: "budget larger than the remaining context is capped", numPredict: 100, promptTokens: 3, want: 5},
+		{name: "budget that fits is kept", numPredict: 2, promptTokens: 3, want: 2},
+		{name: "prompt leaving one token of room", numPredict: -1, promptTokens: 7, want: 1},
+		{name: "prompt filling the context is rejected", numPredict: -1, promptTokens: 8, wantErr: true},
+		{name: "prompt over the context is rejected", numPredict: -1, promptTokens: 9, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := noShiftNumPredict(tt.numPredict, 8, tt.promptTokens)
+			if tt.wantErr {
+				var serr api.StatusError
+				if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
+					t.Fatalf("err = %v, want 400 status error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("noShiftNumPredict = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func noShiftTestServer(t *testing.T, promptTokens int) (*llamaServerRunner, *int, *bool) {
+	t.Helper()
+
+	nPredict := -100
+	generated := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/apply-template":
+			fmt.Fprint(w, `{"prompt":"rendered chat"}`)
+		case "/tokenize":
+			json.NewEncoder(w).Encode(map[string][]int{"tokens": make([]int, promptTokens)})
+		case "/completion":
+			var req llamaServerCompletionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			generated, nPredict = true, req.NPredict
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		case "/v1/chat/completions":
+			var req struct {
+				NPredict int `json:"n_predict"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("invalid chat request body: %v", err)
+				return
+			}
+			generated, nPredict = true, req.NPredict
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	runner := &llamaServerRunner{
+		port:    srv.Listener.Addr().(*net.TCPAddr).Port,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+	return runner, &nPredict, &generated
+}
+
+func TestLlamaServerShiftDisabledOnShiftRunner(t *testing.T) {
+	type call func(r *llamaServerRunner, shift bool, opts *api.Options) error
+	calls := map[string]call{
+		"completion": func(r *llamaServerRunner, shift bool, opts *api.Options) error {
+			return r.Completion(t.Context(), CompletionRequest{Prompt: "hi", Options: opts, Truncate: true, Shift: shift}, func(CompletionResponse) {})
+		},
+		"chat": func(r *llamaServerRunner, shift bool, opts *api.Options) error {
+			return r.Chat(t.Context(), ChatRequest{Messages: []api.Message{{Role: "user", Content: "hi"}}, Options: opts, Shift: shift}, func(ChatResponse) {})
+		},
+	}
+
+	for name, run := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Run("shift false caps generation at the context limit", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				opts := api.DefaultOptions()
+				if err := run(runner, false, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if *nPredict != 5 {
+					t.Fatalf("n_predict = %d, want 5", *nPredict)
+				}
+			})
+
+			t.Run("shift false rejects a prompt that fills the context", func(t *testing.T) {
+				runner, _, generated := noShiftTestServer(t, 8)
+				opts := api.DefaultOptions()
+				err := run(runner, false, &opts)
+				var serr api.StatusError
+				if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest {
+					t.Fatalf("err = %v, want 400 status error", err)
+				}
+				if *generated {
+					t.Fatal("generation request was sent for a prompt that does not fit")
+				}
+			})
+
+			t.Run("shift true is not capped", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				opts := api.DefaultOptions()
+				if err := run(runner, true, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if want := boundedNumPredict(-1, 8); *nPredict != want {
+					t.Fatalf("n_predict = %d, want %d", *nPredict, want)
+				}
+			})
+
+			t.Run("shift false on a projector runner is not capped", func(t *testing.T) {
+				runner, nPredict, _ := noShiftTestServer(t, 3)
+				runner.launch.projectors = []string{"mmproj.gguf"}
+				opts := api.DefaultOptions()
+				if err := run(runner, false, &opts); err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if want := boundedNumPredict(-1, 8); *nPredict != want {
+					t.Fatalf("n_predict = %d, want %d", *nPredict, want)
+				}
+			})
+		})
 	}
 }

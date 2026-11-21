@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
@@ -168,26 +169,26 @@ func LoadDepthDecoder(tensors map[string]*mlx.Array, names TensorNames, cfg *Con
 	return d, nil
 }
 
-// project maps a hidden state ([hidden], [1, hidden] or [1, 1, hidden]) to
-// the per-codebook slot inputs [1, codebooks, depth hidden].
+// project maps final hidden states to [batch, codebooks, depth hidden].
 func (d *DepthDecoder) project(hidden *mlx.Array) *mlx.Array {
-	h := mlx.Reshape(hidden, 1, -1)
-	return mlx.Reshape(d.Linear.Forward(h), 1, int32(d.cfg.NumCodebooks), d.cfg.Depth.HiddenSize)
+	h := mlx.Reshape(hidden, -1, int32(d.Linear.Weight.Dim(1)))
+	return mlx.Reshape(d.Linear.Forward(h), int32(h.Dim(0)), int32(d.cfg.NumCodebooks), d.cfg.Depth.HiddenSize)
 }
 
 // logits scores every codebook given the revealed codes; masked codebooks
-// see the mask embedding instead of their code. Returns [codebooks, size].
+// see the mask embedding instead of their code. Codes/masks are flattened
+// in row-major order; returns [batch*codebooks, size].
 func (d *DepthDecoder) logits(slots *mlx.Array, codes []int32, masked []bool) *mlx.Array {
-	K := d.cfg.NumCodebooks
-	rows := make([]int32, K)
+	B, K := slots.Dim(0), d.cfg.NumCodebooks
+	rows := make([]int32, B*K)
 	for k, c := range codes {
 		if !masked[k] {
-			rows[k] = int32(k*d.cfg.CodebookSize) + c
+			rows[k] = int32((k%K)*d.cfg.CodebookSize) + c
 		}
 	}
-	embedded := mlx.Take(d.Codes, mlx.FromValues(rows, K), 0)
-	inputs := mlx.Where(mlx.FromValues(masked, K, 1), d.Mask.AsType(embedded.DType()), embedded)
-	x := mlx.Add(slots, mlx.ExpandDims(inputs, 0))
+	embedded := mlx.Take(d.Codes, mlx.FromValues(rows, B, K), 0)
+	inputs := mlx.Where(mlx.FromValues(masked, B, K, 1), d.Mask.AsType(embedded.DType()), embedded)
+	x := mlx.Add(slots, inputs)
 	for _, l := range d.Layers {
 		x = mlx.Add(x, l.attention(l.AttnNorm.Forward(x, 0), d))
 		x = mlx.Add(x, l.MLP.Forward(l.FFNNorm.Forward(x, 0)))
@@ -195,18 +196,18 @@ func (d *DepthDecoder) logits(slots *mlx.Array, codes []int32, masked []bool) *m
 	x = d.Norm.Forward(x, 0)
 
 	// Head norms scale in float32 and round once, unlike the trunk's.
-	h := mlx.Reshape(x.AsType(mlx.DTypeFloat32), int32(K), 1, d.cfg.Depth.HiddenSize)
+	h := mlx.Transpose(x.AsType(mlx.DTypeFloat32), 1, 0, 2)
 	variance := mlx.AddScalar(mlx.Mean(mlx.Mul(h, h), -1, true), d.cfg.Depth.NormEps)
 	h = mlx.Mul(mlx.Mul(h, mlx.RSqrt(variance)), d.HeadNorms).AsType(x.DType())
-	return mlx.Reshape(mlx.Matmul(h, d.Heads), int32(K), int32(d.cfg.CodebookSize))
+	return mlx.Reshape(mlx.Transpose(mlx.Matmul(h, d.Heads), 1, 0, 2), int32(B*K), int32(d.cfg.CodebookSize))
 }
 
 // attention is bidirectional over the codebook slots.
 func (l *DepthLayer) attention(x *mlx.Array, d *DepthDecoder) *mlx.Array {
 	dc := d.cfg.Depth
-	L := int32(d.cfg.NumCodebooks)
+	B, L := int32(x.Dim(0)), int32(d.cfg.NumCodebooks)
 	heads := func(proj nn.LinearLayer, n int32) *mlx.Array {
-		return mlx.Transpose(mlx.Reshape(proj.Forward(x), 1, L, n, dc.HeadDim), 0, 2, 1, 3)
+		return mlx.Transpose(mlx.Reshape(proj.Forward(x), B, L, n, dc.HeadDim), 0, 2, 1, 3)
 	}
 	q := d.rope(l.Attn.QNorm.Forward(heads(l.Attn.QProj, dc.NumHeads), 0))
 	k := d.rope(l.Attn.KNorm.Forward(heads(l.Attn.KProj, dc.NumKVHeads), 0))
@@ -215,10 +216,10 @@ func (l *DepthLayer) attention(x *mlx.Array, d *DepthDecoder) *mlx.Array {
 	out = mlx.Transpose(out, 0, 2, 1, 3)
 	gate := mlx.Sigmoid(l.Attn.GateProj.Forward(x))
 	out = mlx.Mul(out, mlx.ExpandDims(gate, -1))
-	return l.Attn.OProj.Forward(mlx.Reshape(out, 1, L, dc.NumHeads*dc.HeadDim))
+	return l.Attn.OProj.Forward(mlx.Reshape(out, B, L, dc.NumHeads*dc.HeadDim))
 }
 
-// rope rotates x [1, heads, slots, head_dim] in float32 with the
+// rope rotates x [B, heads, slots, head_dim] in float32 with the
 // non-interleaved half layout.
 func (d *DepthDecoder) rope(x *mlx.Array) *mlx.Array {
 	half := d.cfg.Depth.HeadDim / 2
@@ -236,47 +237,64 @@ func (d *DepthDecoder) Logits(hidden *mlx.Array, codes []int32, masked []bool) *
 	return d.logits(d.project(hidden), codes, masked)
 }
 
-// DecodeFrame samples one speech frame from the backbone hidden state that
-// precedes it. When any codebook draws the EOS code it returns an all-EOS
-// frame and eos; that frame is still fed back to the backbone, but it is
-// neither audio nor penalty history.
-func (d *DepthDecoder) DecodeFrame(hidden *mlx.Array, s *FrameSampler) (frame []int32, eos bool) {
-	K, size := d.cfg.NumCodebooks, d.cfg.CodebookSize
-	frame = make([]int32, K)
-	masked := make([]bool, K)
+// DecodeFrame samples one speech frame. DecodeFrames shares the depth trunk
+// across requests while keeping each sampler's reveal order and history local.
+func (d *DepthDecoder) DecodeFrame(hidden *mlx.Array, s *FrameSampler) ([]int32, bool) {
+	frames, eos := d.DecodeFrames(hidden, []*FrameSampler{s})
+	return frames[0], eos[0]
+}
+
+func (d *DepthDecoder) DecodeFrames(hidden *mlx.Array, samplers []*FrameSampler) ([][]int32, []bool) {
+	B, K, size := len(samplers), d.cfg.NumCodebooks, d.cfg.CodebookSize
+	logutil.Trace("mlx speech depth batch", "rows", len(samplers))
+	codes, masked := make([]int32, B*K), make([]bool, B*K)
+	orders := make([][]int, B)
 	for k := range masked {
 		masked[k] = true
 	}
-	order := s.order(K)
+	for i, s := range samplers {
+		orders[i] = s.order(K)
+	}
 	mlx.Scoped(func() {
 		slots := d.project(hidden)
 		start := 0
 		for _, n := range d.cfg.Schedule {
-			pick := order[start : start+n]
+			rows := make([]int32, B*n)
+			for i := range samplers {
+				for j, k := range orders[i][start : start+n] {
+					rows[i*n+j] = int32(i*K + k)
+				}
+			}
+			logits := mlx.Take(d.logits(slots, codes, masked), mlx.FromValues(rows, B*n), 0).AsType(mlx.DTypeFloat32).Floats()
+			for i, s := range samplers {
+				for j, k := range orders[i][start : start+n] {
+					at := (i*n + j) * size
+					codes[i*K+k] = s.sample(logits[at:at+size], k)
+					masked[i*K+k] = false
+				}
+			}
 			start += n
-			rows := make([]int32, n)
-			for i, k := range pick {
-				rows[i] = int32(k)
-			}
-			logits := mlx.Take(d.logits(slots, frame, masked), mlx.FromValues(rows, n), 0).AsType(mlx.DTypeFloat32).Floats()
-			for i, k := range pick {
-				frame[k] = s.sample(logits[i*size:(i+1)*size], k)
-			}
-			for _, k := range pick {
-				masked[k] = false
-			}
 		}
 	})
-	for _, c := range frame {
-		if c == d.cfg.EOSCode {
+	frames, eos := make([][]int32, B), make([]bool, B)
+	for i, s := range samplers {
+		frame := codes[i*K : (i+1)*K]
+		for _, c := range frame {
+			if c == d.cfg.EOSCode {
+				eos[i] = true
+				break
+			}
+		}
+		if eos[i] {
 			for k := range frame {
 				frame[k] = d.cfg.EOSCode
 			}
-			return frame, true
+		} else {
+			s.remember(frame)
 		}
+		frames[i] = frame
 	}
-	s.remember(frame)
-	return frame, false
+	return frames, eos
 }
 
 // dense loads an unquantized linear layer, checking its shape; in < 0 skips

@@ -32,6 +32,9 @@ type Config struct {
 	MaxPositionEmbeddings int32   `json:"max_position_embeddings"`
 	TieWordEmbeddings     bool    `json:"tie_word_embeddings"`
 
+	RopeScaling    *nn.RopeParameters `json:"rope_scaling"`
+	RopeParameters *nn.RopeParameters `json:"rope_parameters"`
+
 	// Quantization parameters (set during load based on model quantization).
 	QuantGroupSize int                               `json:"-"`
 	QuantBits      int                               `json:"-"`
@@ -39,8 +42,9 @@ type Config struct {
 	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
 
 	// Computed fields.
-	Scale     float32 `json:"-"`
-	QKNormEps float32 `json:"-"`
+	Scale     float32    `json:"-"`
+	QKNormEps float32    `json:"-"`
+	RopeFreqs *mlx.Array `json:"-"`
 }
 
 // Model is the Qwen3 text-only model.
@@ -125,11 +129,28 @@ func newModel(root *model.Root) (model.Model, error) {
 	if cfg.RMSNormEps == 0 {
 		cfg.RMSNormEps = 1e-6
 	}
+	rope := cfg.RopeParameters
+	if rope == nil {
+		rope = cfg.RopeScaling
+	}
+	if cfg.RopeTheta == 0 && rope != nil {
+		cfg.RopeTheta = rope.RopeTheta
+	}
 	if cfg.RopeTheta == 0 {
 		cfg.RopeTheta = 1000000
 	}
 	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
 	cfg.QKNormEps = 1e-6
+	if rope != nil && rope.TypeName() == "yarn" {
+		params := *rope
+		if params.OriginalMaxPositionEmbeddings <= 0 {
+			params.OriginalMaxPositionEmbeddings = cfg.MaxPositionEmbeddings
+		}
+		var scale float32
+		cfg.RopeFreqs, scale = nn.BuildYarnRopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, &params)
+		cfg.Scale *= scale * scale
+		cfg.MaxPositionEmbeddings = max(cfg.MaxPositionEmbeddings, int32(float64(params.Factor)*float64(params.OriginalMaxPositionEmbeddings)))
+	}
 
 	if qt := root.QuantType(); qt != "" {
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
@@ -253,14 +274,14 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	for i, layer := range m.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
@@ -291,12 +312,12 @@ func (m *Model) NewCaches() []cache.Cache {
 	return caches
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	h := mlx.Add(x, l.Attention.Forward(l.AttentionNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg))
 	return mlx.Add(h, l.MLP.Forward(l.MLPNorm.Forward(h, cfg.RMSNormEps)))
 }
 
-func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QProj.Forward(x)
 	k := a.KProj.Forward(x)
 	v := a.VProj.Forward(x)
@@ -312,8 +333,8 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
+	q = mlx.RoPEWithFreqs(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+	k = mlx.RoPEWithFreqs(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
 
 	// MLX SDPA supports grouped-query attention directly (Q heads can be a
 	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
