@@ -2871,11 +2871,14 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	CUDA_Host compute buffer size =   268.05 MiB
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
+const maxMemoryParsingLineBytes = 64 * 1024
+
 type memoryParsingWriter struct {
-	inner   io.Writer
-	runner  *llamaServerRunner
-	buffers map[memoryBufferKey]memoryBuffer
-	pending []byte
+	inner              io.Writer
+	runner             *llamaServerRunner
+	buffers            map[memoryBufferKey]memoryBuffer
+	pending            []byte
+	discardingLongLine bool
 }
 
 type memoryBufferKey struct {
@@ -2941,49 +2944,77 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			defer w.runner.memoryMu.Unlock()
 
 			data := append(w.pending, b...)
-			lastNewline := bytes.LastIndexByte(data, '\n')
-			if lastNewline < 0 {
-				w.pending = data
-				return
-			}
-			completeLines := data[:lastNewline+1]
-			defer func() {
-				w.pending = append(w.pending[:0], data[lastNewline+1:]...)
-			}()
+			w.pending = w.pending[:0]
 
-			if match := deviceFreeRegex.FindSubmatch(completeLines); match != nil {
-				devName := string(match[1])
-				if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
-					w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
+			// If the previous write exceeded the line limit, discard through
+			// the next newline before parsing any subsequent output.
+			if w.discardingLongLine {
+				newline := bytes.IndexByte(data, '\n')
+				if newline < 0 {
+					return
 				}
+				data = data[newline+1:]
+				w.discardingLongLine = false
 			}
-			for _, match := range offloadedLayersRegex.FindAllSubmatch(completeLines, -1) {
-				loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
-				total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
-				if loadedErr == nil && totalErr == nil {
-					w.runner.gpuLayers = loaded
-					w.runner.totalLayers = total
-				}
-			}
-			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(completeLines, -1) {
-				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
-				if err == nil && overflowing > 0 {
-					w.runner.gpuLayerOverflow += int(overflowing)
-				}
-			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(completeLines, -1) {
-				backendName := string(match[2])
-				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
-					if w.buffers == nil {
-						w.buffers = make(map[memoryBufferKey]memoryBuffer)
+
+			for len(data) > 0 {
+				newline := bytes.IndexByte(data, '\n')
+				if newline < 0 {
+					if len(data) > maxMemoryParsingLineBytes {
+						slog.Warn("ignoring oversized llama-server log line in memory parser",
+							"line_bytes", len(data), "limit_bytes", maxMemoryParsingLineBytes)
+						w.pending = nil
+						w.discardingLongLine = true
+					} else {
+						w.pending = append(w.pending[:0], data...)
 					}
-					w.buffers[memoryBufferKey{
-						component: string(match[1]),
-						backend:   backendName,
-						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
-					w.updateRunnerMemoryLocked()
+					return
 				}
+
+				line := data[:newline+1]
+				if len(line) > maxMemoryParsingLineBytes {
+					slog.Warn("ignoring oversized llama-server log line in memory parser",
+						"line_bytes", len(line), "limit_bytes", maxMemoryParsingLineBytes)
+					data = data[newline+1:]
+					continue
+				}
+
+				if match := deviceFreeRegex.FindSubmatch(line); match != nil {
+					devName := string(match[1])
+					if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
+						w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
+					}
+				}
+				for _, match := range offloadedLayersRegex.FindAllSubmatch(line, -1) {
+					loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
+					total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
+					if loadedErr == nil && totalErr == nil {
+						w.runner.gpuLayers = loaded
+						w.runner.totalLayers = total
+					}
+				}
+				for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(line, -1) {
+					overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
+					if err == nil && overflowing > 0 {
+						w.runner.gpuLayerOverflow += int(overflowing)
+					}
+				}
+				for _, match := range bufferSizeRegex.FindAllSubmatch(line, -1) {
+					backendName := string(match[2])
+					if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+						if w.buffers == nil {
+							w.buffers = make(map[memoryBufferKey]memoryBuffer)
+						}
+						w.buffers[memoryBufferKey{
+							component: string(match[1]),
+							backend:   backendName,
+							kind:      string(match[3]),
+						}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+						w.updateRunnerMemoryLocked()
+					}
+				}
+
+				data = data[newline+1:]
 			}
 		}()
 	}
