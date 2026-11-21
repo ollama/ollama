@@ -290,3 +290,36 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*downloadStallTimeout)
 	}
 }
+
+func TestDownloadRedirectErrorStatus(t *testing.T) {
+	var hits atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("<html><body>access denied by proxy</body></html>"))
+	}))
+	t.Cleanup(cdn.Close)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, cdn.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(registry.Close)
+	requestURL, _ := url.Parse(strings.Replace(registry.URL, "127.0.0.1", "localhost", 1))
+
+	download := &blobDownload{
+		Name: filepath.Join(t.TempDir(), "blob"), Total: 1024,
+		Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	if err := download.newPart(0, 1024); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err := download.run(ctx, requestURL, &registryOptions{Insecure: true})
+	if err == nil || !strings.Contains(err.Error(), "403 Forbidden") || !strings.Contains(err.Error(), "access denied by proxy") {
+		t.Fatalf("download: error = %v, want 403 Forbidden with body", err)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("requests = %d, want 1", got)
+	}
+}
