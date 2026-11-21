@@ -39,6 +39,7 @@ type Client struct {
 	modelName           string
 	contextLength       atomic.Int64
 	softContextLength   int // recommended limit to avoid poor performance
+	numCtxAuto          bool
 	memory              atomic.Uint64
 	embeddingDimensions atomic.Value // []int
 	done                chan struct{}
@@ -54,7 +55,7 @@ var ErrRuntimeUnavailable = errors.New("MLX runtime is not available")
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
-func NewClient(modelName string, softContextLength int) (*Client, error) {
+func NewClient(modelName string, softContextLength int, numCtxAuto bool) (*Client, error) {
 	if err := CheckRuntime(); err != nil {
 		return nil, err
 	}
@@ -62,6 +63,7 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 	c := &Client{
 		modelName:         modelName,
 		softContextLength: softContextLength,
+		numCtxAuto:        numCtxAuto,
 		done:              make(chan struct{}),
 		client:            http.DefaultClient,
 	}
@@ -318,6 +320,15 @@ func (c *Client) reportedContextLength(modelContextLength int) int {
 	return modelContextLength
 }
 
+func (c *Client) parallelContextHint() int {
+	// The VRAM-tier default is a soft limit. Only an explicitly configured
+	// context should reduce the per-slot memory projection.
+	if c.numCtxAuto {
+		return 0
+	}
+	return c.softContextLength
+}
+
 // Detokenize implements llm.LlamaServer.
 func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	ids32 := make([]int32, len(tokens))
@@ -461,7 +472,7 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	// Spawn subprocess: ollama runner --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port), "--ctx-size", strconv.Itoa(c.softContextLength))
+	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port), "--ctx-size", strconv.Itoa(c.parallelContextHint()))
 	cmd.Env = os.Environ()
 	loadedLibraryPath, err := mlx.LoadedLibraryPath()
 	if err != nil {

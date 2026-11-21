@@ -6,6 +6,28 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
 
+func TestParallelContextUsesExplicitNumCtx(t *testing.T) {
+	const trained = 1 << 20
+	for _, tc := range []struct {
+		name string
+		auto bool
+		want int
+	}{
+		{"VRAM tier", true, 256 << 10},
+		{"explicit", false, 4096},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Client{softContextLength: 4096, numCtxAuto: tc.auto}
+			if got := parallelContextLength(trained, c.parallelContextHint()); got != tc.want {
+				t.Errorf("projected context = %d, want %d", got, tc.want)
+			}
+			if got := c.reportedContextLength(trained); got != 4096 {
+				t.Errorf("reported context = %d, want 4096", got)
+			}
+		})
+	}
+}
+
 func TestParallelContextLength(t *testing.T) {
 	for _, tc := range []struct {
 		name                     string
