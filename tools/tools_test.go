@@ -453,6 +453,75 @@ func TestParser(t *testing.T) {
 			tmpl:    json,
 		},
 		{
+			name: "json content after tool call",
+			inputs: []string{
+				"{\"name\": \"get_temperature\", \"arguments\": {\"city\": \"Tokyo\"}}",
+				" I called the tool for you.",
+			},
+			content: "I called the tool for you.",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: testArgs(map[string]any{
+							"city": "Tokyo",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name: "json content after tool call same chunk",
+			inputs: []string{
+				"{\"name\": \"get_temperature\", \"arguments\": {\"city\": \"Tokyo\"}}\nDone!",
+			},
+			content: "Done!",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: testArgs(map[string]any{
+							"city": "Tokyo",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name: "list content after tool calls",
+			inputs: []string{
+				"[{\"name\": \"get_temperature\", \"arguments\": {\"city\": \"London\"}},",
+				" {\"name\": \"get_conditions\", \"arguments\": {\"location\": \"Tokyo\"}}]",
+				" All done.",
+			},
+			content: "All done.",
+			tmpl:    list,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: testArgs(map[string]any{
+							"city": "London",
+						}),
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index: 1,
+						Name:  "get_conditions",
+						Arguments: testArgs(map[string]any{
+							"location": "Tokyo",
+						}),
+					},
+				},
+			},
+		},
+		{
 			name: "list multiple",
 			inputs: []string{
 				"[",
