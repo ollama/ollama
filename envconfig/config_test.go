@@ -38,6 +38,8 @@ func TestHost(t *testing.T) {
 		"http port":           {"http://1.2.3.4:4321", "http://1.2.3.4:4321"},
 		"https":               {"https://1.2.3.4", "https://1.2.3.4:443"},
 		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
+		"unix socket":         {"unix:///tmp/ollama.sock", "unix:///tmp/ollama.sock"},
+		"unix socket escaped": {"unix:///tmp/ollama%20socket", "unix:///tmp/ollama%20socket"},
 		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
 		"ollama.com":          {"ollama.com", "https://ollama.com:443"},
 	}

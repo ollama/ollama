@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/readline"
 )
@@ -240,12 +241,13 @@ func synthesize(ctx context.Context, model, voice, text string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, envconfig.Host().JoinPath("v1/audio/speech").String(), bytes.NewReader(body))
+	host, client := api.HTTPClientForHost(envconfig.Host(), http.DefaultClient)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, host.JoinPath("v1/audio/speech").String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
