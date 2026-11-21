@@ -34,7 +34,11 @@ func mlxTestThread(tb testing.TB) *mlxthreadtest.Thread {
 
 func withMLXThread(t *testing.T, fn func(*mlxthreadtest.T)) {
 	t.Helper()
-	mlxthreadtest.Run(t, mlxTestThread(t), fn)
+	mlxthreadtest.Run(t, mlxTestThread(t), func(t *mlxthreadtest.T) {
+		Scoped(func() {
+			fn(t)
+		})
+	})
 }
 
 func TestThreadedMLXOperations(t *testing.T) {

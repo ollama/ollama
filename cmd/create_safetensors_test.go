@@ -108,6 +108,8 @@ LICENSE MIT
 LICENSE Apache-2.0
 PARSER test-parser
 RENDERER test-renderer
+CAPABILITY decision
+CAPABILITY tools
 REQUIRES 0.20.0
 MESSAGE user Hello
 PARAMETER temperature 0.7
@@ -131,20 +133,30 @@ PARAMETER stop ASSISTANT:
 		t.Fatalf("CreateRequest license = %#v, want []string", req.License)
 	}
 	want := &modelfileConfig{
-		Template:   req.Template,
-		System:     req.System,
-		Licenses:   licenses,
-		Parser:     req.Parser,
-		Renderer:   req.Renderer,
-		Requires:   req.Requires,
-		Parameters: req.Parameters,
-		Messages:   req.Messages,
+		Template:     req.Template,
+		System:       req.System,
+		Licenses:     licenses,
+		Parser:       req.Parser,
+		Renderer:     req.Renderer,
+		Requires:     req.Requires,
+		Parameters:   req.Parameters,
+		Messages:     req.Messages,
+		Capabilities: req.Capabilities,
 	}
 	if modelDir != req.From {
 		t.Fatalf("model source = %q, want %q", modelDir, req.From)
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Modelfile metadata mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestConfigFromModelfileRejectsUnknownCapability(t *testing.T) {
+	for _, capability := range []string{"", "system-one", "decision tools"} {
+		mf := &parser.Modelfile{Commands: []parser.Command{{Name: "capability", Args: capability}}}
+		if _, _, err := configFromModelfile(mf); err == nil || !strings.Contains(err.Error(), "unknown capability") {
+			t.Fatalf("capability %q: got %v, want unknown capability", capability, err)
+		}
 	}
 }
 
@@ -421,6 +433,7 @@ func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) 
 	opts := createOptions{
 		ModelName: "test-quantized",
 		ModelDir:  t.TempDir(),
+		Modelfile: &modelfileConfig{Capabilities: []string{"decision", "completion", "decision"}},
 	}
 
 	writer := newManifestWriter(opts)
@@ -455,6 +468,9 @@ func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) 
 
 	if cfg.FileType != "mxfp8" {
 		t.Fatalf("FileType = %q, want %q", cfg.FileType, "mxfp8")
+	}
+	if want := []string{"completion", "decision"}; !slices.Equal(cfg.Capabilities, want) {
+		t.Fatalf("Capabilities = %v, want %v", cfg.Capabilities, want)
 	}
 }
 

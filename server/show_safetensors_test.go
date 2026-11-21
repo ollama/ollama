@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
@@ -198,6 +202,35 @@ func TestBuildModelInfo_ArchitectureConversion(t *testing.T) {
 			wantArch:      "custom",
 		},
 		{
+			name:          "Strands decision architecture over backbone",
+			architectures: []string{"StrandsDeciderForDecision"},
+			modelType:     "qwen3_5",
+			wantArch:      "strandsdecider",
+		},
+		{
+			name:          "Clef decision architecture over backbone",
+			architectures: []string{"ClefForDecision"},
+			modelType:     "qwen3_5",
+			wantArch:      "clef",
+		},
+		{
+			name:          "Laya decision architecture",
+			architectures: []string{"LayaForDecision"},
+			modelType:     "laya",
+			wantArch:      "laya",
+		},
+		{
+			name:          "decision architecture without model_type",
+			architectures: []string{"StrandsDeciderForDecision"},
+			wantArch:      "strandsdecider",
+		},
+		{
+			name:          "Qwen fine-tune retains backbone architecture",
+			architectures: []string{"Qwen3_5ForConditionalGeneration"},
+			modelType:     "qwen3_5",
+			wantArch:      "qwen3_5",
+		},
+		{
 			name:          "empty architectures with model_type",
 			architectures: nil,
 			modelType:     "mymodel",
@@ -208,13 +241,21 @@ func TestBuildModelInfo_ArchitectureConversion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := modelConfig{
-				Architectures: tt.architectures,
-				ModelType:     tt.modelType,
+				Architectures:         tt.architectures,
+				ModelType:             tt.modelType,
+				MaxPositionEmbeddings: 4096,
+				HiddenSize:            2048,
+				NumHiddenLayers:       24,
 			}
 			info := buildModelInfo(config, 0, 0)
 
 			if arch, ok := info["general.architecture"].(string); !ok || arch != tt.wantArch {
 				t.Errorf("architecture = %v, want %v", info["general.architecture"], tt.wantArch)
+			}
+			for key, want := range map[string]int{"context_length": 4096, "embedding_length": 2048, "block_count": 24} {
+				if got := info[tt.wantArch+"."+key]; got != want {
+					t.Errorf("%s.%s = %v, want %d", tt.wantArch, key, got, want)
+				}
 			}
 		})
 	}
@@ -350,7 +391,7 @@ func TestParseSafetensorsAllHeaders_Errors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseSafetensorsAllHeaders(bytes.NewReader(tt.data))
+			_, err := parseSafetensorsAllHeaders(bytes.NewReader(tt.data), "")
 			if err == nil {
 				t.Error("expected error, got nil")
 				return
@@ -446,7 +487,7 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 		Layers:        layers,
 	}
 
-	result, err := getTensorInfoFromManifest(mf)
+	result, err := getTensorInfoFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
 	}
@@ -532,7 +573,7 @@ func TestGetTensorInfoFromManifest_Quantized(t *testing.T) {
 		},
 	}
 
-	result, err := getTensorInfoFromManifest(mf)
+	result, err := getTensorInfoFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
 	}
@@ -551,6 +592,99 @@ func TestGetTensorInfoFromManifest_Quantized(t *testing.T) {
 	// Shape should be unpacked: 320 * 8 = 2560
 	if len(tensor.Shape) != 2 || tensor.Shape[0] != 2560 || tensor.Shape[1] != 2560 {
 		t.Errorf("Shape = %v, want [2560, 2560]", tensor.Shape)
+	}
+}
+
+func createSafetensorsManifestForRunner(t *testing.T, name, runner, tensorName string) manifest.Manifest {
+	t.Helper()
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader([]byte("{}")), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	header := map[string]any{
+		tensorName: map[string]any{
+			"dtype":        "F32",
+			"shape":        []int64{2, 3},
+			"data_offsets": []int64{0, 24},
+		},
+	}
+	headerData, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerData))); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write(headerData)
+
+	tensorLayer, err := manifest.NewLayer(bytes.NewReader(buf.Bytes()), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tensorLayer.Name = tensorName
+
+	if err := manifest.WriteManifestWithMetadata(model.ParseName(name), configLayer, []manifest.Layer{tensorLayer}, runner, manifest.FormatSafetensors); err != nil {
+		t.Fatal(err)
+	}
+
+	mf, err := manifest.ParseNamedManifestForRunner(model.ParseName(name), runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return *mf
+}
+
+func TestGetSafetensorsTensorInfoForRunnerSelectsChildManifest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	mlxManifest := createSafetensorsManifestForRunner(t, "runner-mlx", manifest.RunnerMLX, "mlx.weight")
+	ggmlManifest := createSafetensorsManifestForRunner(t, "runner-ggml", manifest.RunnerGGML, "ggml.weight")
+
+	mlxRef, err := manifest.NewManifestReference(mlxManifest.BlobDigest(), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggmlManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{ggmlRef, mlxRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName("runner-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		runner string
+		want   string
+	}{
+		{runner: manifest.RunnerMLX, want: "mlx.weight"},
+		{runner: manifest.RunnerGGML, want: "ggml.weight"},
+	} {
+		t.Run(tt.runner, func(t *testing.T) {
+			tensors, err := getSafetensorsTensorInfoForRunner(model.ParseName("runner-list"), tt.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tensors) != 1 {
+				t.Fatalf("tensor count = %d, want 1", len(tensors))
+			}
+			if tensors[0].Name != tt.want {
+				t.Fatalf("tensor name = %q, want %q", tensors[0].Name, tt.want)
+			}
+		})
 	}
 }
 
@@ -641,7 +775,7 @@ func TestGetParameterCountFromManifest(t *testing.T) {
 		},
 	}
 
-	paramCount, err := getParameterCountFromManifest(mf)
+	paramCount, err := getParameterCountFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getParameterCountFromManifest() error = %v", err)
 	}
@@ -724,7 +858,7 @@ func TestGetParameterCountFromManifest_MixedQuantizedPacked(t *testing.T) {
 		},
 	}
 
-	paramCount, err := getParameterCountFromManifest(mf)
+	paramCount, err := getParameterCountFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getParameterCountFromManifest() error = %v", err)
 	}
@@ -913,7 +1047,7 @@ func TestParseSafetensorsAllHeaders(t *testing.T) {
 			}
 			buf.Write(headerJSON)
 
-			results, err := parseSafetensorsAllHeaders(&buf)
+			results, err := parseSafetensorsAllHeaders(&buf, "")
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseSafetensorsAllHeaders() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -1035,7 +1169,7 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 		},
 	}
 
-	result, err := getTensorInfoFromManifest(mf)
+	result, err := getTensorInfoFromManifest(mf, "")
 	if err != nil {
 		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
 	}
@@ -1077,30 +1211,30 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 	}
 }
 
+func writeSafetensorsLayer(t *testing.T, header map[string]any, name string) manifest.Layer {
+	t.Helper()
+
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		t.Fatalf("failed to marshal header: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+		t.Fatalf("failed to write header size: %v", err)
+	}
+	buf.Write(headerJSON)
+
+	layer, err := manifest.NewLayer(&buf, manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatalf("failed to create tensor layer: %v", err)
+	}
+	layer.Name = name
+	return layer
+}
+
 func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-
-	writeSafetensorsLayer := func(t *testing.T, header map[string]any, name string) manifest.Layer {
-		t.Helper()
-
-		headerJSON, err := json.Marshal(header)
-		if err != nil {
-			t.Fatalf("failed to marshal header: %v", err)
-		}
-
-		var buf bytes.Buffer
-		if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
-			t.Fatalf("failed to write header size: %v", err)
-		}
-		buf.Write(headerJSON)
-
-		layer, err := manifest.NewLayer(&buf, manifest.MediaTypeImageTensor)
-		if err != nil {
-			t.Fatalf("failed to create tensor layer: %v", err)
-		}
-		layer.Name = name
-		return layer
-	}
 
 	configData, err := json.Marshal(map[string]any{
 		"model_format": "safetensors",
@@ -1160,11 +1294,114 @@ func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 		t.Fatalf("failed to write manifest: %v", err)
 	}
 
-	got, err := getSafetensorsDtype(name)
+	got, err := getSafetensorsDtypeForRunner(name, "")
 	if err != nil {
-		t.Fatalf("getSafetensorsDtype() error = %v", err)
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
 	}
 	if got != "nvfp4" {
-		t.Fatalf("getSafetensorsDtype() = %q, want nvfp4", got)
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want nvfp4", got)
+	}
+
+	draft := lowerPrecision
+	draft.Name = "draft.model.layers.0.mlp.up_proj.weight"
+
+	name = model.ParseName("mixed-target-and-draft-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, quantized, draft}); err != nil {
+		t.Fatalf("failed to write target/draft manifest: %v", err)
+	}
+	got, err = getSafetensorsDtypeForRunner(name, "")
+	if err != nil {
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
+	}
+	if got != "mxfp8" {
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want target mxfp8", got)
+	}
+
+	configJSON, err := manifest.NewLayer(strings.NewReader(`{"dtype":"bfloat16"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatalf("failed to create model config layer: %v", err)
+	}
+	configJSON.Name = "config.json"
+	name = model.ParseName("bf16-target-and-nvfp4-draft-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, draft, configJSON}); err != nil {
+		t.Fatalf("failed to write BF16 target/draft manifest: %v", err)
+	}
+	got, err = getSafetensorsDtypeForRunner(name, "")
+	if err != nil {
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
+	}
+	if got != "bfloat16" {
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want target bfloat16", got)
+	}
+}
+
+func TestShowInkling2Tensors(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	const nv = "model.llm.layers.0.mlp.experts.w13_weight"
+	const mx = "model.llm.layers.1.mlp.experts.w2_weight"
+	const clip = "model.llm.layers.0.attn.q_l2_clip.scale"
+	const bias = "model.visual.backbone.layers.0.ln_1.bias"
+	const draft = "draft.markov_head.hidden_out.bias"
+
+	// The importer stores a packed U32 weight and its U8 block scales in one
+	// blob, and keeps the NVFP4 outer-scale parameters in separate blobs.
+	bank := func(name, mode string, weight, scales []int) map[string]any {
+		return map[string]any{
+			"__metadata__":  map[string]string{"quant_type": mode},
+			name:            map[string]any{"dtype": "U32", "shape": weight},
+			name + "_scale": map[string]any{"dtype": "U8", "shape": scales},
+		}
+	}
+	hfConfig, err := manifest.NewLayer(strings.NewReader(`{"model_type":"inkling2_loop"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hfConfig.Name = "config.json"
+	config, err := createConfigLayer(model.ConfigV2{ModelFormat: manifest.FormatSafetensors, Capabilities: []string{"completion"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := model.ParseName("show-inkling")
+	// Packed headers may name several primaries. The learned clipping scale
+	// and bias retain their own dtype and shape alongside a quantized bank.
+	packed := bank(mx, "mxfp8", []int{2, 4, 8}, []int{2, 4, 1})
+	packed[clip] = map[string]any{"dtype": "F32", "shape": []int{2, 3}}
+	packed[bias] = map[string]any{"dtype": "F32", "shape": []int{3}}
+	layers := []manifest.Layer{
+		hfConfig,
+		writeSafetensorsLayer(t, bank(nv, "nvfp4", []int{2, 3, 4}, []int{2, 3, 2}), nv),
+		writeSafetensorsLayer(t, packed, "model.packed"),
+		createShowSafetensorsLayer(t, nv+"_amax", []int64{2}),
+		createShowSafetensorsLayer(t, nv+"_outer_scale_denominator", []int64{1}),
+		createShowSafetensorsLayer(t, draft, []int64{5}),
+	}
+	if err := manifest.WriteManifestWithMetadata(name, *config, layers, manifest.RunnerMLX, manifest.FormatSafetensors); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, verbose := range []bool{false, true} {
+		resp, err := GetModelInfo(api.ShowRequest{Model: name.String(), Verbose: verbose})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := resp.ModelInfo["general.parameter_count"]; got != int64(457) {
+			t.Fatalf("parameter count = %v, want 457", got)
+		}
+		if got := resp.Details.ParameterSize; got != "457" {
+			t.Fatalf("parameter size = %q, want 457", got)
+		}
+		var want []api.Tensor
+		if verbose {
+			want = []api.Tensor{
+				{Name: draft, Type: "F32", Shape: []uint64{5}},
+				{Name: clip, Type: "F32", Shape: []uint64{2, 3}},
+				{Name: nv, Type: "nvfp4", Shape: []uint64{2, 3, 32}},
+				{Name: mx, Type: "mxfp8", Shape: []uint64{2, 4, 32}},
+				{Name: bias, Type: "F32", Shape: []uint64{3}},
+			}
+		}
+		if diff := cmp.Diff(want, resp.Tensors); diff != "" {
+			t.Fatalf("verbose=%t tensor inventory (-want +got):\n%s", verbose, diff)
+		}
 	}
 }

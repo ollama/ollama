@@ -6,9 +6,47 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 )
+
+func TestSessionCloseCompactsRestoredRecurrentStateWithoutNewFrontier(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		recurrent := cache.NewRecurrentCache(3, 12, 4, 8, 8)
+		defer recurrent.Free()
+		b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 1), SeqQueryLens: []int32{1}}
+		recurrent.Get(b, mlx.DTypeFloat16)
+		recurrent.PrepareSnapshots([]int{0, 1, 2})
+		forward := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 3), SeqQueryLens: []int32{3}}
+		conv := mlx.Zeros(mlx.DTypeFloat16, 1, 3, 12)
+		delta := mlx.Zeros(mlx.DTypeFloat32, 1, 4, 8, 8)
+		recurrent.Put(forward, []*mlx.Array{conv, conv, conv}, []*mlx.Array{delta, delta, delta})
+		snaps := recurrent.TakeSnapshots()
+		if !recurrent.Restore(snaps[1], 1) {
+			t.Fatal("interior restore failed")
+		}
+		for _, snap := range snaps {
+			if snap != nil {
+				snap.Close()
+			}
+		}
+		if state := recurrent.PrepareCompaction(); state == nil {
+			t.Fatal("restored interior state should need compaction before close")
+		}
+
+		pc := newPrefixCache([]cache.Cache{recurrent})
+		pc.ensureRoot()
+		frontier := pc.root.appendChild([]trieKey{7}, 1)
+		pc.activePath = []*trieNode{pc.root, frontier}
+		session := &cacheSession{cache: pc, caches: pc.caches, effInputs: []uint32{7}}
+		session.close()
+		if state := recurrent.PrepareCompaction(); state != nil {
+			t.Fatal("restored state was not compacted when the frontier did not advance")
+		}
+	})
+}
 
 // snapshotTracker records every fakeSnapshot created and every Close() call
 // so tests can detect leaked (created but never closed) or double-closed snapshots.
@@ -810,6 +848,30 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 20})
 
 		checkTrieInvariants(t, pc.root)
+	})
+}
+
+func TestPrefixCacheClose(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		pc := env.pc
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{6, 7}, 2)
+		simulateRequest(t, pc, []int32{1, 2, 8, 9, 10}, []int32{11, 12}, 2)
+		if len(env.tracker.all) == 0 {
+			t.Fatal("requests produced no snapshots")
+		}
+		pc.close()
+		if pc.root != nil || len(pc.activePath) != 0 || pc.pagedOutBytes != 0 {
+			t.Fatal("closed cache retains trie state")
+		}
+		for i, c := range pc.caches {
+			if c != nil && c.Offset() != 0 {
+				t.Fatalf("cache %d retains offset %d after close", i, c.Offset())
+			}
+		}
+		checkSnapshotLeaks(t, env.tracker, pc.root)
+		// Repeated teardown must not close snapshots twice.
+		pc.close()
+		checkSnapshotLeaks(t, env.tracker, pc.root)
 	})
 }
 

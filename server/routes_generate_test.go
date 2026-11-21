@@ -190,6 +190,91 @@ func newServerWithMockRunner(t *testing.T, mock *mockRunner) *Server {
 	return s
 }
 
+func TestEmbeddingHandlersUseRunnerSelection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeShowManifestVariant(t, "embed-ggml", manifest.RunnerGGML, manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat:  manifest.FormatGGUF,
+		Capabilities: []string{string(model.CapabilityEmbedding)},
+	}, map[string]any{
+		"general.architecture": "llama",
+	})
+	writeShowManifestVariant(t, "embed-mlx", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		Capabilities: []string{string(model.CapabilityEmbedding)},
+	}, nil)
+	writeManifestListFixture(t, "Embed-List",
+		manifestListFixtureChild{name: "embed-ggml", runner: manifest.RunnerGGML, format: manifest.FormatGGUF},
+		manifestListFixtureChild{name: "embed-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
+	)
+
+	tests := []struct {
+		name    string
+		handler func(*Server) func(*gin.Context)
+		body    any
+	}{
+		{
+			name:    "embed",
+			handler: func(s *Server) func(*gin.Context) { return s.EmbedHandler },
+			body: api.EmbedRequest{
+				Model:  "embed-list",
+				Runner: manifest.RunnerMLX,
+				Input:  "",
+			},
+		},
+		{
+			name:    "embeddings",
+			handler: func(s *Server) func(*gin.Context) { return s.EmbeddingsHandler },
+			body: api.EmbeddingRequest{
+				Model:  "embed-list",
+				Runner: manifest.RunnerMLX,
+				Prompt: "",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			selectedRunner := make(chan string, 1)
+			mock := &mockRunner{}
+			s := &Server{
+				sched: &Scheduler{
+					pendingReqCh:    make(chan *LlmRequest, 1),
+					finishedReqCh:   make(chan *LlmRequest, 1),
+					expiredCh:       make(chan *runnerRef, 1),
+					unloadedCh:      make(chan any, 1),
+					loaded:          make(map[string]*runnerRef),
+					newServerFn:     newMockServer(mock),
+					getGpuFn:        getGpuFn,
+					getSystemInfoFn: getSystemInfoFn,
+					waitForRecovery: 250 * time.Millisecond,
+					loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+						selectedRunner <- req.model.Runner
+						req.successCh <- &runnerRef{llama: mock}
+						return false
+					},
+				},
+			}
+			go s.sched.Run(t.Context())
+
+			w := createRequest(t, tt.handler(s), tt.body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+			}
+
+			select {
+			case got := <-selectedRunner:
+				if got != manifest.RunnerMLX {
+					t.Fatalf("scheduled runner = %q, want %q", got, manifest.RunnerMLX)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for scheduler")
+			}
+		})
+	}
+}
+
 func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV, tmpl string, info map[string]any) {
 	t.Helper()
 
@@ -221,17 +306,6 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200 creating model, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestModelOptionsKeepStoredTypicalP(t *testing.T) {
-	s := &Server{}
-	opts, err := s.modelOptions(&Model{Options: map[string]any{"typical_p": 0.5}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.TypicalP != 0.5 {
-		t.Fatalf("typical_p = %v, want 0.5", opts.TypicalP)
 	}
 }
 
@@ -512,6 +586,24 @@ func TestChatHandlerHarmonyPreservesStructuralTokens(t *testing.T) {
 	}
 }
 
+func TestParserNameForModelDoesNotChangeConfig(t *testing.T) {
+	tmpl, err := ollamatemplate.Parse("<|start|><|end|>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Model{Config: model.ConfigV2{ModelFamily: "gptoss"}, Template: tmpl}
+	if got := parserNameForModel(m); got != "harmony" {
+		t.Fatalf("parser = %q, want harmony", got)
+	}
+	if m.Config.Parser != "" {
+		t.Fatalf("model parser changed to %q", m.Config.Parser)
+	}
+	m.Config.Parser = "gemma4"
+	if got := parserNameForModel(m); got != "gemma4" {
+		t.Fatalf("explicit parser = %q, want gemma4", got)
+	}
+}
+
 func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
@@ -704,6 +796,31 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			t.Fatalf("second image media = %#v", mock.CompletionRequest.Media[1])
 		}
 	})
+}
+
+func TestGenerateInklingImageAfterContext(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	const name = "inkling-generate"
+	const prefix = "prior 🖼\x00<|content_image|>[img-0]<|end_message|>"
+	mock := mockRunner{
+		DetokenizeFn:       func(context.Context, []int) (string, error) { return prefix, nil },
+		CompletionResponse: llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createSafetensorsTestModel(t, name, model.ConfigV2{
+		ModelFormat: "safetensors", Renderer: "inkling2", Capabilities: []string{"completion", "vision"},
+	}, nil)
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model: name, Prompt: "look[img]", Images: []api.ImageData{{1}}, Context: []int{1}, Stream: new(false),
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("generate status %d: %s", w.Code, w.Body)
+	}
+	got := mock.CompletionRequest
+	want := strings.LastIndex(got.Prompt, "[img-0]")
+	if !strings.HasPrefix(got.Prompt, prefix) || want < len(prefix) || len(got.Media) != 1 || !slices.Equal(got.Media[0].TagOffsets, []int{want}) {
+		t.Fatalf("generate prompt %q, media %+v; want attachment only at %d", got.Prompt, got.Media, want)
+	}
 }
 
 func TestGenerateChatRemote(t *testing.T) {
@@ -1653,32 +1770,19 @@ func TestGenerate(t *testing.T) {
 		}
 	})
 
-	t.Run("rejected option", func(t *testing.T) {
+	t.Run("deprecated option passes through", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:   "test",
 			Prompt:  "Hello!",
 			Options: map[string]any{"typical_p": 0.5},
-		})
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", w.Code)
-		}
-
-		if diff := cmp.Diff(w.Body.String(), `{"error":"typical_p is no longer supported"}`); diff != "" {
-			t.Errorf("mismatch (-got +want):\n%s", diff)
-		}
-	})
-
-	t.Run("null option is unset", func(t *testing.T) {
-		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-			Model:   "test",
-			Prompt:  "Hello!",
-			Options: map[string]any{"typical_p": nil},
 			Stream:  &stream,
 		})
 
 		if w.Code != http.StatusOK {
 			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if mock.CompletionRequest.Options.TypicalP != 0.5 {
+			t.Errorf("typical_p = %v, want 0.5", mock.CompletionRequest.Options.TypicalP)
 		}
 	})
 
@@ -2644,331 +2748,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if got := allContent.String(); got != "Based on my analysis, the solution is straightforward." {
 			t.Errorf("expected content %q, got %q", "Based on my analysis, the solution is straightforward.", got)
-		}
-	})
-
-	earlyFirstPassMetrics := api.Metrics{
-		PromptEvalCount:       4,
-		PromptEvalCachedCount: testIntPtr(1),
-		PromptEvalDuration:    5 * time.Millisecond,
-		EvalCount:             6,
-		EvalDuration:          7 * time.Millisecond,
-	}
-	firstPassMetrics := api.Metrics{
-		PromptEvalCount:       10,
-		PromptEvalCachedCount: testIntPtr(4),
-		PromptEvalDuration:    11 * time.Millisecond,
-		EvalCount:             12,
-		EvalDuration:          13 * time.Millisecond,
-	}
-	secondPassMetrics := api.Metrics{
-		PromptEvalCount:       20_000,
-		PromptEvalCachedCount: testIntPtr(19_000),
-		PromptEvalDuration:    21 * time.Millisecond,
-		EvalCount:             22,
-		EvalDuration:          23 * time.Millisecond,
-	}
-	wantMetrics := api.Metrics{
-		PromptEvalCount:       firstPassMetrics.PromptEvalCount,
-		PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
-		PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
-		EvalCount:             firstPassMetrics.EvalCount + secondPassMetrics.EvalCount,
-		EvalDuration:          firstPassMetrics.EvalDuration + secondPassMetrics.PromptEvalDuration + secondPassMetrics.EvalDuration,
-	}
-
-	t.Run("structured outputs restart non-stream", func(t *testing.T) {
-		var (
-			requestsMu sync.Mutex
-			requests   []llm.CompletionRequest
-			wg         sync.WaitGroup
-		)
-
-		wg.Add(2)
-
-		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
-
-		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-			defer wg.Done()
-
-			requestsMu.Lock()
-			requests = append(requests, r)
-			callNum := len(requests)
-			requestsMu.Unlock()
-
-			switch callNum {
-			case 1:
-				fn(llm.CompletionResponse{
-					Content:               " I am thinking through this problem.",
-					Done:                  false,
-					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
-					EvalCount:             earlyFirstPassMetrics.EvalCount,
-					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
-				})
-				fn(llm.CompletionResponse{
-					Content:               " </think> {\"answer\":\"42\"}",
-					Done:                  false,
-					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
-					EvalCount:             firstPassMetrics.EvalCount,
-					EvalDuration:          firstPassMetrics.EvalDuration,
-				})
-
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(time.Second):
-					t.Fatalf("timeout waiting for structured outputs cancellation")
-					return nil
-				}
-			case 2:
-				fn(llm.CompletionResponse{
-					Content:               `{"answer":"42"}`,
-					Done:                  true,
-					DoneReason:            llm.DoneReasonStop,
-					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
-					EvalCount:             secondPassMetrics.EvalCount,
-					EvalDuration:          secondPassMetrics.EvalDuration,
-				})
-				return nil
-			default:
-				t.Fatalf("unexpected number of completion calls: %d", callNum)
-				return nil
-			}
-		}
-
-		think := true
-		streamRequest := false
-		w := createRequest(t, s.ChatHandler, api.ChatRequest{
-			Model:    "test-thinking",
-			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
-			Think:    &api.ThinkValue{Value: think},
-			Stream:   &streamRequest,
-			Format:   format,
-		})
-
-		wg.Wait()
-		mock.CompletionFn = nil
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		if len(requests) != 2 {
-			t.Fatalf("expected two completion calls, got %d", len(requests))
-		}
-
-		if requests[0].Format != nil {
-			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
-		}
-		if !requests[0].IncludeIntermediateMetrics {
-			t.Error("expected first completion to request per-token metrics")
-		}
-
-		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
-			t.Errorf("expected second completion format to match original format")
-		}
-		if requests[1].IncludeIntermediateMetrics {
-			t.Error("expected second completion to use terminal metrics")
-		}
-
-		var resp api.ChatResponse
-		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-			t.Fatal(err)
-		}
-
-		if resp.Message.Thinking != "I am thinking through this problem. " {
-			t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", resp.Message.Thinking)
-		}
-
-		if resp.Message.Content != `{"answer":"42"}` {
-			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
-		}
-
-		if !resp.Done {
-			t.Errorf("expected response to be done")
-		}
-
-		if resp.DoneReason != "stop" {
-			t.Errorf("expected done reason stop, got %s", resp.DoneReason)
-		}
-		if resp.PromptEvalCount != wantMetrics.PromptEvalCount || resp.EvalCount != wantMetrics.EvalCount {
-			t.Errorf("response counts = (%d, %d), want (%d, %d)", resp.PromptEvalCount, resp.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
-		}
-		if diff := cmp.Diff(wantMetrics.PromptEvalCachedCount, resp.PromptEvalCachedCount); diff != "" {
-			t.Errorf("response cached prompt count mismatch (-want +got):\n%s", diff)
-		}
-		if resp.PromptEvalDuration != wantMetrics.PromptEvalDuration || resp.EvalDuration != wantMetrics.EvalDuration {
-			t.Errorf("response durations = (%s, %s), want (%s, %s)", resp.PromptEvalDuration, resp.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
-		}
-	})
-
-	t.Run("structured outputs restart streaming", func(t *testing.T) {
-		var (
-			requestsMu sync.Mutex
-			requests   []llm.CompletionRequest
-			wg         sync.WaitGroup
-		)
-
-		wg.Add(2)
-
-		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
-
-		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-			defer wg.Done()
-
-			requestsMu.Lock()
-			requests = append(requests, r)
-			callNum := len(requests)
-			requestsMu.Unlock()
-
-			switch callNum {
-			case 1:
-				fn(llm.CompletionResponse{
-					Content:               " I am thinking through this problem.",
-					Done:                  false,
-					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
-					EvalCount:             earlyFirstPassMetrics.EvalCount,
-					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
-				})
-				fn(llm.CompletionResponse{
-					Content:               " </think> {\"answer\":\"42\"}",
-					Done:                  false,
-					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
-					EvalCount:             firstPassMetrics.EvalCount,
-					EvalDuration:          firstPassMetrics.EvalDuration,
-				})
-
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(time.Second):
-					t.Fatalf("timeout waiting for structured outputs cancellation")
-					return nil
-				}
-			case 2:
-				fn(llm.CompletionResponse{
-					Content:               `{"answer":"42"}`,
-					Done:                  true,
-					DoneReason:            llm.DoneReasonStop,
-					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
-					EvalCount:             secondPassMetrics.EvalCount,
-					EvalDuration:          secondPassMetrics.EvalDuration,
-				})
-				return nil
-			default:
-				t.Fatalf("unexpected number of completion calls: %d", callNum)
-				return nil
-			}
-		}
-
-		think := true
-		streamRequest := true
-		w := createRequest(t, s.ChatHandler, api.ChatRequest{
-			Model:    "test-thinking",
-			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
-			Think:    &api.ThinkValue{Value: think},
-			Stream:   &streamRequest,
-			Format:   format,
-		})
-
-		wg.Wait()
-		mock.CompletionFn = nil
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		if len(requests) != 2 {
-			t.Fatalf("expected two completion calls, got %d", len(requests))
-		}
-
-		if requests[0].Format != nil {
-			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
-		}
-		if !requests[0].IncludeIntermediateMetrics {
-			t.Error("expected first completion to request per-token metrics")
-		}
-
-		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
-			t.Errorf("expected second completion format to match original format")
-		}
-		if requests[1].IncludeIntermediateMetrics {
-			t.Error("expected second completion to use terminal metrics")
-		}
-
-		decoder := json.NewDecoder(w.Body)
-		var events []api.ChatResponse
-		for {
-			var event api.ChatResponse
-			if err := decoder.Decode(&event); err == io.EOF {
-				break
-			} else if err != nil {
-				t.Fatal(err)
-			}
-			events = append(events, event)
-			if event.Done {
-				break
-			}
-		}
-
-		if len(events) < 2 {
-			t.Fatalf("expected at least two streaming events, got %d", len(events))
-		}
-
-		first := events[0]
-		var thinking strings.Builder
-		for _, event := range events {
-			thinking.WriteString(event.Message.Thinking)
-			if !event.Done && (event.PromptEvalCount != 0 || event.PromptEvalCachedCount != nil || event.PromptEvalDuration != 0 || event.EvalCount != 0 || event.EvalDuration != 0) {
-				t.Errorf("non-terminal event unexpectedly exposed metrics: %+v", event.Metrics)
-			}
-		}
-		if got := thinking.String(); got != "I am thinking through this problem. " {
-			t.Errorf("thinking = %q, want %q", got, "I am thinking through this problem. ")
-		}
-
-		if first.Message.Content != "" {
-			t.Errorf("expected first event content to be empty, got %q", first.Message.Content)
-		}
-
-		if first.Done {
-			t.Error("expected first event to be non-terminal")
-		}
-		last := events[len(events)-1]
-		if last.Message.Thinking != "" {
-			t.Errorf("expected final event thinking to be empty, got %q", last.Message.Thinking)
-		}
-
-		if last.Message.Content != `{"answer":"42"}` {
-			t.Errorf("expected final event content %q, got %q", `{"answer":"42"}`, last.Message.Content)
-		}
-
-		if !last.Done {
-			t.Error("expected final event to be done")
-		}
-
-		if last.DoneReason != "stop" {
-			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
-		}
-		if last.PromptEvalCount != wantMetrics.PromptEvalCount || last.EvalCount != wantMetrics.EvalCount {
-			t.Errorf("final counts = (%d, %d), want (%d, %d)", last.PromptEvalCount, last.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
-		}
-		if diff := cmp.Diff(wantMetrics.PromptEvalCachedCount, last.PromptEvalCachedCount); diff != "" {
-			t.Errorf("final cached prompt count mismatch (-want +got):\n%s", diff)
-		}
-		if last.PromptEvalDuration != wantMetrics.PromptEvalDuration || last.EvalDuration != wantMetrics.EvalDuration {
-			t.Errorf("final durations = (%s, %s), want (%s, %s)", last.PromptEvalDuration, last.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
 		}
 	})
 }

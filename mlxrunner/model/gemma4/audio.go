@@ -159,10 +159,22 @@ func (m *Model) loadAudioWeights(tensors map[string]*mlx.Array, linears model.Li
 	if m.Audio.unified() {
 		return m.loadUnifiedAudioWeights(tensors, linears)
 	}
-	a := m.Audio
-	root, err := audioWeightRoot(tensors)
+	tower, proj, err := LoadAudioTower(tensors, m.Audio, linears)
 	if err != nil {
 		return err
+	}
+	m.AudioTower = tower
+	m.EmbedAudio = proj
+	return nil
+}
+
+// LoadAudioTower loads the gemma4_audio conformer tower and its embed_audio
+// projection from the tensor map. The projection stays separate from the
+// tower so the caller decides where to keep it.
+func LoadAudioTower(tensors map[string]*mlx.Array, a *AudioConfig, linears model.LinearFactory) (tower *AudioTower, proj *MultimodalEmbedder, err error) {
+	root, err := audioWeightRoot(tensors)
+	if err != nil {
+		return nil, nil, err
 	}
 	at := root + "audio_tower."
 
@@ -174,7 +186,7 @@ func (m *Model) loadAudioWeights(tensors map[string]*mlx.Array, linears model.Li
 		return w, nil
 	}
 
-	tower := &AudioTower{
+	tower = &AudioTower{
 		SubsampleConv: make([]*AudioSubsampleConv, 2),
 		Layers:        make([]*AudioLayer, a.NumHiddenLayers),
 	}
@@ -182,17 +194,17 @@ func (m *Model) loadAudioWeights(tensors map[string]*mlx.Array, linears model.Li
 		sp := fmt.Sprintf("%ssubsample_conv_projection.layer%d.", at, i)
 		conv := tensors[sp+"conv.weight"]
 		if conv == nil {
-			return fmt.Errorf("missing audio weight: %sconv.weight", sp)
+			return nil, nil, fmt.Errorf("missing audio weight: %sconv.weight", sp)
 		}
 		norm, err := requiredNorm(sp + "norm.weight")
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		// Conv weights arrive [out, in, kH, kW]; mlx wants channels last.
 		tower.SubsampleConv[i] = &AudioSubsampleConv{Conv: mlx.Transpose(conv, 0, 2, 3, 1), Norm: norm}
 	}
 	if tower.InputProj, err = makeClippableLinear(linears, tensors, at+"subsample_conv_projection.input_proj_linear"); err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	table := audioRelPosTable(a)
@@ -213,39 +225,39 @@ func (m *Model) loadAudioWeights(tensors map[string]*mlx.Array, linears model.Li
 		}{{layer.FFW1, "feed_forward1."}, {layer.FFW2, "feed_forward2."}} {
 			fp := lp + ffw.name
 			if ffw.f.PreNorm, err = requiredNorm(fp + "pre_layer_norm.weight"); err != nil {
-				return err
+				return nil, nil, err
 			}
 			if ffw.f.Up, err = makeClippableLinear(linears, tensors, fp+"ffw_layer_1"); err != nil {
-				return err
+				return nil, nil, err
 			}
 			if ffw.f.Down, err = makeClippableLinear(linears, tensors, fp+"ffw_layer_2"); err != nil {
-				return err
+				return nil, nil, err
 			}
 			if ffw.f.PostNorm, err = requiredNorm(fp + "post_layer_norm.weight"); err != nil {
-				return err
+				return nil, nil, err
 			}
 		}
 
 		attn := layer.Attention
 		if attn.QProj, err = makeClippableLinear(linears, tensors, lp+"self_attn.q_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if attn.KProj, err = makeClippableLinear(linears, tensors, lp+"self_attn.k_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if attn.VProj, err = makeClippableLinear(linears, tensors, lp+"self_attn.v_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if attn.Post, err = makeClippableLinear(linears, tensors, lp+"self_attn.post"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		perDimScale, err := requiredNorm(lp + "self_attn.per_dim_scale")
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		relProj, err := makeClippableLinear(linears, tensors, lp+"self_attn.relative_k_proj")
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		// The reference applies softplus and the rel-position projection in
 		// the checkpoint dtype and lifts the results to f32 with q.
@@ -257,49 +269,48 @@ func (m *Model) loadAudioWeights(tensors map[string]*mlx.Array, linears model.Li
 
 		lc := layer.LConv
 		if lc.PreNorm, err = requiredNorm(lp + "lconv1d.pre_layer_norm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if lc.Start, err = makeClippableLinear(linears, tensors, lp+"lconv1d.linear_start"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		dw := tensors[lp+"lconv1d.depthwise_conv1d.weight"]
 		if dw == nil {
-			return fmt.Errorf("missing audio weight: %slconv1d.depthwise_conv1d.weight", lp)
+			return nil, nil, fmt.Errorf("missing audio weight: %slconv1d.depthwise_conv1d.weight", lp)
 		}
 		lc.DWConv = mlx.Transpose(dw, 0, 2, 1)
 		if lc.ConvNorm, err = requiredNorm(lp + "lconv1d.conv_norm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if lc.End, err = makeClippableLinear(linears, tensors, lp+"lconv1d.linear_end"); err != nil {
-			return err
+			return nil, nil, err
 		}
 
 		if layer.PreAttnNorm, err = requiredNorm(lp + "norm_pre_attn.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.PostAttnNorm, err = requiredNorm(lp + "norm_post_attn.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.OutNorm, err = requiredNorm(lp + "norm_out.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		tower.Layers[i] = layer
 	}
 
 	if tower.OutputProj, err = makeClippableLinear(linears, tensors, at+"output_proj"); err != nil {
-		return err
+		return nil, nil, err
 	}
 	projection, err := makeClippableLinear(linears, tensors, root+"embed_audio.embedding_projection")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	tower.ClipMin = mlx.FromValue(-a.GradientClipping).AsType(mlx.DTypeBFloat16)
 	tower.ClipMax = mlx.FromValue(a.GradientClipping).AsType(mlx.DTypeBFloat16)
 
-	m.AudioTower = tower
-	m.EmbedAudio = &MultimodalEmbedder{Projection: projection}
-	return nil
+	proj = &MultimodalEmbedder{Projection: projection}
+	return tower, proj, nil
 }
 
 // loadUnifiedAudioWeights loads the encoder-free variant, whose only audio
@@ -331,7 +342,13 @@ func (t *AudioTower) clip(x *mlx.Array) *mlx.Array {
 // over n frames: block b's context slot j holds frame b*chunk + j -
 // (ContextLeft-1), attendable when it exists and lies within the window.
 func (m *Model) audioAttentionMask(n int) *mlx.Array {
-	a := m.Audio
+	return audioAttentionMask(n, m.Audio)
+}
+
+// audioAttentionMask builds the boolean [blocks, 1, chunk, context] mask
+// over n frames: block b's context slot j holds frame b*chunk + j -
+// (ContextLeft-1), attendable when it exists and lies within the window.
+func audioAttentionMask(n int, a *AudioConfig) *mlx.Array {
 	chunk, left, right := int(a.ChunkSize), int(a.ContextLeft-1), int(a.ContextRight)
 	ctx := chunk + left + right
 	blocks := (n + chunk - 1) / chunk
@@ -355,8 +372,7 @@ func (m *Model) audioAttentionMask(n int) *mlx.Array {
 
 // audioContextIndices maps block b's context slot j to index b*chunk+j of
 // the padded key/value sequence.
-func (m *Model) audioContextIndices(blocks int) *mlx.Array {
-	a := m.Audio
+func audioContextIndices(blocks int, a *AudioConfig) *mlx.Array {
 	ctx := int(a.ChunkSize + a.ContextLeft - 1 + a.ContextRight)
 	idx := make([]int32, blocks*ctx)
 	for b := range blocks {
@@ -483,8 +499,12 @@ func (l *AudioLayer) Forward(t *AudioTower, h, mask, indices *mlx.Array, a *Audi
 // encodeAudio runs the conformer over one chunk's [frames, melBins] log-mel
 // features, returning the lazy [numTokens, hidden] features.
 func (m *Model) encodeAudio(data *mlx.Array) *mlx.Array {
-	a := m.Audio
-	t := m.AudioTower
+	return m.AudioTower.Encode(data, m.Audio, m.EmbedAudio)
+}
+
+// Encode runs the conformer over one chunk's [frames, melBins] log-mel
+// features, returning the lazy [numTokens, hidden] features.
+func (t *AudioTower) Encode(data *mlx.Array, a *AudioConfig, proj *MultimodalEmbedder) *mlx.Array {
 	frames := data.Dim(0)
 
 	h := mlx.Reshape(data, 1, int32(frames), audioMelBins, 1).AsType(mlx.DTypeBFloat16)
@@ -497,15 +517,15 @@ func (m *Model) encodeAudio(data *mlx.Array) *mlx.Array {
 	h = mlx.Reshape(h, int32(n), int32(w*c))
 	h = t.InputProj.Forward(h)
 
-	mask := m.audioAttentionMask(n)
-	indices := m.audioContextIndices((n + int(a.ChunkSize) - 1) / int(a.ChunkSize))
+	mask := audioAttentionMask(n, a)
+	indices := audioContextIndices((n+int(a.ChunkSize)-1)/int(a.ChunkSize), a)
 	for _, layer := range t.Layers {
 		h = layer.Forward(t, h, mask, indices, a)
 	}
 
 	h = t.OutputProj.Forward(h)
 	h = mlx.RMSNormFn(h, nil, a.RMSNormEps)
-	return m.EmbedAudio.Projection.Forward(h)
+	return proj.Projection.Forward(h)
 }
 
 // encodeUnifiedAudio projects raw waveform frames straight into the text

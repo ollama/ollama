@@ -86,21 +86,12 @@ func prepareRemoteSourceFiles(ctx context.Context, dir string, draft bool) ([]re
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
+	configs, err := create.SafetensorsConfigFiles(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	names := append([]string(nil), weightFiles...)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if filepath.Ext(name) == ".json" || name == "chat_template.jinja" {
-			names = append(names, name)
-		}
-	}
+	names := append(weightFiles, configs...)
 	slices.Sort(names)
 
 	files := make([]remoteSourceFile, 0, len(names))
@@ -287,6 +278,7 @@ func newRemoteCreateRequest(opts createOptions, files []remoteSourceFile) *api.C
 		req.System = opts.Modelfile.System
 		req.Parameters = opts.Modelfile.Parameters
 		req.Messages = opts.Modelfile.Messages
+		req.Capabilities = opts.Modelfile.Capabilities
 		if len(opts.Modelfile.Licenses) > 0 {
 			req.License = opts.Modelfile.Licenses
 		}

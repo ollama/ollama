@@ -288,6 +288,44 @@ PARSER parser1
 	assert.Equal(t, []Command{{Name: "model", Args: "foo"}, {Name: "parser", Args: "parser1"}}, modelfile.Commands)
 }
 
+func TestModelfileCapabilities(t *testing.T) {
+	for _, input := range []string{
+		"FROM base\nCAPABILITY decision\nCAPABILITY tools\n",
+		"FROM base\ncapability decision\nCAPABILITY \"tools\"",
+	} {
+		mf, err := ParseFile(strings.NewReader(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := mf.CreateRequest(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff([]string{"decision", "tools"}, req.Capabilities); diff != "" {
+			t.Fatalf("capabilities (-want +got):\n%s", diff)
+		}
+		roundtrip, err := ParseFile(strings.NewReader(mf.String()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := cmp.Diff(mf, roundtrip); diff != "" {
+			t.Fatalf("Modelfile roundtrip (-want +got):\n%s", diff)
+		}
+	}
+}
+
+func TestModelfileRejectsUnknownCapability(t *testing.T) {
+	for _, capability := range []string{"system-one", "decision tools", `""`} {
+		mf, err := ParseFile(strings.NewReader("FROM base\nCAPABILITY " + capability + "\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mf.CreateRequest(t.TempDir()); err == nil || !strings.Contains(err.Error(), "unknown capability") {
+			t.Fatalf("capability %q: got %v, want unknown capability", capability, err)
+		}
+	}
+}
+
 func TestParseFileMessages(t *testing.T) {
 	cases := []struct {
 		input    string

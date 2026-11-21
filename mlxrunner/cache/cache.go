@@ -6,16 +6,25 @@ import (
 	"github.com/ollama/ollama/mlx"
 )
 
-// Cache is common state management shared by every cache kind. Writers
-// live on the specific caches
-type Cache interface {
-	// State returns the cache-owned state roots that should be kept/evaluated.
+// Layer is one cache slot used during a model forward. Attention and Recurrent
+// provide its read/write operations. It may be a request's Cache or a temporary
+// view of the corresponding caches from several requests. The view does not own
+// those caches and cannot manage their snapshots or lifetime.
+type Layer interface {
+	// State returns state roots that should be kept/evaluated.
 	State() []*mlx.Array
+}
+
+// Cache owns one cache slot's state and snapshots for a single request.
+// A model usually needs one slot per layer, returned together by NewCaches.
+type Cache interface {
+	Layer
 	Free()
 	Offset() int
 
-	// Snapshot copies cache state from fromOffset to current offset into
-	// owned VRAM arrays. The active cache is unchanged.
+	// Snapshot retains state from fromOffset to the current offset without
+	// changing the active cache. Storage may be copied, shared immutably, or
+	// copied lazily before the active cache overwrites it.
 	Snapshot(fromOffset int) Snapshot
 
 	// PrepareSnapshots schedules the cache to capture a snapshot as its
@@ -32,15 +41,13 @@ type Cache interface {
 
 	// TakeSnapshots returns the snapshots captured since PrepareSnapshots,
 	// one per scheduled offset in the caller's order, and clears the
-	// schedule. An entry is nil when its scheduled offset captured a
-	// zero-width range (the offset equalled the previous boundary, e.g. an
-	// offset scheduled at the current position): rolling back there needs
-	// only a live rewind, so there is nothing to page out.
+	// schedule. An entry may be nil for an empty range or an offset that
+	// writes never reached, for example after cancellation.
 	TakeSnapshots() []Snapshot
 
 	// Restore brings the cache to target. If snapshot is nil, rewinds
-	// using the cache's own live state. Returns false if the target is
-	// unreachable (e.g. target > current offset, or negative).
+	// using the cache's own live state. Returns false if the requested state
+	// is unavailable or target is negative.
 	Restore(snapshot Snapshot, target int) bool
 
 	// Merge combines two sequential snapshots [a,b) and [b,c) into [a,c).
@@ -53,9 +60,23 @@ type Cache interface {
 	Split(snapshot Snapshot, at int) (parent, child Snapshot)
 }
 
+// Layers exposes a request's cache slots through the forward-only interface.
+// It converts the slice without copying any cache state or transferring ownership.
+func Layers(caches []Cache) []Layer {
+	if caches == nil {
+		return nil
+	}
+	layers := make([]Layer, len(caches))
+	for i, c := range caches {
+		layers[i] = c
+	}
+	return layers
+}
+
 // Snapshot is paged-out cache state that can be restored later.
 type Snapshot interface {
-	// Size returns the byte size of the paged-out data (in VRAM). A lazy
+	// Size returns the retained VRAM bytes charged to the snapshot. Immutable
+	// views may conservatively charge shared backing storage more than once. A lazy
 	// snapshot that still indexes a live cache buffer returns 0 — it owns
 	// no extra memory yet. Once materialized (the cache copies the range
 	// out before overwriting its slots), Size returns the owned bytes.
@@ -67,14 +88,13 @@ type Snapshot interface {
 	// never lazy may treat this as a no-op.
 	SetMaterializeHook(func(delta int))
 
-	// Close frees the snapshot's arrays.
+	// Close releases the snapshot's ownership of retained arrays.
 	Close()
 }
 
-// pendingSnapshots holds the per-token snapshot capture state shared by all
-// cache kinds. The owning cache calls capture(offset) from its write path
-// after each token's storage is in place; capture materializes a snapshot
-// for every scheduled offset that the write has now reached.
+// pendingSnapshots holds the scheduled snapshot capture state shared by all
+// cache kinds. The owning cache calls captureReached from its write path
+// to retain state at each scheduled offset the write reaches.
 type pendingSnapshots struct {
 	offsets  []int      // scheduled storage offsets, in caller order
 	captured []Snapshot // captured[i] corresponds to offsets[i]; nil until reached
@@ -102,16 +122,15 @@ func (p *pendingSnapshots) prepare(currentOffset int, offsets []int) {
 }
 
 // take returns the captured snapshots and clears the schedule. See
-// Cache.TakeSnapshots. Captures fire in ascending offset order, so by take time
-// every scheduled offset the writes crossed has been visited; a nil entry is a
-// zero-width capture, not a missed one.
+// Cache.TakeSnapshots. Captures fire in ascending offset order; offsets beyond
+// the last completed write remain nil.
 func (p *pendingSnapshots) take() []Snapshot {
 	out := p.captured
 	p.offsets, p.captured = nil, nil
 	return out
 }
 
-// captureReached materializes a snapshot for every scheduled offset that equals
+// captureReached captures a snapshot for every scheduled offset that equals
 // reached and hasn't been captured yet, using snap to produce the rollback
 // state. The capture cursor base holds the previous scheduled boundary: snap
 // reads it (yielding a [base, reached) range for position-sliceable caches),
@@ -147,4 +166,58 @@ func (p *pendingSnapshots) scheduledIn(start, end int) []int {
 		}
 	}
 	return boundaries
+}
+
+// PendingCopyBytes bounds the additional storage a lazy snapshot may need before
+// its live buffers can be reused. It does not evaluate or materialize the snapshot.
+func PendingCopyBytes(s Snapshot) int {
+	if s == nil {
+		return 0
+	}
+	if lazy, ok := s.(interface{ pendingBytes() int }); ok {
+		return lazy.pendingBytes()
+	}
+	return 0
+}
+
+// CopyBytes measures the buffers a write may need to copy. Attention caches can
+// keep capacity beyond their current offset, including after a rewind. State
+// only exposes the live prefix and would undercount that copy.
+func CopyBytes(c Cache) int {
+	if c == nil {
+		return 0
+	}
+	var state []*mlx.Array
+	switch c := c.(type) {
+	case *KVCache:
+		state = []*mlx.Array{c.keys, c.values}
+	case *RotatingKVCache:
+		state = []*mlx.Array{c.keys, c.values}
+	default:
+		state = c.State()
+	}
+	var size int
+	for _, a := range state {
+		if a != nil {
+			size += a.NumBytes()
+		}
+	}
+	return size
+}
+
+// CanMergeWithoutCopy reports whether Merge can compact these snapshots without
+// allocating native storage. Unknown cache implementations remain conservative.
+func CanMergeWithoutCopy(c Cache, parent, child Snapshot) bool {
+	switch c.(type) {
+	case *RecurrentCache, *RotatingKVCache:
+		return child != nil // Keep the last valid state if the child has no capture.
+	case *KVCache:
+		if parent == nil || child == nil {
+			return false // Do not merge across a missing part of sliceable history.
+		}
+		p, next := parent.(*kvSnapshot), child.(*kvSnapshot)
+		return p.keys == nil && next.keys == nil && p.cache == next.cache && p.toOffset == next.fromOffset
+	default:
+		return c == nil
+	}
 }

@@ -72,15 +72,19 @@ func TestStageSafetensorsSourceFilesRejectsOversizedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir, cleanup, err := stageSafetensorsSourceFiles(t.Context(), map[string]string{"config.json": digest})
-	if cleanup != nil {
-		cleanup()
-	}
-	if err == nil {
-		t.Fatalf("stageSafetensorsSourceFiles() = %q, nil, want size error", dir)
-	}
-	if !strings.Contains(err.Error(), "exceeds maximum") {
-		t.Fatalf("stageSafetensorsSourceFiles() error = %v, want size error", err)
+	for _, name := range []string{"config.json", "joint_head_config.json"} {
+		t.Run(name, func(t *testing.T) {
+			dir, cleanup, err := stageSafetensorsSourceFiles(t.Context(), map[string]string{name: digest})
+			if cleanup != nil {
+				cleanup()
+			}
+			if err == nil {
+				t.Fatalf("stageSafetensorsSourceFiles() = %q, nil, want size error", dir)
+			}
+			if !strings.Contains(err.Error(), "exceeds maximum") {
+				t.Fatalf("stageSafetensorsSourceFiles() error = %v, want size error", err)
+			}
+		})
 	}
 }
 

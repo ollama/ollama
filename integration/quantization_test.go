@@ -1,4 +1,4 @@
-//go:build integration && release
+//go:build integration && create
 
 package integration
 

@@ -118,8 +118,7 @@
             "group": "Get started",
             "pages": [
               "index",
-              "quickstart",
-              "/cloud"
+              "quickstart"
             ]
           },
           {
@@ -128,10 +127,23 @@
               "/capabilities/streaming",
               "/capabilities/thinking",
               "/capabilities/structured-outputs",
+              "/capabilities/decision",
               "/capabilities/vision",
               "/capabilities/embeddings",
+              "/capabilities/speech",
               "/capabilities/tool-calling",
               "/capabilities/web-search"
+            ]
+          },
+          {
+            "group": "Cloud",
+            "pages": [
+              "/cloud",
+              "/cloud/api",
+              "/cloud/models",
+              "/cloud/usage",
+              "/cloud/model-lifecycle",
+              "/cloud/faq"
             ]
           },
           {
@@ -249,6 +261,7 @@
               "POST /api/generate",
               "POST /api/chat",
               "POST /api/embed",
+              "POST /v1/systemone",
               "GET /api/tags",
               "GET /api/ps",
               "POST /api/show",
@@ -257,7 +270,9 @@
               "POST /api/pull",
               "POST /api/push",
               "DELETE /api/delete",
-              "GET /api/version"
+              "GET /api/version",
+              "/api/cloud-usage",
+              "/api/balance"
             ]
           }
         ]

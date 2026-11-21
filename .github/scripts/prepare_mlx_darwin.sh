@@ -52,8 +52,6 @@ read_pin() {
   tr -d '[:space:]' <"$1"
 }
 
-# Native wrapper sources compiled into libollama_xgrammar.dylib — keep in
-# sync with the ollama_xgrammar target in cmake/mlx/CMakeLists.txt.
 xgrammar_native_dir=mlxrunner/xgrammar/native
 
 # Payload build rules beyond the MLX_VERSION/MLX_C_VERSION pins.

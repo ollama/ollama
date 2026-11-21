@@ -1,20 +1,29 @@
 package launch
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"golang.org/x/mod/semver"
 )
 
 const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
+
+const openCodeDefaultMaxOutputTokens = 32_000
 
 var openCodeGOOS = runtime.GOOS
 
@@ -53,16 +62,281 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 	if err != nil {
 		return err
 	}
-
+	content, err := o.runContent(model, models, args...)
+	if err != nil {
+		return err
+	}
+	version := openCodeVersion(opencodePath)
+	content, err = openCodeConfigForVersion(content, version, models)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 && model != "" {
+		switch semver.Major(version) {
+		case "v2":
+			// The shared v2 service does not inherit this launch's inline config.
+			args = []string{"--standalone"}
+		case "v1":
+			// V1 needs an explicit selection to override an agent's configured model.
+			if primary, ok := findLaunchModel(models, model); ok {
+				model = primary.Name
+			}
+			args = []string{"--model", "ollama/" + model}
+		}
+	}
 	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if content := o.resolveContent(model, models); content != "" {
+	if content != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 	return cmd.Run()
+}
+
+// An unknown version retains the legacy config and adds no version-specific flags.
+func openCodeVersion(path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd.WaitDelay = time.Second
+	data, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return ""
+	}
+	version := "v" + strings.TrimPrefix(fields[len(fields)-1], "v")
+	if semver.IsValid(version) {
+		return version
+	}
+	return ""
+}
+
+var (
+	openCodeLoadedContextLength = loadedContextLength
+	openCodeReadConfig          = readOpenCodeConfig
+)
+
+// Let OpenCode resolve its configuration layers, including JSONC and project settings.
+func readOpenCodeConfig() ([]byte, error) {
+	path, ok := findOpenCode()
+	if !ok {
+		return nil, fmt.Errorf("could not find the OpenCode executable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "debug", "config")
+	// npm's launcher can leave a child holding the output pipes after cancellation.
+	cmd.WaitDelay = time.Second
+	data, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if diagnostic := openCodeConfigDiagnostic(exitErr.Stderr); diagnostic != "" {
+			err = fmt.Errorf("%w: %s", err, diagnostic)
+		}
+		return nil, fmt.Errorf("%w\nRun `opencode debug config` for details.", err)
+	}
+	return data, err
+}
+
+// OpenCode's validation messages can echo credentials or the entire JSONC file.
+// Keep only the config location and issue paths, never messages or input values.
+func openCodeConfigDiagnostic(stderr []byte) string {
+	// Cmd.Output truncates large errors mid-message. A partial rejected value
+	// must not be mistaken for a field path; use the recovery command instead.
+	if len(stderr) > 16<<10 {
+		return ""
+	}
+	lines := strings.Split(ansi.Strip(string(stderr)), "\n")
+	for i, line := range lines {
+		line = strings.TrimPrefix(strings.TrimSuffix(line, "\r"), "Error: ")
+		if path, ok := strings.CutPrefix(line, "Config file at "); ok {
+			if path, _, ok := strings.Cut(path, " is not valid JSON(C)"); ok {
+				return fmt.Sprintf("config file at %q is not valid JSON(C)", path)
+			}
+		}
+		rest, ok := strings.CutPrefix(line, "Configuration is invalid")
+		if !ok {
+			continue
+		}
+		diagnostic := "configuration is invalid"
+		if path, ok := strings.CutPrefix(rest, " at "); ok {
+			path, _, _ = strings.Cut(path, ": ")
+			diagnostic += fmt.Sprintf(" at %q", path)
+		}
+		var fields []string
+		for _, issue := range lines[i+1:] {
+			issue = strings.TrimSuffix(issue, "\r")
+			if !strings.HasPrefix(issue, "↳ ") {
+				break
+			}
+			// OpenCode appends a space and the field path, even for root issues
+			// whose path is empty. Preserve that trailing space when parsing.
+			if last := strings.LastIndexByte(issue, ' '); last >= 0 && last < len(issue)-1 {
+				fields = append(fields, fmt.Sprintf("%q", issue[last+1:]))
+			}
+		}
+		if len(fields) > 0 {
+			diagnostic += " (invalid fields: " + strings.Join(fields, ", ") + ")"
+		}
+		return diagnostic
+	}
+	return ""
+}
+
+// runContent refreshes only the selected local model's limits after loading it.
+// Edit remains metadata-only; other picker entries are not loaded, and their
+// limits must not inherit the selected model's allocation.
+func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string) (string, error) {
+	content := o.resolveContent(model, models)
+	// Forwarded arguments may select another model, resume a session, or run a
+	// utility. Leave those invocations entirely to OpenCode.
+	if len(args) > 0 {
+		return content, nil
+	}
+	primary, _ := findLaunchModel(models, model)
+	if model == "" || primary.Remote || isCloudModelName(model) {
+		return content, nil
+	}
+	if primary.Name != "" {
+		model = primary.Name
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		return "", err
+	}
+	providers, _ := config["provider"].(map[string]any)
+	provider, _ := providers["ollama"].(map[string]any)
+	entries, _ := provider["models"].(map[string]any)
+	entry, _ := entries[model].(map[string]any)
+	if entry == nil {
+		return content, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Loading %s...\n", model)
+	contextLength, err := openCodeLoadedContextLength(model)
+	if err != nil {
+		return "", fmt.Errorf("could not load %s: %w", model, err)
+	}
+	if contextLength < 4 {
+		fmt.Fprintf(os.Stderr, "Warning: could not read the context size for %s. Continuing with existing settings; long chats may lose earlier messages.\n", model)
+		return content, nil
+	}
+	data, err := openCodeReadConfig()
+	if err != nil {
+		return "", fmt.Errorf("could not read OpenCode configuration: %w", err)
+	}
+	saved, err := openCodeConfiguredLimits(data)
+	if err != nil {
+		return "", fmt.Errorf("could not read OpenCode model limits: %w", err)
+	}
+	// OpenCode prioritizes input over context for compaction. Override stale
+	// input limits too, while keeping a user's smaller limit.
+	input := contextLength
+
+	// Reserve a quarter of the context for output, capped at 8k. Avoid a
+	// minimum output budget that could consume a small allocation entirely.
+	output := min(8192, contextLength/4)
+	if primary.MaxOutputTokens > 0 {
+		output = min(output, primary.MaxOutputTokens)
+	}
+	for name, configured := range saved {
+		if !launchModelMatches(name, model) && !launchModelMatches(model, name) {
+			continue
+		}
+		if configured.Input != nil && *configured.Input > 0 {
+			input = min(input, *configured.Input)
+		}
+		if configured.Output != nil && *configured.Output > 0 {
+			output = min(output, *configured.Output)
+		}
+	}
+	limit, _ := entry["limit"].(map[string]any)
+	if limit == nil {
+		limit = make(map[string]any)
+	}
+	if known, ok := limit["output"].(float64); ok && known > 0 {
+		output = min(output, int(known))
+	}
+	limit["context"] = contextLength
+	limit["input"] = input
+	limit["output"] = output
+	entry["limit"] = limit
+	data, err = json.Marshal(config)
+	return string(data), err
+}
+
+type openCodeModelLimits struct{ Input, Output *int }
+
+// V1 debug config returns a resolved object; V2 returns normalized source
+// entries from lowest to highest priority. Read only Ollama model limits.
+func openCodeConfiguredLimits(data []byte) (map[string]openCodeModelLimits, error) {
+	type providers map[string]struct {
+		Models map[string]struct{ Limit openCodeModelLimits }
+	}
+	var sources []providers
+	if strings.HasPrefix(strings.TrimSpace(string(data)), "[") {
+		var entries []struct {
+			Type string
+			Info struct{ Providers providers }
+		}
+		if err := json.Unmarshal(data, &entries); err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.Type == "document" {
+				sources = append(sources, entry.Info.Providers)
+			}
+		}
+	} else {
+		var config struct{ Provider providers }
+		if err := json.Unmarshal(data, &config); err != nil {
+			return nil, err
+		}
+		sources = append(sources, config.Provider)
+	}
+	limits := make(map[string]openCodeModelLimits)
+	for _, source := range sources {
+		for name, model := range source["ollama"].Models {
+			limit := limits[name]
+			if model.Limit.Input != nil {
+				limit.Input = model.Limit.Input
+			}
+			if model.Limit.Output != nil {
+				limit.Output = model.Limit.Output
+			}
+			limits[name] = limit
+		}
+	}
+	return limits, nil
+}
+
+// openCodeRuntimeModels carries recommended output ceilings to Run after Edit
+// has built the fallback configuration. Native context metadata remains intact.
+func openCodeRuntimeModels(models []LaunchModel, recommendations []ModelItem) []LaunchModel {
+	models = cloneLaunchModels(models)
+	for i := range models {
+		if models[i].Remote || isCloudModelName(models[i].Name) {
+			continue
+		}
+		for _, rec := range recommendations {
+			if launchModelRecommendationKey(models[i].Name) != launchModelRecommendationKey(rec.Name) || rec.MaxOutputTokens <= 0 {
+				continue
+			}
+			if models[i].MaxOutputTokens <= 0 || rec.MaxOutputTokens < models[i].MaxOutputTokens {
+				models[i].MaxOutputTokens = rec.MaxOutputTokens
+			}
+		}
+	}
+	return models
 }
 
 func ensureOpenCodeInstalled() (string, error) {
@@ -243,6 +517,15 @@ func (o *OpenCode) Edit(models []LaunchModel) error {
 		_ = json.Unmarshal(data, &state) // Ignore parse errors; use defaults
 	}
 
+	if defaultVariant := openCodeDefaultVariant(models[0]); defaultVariant != "" {
+		if variantState, ok := state["variant"].(map[string]any); ok {
+			key := "ollama/" + models[0].Name
+			if _, exists := variantState[key]; !exists {
+				variantState[key] = defaultVariant
+			}
+		}
+	}
+
 	recent, _ := state["recent"].([]any)
 
 	modelSet := make(map[string]bool)
@@ -312,6 +595,97 @@ func buildInlineConfig(primary LaunchModel, models []LaunchModel) (string, error
 	return string(data), nil
 }
 
+// Newer clients can declare the supported efforts, replacing their fallback list.
+// Older v1 clients still need the legacy disabled variants.
+func openCodeConfigForVersion(content, version string, modelList []LaunchModel) (string, error) {
+	v2 := semver.Major(version) == "v2"
+	if content == "" || (!v2 && (semver.Major(version) != "v1" || semver.Compare(version, "v1.19.3") < 0)) {
+		return content, nil
+	}
+	var config struct {
+		Schema   string                    `json:"$schema"`
+		Model    string                    `json:"model"`
+		Provider map[string]map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		return "", err
+	}
+	provider := config.Provider["ollama"]
+	models, _ := provider["models"].(map[string]any)
+	rank := func(label string) int {
+		order := []string{"none", "thinking", "minimal", "low", "medium", "high", "xhigh", "max"}
+		if i := slices.Index(order, label); i >= 0 {
+			return i
+		}
+		return len(order)
+	}
+	for name, raw := range models {
+		model, _ := findLaunchModel(modelList, name)
+		metadataKnown := model.Thinking.Valid()
+		if !v2 && !metadataKnown {
+			continue
+		}
+		entry := raw.(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+		efforts := []string{}
+		nativeVariants := []any{}
+		labels := slices.SortedFunc(maps.Keys(variants), func(a, b string) int {
+			return cmp.Or(cmp.Compare(rank(a), rank(b)), strings.Compare(a, b))
+		})
+		for _, label := range labels {
+			variant := variants[label].(map[string]any)
+			if variant["disabled"] == true {
+				delete(variants, label)
+				continue
+			}
+			// Boolean aliases keep their own labels and explicit reset values. Only
+			// named efforts should also be generated by the client's native controls.
+			if effort, ok := variant["reasoningEffort"].(string); ok && effort == label {
+				efforts = append(efforts, effort)
+			}
+			nativeVariants = append(nativeVariants, map[string]any{"id": label, "settings": variant})
+		}
+		if !v2 {
+			entry["reasoning_options"] = []any{}
+			if len(efforts) > 0 {
+				entry["reasoning_options"] = []any{map[string]any{"type": "effort", "values": efforts}}
+			}
+			continue
+		}
+		capabilities, _ := entry["modalities"].(map[string]any)
+		if capabilities == nil {
+			capabilities = map[string]any{}
+		}
+		if metadataKnown {
+			// Native reasoning declarations replace existing variants. Without metadata,
+			// retain user-configured controls instead of declaring the fallback authoritative.
+			reasoning := map[string]any{"supported": entry["reasoning"] == true}
+			if entry["reasoning"] == true {
+				reasoning["effort"] = efforts
+			}
+			capabilities["reasoning"] = reasoning
+		}
+		entry["capabilities"] = capabilities
+		entry["variants"] = nativeVariants
+		if options, ok := entry["options"]; ok {
+			entry["settings"] = options
+		}
+		delete(entry, "options")
+		delete(entry, "modalities")
+		delete(entry, "reasoning")
+	}
+	if !v2 {
+		data, err := json.Marshal(config)
+		return string(data), err
+	}
+	provider["package"] = "@opencode/ai/providers/openai-compatible"
+	provider["settings"] = provider["options"]
+	delete(provider, "npm")
+	delete(provider, "options")
+	data, err := json.Marshal(map[string]any{"$schema": config.Schema, "model": config.Model, "providers": config.Provider})
+	return string(data), err
+}
+
 // readModelJSONModels reads ollama model IDs from the opencode model.json state file
 func readModelJSONModels() []string {
 	statePath, err := openCodeStatePath()
@@ -355,16 +729,19 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				"output": []string{"text"},
 			}
 		}
-		if model.HasCapability("thinking") {
+		supportsThinking := model.HasCapability("thinking")
+		if model.Thinking.Valid() {
+			// Explicit metadata wins over the capability flag. False-only metadata
+			// describes a non-thinking model; every other valid descriptor permits thinking.
+			supportsThinking = len(model.Thinking.Values) > 1 || !model.Thinking.Supports(false)
+		}
+		if supportsThinking {
 			entry["reasoning"] = true
-			if openCodeModelSupportsThinkingLevels(model) {
-				entry["options"] = map[string]any{"reasoningEffort": "medium"}
-				entry["variants"] = map[string]any{
-					"low":    map[string]any{"reasoningEffort": "low"},
-					"medium": map[string]any{"reasoningEffort": "medium"},
-					"high":   map[string]any{"reasoningEffort": "high"},
-					"max":    map[string]any{"reasoningEffort": "max"},
+			if variants, defaults, _ := openCodeThinkingVariants(model); variants != nil {
+				if len(defaults) > 0 {
+					entry["options"] = defaults
 				}
+				entry["variants"] = variants
 			} else {
 				entry["variants"] = map[string]any{
 					"none":   map[string]any{"reasoningEffort": "none"},
@@ -374,17 +751,128 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				}
 			}
 		}
-		if model.MaxOutputTokens > 0 {
-			limit := make(map[string]any)
-			if model.ContextLength > 0 {
-				limit["context"] = model.ContextLength
+		if model.ContextLength > 0 && (model.MaxOutputTokens > 0 || model.Remote || isCloudModelName(model.Name)) {
+			output := model.MaxOutputTokens
+			if output <= 0 {
+				output = openCodeDefaultMaxOutputTokens
 			}
-			limit["output"] = model.MaxOutputTokens
-			entry["limit"] = limit
+			entry["limit"] = map[string]any{"context": model.ContextLength, "output": output}
 		}
 		models[model.Name] = entry
 	}
 	return models
+}
+
+// openCodeThinkingVariants maps Ollama's shared thinking metadata to the OpenAI-compatible
+// controls OpenCode can advertise. An omitted reasoning effort lets the backend use its
+// boolean-on default.
+func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any, string) {
+	if thinking := model.Thinking; thinking.Valid() {
+		variants := make(map[string]any)
+		for _, value := range thinking.Values {
+			label, ok := value.(string)
+			if !ok {
+				continue
+			}
+			if label == "none" {
+				// The API reserves none for boolean off. Reserve its label too, so
+				// any supported boolean-off collision keeps its existing identifier.
+				variants[label] = map[string]any{"disabled": true}
+				continue
+			}
+			variants[label] = map[string]any{"reasoningEffort": label}
+		}
+		if variant, exists := variants["default"]; exists {
+			// OpenCode reserves "default" for the absence of a selected variant.
+			variants[openCodeVariantLabel("default", variants)] = variant
+			delete(variants, "default")
+		}
+
+		hasNamedLevels := len(variants) > 0
+		booleanLabels := make(map[bool]string)
+		for _, value := range thinking.Values {
+			boolean, ok := value.(bool)
+			if !ok {
+				continue
+			}
+			// Mixed metadata has no distinct boolean-on effort unless omission uses
+			// a boolean-on default. Offer its named levels instead of relabeling one.
+			if boolean && hasNamedLevels && thinking.Default != true {
+				continue
+			}
+			base := "thinking"
+			variant := map[string]any{}
+			if !boolean {
+				base = "none"
+				variant["reasoningEffort"] = "none"
+			}
+			label := openCodeVariantLabel(base, variants)
+			booleanLabels[boolean] = label
+			if boolean {
+				variant["reasoningEffort"] = "high" // Existing OpenAI alias for binary on.
+				if thinking.Default == true {
+					// Clear inherited off options and use the backend's boolean-on default.
+					variant["reasoningEffort"] = ""
+				}
+			}
+			variants[label] = variant
+		}
+
+		// OpenCode 1.18 still computes generic low/medium/high/max fallbacks and merges
+		// configured variants. Explicitly disable the fallbacks that Ollama metadata does
+		// not support so the provider's variant merge cannot repopulate them.
+		for _, level := range []string{"none", "thinking", "low", "medium", "high", "max"} {
+			if _, ok := variants[level]; !ok {
+				variants[level] = map[string]any{"disabled": true}
+			}
+		}
+
+		defaults := map[string]any{}
+		defaultVariant := ""
+		switch defaultLevel := thinking.Default.(type) {
+		case string:
+			defaults["reasoningEffort"] = defaultLevel
+			if defaultLevel == "none" {
+				// Clear inherited effort and let omission resolve the named default.
+				defaults["reasoningEffort"] = ""
+			}
+		case bool:
+			// Boolean defaults launch with a variant instead of a model option, which
+			// lets on and off choices reset the inherited reasoning effort.
+			defaultVariant = booleanLabels[defaultLevel]
+		}
+		return variants, defaults, defaultVariant
+	}
+
+	if openCodeModelSupportsThinkingLevels(model) {
+		return map[string]any{
+			"low":    map[string]any{"reasoningEffort": "low"},
+			"medium": map[string]any{"reasoningEffort": "medium"},
+			"high":   map[string]any{"reasoningEffort": "high"},
+			"max":    map[string]any{"reasoningEffort": "max"},
+		}, map[string]any{"reasoningEffort": "medium"}, "medium"
+	}
+
+	return nil, nil, ""
+}
+
+func openCodeVariantLabel(base string, variants map[string]any) string {
+	label := base
+	for suffix := 2; ; suffix++ {
+		if _, exists := variants[label]; !exists {
+			return label
+		}
+		label = fmt.Sprintf("%s-%d", base, suffix)
+	}
+}
+
+func openCodeDefaultVariant(model LaunchModel) string {
+	if !model.Thinking.Valid() || (len(model.Thinking.Values) == 1 && model.Thinking.Supports(false)) {
+		return ""
+	}
+
+	_, _, defaultVariant := openCodeThinkingVariants(model)
+	return defaultVariant
 }
 
 func openCodeModelSupportsThinkingLevels(model LaunchModel) bool {

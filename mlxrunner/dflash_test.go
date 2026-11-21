@@ -2,6 +2,8 @@ package mlxrunner
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"slices"
 	"testing"
 
@@ -39,11 +41,16 @@ type blockCall struct {
 
 func (d *fakeBlockDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
 
-func (d *fakeBlockDraft) NewCaches() []cache.Cache { return d.draftCaches }
+func (d *fakeBlockDraft) NewCaches() []cache.Cache {
+	if d.draftCaches != nil {
+		return d.draftCaches
+	}
+	return []cache.Cache{cache.NewKVCache()}
+}
 
 func (d *fakeBlockDraft) BlockParams() (int, int32) { return d.blockSize, d.maskToken }
 
-func (d *fakeBlockDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (d *fakeBlockDraft) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	call := blockCall{offset: b.SeqOffsets[0]}
 
 	if b.Hidden != nil {
@@ -69,6 +76,10 @@ func (d *fakeBlockDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (
 	if rc, ok := draftCaches[0].(*fakeRewindableCache); ok {
 		rc.feed(call.ctx)
 		rc.feed(call.block)
+	} else {
+		ids := slices.Concat(call.ctx, call.block)
+		kv := mlx.FromValues(ids, 1, 1, len(ids), 1).AsType(mlx.DTypeFloat32)
+		draftCaches[0].(cache.Attention).Update(b, kv, kv)
 	}
 
 	if call.block == nil {
@@ -99,7 +110,7 @@ func newBlockTestSession(t *mlxtest.T, predict map[int32]int32, blockSize int) (
 	caches, _ := newMTPTestCaches(2) // caches[0] target, caches[1] draft context
 	draft := &fakeBlockDraft{predict: predict, blockSize: blockSize, maskToken: 6, draftCaches: caches[1:]}
 	r.cache.caches = caches
-	r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+	r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 	return r, draft, r.spec.drafter.open(nil).(*dflashDraftSession), caches
 }
 
@@ -166,7 +177,7 @@ func TestDFlashRestoredPrefixResumes(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft := &fakeBlockDraft{blockSize: 4, maskToken: 6, draftCaches: caches[1:]}
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 
 		// A restored prefix arrives with the draft caches already written.
 		restored := []int32{1, 2, 3, 4, 5}
@@ -281,10 +292,10 @@ func TestDecodeBlockDraft(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft := &fakeBlockDraft{predict: predict, blockSize: 3, maskToken: 6, draftCaches: caches[1:]}
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 
-		req := Request{
+		req := request{
 			Responses:         ch,
 			Tokens:            []int32{1},
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
@@ -296,11 +307,9 @@ func TestDecodeBlockDraft(t *testing.T) {
 		}
 		pinDraftLimit(spec, 4)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := driveTestDecoder(context.Background(), r, req, session, d, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		d.close()
-		spec.close()
 
 		content, final := collectResponses(ch)
 		if content != "2345" {
@@ -348,4 +357,225 @@ func TestDecodeBlockDraft(t *testing.T) {
 			t.Fatalf("draft cache retains block rows: %v", toks)
 		}
 	})
+}
+
+// This test model's learned score favors token 0 rather than the unary winner.
+// The real sampler callback must supply both the choice and its probability.
+type selectedBlockDraft struct{ *fakeBlockDraft }
+
+func (d *selectedBlockDraft) Select(_ *mlx.Array, logits *mlx.Array, _ *mlx.Array, choose func(ids, scores *mlx.Array) (tokens, probs *mlx.Array)) (tokens, ids, probs *mlx.Array) {
+	n := logits.Dim(1)
+	unary := logits.Argmax(-1, false).AsType(mlx.DTypeInt32).Reshape(n, 1)
+	ids = unary.Concatenate(1, mlx.Zeros(mlx.DTypeInt32, n, 1))
+	scores := mlx.BroadcastTo(mlx.FromValues([]float32{0, 2}, 1, 2), int32(n), 2)
+	tokens, probs = choose(ids, scores)
+	return tokens.Reshape(1, n), ids.Reshape(1, n, 2), probs.Reshape(1, n, 2)
+}
+
+type vocabularyBlockSelector struct{ *selectedBlockDraft }
+
+func (*vocabularyBlockSelector) Select(_ *mlx.Array, logits *mlx.Array, _ *mlx.Array, choose func(*mlx.Array, *mlx.Array) (*mlx.Array, *mlx.Array)) (tokens, ids, probs *mlx.Array) {
+	rows, vocab := logits.Dim(1), logits.Dim(2)
+	ids = mlx.BroadcastTo(mlx.Arange(0, float64(vocab), 1, mlx.DTypeInt32), int32(rows), int32(vocab))
+	tokens, probs = choose(ids, logits.Squeeze(0))
+	return tokens.ExpandDims(0), nil, probs.ExpandDims(0)
+}
+
+func TestBlockSelectorVocabularyOrderWithTopKTarget(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		r, draft, session, _ := newBlockTestSession(t, nil, 3)
+		defer session.close()
+		r.spec.draft = &vocabularyBlockSelector{&selectedBlockDraft{draft}}
+		r.Sampler.Remove(pipelineSlot)
+		r.Sampler.Add(pipelineSlot, sampler.Options{Temperature: 1, TopK: 2, UseSeed: true, Seed: 42}, nil)
+
+		// After the unused anchor row, the first proposal is uniform and the
+		// second assigns more than half its mass to token 3.
+		logits := mlx.FromValues([]float32{
+			0, 0, 0, 0,
+			0, 0, 0, 0,
+			0, 0, 0, 2,
+		}, 1, 3, 4)
+		q := session.selectBlock(logits, mlx.FromValues([]int32{0}, 1), 2, 2).dist
+		if q.IDs != nil || !slices.Equal(q.Probs.Dims(), []int{2, 4}) {
+			t.Fatalf("proposal IDs %v, shape %v, want dense [2 4]", q.IDs, q.Probs.Dims())
+		}
+		// Target row 0 splits its mass equally between tokens 0 and 2.
+		// Row 1 splits between 1 and 3, so only token 1 has residual mass.
+		p := r.Sampler.Distribution(pipelineSlot, mlx.FromValues([]float32{1, 0, 1, 0, 0, 1, 0, 1}, 2, 4), nil)
+		residual := p.ResidualAgainst(q)
+		query := mlx.FromValues([]int32{2, 0, 1, 1, 3, 2}, 2, 3)
+		if got, want := residual.ProbsForIDs(query).Floats(), []float32{.5, .5, 0, 1, 0, 0}; !slices.Equal(got, want) {
+			t.Fatalf("residual probabilities = %v, want %v", got, want)
+		}
+	})
+}
+
+type observeProposalRows struct {
+	*selectedBlockDraft
+	unembed, hidden, logits int
+}
+
+func (d *observeProposalRows) Unembed(h *mlx.Array) *mlx.Array {
+	d.unembed = h.Dim(1)
+	return d.selectedBlockDraft.Unembed(h)
+}
+
+func (d *observeProposalRows) Select(hidden, logits, anchor *mlx.Array, choose func(*mlx.Array, *mlx.Array) (*mlx.Array, *mlx.Array)) (*mlx.Array, *mlx.Array, *mlx.Array) {
+	d.hidden = hidden.Dim(1)
+	d.logits = logits.Dim(1)
+	return d.selectedBlockDraft.Select(hidden, logits, anchor, choose)
+}
+
+type adaptiveBlockSelector struct{ *observeProposalRows }
+
+func (*adaptiveBlockSelector) AdaptiveDraftDepth() bool { return true }
+
+func TestBlockProposalIgnoresPaddedHidden(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		r, draft, session, _ := newBlockTestSession(t, nil, 8)
+		defer session.close()
+		hidden := oneHotLogits([]int32{1, 2, 3, 4, 5})
+		current := mlx.FromValues([]int32{1}, 1)
+		if got := session.selectBlock(hidden, current, 2, 2).tokens.Ints(); !slices.Equal(got, []int32{2, 3}) {
+			t.Fatalf("padded block proposed %v, want [2 3]", got)
+		}
+		selector := &observeProposalRows{selectedBlockDraft: &selectedBlockDraft{draft}}
+		r.spec.draft = selector
+		got := session.selectBlock(hidden, current, 2, 2)
+		if got.tokens.Dim(1) != 2 || selector.unembed != 2 {
+			t.Fatalf("padded selector projected %d rows and proposed %d, want 2 each", selector.unembed, got.tokens.Dim(1))
+		}
+	})
+}
+
+func TestProposalPrefixAfterFullVocabularyProjection(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		for _, adaptive := range []bool{false, true} {
+			for n := range 8 {
+				mlx.Scoped(func() {
+					r, fake, _, caches := newBlockTestSession(t, map[int32]int32{0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 1}, 8)
+					observer := &observeProposalRows{selectedBlockDraft: &selectedBlockDraft{fake}}
+					var selector model.BlockSelector = observer
+					rows := n
+					if adaptive {
+						selector = &adaptiveBlockSelector{observer}
+						rows = 7
+					}
+					r.spec = newSpeculation(r, pipelineSlot, selector, caches[:1], caches[1:])
+					session := r.spec.drafter.open(nil)
+					defer session.close()
+					session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
+					got := session.propose(mlx.FromValues([]int32{1}, 1), n)
+					if n == 0 {
+						if got != nil || len(fake.calls) != 0 {
+							t.Fatalf("zero budget produced a proposal or a forward")
+						}
+						return
+					}
+					mlx.Eval(got.Arrays()...)
+					if len(fake.calls) != 1 || len(fake.calls[0].block) != rows+1 || observer.unembed != rows {
+						t.Fatalf("adaptive=%v, %d proposals: draft calls %v, projected %d rows, want %d", adaptive, n, fake.calls, observer.unembed, rows)
+					}
+					if observer.hidden != n || observer.logits != n || !slices.Equal(got.tokens.Dims(), []int{1, n}) || got.dist.Probs.Dim(0) != n || got.dist.IDs.Dim(0) != n {
+						t.Fatalf("%d proposals: selector rows %d/%d, tokens %v, probabilities %v, IDs %v", n, observer.hidden, observer.logits, got.tokens.Dims(), got.dist.Probs.Dims(), got.dist.IDs.Dims())
+					}
+				})
+			}
+		}
+	})
+}
+
+func TestBlockSelectorProposalAndRejection(t *testing.T) {
+	for _, tc := range []struct {
+		slot        int
+		temperature float32
+	}{{0, 0}, {0, 1}, {1, 0}, {1, 1}} {
+		temperature := tc.temperature
+		mlxtest.RunSubtest(t, fmt.Sprintf("slot %d/temperature %g", tc.slot, temperature), func(t *mlxtest.T) {
+			r, draft, session, caches := newBlockTestSession(t, map[int32]int32{1: 2, 2: 3, 3: 4, 4: 5, 0: 2}, 4)
+			defer session.close()
+			r.spec.draft = &selectedBlockDraft{draft}
+			r.Sampler.Remove(pipelineSlot)
+			// Keep slot zero deliberately different: a selector in slot one
+			// must use its own sampling settings, even while slot zero is idle.
+			if tc.slot != pipelineSlot {
+				r.Sampler.Add(pipelineSlot, sampler.Options{Temperature: 1 - temperature}, nil)
+			}
+			r.spec.slotID = tc.slot
+			r.Sampler.Add(tc.slot, sampler.Options{Temperature: temperature, UseSeed: true, Seed: 42}, nil)
+			session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
+			candidates := session.propose(mlx.FromValues([]int32{1}, 1), 3)
+			mlx.Eval(candidates.Arrays()...)
+			if candidates.dist.IDs == nil || !slices.Equal(candidates.dist.IDs.Ints(), []int32{2, 0, 3, 0, 4, 0}) {
+				t.Fatalf("selector support = %v", candidates.dist.IDs)
+			}
+			want := float32(0)
+			if temperature > 0 {
+				want = float32(1 / (1 + math.Exp(2)))
+			}
+			// Broadcast inputs can leave zero-stride output rows; materialize for the host assertion.
+			probs := mlx.Contiguous(candidates.dist.Probs, false)
+			mlx.Eval(probs)
+			for i, q := range probs.Floats() {
+				expected := want
+				if i%2 == 1 {
+					expected = 1 - want
+				}
+				if math.Abs(float64(q-expected)) > 1e-6 {
+					t.Fatalf("proposal probability %d = %g want %g", i, q, expected)
+				}
+			}
+			if temperature == 0 && !slices.Equal(candidates.tokens.Ints(), []int32{0, 0, 0}) {
+				t.Fatalf("selected tokens = %v want [0 0 0]", candidates.tokens.Ints())
+			}
+			// At temperature 1 a dense target verifies the sparse proposal. Token 2
+			// is both the only acceptable draft and the residual, so any draw emits it first.
+			position := 0
+			spec := testSpeculationSession(r, caches[:1])
+			spec.spec.slotID = tc.slot
+			results, accepted, _, err := spec.accept(&position, sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}, candidates, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids := resultIDs(results)
+			if len(ids) == 0 || ids[0] != 2 || (temperature == 0 && (accepted != 0 || len(ids) != 1)) {
+				t.Fatalf("accepted %d results %v; want target token 2 first", accepted, ids)
+			}
+		})
+	}
+}
+
+// A selector draft opens at the fixed DFlash2 depth and keeps it whatever a
+// round accepts, without training the depth controller; a plain block draft
+// still takes the controller's depth.
+func TestSelectorDraftKeepsFixedDepth(t *testing.T) {
+	draft := &fakeBlockDraft{blockSize: 8}
+	r := &Runner{}
+	r.spec = newSpeculation(r, pipelineSlot, draft, nil, nil)
+	req := request{Tokens: []int32{1, 2, 3}}
+
+	plain := r.spec.open(req, nil)
+	if plain.fixedDepth || plain.limit != r.spec.depth.scheduled {
+		t.Fatalf("block draft: fixedDepth %v limit %d, want the controller's %d", plain.fixedDepth, plain.limit, r.spec.depth.scheduled)
+	}
+	plain.close()
+
+	r.spec.draft = &selectedBlockDraft{draft}
+	s := r.spec.open(req, nil)
+	defer s.close()
+	if !s.fixedDepth || s.limit != dflash2Depth {
+		t.Fatalf("selector draft: fixedDepth %v limit %d, want %d", s.fixedDepth, s.limit, dflash2Depth)
+	}
+	scheduled := r.spec.depth.scheduled
+	for _, accepted := range []int{0, 3, dflash2Depth} {
+		s.beginRound()
+		s.endRound(dflash2Depth, accepted, dflash2Depth)
+		if s.limit != dflash2Depth {
+			t.Fatalf("limit %d after accepting %d, want %d", s.limit, accepted, dflash2Depth)
+		}
+	}
+	if slices.ContainsFunc(r.spec.depth.acc.seen, func(n int) bool { return n != 0 }) || r.spec.depth.scheduled != scheduled {
+		t.Fatalf("fixed-depth rounds trained the depth controller: seen %v, scheduled %d -> %d", r.spec.depth.acc.seen, scheduled, r.spec.depth.scheduled)
+	}
 }

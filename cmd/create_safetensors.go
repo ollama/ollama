@@ -21,15 +21,16 @@ import (
 
 // modelfileConfig holds configuration extracted from a Modelfile.
 type modelfileConfig struct {
-	Template   string
-	System     string
-	Licenses   []string
-	Draft      string
-	Parser     string
-	Renderer   string
-	Requires   string
-	Parameters map[string]any
-	Messages   []api.Message
+	Template     string
+	System       string
+	Licenses     []string
+	Draft        string
+	Parser       string
+	Renderer     string
+	Requires     string
+	Capabilities []string
+	Parameters   map[string]any
+	Messages     []api.Message
 }
 
 var ignoredModelfileParameters = []string{
@@ -66,6 +67,11 @@ func configFromModelfile(modelfile *parser.Modelfile) (string, *modelfileConfig,
 			mfConfig.Parser = cmd.Args
 		case "renderer":
 			mfConfig.Renderer = cmd.Args
+		case "capability":
+			if !model.Capability(cmd.Args).IsValid() {
+				return "", nil, fmt.Errorf("unknown capability: %q", cmd.Args)
+			}
+			mfConfig.Capabilities = append(mfConfig.Capabilities, cmd.Args)
 		case "requires":
 			requires := cmd.Args
 			if !strings.HasPrefix(requires, "v") {
@@ -364,6 +370,7 @@ func newManifestWriter(opts createOptions) create.ManifestWriter {
 	var license any
 	var parameters map[string]any
 	var messages []api.Message
+	var capabilities []string
 	if opts.Modelfile != nil {
 		template = opts.Modelfile.Template
 		system = opts.Modelfile.System
@@ -373,14 +380,16 @@ func newManifestWriter(opts createOptions) create.ManifestWriter {
 		draftDir = opts.Modelfile.Draft
 		parameters = opts.Modelfile.Parameters
 		messages = opts.Modelfile.Messages
+		capabilities = opts.Modelfile.Capabilities
 	}
 	return create.NewSafetensorsManifestWriter(create.SafetensorsManifestOptions{
-		MinVersion: create.SafetensorsMinOllamaVersion,
-		DraftDir:   draftDir,
-		Template:   template,
-		System:     system,
-		License:    license,
-		Parameters: parameters,
-		Messages:   messages,
+		MinVersion:   create.SafetensorsMinOllamaVersion,
+		DraftDir:     draftDir,
+		Template:     template,
+		System:       system,
+		License:      license,
+		Parameters:   parameters,
+		Messages:     messages,
+		Capabilities: capabilities,
 	})
 }

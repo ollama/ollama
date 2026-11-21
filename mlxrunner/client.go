@@ -2,7 +2,9 @@ package mlxrunner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,25 +35,27 @@ import (
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
 type Client struct {
-	port              int
-	modelName         string
-	contextLength     atomic.Int64
-	softContextLength int // recommended limit to avoid poor performance
-	memory            atomic.Uint64
-	done              chan struct{}
-	doneErr           error // valid after done is closed
-	client            *http.Client
-	status            *llm.StatusWriter
-	mu                sync.Mutex
-	cmd               *exec.Cmd
-	closed            bool
+	port                int
+	modelName           string
+	contextLength       atomic.Int64
+	softContextLength   int // recommended limit to avoid poor performance
+	numCtxAuto          bool
+	memory              atomic.Uint64
+	embeddingDimensions atomic.Value // []int
+	done                chan struct{}
+	doneErr             error // valid after done is closed
+	client              *http.Client
+	status              *llm.StatusWriter
+	mu                  sync.Mutex
+	cmd                 *exec.Cmd
+	closed              bool
 }
 
 var ErrRuntimeUnavailable = errors.New("MLX runtime is not available")
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
-func NewClient(modelName string, softContextLength int) (*Client, error) {
+func NewClient(modelName string, softContextLength int, numCtxAuto bool) (*Client, error) {
 	if err := CheckRuntime(); err != nil {
 		return nil, err
 	}
@@ -59,6 +63,7 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 	c := &Client{
 		modelName:         modelName,
 		softContextLength: softContextLength,
+		numCtxAuto:        numCtxAuto,
 		done:              make(chan struct{}),
 		client:            http.DefaultClient,
 	}
@@ -114,13 +119,12 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 }
 
 type CompletionRequest struct {
-	Prompt                     string
-	Media                      []llm.MediaData
-	Format                     json.RawMessage
-	Options                    api.Options
-	Logprobs                   bool
-	TopLogprobs                int
-	IncludeIntermediateMetrics bool
+	Prompt      string
+	Media       []llm.MediaData
+	Format      json.RawMessage
+	Options     api.Options
+	Logprobs    bool
+	TopLogprobs int
 }
 
 type CompletionResponse struct {
@@ -155,7 +159,8 @@ func (c *Client) Close() error {
 }
 
 // requestGrammar returns the structural tag the runner decodes under: the
-// API's format wrapped into a json_schema tag.
+// API's format as a json_schema tag, behind the free thinking the response
+// begins with when there is any.
 func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 	schema := req.Format
 	switch string(schema) {
@@ -165,21 +170,67 @@ func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 		// The API documents "json" as producing a JSON object.
 		schema = json.RawMessage(`{"type":"object"}`)
 	}
-	tag := make(json.RawMessage, 0, len(schema)+64)
-	tag = append(tag, `{"type":"structural_tag","format":{"type":"json_schema","json_schema":`...)
-	tag = append(tag, schema...)
-	return append(tag, `}}`...)
+	format := `{"type":"json_schema","json_schema":` + string(schema) + `}`
+	if frames := req.FormatFrames; frames != nil {
+		var elements []string
+		if frames.ThinkingClose != "" {
+			excludes := make([]string, len(frames.ThinkingExcludes))
+			for i, marker := range frames.ThinkingExcludes {
+				excludes[i] = jsonString(marker)
+			}
+			body := `{"type":"any_text","excludes":[` + strings.Join(excludes, ",") + `]}`
+			close := grammarLiteral(frames.ThinkingClose)
+			if frames.ThinkingOpen == "" {
+				elements = append(elements, body, close)
+			} else {
+				thought := grammarSequence(grammarLiteral(frames.ThinkingOpen), body, close)
+				elements = append(elements, `{"type":"optional","content":`+thought+`}`)
+			}
+		}
+		format = grammarSequence(append(elements, grammarLiteral(frames.ContentOpen), format)...)
+	} else if len(req.ThinkingClose) > 0 {
+		excludes := make([]string, len(req.ThinkingClose))
+		closings := make([]string, len(req.ThinkingClose))
+		for i, closing := range req.ThinkingClose {
+			excludes[i] = jsonString(closing)
+			closings[i] = `{"type":"const_string","value":` + excludes[i] + `}`
+		}
+		closing := closings[0]
+		if len(closings) > 1 {
+			closing = `{"type":"or","elements":[` + strings.Join(closings, ",") + `]}`
+		}
+		// The tail is optional so EOS stays legal mid-thinking.
+		format = `{"type":"sequence","elements":[{"type":"any_text","excludes":[` + strings.Join(excludes, ",") + `]},` +
+			`{"type":"optional","content":{"type":"sequence","elements":[` + closing + `,` + format + `]}}]}`
+	}
+	return json.RawMessage(`{"type":"structural_tag","format":` + format + `}`)
+}
+
+func grammarLiteral(text string) string {
+	return `{"type":"const_string","value":` + jsonString(text) + `}`
+}
+
+func grammarSequence(elements ...string) string {
+	return `{"type":"sequence","elements":[` + strings.Join(elements, ",") + `]}`
+}
+
+// jsonString quotes s without escaping the HTML characters tags carry.
+func jsonString(s string) string {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
-		Prompt:                     req.Prompt,
-		Media:                      req.Media,
-		Format:                     requestGrammar(req),
-		Logprobs:                   req.Logprobs,
-		TopLogprobs:                req.TopLogprobs,
-		IncludeIntermediateMetrics: req.IncludeIntermediateMetrics,
+		Prompt:      req.Prompt,
+		Media:       req.Media,
+		Format:      requestGrammar(req),
+		Logprobs:    req.Logprobs,
+		TopLogprobs: req.TopLogprobs,
 	}
 	if req.Options != nil {
 		creq.Options = *req.Options
@@ -269,14 +320,89 @@ func (c *Client) reportedContextLength(modelContextLength int) int {
 	return modelContextLength
 }
 
-// Detokenize implements llm.LlamaServer.
-func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	return "", errors.New("not supported")
+func (c *Client) parallelContextHint() int {
+	// The VRAM-tier default is a soft limit. Only an explicitly configured
+	// context should reduce the per-slot memory projection.
+	if c.numCtxAuto {
+		return 0
+	}
+	return c.softContextLength
 }
 
-// Embedding implements llm.LlamaServer.
-func (c *Client) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return nil, 0, errors.New("not supported")
+// Detokenize implements llm.LlamaServer.
+func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
+	ids32 := make([]int32, len(tokens))
+	for i, t := range tokens {
+		ids32[i] = int32(t)
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ids32); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("http://127.0.0.1:%d/v1/detokenize", c.port), &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", api.StatusError{
+			StatusCode:   resp.StatusCode,
+			ErrorMessage: strings.TrimSpace(string(body)),
+		}
+	}
+
+	var s string
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return "", err
+	}
+	return s, nil
+}
+
+func (c *Client) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
+	wire := embedWireRequest{Content: input}
+	for _, blob := range media {
+		wire.Media = append(wire.Media, base64.StdEncoding.EncodeToString(blob))
+	}
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(wire); err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("http://127.0.0.1:%d/v1/embeddings", c.port), &buf)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, 0, api.StatusError{
+			StatusCode:   resp.StatusCode,
+			ErrorMessage: strings.TrimSpace(string(body)),
+		}
+	}
+
+	var er embedWireResponse
+	if err := json.NewDecoder(resp.Body).Decode(&er); err != nil {
+		return nil, 0, err
+	}
+	return er.Embedding, er.PromptEvalCount, nil
 }
 
 // GetDeviceInfos implements llm.LlamaServer.
@@ -346,8 +472,19 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	// Spawn subprocess: ollama runner --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port))
+	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port), "--ctx-size", strconv.Itoa(c.parallelContextHint()))
 	cmd.Env = os.Environ()
+	loadedLibraryPath, err := mlx.LoadedLibraryPath()
+	if err != nil {
+		return nil, fmt.Errorf("unable to determine loaded MLX library path: %w", err)
+	}
+
+	// Keep Metal weights resident between requests until MLX fixes idle eviction.
+	if runtime.GOOS == "darwin" {
+		if _, ok := os.LookupEnv("MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS"); !ok {
+			setEnv(cmd, "MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS", "1000")
+		}
+	}
 
 	// Set library path environment variable for MLX libraries
 	// Linux: LD_LIBRARY_PATH, Windows: PATH
@@ -360,16 +497,8 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	if libPathEnvVar != "" {
-		libraryPaths := []string{ml.LibOllamaPath}
-		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
-			libraryPaths = append(libraryPaths, mlxDirs...)
-		}
-
-		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
-			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
-		}
-
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+		libraryPaths := mlx.LibraryPathsForLoadedLibrary(loadedLibraryPath)
+		pathEnvVal := libraryPathEnv(libraryPaths, os.Getenv(libPathEnvVar))
 
 		found := false
 		for i := range cmd.Env {
@@ -393,15 +522,10 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	// MLX resolves headers via $CUDA_PATH/include/*.h (and checks CUDA_HOME first).
 	// Always use bundled headers to avoid version mismatches with any
 	// system-installed CUDA toolkit.
-	if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_cuda_*")); err == nil {
-		for _, d := range mlxDirs {
-			if _, err := os.Stat(filepath.Join(d, "include")); err == nil {
-				setEnv(cmd, "CUDA_PATH", d)
-				setEnv(cmd, "CUDA_HOME", d)
-				slog.Debug("mlx subprocess CUDA headers", "CUDA_PATH", d)
-				break
-			}
-		}
+	if cudaPath, ok := mlx.CUDAToolkitDirForLoadedLibrary(loadedLibraryPath); ok {
+		setEnv(cmd, "CUDA_PATH", cudaPath)
+		setEnv(cmd, "CUDA_HOME", cudaPath)
+		slog.Debug("mlx subprocess CUDA headers", "CUDA_PATH", cudaPath)
 	}
 
 	status := llm.NewStatusWriter(os.Stderr)
@@ -420,6 +544,11 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
+	}
+	if err := llm.AddRunnerToJob(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("assign mlx runner to runner job: %w", err)
 	}
 	c.cmd = cmd
 
@@ -452,6 +581,20 @@ type statusResponse struct {
 	Progress      int
 	ContextLength int
 	Memory        uint64
+
+	// EmbeddingDimensions lists the model's trained matryoshka truncation
+	// sizes, when it declares any.
+	EmbeddingDimensions []int
+}
+
+// EmbeddingDimensions returns the runner's declared matryoshka set, cached
+// from the last successful status response. Empty when the runner doesn't
+// advertise one.
+func (c *Client) EmbeddingDimensions() []int {
+	if v := c.embeddingDimensions.Load(); v != nil {
+		return v.([]int)
+	}
+	return nil
 }
 
 // Ping implements llm.LlamaServer.
@@ -477,6 +620,7 @@ func (c *Client) Ping(ctx context.Context) error {
 
 	c.contextLength.Store(int64(c.reportedContextLength(status.ContextLength)))
 	c.memory.Store(status.Memory)
+	c.embeddingDimensions.Store(status.EmbeddingDimensions)
 
 	return nil
 }
@@ -495,6 +639,14 @@ func (c *Client) Tokenize(ctx context.Context, content string) ([]int, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, api.StatusError{StatusCode: resp.StatusCode, ErrorMessage: strings.TrimSpace(string(body))}
+	}
 
 	var tokens []int
 	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
@@ -535,4 +687,32 @@ func setEnv(cmd *exec.Cmd, key, value string) {
 		}
 	}
 	cmd.Env = append(cmd.Env, entry)
+}
+
+func libraryPathEnv(preferred []string, existing string) string {
+	var paths []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		key := path
+		if runtime.GOOS == "windows" {
+			key = strings.ToUpper(key)
+		}
+		if !seen[key] {
+			seen[key] = true
+			paths = append(paths, path)
+		}
+	}
+
+	for _, path := range preferred {
+		add(path)
+	}
+	for _, path := range filepath.SplitList(existing) {
+		add(path)
+	}
+
+	return strings.Join(paths, string(filepath.ListSeparator))
 }

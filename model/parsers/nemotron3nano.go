@@ -32,6 +32,13 @@ type Nemotron3NanoParser struct {
 func (p *Nemotron3NanoParser) HasToolSupport() bool     { return true }
 func (p *Nemotron3NanoParser) HasThinkingSupport() bool { return true }
 
+func (p *Nemotron3NanoParser) ThinkingClose() []string {
+	if p.state == Nemotron3NanoCollectingThinking {
+		return []string{nemotronThinkClose}
+	}
+	return nil
+}
+
 func (p *Nemotron3NanoParser) PreservedTokens() []string {
 	return []string{
 		nemotronThinkOpen,

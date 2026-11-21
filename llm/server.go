@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/types/model"
 )
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
@@ -63,7 +64,7 @@ type LlamaServer interface {
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Chat(ctx context.Context, req ChatRequest, fn func(ChatResponse)) error
 	ApplyChatTemplate(ctx context.Context, req ChatRequest) (string, error)
-	Embedding(ctx context.Context, input string) ([]float32, int, error)
+	Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -83,6 +84,13 @@ type LlamaServerConfig struct {
 	ManifestDigest       string
 	DraftModelPath       string
 	DraftModelShardPaths []string
+}
+
+// IsLlamaCPP reports whether the server is backed by the llama.cpp
+// llama-server runner implementation.
+func IsLlamaCPP(s LlamaServer) bool {
+	_, ok := s.(*llamaServerRunner)
+	return ok
 }
 
 // LoadModel loads GGUF model metadata from disk.
@@ -165,6 +173,8 @@ type MediaData struct {
 	Data []byte `json:"data"`
 	ID   int    `json:"id"`
 	Kind MediaKind
+	// TagOffsets are the byte offsets of this attachment's tags, in prompt order.
+	TagOffsets []int `json:"tag_offsets,omitempty"`
 }
 
 type Message struct {
@@ -205,8 +215,11 @@ type CompletionRequest struct {
 	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners
 	ToolCallTag     string   // raw generic tool parser tag, if any
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
-	// IncludeIntermediateMetrics adds cumulative metrics to non-final responses; final responses always include metrics.
-	IncludeIntermediateMetrics bool
+	// ThinkingClose holds the strings any of which ends the thinking the
+	// response begins with, which Format leaves free; none when the response
+	// starts in content.
+	ThinkingClose []string
+	FormatFrames  *model.StructuredOutputFrames // MLX framed structured output, when the parser supplies it
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool

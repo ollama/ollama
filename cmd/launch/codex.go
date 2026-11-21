@@ -44,6 +44,7 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 	for _, override := range codexManagedConfigOverrides(modelCatalogPath) {
 		args = append(args, "-c", override)
 	}
+	args = append(args, "-c", `service_tier="default"`)
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -223,7 +224,7 @@ func ensureCodexConfig(modelName string, models []LaunchModel) error {
 	}
 
 	catalogPath := codexModelCatalogPathForConfig(configPath)
-	if err := writeCodexModelCatalog(catalogPath, codexCatalogModel(modelName, models)); err != nil {
+	if err := writeCodexModelCatalog(catalogPath, codexCatalogModels(modelName, models)); err != nil {
 		return err
 	}
 
@@ -672,11 +673,29 @@ func codexCatalogModel(modelName string, models []LaunchModel) LaunchModel {
 	return fallbackLaunchModel(modelName)
 }
 
-func writeCodexModelCatalog(catalogPath string, model LaunchModel) error {
-	entry := buildCodexModelEntry(model)
+func codexCatalogModels(modelName string, models []LaunchModel) []LaunchModel {
+	selected := codexCatalogModel(modelName, models)
+	catalogModels := []LaunchModel{selected}
+	seen := map[string]bool{launchModelRecommendationKey(selected.Name): true}
+	for _, model := range models {
+		key := launchModelRecommendationKey(model.Name)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		catalogModels = append(catalogModels, model.WithCloudLimits())
+	}
+	return catalogModels
+}
+
+func writeCodexModelCatalog(catalogPath string, models []LaunchModel) error {
+	entries := make([]any, 0, len(models))
+	for _, model := range models {
+		entries = append(entries, buildCodexModelEntry(model))
+	}
 
 	catalog := map[string]any{
-		"models": []any{entry},
+		"models": entries,
 	}
 
 	data, err := json.MarshalIndent(catalog, "", "  ")
@@ -685,6 +704,27 @@ func writeCodexModelCatalog(catalogPath string, model LaunchModel) error {
 	}
 
 	return os.WriteFile(catalogPath, data, 0o644)
+}
+
+func launchReasoningEffortLevels(thinking *model.Thinking) ([]string, string) {
+	contract, ok := codexAppThinkingContractFromRecommendation(thinking)
+	if !ok {
+		return nil, ""
+	}
+	var levels []string
+	for _, level := range contract.levels {
+		value := contract.values[level]
+		converted, err := openai.ThinkingFromReasoningEffort(level, thinking)
+		if err != nil || converted == nil {
+			continue
+		}
+		resolved := renderers.ResolveThinking(converted, thinking)
+		if resolved == nil || resolved.Value != value {
+			continue
+		}
+		levels = append(levels, level)
+	}
+	return levels, contract.defaultLevel
 }
 
 func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
@@ -719,25 +759,15 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 
 	supportedReasoningLevels := make([]any, 0)
 	var defaultReasoningLevel any
-	if contract, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
-		for _, level := range contract.levels {
-			value := contract.values[level]
-			converted, err := openai.ThinkingFromReasoningEffort(level, launchModel.Thinking)
-			if err != nil || converted == nil {
-				continue
-			}
-			resolved := renderers.ResolveThinking(converted, launchModel.Thinking)
-			if resolved == nil || resolved.Value != value {
-				continue
-			}
-			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
-				"effort":      level,
-				"description": codexAppThinkingLevelDescription(level),
-			})
-		}
-		if contract.defaultLevel != "" {
-			defaultReasoningLevel = contract.defaultLevel
-		}
+	levels, defaultLevel := launchReasoningEffortLevels(launchModel.Thinking)
+	for _, level := range levels {
+		supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
+			"effort":      level,
+			"description": codexAppThinkingLevelDescription(level),
+		})
+	}
+	if defaultLevel != "" {
+		defaultReasoningLevel = defaultLevel
 	}
 
 	return map[string]any{

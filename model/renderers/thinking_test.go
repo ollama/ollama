@@ -29,7 +29,9 @@ func TestResolveThinking(t *testing.T) {
 		{"invalid metadata retains request", &model.Thinking{Values: []any{false}, Default: 75}, "xhigh", "xhigh"},
 		{"toggle unsupported uses on", &model.Thinking{Values: []any{false, true}, Default: true}, "low", true},
 		{"off default is not lost", &model.Thinking{Values: []any{false, true}, Default: false}, "low", false},
-		{"fixed thinking preserves explicit off", &model.Thinking{Values: []any{true}, Default: true}, false, false},
+		{"fixed thinking uses minimum for explicit off", &model.Thinking{Values: []any{true}, Default: true}, false, true},
+		{"named thinking uses lowest level for explicit off", &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}, false, "low"},
+		{"unknown retains explicit off", nil, false, false},
 		{"known nonthinking default", &model.Thinking{Values: []any{false}, Default: false}, nil, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,7 +55,7 @@ func TestResolveThinking(t *testing.T) {
 }
 
 func TestThinkingRendererVariants(t *testing.T) {
-	for _, name := range []string{"harmony", "qwen3.5", "qwen3.8", "ornith", "qwen3-coder", "qwen3-vl-instruct", "qwen3-vl-thinking", "cogito", "deepseek3.1", "olmo3", "olmo3.1", "olmo3-think", "olmo3-32b-think", "nemotron-3-nano", "nemotron-3.5-nano", "gemma4", "gemma4-small", "gemma4-large", "functiongemma", "glm-4.7", "glm-ocr", "lfm2", "lfm2-thinking", "laguna", "poolside-v1", "cohere", "glimmer"} {
+	for _, name := range []string{"harmony", "qwen3.5", "qwen3.8", "ornith", "qwen3-coder", "qwen3-vl-instruct", "qwen3-vl-thinking", "cogito", "deepseek3.1", "olmo3", "olmo3.1", "olmo3-think", "olmo3-32b-think", "nemotron-3-nano", "nemotron-3.5-nano", "gemma4", "gemma4-small", "gemma4-large", "gemma4-nemotron", "functiongemma", "glm-4.7", "glm-ocr", "lfm2", "lfm2-thinking", "laguna", "poolside-v1", "cohere", "glimmer"} {
 		t.Run(name, func(t *testing.T) {
 			if !ThinkingForRenderer(name).Valid() {
 				t.Fatal("invalid or absent descriptor")

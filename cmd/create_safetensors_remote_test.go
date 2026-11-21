@@ -127,14 +127,15 @@ func TestNewRemoteCreateRequest(t *testing.T) {
 		Quantize:      "nvfp4",
 		DraftQuantize: "mxfp8",
 		Modelfile: &modelfileConfig{
-			Template:   "{{ .Prompt }}",
-			System:     "system",
-			Licenses:   []string{"MIT", "Apache-2.0"},
-			Parser:     "mf-parser",
-			Renderer:   "mf-renderer",
-			Requires:   "0.20.0",
-			Parameters: map[string]any{"temperature": float32(0.1)},
-			Messages:   []api.Message{{Role: "user", Content: "hello"}},
+			Template:     "{{ .Prompt }}",
+			System:       "system",
+			Licenses:     []string{"MIT", "Apache-2.0"},
+			Parser:       "mf-parser",
+			Renderer:     "mf-renderer",
+			Requires:     "0.20.0",
+			Capabilities: []string{"decision"},
+			Parameters:   map[string]any{"temperature": float32(0.1)},
+			Messages:     []api.Message{{Role: "user", Content: "hello"}},
 		},
 	}, []remoteSourceFile{
 		{logical: "config.json", digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -154,6 +155,9 @@ func TestNewRemoteCreateRequest(t *testing.T) {
 	}
 	if req.Requires != "0.20.0" {
 		t.Fatalf("Requires = %q, want 0.20.0", req.Requires)
+	}
+	if !slices.Equal(req.Capabilities, []string{"decision"}) {
+		t.Fatalf("Capabilities = %v, want decision", req.Capabilities)
 	}
 	if licenses, ok := req.License.([]string); !ok || !slices.Equal(licenses, []string{"MIT", "Apache-2.0"}) {
 		t.Fatalf("License = %#v, want both licenses", req.License)

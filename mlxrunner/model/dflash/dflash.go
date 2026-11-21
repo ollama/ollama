@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -16,6 +17,7 @@ import (
 )
 
 func init() {
+	model.RegisterDraft("DFlash2DraftModel", newModel2)
 	model.RegisterDraft("DFlashDraftModel", func(root *model.Root, target model.Model) (model.DraftModel, error) {
 		return newModel(root, target, false)
 	})
@@ -29,6 +31,14 @@ func init() {
 
 var _ model.BlockDraft = (*Model)(nil)
 
+// Bound allocations driven by draft metadata before weights are inspected.
+const (
+	maxDraftLayers = 1024
+	maxBlockSize   = 1024
+	// The selector scores every pair of its top_k candidates.
+	maxSelectorTopK = 64
+)
+
 type Config struct {
 	HiddenSize        int32
 	NumHiddenLayers   int32
@@ -40,11 +50,13 @@ type Config struct {
 	Scale             float32
 	SlidingWindow     int32
 	LayerTypes        []string
+	NoRoPELayers      []int
 
 	BlockSize      int
 	MaskTokenID    int32
 	VocabSize      int32
 	TargetLayerIDs []int
+	HasOwnLMHead   bool
 
 	// RopeInterleaved selects the draft's rotary pairing convention:
 	// true pairs adjacent dims (torch view_as_complex over pairs, the glimmer
@@ -56,14 +68,21 @@ type Config struct {
 	// Causal, when set, overrides every layer's attention direction;
 	// otherwise only sliding layers run causal.
 	Causal *bool
+	// isCausal is the checkpoint's top-level is_causal, which only DFlash2 reads.
+	isCausal *bool
+
+	ConvGroupSize  int
+	ConvKernelSize int
+	SelectorRank   int
+	SelectorTopK   int
 }
 
 // draftTarget is what dflash requires of its target beyond model.Model.
 type draftTarget interface {
 	model.Model
 
-	// TokenEmbeddings is the raw table lookup; the draft has no table of
-	// its own.
+	// TokenEmbeddings borrows the target table and its input scaling; the
+	// draft has no table of its own.
 	TokenEmbeddings(ids *mlx.Array) *mlx.Array
 
 	// RawLogits is the raw head projection, skipping any output decoration
@@ -80,6 +99,7 @@ type draftTarget interface {
 
 type Model struct {
 	FC         nn.LinearLayer
+	LMHead     nn.LinearLayer
 	HiddenNorm *nn.RMSNorm
 	Norm       *nn.RMSNorm
 	Layers     []*Layer
@@ -110,6 +130,9 @@ type Layer struct {
 	MLP          *MLP
 	IsSliding    bool
 	IsCausal     bool
+	// DFlash2's convolutions around each sublayer; nil for DFlash, where they pass through.
+	AttentionConv *convolution
+	MLPConv       *convolution
 }
 
 // Attention holds a q projection and a fused k|v projection: split
@@ -122,6 +145,7 @@ type Attention struct {
 	OProj  nn.LinearLayer
 	QNorm  *nn.RMSNorm
 	KNorm  *nn.RMSNorm
+	NoRoPE bool
 
 	// ctxInputNorm applies the layer's input norm to context rows (laguna).
 	ctxInputNorm *nn.RMSNorm
@@ -145,17 +169,24 @@ func parseConfig(data []byte) (*Config, error) {
 		RopeParameters    struct {
 			RopeTheta float32 `json:"rope_theta"`
 		} `json:"rope_parameters"`
-		BlockSize    int `json:"block_size"`
+		BlockSize    int   `json:"block_size"`
+		IsCausal     *bool `json:"is_causal"`
 		DFlashConfig struct {
 			BlockSize       int    `json:"block_size"`
 			MaskTokenID     *int32 `json:"mask_token_id"`
 			TargetLayerIDs  []int  `json:"target_layer_ids"`
 			NumTargetLayers int    `json:"num_target_layers"`
 			Causal          *bool  `json:"causal"`
+			ConvGroupSize   int    `json:"conv_group_size"`
+			ConvKernelSize  int    `json:"conv_kernel_size"`
+			SelectorRank    int    `json:"selector_rank"`
+			SelectorTopK    int    `json:"selector_top_k"`
 		} `json:"dflash_config"`
 		NumTargetLayers int      `json:"num_target_layers"`
 		VocabSize       int32    `json:"vocab_size"`
+		HasOwnLMHead    bool     `json:"has_own_lm_head"`
 		LayerTypes      []string `json:"layer_types"`
+		NoRoPELayers    []int    `json:"no_rope_layers"`
 		SlidingWindow   int32    `json:"sliding_window"`
 		RopeInterleaved *bool    `json:"rope_interleaved"`
 	}
@@ -173,10 +204,35 @@ func parseConfig(data []byte) (*Config, error) {
 		RopeTheta:         raw.RopeTheta,
 		SlidingWindow:     raw.SlidingWindow,
 		LayerTypes:        raw.LayerTypes,
+		NoRoPELayers:      raw.NoRoPELayers,
 		BlockSize:         raw.DFlashConfig.BlockSize,
 		VocabSize:         raw.VocabSize,
+		HasOwnLMHead:      raw.HasOwnLMHead,
 		TargetLayerIDs:    raw.DFlashConfig.TargetLayerIDs,
 		Causal:            raw.DFlashConfig.Causal,
+		isCausal:          raw.IsCausal,
+		ConvGroupSize:     raw.DFlashConfig.ConvGroupSize,
+		ConvKernelSize:    raw.DFlashConfig.ConvKernelSize,
+		SelectorRank:      raw.DFlashConfig.SelectorRank,
+		SelectorTopK:      raw.DFlashConfig.SelectorTopK,
+	}
+	if cfg.HiddenSize <= 0 || cfg.NumHiddenLayers <= 0 || cfg.NumAttentionHeads <= 0 || cfg.NumKeyValueHeads <= 0 || cfg.HeadDim <= 0 {
+		return nil, fmt.Errorf("dflash dimensions must be positive: hidden_size %d, num_hidden_layers %d, num_attention_heads %d, num_key_value_heads %d, head_dim %d", cfg.HiddenSize, cfg.NumHiddenLayers, cfg.NumAttentionHeads, cfg.NumKeyValueHeads, cfg.HeadDim)
+	}
+	if cfg.NumHiddenLayers > maxDraftLayers {
+		return nil, fmt.Errorf("dflash num_hidden_layers %d exceeds supported maximum %d", cfg.NumHiddenLayers, maxDraftLayers)
+	}
+	for _, id := range cfg.NoRoPELayers {
+		if id < 0 || id >= int(cfg.NumHiddenLayers) {
+			return nil, fmt.Errorf("dflash no_rope_layers index %d out of range for %d layers", id, cfg.NumHiddenLayers)
+		}
+	}
+	// The fused projection holds the query, key and value rows.
+	if (int64(cfg.NumAttentionHeads)+2*int64(cfg.NumKeyValueHeads))*int64(cfg.HeadDim) > math.MaxInt32 {
+		return nil, fmt.Errorf("dflash attention projection dimensions exceed int32")
+	}
+	if cfg.NumAttentionHeads%cfg.NumKeyValueHeads != 0 || cfg.HeadDim%2 != 0 {
+		return nil, fmt.Errorf("dflash requires divisible query/KV head counts and an even head dimension: num_attention_heads %d, num_key_value_heads %d, head_dim %d", cfg.NumAttentionHeads, cfg.NumKeyValueHeads, cfg.HeadDim)
 	}
 	if raw.RopeInterleaved != nil {
 		cfg.RopeInterleaved = *raw.RopeInterleaved
@@ -189,8 +245,8 @@ func parseConfig(data []byte) (*Config, error) {
 	}
 	cfg.Scale = float32(math.Pow(float64(cfg.HeadDim), -0.5))
 
-	if cfg.BlockSize < 2 {
-		return nil, fmt.Errorf("dflash block size %d must be at least 2", cfg.BlockSize)
+	if cfg.BlockSize < 2 || cfg.BlockSize > maxBlockSize {
+		return nil, fmt.Errorf("dflash block size %d must be in [2, %d]", cfg.BlockSize, maxBlockSize)
 	}
 	if raw.DFlashConfig.MaskTokenID == nil {
 		return nil, fmt.Errorf("dflash config missing mask_token_id")
@@ -231,7 +287,7 @@ func parseConfig(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
-func newModel(root *model.Root, targetModel model.Model, ctxLayerNorm bool) (model.DraftModel, error) {
+func newModel(root *model.Root, targetModel model.Model, ctxLayerNorm bool) (*Model, error) {
 	if root == nil || root.Draft == nil {
 		return nil, fmt.Errorf("draft metadata missing")
 	}
@@ -312,6 +368,12 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	if m.FC = linears.Make(prefix + "fc"); m.FC == nil {
 		return fmt.Errorf("missing dflash fc weight")
 	}
+	if m.HasOwnLMHead {
+		m.LMHead = linears.Make(prefix + "lm_head")
+		if m.LMHead == nil {
+			return fmt.Errorf("dflash config requires its own lm_head weight")
+		}
+	}
 	for name, dst := range map[string]**nn.RMSNorm{
 		"hidden_norm.weight": &m.HiddenNorm,
 		"norm.weight":        &m.Norm,
@@ -339,8 +401,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		layer := &Layer{
 			IsSliding: m.LayerTypes[i] == "sliding_attention",
 			Attention: &Attention{
-				GProj: linears.Make(layerPrefix + ".self_attn.g_proj"),
-				OProj: linears.Make(layerPrefix + ".self_attn.o_proj"),
+				NoRoPE: slices.Contains(m.NoRoPELayers, i),
+				GProj:  linears.Make(layerPrefix + ".self_attn.g_proj"),
+				OProj:  linears.Make(layerPrefix + ".self_attn.o_proj"),
 			},
 			MLP: &MLP{
 				DownProj: linears.Make(layerPrefix + ".mlp.down_proj"),
@@ -531,9 +594,19 @@ func (m *Model) BlockParams() (int, int32) { return m.BlockSize, m.MaskTokenID }
 // NewCaches builds the per-layer context caches.
 func (m *Model) NewCaches() []cache.Cache {
 	caches := make([]cache.Cache, len(m.Layers))
+	draftWindow := 0
+	if target, ok := m.target.(interface{ DraftWindow() int }); ok {
+		draftWindow = target.DraftWindow()
+	}
 	for i, layer := range m.Layers {
 		if layer.IsSliding {
-			caches[i] = cache.NewRotatingKVCache(int(m.SlidingWindow))
+			window := int(m.SlidingWindow)
+			if draftWindow > 0 {
+				window = min(window, draftWindow)
+			}
+			caches[i] = cache.NewRotatingKVCache(window)
+		} else if draftWindow > 0 {
+			caches[i] = cache.NewRotatingKVCache(draftWindow)
 		} else {
 			caches[i] = cache.NewKVCache()
 		}
@@ -542,6 +615,9 @@ func (m *Model) NewCaches() []cache.Cache {
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
+	if m.LMHead != nil {
+		return m.LMHead.Forward(x)
+	}
 	return m.target.RawLogits(x)
 }
 
@@ -550,7 +626,7 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 // come from the block only. Either input may be absent: with no block the
 // call just extends the context, with no context the block drafts from
 // whatever is already cached.
-func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	kv := draftCaches
 
 	var hctx *mlx.Array
@@ -607,9 +683,12 @@ func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, a
 	return hidden, hidden
 }
 
-func (l *Layer) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
-	h := mlx.Add(x, l.Attention.Forward(l.InputNorm.Forward(x, cfg.RMSNormEps), ctxK, ctxV, c, bb, positions, mask, B, L, cfg))
-	return mlx.Add(h, l.MLP.Forward(l.PostAttnNorm.Forward(h, cfg.RMSNormEps)))
+func (l *Layer) Forward(x, ctxK, ctxV *mlx.Array, c cache.Layer, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
+	h, kernel := l.AttentionConv.prepare(l.InputNorm.Forward(x, cfg.RMSNormEps))
+	h = l.Attention.Forward(h, ctxK, ctxV, c, bb, positions, mask, B, L, cfg)
+	x = x.Add(l.AttentionConv.finish(h, kernel))
+	h, kernel = l.MLPConv.prepare(l.PostAttnNorm.Forward(x, cfg.RMSNormEps))
+	return x.Add(l.MLPConv.finish(l.MLP.Forward(h), kernel))
 }
 
 // contextKV projects feature rows into the layer's context K/V.
@@ -623,7 +702,9 @@ func (a *Attention) contextKV(hctx *mlx.Array, positions *mlx.Array, cfg *Config
 	k = a.KNorm.Forward(k, cfg.RMSNormEps)
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	if !a.NoRoPE {
+		k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	}
 	return k, v
 }
 
@@ -634,7 +715,7 @@ func (a *Attention) splitKV(kv *mlx.Array, B, L int32, cfg *Config) (k, v *mlx.A
 	return k, v
 }
 
-func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Layer, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
 	q := mlx.Reshape(a.QProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
 	k, v := a.splitKV(a.KVProj.Forward(x), B, L, cfg)
 
@@ -645,8 +726,10 @@ func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.B
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	if !a.NoRoPE {
+		q = mlx.RoPEWithBase(q, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+		k = mlx.RoPEWithBase(k, int(cfg.HeadDim), cfg.RopeInterleaved, cfg.RopeTheta, 1.0, positions)
+	}
 
 	if ctxK != nil {
 		k = ctxK.Concatenate(2, k)

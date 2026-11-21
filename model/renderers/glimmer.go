@@ -119,7 +119,7 @@ func glimmerJSON(v any) (string, error) {
 	if err := encoder.Encode(v); err != nil {
 		return "", err
 	}
-	return string(addJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
+	return string(AddJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
 }
 
 func writeGlimmerToolDefinitions(sb *strings.Builder, tools []api.Tool) error {

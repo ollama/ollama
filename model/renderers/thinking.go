@@ -25,8 +25,9 @@ func ThinkingForRenderer(name string) *model.Thinking {
 	return thinking.Clone()
 }
 
-// ResolveThinking preserves explicit booleans and supported names. Omission or
-// an unsupported name uses the default. Unknown metadata preserves legacy handling.
+// ResolveThinking preserves supported explicit values. Omission or an unsupported
+// name uses the default. Explicit off uses the lowest advertised level when the
+// model cannot disable thinking. Unknown metadata preserves legacy handling.
 func ResolveThinking(requestedThink *api.ThinkValue, thinking *model.Thinking) *api.ThinkValue {
 	if !thinking.Valid() {
 		return requestedThink
@@ -34,6 +35,9 @@ func ResolveThinking(requestedThink *api.ThinkValue, thinking *model.Thinking) *
 	if requestedThink != nil {
 		switch value := requestedThink.Value.(type) {
 		case bool:
+			if !value && !thinking.Supports(false) {
+				return &api.ThinkValue{Value: thinking.Values[0]}
+			}
 			return requestedThink
 		case string:
 			if thinking.Supports(value) {

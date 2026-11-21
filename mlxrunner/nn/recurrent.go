@@ -14,11 +14,12 @@ type RecurrentOption func(*recurrentConfig)
 // RecurrentOption. Exactly one of history or (convState/deltaState)
 // must be supplied per call.
 type recurrentConfig struct {
-	history    *RecurrentHistory
-	convState  *mlx.Array
-	deltaState *mlx.Array
-	splits     []int
-	convSiLU   bool
+	history      *RecurrentHistory
+	convState    *mlx.Array
+	deltaState   *mlx.Array
+	splits       []int
+	convSiLU     bool
+	preciseDecay bool
 }
 
 // WithRecurrentHistory supplies a cache's per-layer view of conv and
@@ -43,6 +44,12 @@ func WithRecurrentState(convState, deltaState *mlx.Array) RecurrentOption {
 // ignore it, so it can ride a shared option list.
 func WithConvSiLU() RecurrentOption {
 	return func(c *recurrentConfig) { c.convSiLU = true }
+}
+
+// WithPreciseGatedDeltaDecay selects the FP32 decay gate for models trained
+// with that recurrence. Other recurrent wrappers ignore this option.
+func WithPreciseGatedDeltaDecay() RecurrentOption {
+	return func(c *recurrentConfig) { c.preciseDecay = true }
 }
 
 // WithSnapshotSplits requests that the scan run in segments cut at the given
@@ -129,6 +136,31 @@ func resolveRecurrentConfig(opts []RecurrentOption) recurrentConfig {
 // unsegmented conv.
 func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, opts ...RecurrentOption) (out *mlx.Array, states []*mlx.Array) {
 	cfg := resolveRecurrentConfig(opts)
+	L := int32(input.Dim(1))
+	window := causalConvInput(b, input, cfg, L)
+	if cfg.convSiLU {
+		if w := depthwiseConvWeight(conv); w != nil {
+			out = mlx.DepthwiseConvSiLU(window, w, conv.Bias, int(L))
+		} else {
+			out = mlx.SiLU(conv.Forward(window))
+		}
+	} else {
+		out = conv.Forward(window)
+	}
+	return out, causalConvTails(b, window, convTail, cfg.splits, L)
+}
+
+// CausalConvWindow returns a window prefixed with the cached history and the
+// input tails to save at snapshot boundaries. Use it for convolutions whose
+// coefficients depend on the current token.
+func CausalConvWindow(b *batch.Batch, input *mlx.Array, convTail int, opts ...RecurrentOption) (window *mlx.Array, states []*mlx.Array) {
+	cfg := resolveRecurrentConfig(opts)
+	L := int32(input.Dim(1))
+	window = causalConvInput(b, input, cfg, L)
+	return window, causalConvTails(b, window, convTail, cfg.splits, L)
+}
+
+func causalConvInput(b *batch.Batch, input *mlx.Array, cfg recurrentConfig, L int32) *mlx.Array {
 	var prior *mlx.Array
 	if cfg.history != nil {
 		prior = cfg.history.ConvState()
@@ -138,28 +170,20 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 
 	// concat is [prior(convTail); input]; each boundary tail is sliced from it
 	// below.
-	L := int32(input.Dim(1))
 	if mask := paddingMask(b, L); mask != nil {
 		zero := mlx.FromValue(float32(0)).AsType(input.DType())
 		input = mlx.Where(mlx.ExpandDims(mask, 2), input, zero)
 	}
-	concat := mlx.Concatenate([]*mlx.Array{prior, input}, 1)
-	if cfg.convSiLU {
-		if w := depthwiseConvWeight(conv); w != nil {
-			out = mlx.DepthwiseConvSiLU(concat, w, conv.Bias, int(L))
-		} else {
-			out = mlx.SiLU(conv.Forward(concat))
-		}
-	} else {
-		out = conv.Forward(concat)
-	}
+	return mlx.Concatenate([]*mlx.Array{prior, input}, 1)
+}
 
+func causalConvTails(b *batch.Batch, concat *mlx.Array, convTail int, splits []int, L int32) []*mlx.Array {
 	// Snapshot the conv tail at each segment boundary: interior splits in
 	// ascending order, then the forward end at L. Each boundary at offset O
 	// captures input positions [O-convTail, O) — the trailing convTail rows of
 	// the window through token O.
-	segs := segmentRanges(cfg.splits, L)
-	states = make([]*mlx.Array, 0, len(segs))
+	segs := segmentRanges(splits, L)
+	states := make([]*mlx.Array, 0, len(segs))
 	for _, s := range segs {
 		st := convStateAt(concat, b.SeqQueryLens, convTail, s.end)
 		if L > 1 {
@@ -168,7 +192,7 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 		}
 		states = append(states, st)
 	}
-	return out, states
+	return states
 }
 
 // depthwiseConvWeight returns the [C, K] weight view the fused conv kernel
@@ -232,12 +256,16 @@ func GatedDelta(b *batch.Batch, convOut, ba, dtBias, aExp *mlx.Array, opts ...Re
 
 	L := int32(convOut.Dim(1))
 	mask := paddingMask(b, L)
+	run := mlx.GatedDelta
+	if cfg.preciseDecay {
+		run = mlx.GatedDeltaPrecise
+	}
 
 	// No splits and per-token splits are both a single whole-forward call:
 	// len(splits) == L-1 means the sorted interior offsets are exactly
 	// 1..L-1, the kernels' captureAll shape.
 	if n := len(cfg.splits); n == 0 || n == int(L)-1 {
-		y, end, interior := mlx.GatedDelta(convOut, ba, dtBias, aExp, prior, mask, n > 0)
+		y, end, interior := run(convOut, ba, dtBias, aExp, prior, mask, n > 0)
 		return y, append(interior, end)
 	}
 
@@ -247,7 +275,7 @@ func GatedDelta(b *batch.Batch, convOut, ba, dtBias, aExp *mlx.Array, opts ...Re
 	state := prior
 	for _, seg := range segs {
 		var y *mlx.Array
-		y, state, _ = mlx.GatedDelta(sliceSeg(convOut, seg), sliceSeg(ba, seg), dtBias, aExp, state, sliceSeg(mask, seg), false)
+		y, state, _ = run(sliceSeg(convOut, seg), sliceSeg(ba, seg), dtBias, aExp, state, sliceSeg(mask, seg), false)
 		outs = append(outs, y)
 		states = append(states, state)
 	}

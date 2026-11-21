@@ -136,6 +136,7 @@ func TestCurrentTensorTypes(t *testing.T) {
 		{value: TensorTypeMXFP4, number: 39, name: "mxfp4", blockSize: 32, typeSize: 17},
 		{value: TensorTypeNVFP4, number: 40, name: "nvfp4", blockSize: 64, typeSize: 36},
 		{value: TensorTypeQ1_0, number: 41, name: "q1_0", blockSize: 128, typeSize: 18},
+		{value: TensorTypeQ2_0, number: 42, name: "q2_0", blockSize: 64, typeSize: 18},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := uint32(tt.value); got != tt.number {

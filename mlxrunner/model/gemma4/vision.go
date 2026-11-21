@@ -22,15 +22,14 @@ type VisionConfig struct {
 	HeadDim           int32       `json:"head_dim"`
 	PatchSize         int32       `json:"patch_size"`
 	PoolingKernelSize int32       `json:"pooling_kernel_size"`
-	DefaultOutputLen  int32       `json:"default_output_length"`
 	RMSNormEps        float32     `json:"rms_norm_eps"`
 	Standardize       bool        `json:"standardize"`
 	RopeParameters    *RopeParams `json:"rope_parameters"`
 
-	// Unified-embedder field.
-	NumSoftTokens int32 `json:"num_soft_tokens"`
-
 	RopeTheta float32 `json:"-"`
+
+	// Retained at load time so CPU preprocessing need not access MLX arrays.
+	positionEmbeddingSize int
 }
 
 func (v *VisionConfig) unified() bool {
@@ -41,16 +40,15 @@ func (v *VisionConfig) unified() bool {
 // supports; the budget fixes the patch budget as budget*pooling².
 var visionSoftTokenBudgets = []int32{70, 140, 280, 560, 1120}
 
-// visionSoftTokenBudget returns the per-image soft-token budget the checkpoint
-// requests.
-func (m *Model) visionSoftTokenBudget() int32 {
-	if m.MM.VisionSoftTokensPerImage > 0 {
-		return m.MM.VisionSoftTokensPerImage
+// VisionSoftTokenBudget returns the per-image soft-token budget: the caller's
+// explicit override when set, else the default 280 (the budget the EAP
+// embeddinggemma-2 config ships in vision_soft_tokens_per_image).
+func VisionSoftTokenBudget(softTokensPerImage int32, cfg *VisionConfig) int32 {
+	if softTokensPerImage > 0 {
+		return softTokensPerImage
 	}
-	if m.Vision.unified() {
-		return m.Vision.NumSoftTokens
-	}
-	return m.Vision.DefaultOutputLen
+	_ = cfg // held for future "read from config" without breaking callers
+	return 280
 }
 
 // VisionTower is the Gemma 4 image encoder: a bidirectional transformer over
@@ -106,12 +104,24 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 	if m.Vision.unified() {
 		return m.loadUnifiedVisionWeights(tensors, linears)
 	}
-	root, err := visionWeightRoot(tensors)
+	tower, proj, err := LoadVisionTower(tensors, m.Vision, linears)
 	if err != nil {
 		return err
 	}
+	m.VisionTower = tower
+	m.EmbedVision = proj
+	return nil
+}
+
+// LoadVisionTower loads the gemma4_vision transformer tower and its
+// embed_vision projection from the tensor map. The projection stays separate
+// from the tower so the caller decides where to keep it.
+func LoadVisionTower(tensors map[string]*mlx.Array, v *VisionConfig, linears model.LinearFactory) (tower *VisionTower, proj *MultimodalEmbedder, err error) {
+	root, err := visionWeightRoot(tensors)
+	if err != nil {
+		return nil, nil, err
+	}
 	vt := root + "vision_tower."
-	v := m.Vision
 
 	requiredNorm := func(name string) (*mlx.Array, error) {
 		w := tensors[name]
@@ -123,13 +133,19 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 
 	inputProj, err := makeClippableLinear(linears, tensors, vt+"patch_embedder.input_proj")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	table := tensors[vt+"patch_embedder.position_embedding_table"]
 	if table == nil {
-		return fmt.Errorf("missing vision weight: %spatch_embedder.position_embedding_table", vt)
+		return nil, nil, fmt.Errorf("missing vision weight: %spatch_embedder.position_embedding_table", vt)
 	}
-	tower := &VisionTower{
+	// process_image bounds the patch grid against the position table's
+	// capacity; without this every image fails the grid check. The table
+	// is [2, positions, hidden] (x and y rows), so capacity is Dim(1).
+	if v.positionEmbeddingSize == 0 {
+		v.positionEmbeddingSize = table.Dim(1)
+	}
+	tower = &VisionTower{
 		PatchEmbedder: &PatchEmbedder{InputProj: inputProj, PositionEmbeddingTable: table},
 		Layers:        make([]*VisionLayer, v.NumHiddenLayers),
 	}
@@ -139,64 +155,63 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 		layer := &VisionLayer{Attention: &VisionAttention{}, MLP: &MLP{}}
 
 		if layer.InputNorm, err = requiredNorm(lp + "input_layernorm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.PostAttnNorm, err = requiredNorm(lp + "post_attention_layernorm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.PreFFNorm, err = requiredNorm(lp + "pre_feedforward_layernorm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.PostFFNorm, err = requiredNorm(lp + "post_feedforward_layernorm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.Attention.QNorm, err = requiredNorm(lp + "self_attn.q_norm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.Attention.KNorm, err = requiredNorm(lp + "self_attn.k_norm.weight"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.Attention.QProj, err = makeClippableLinear(linears, tensors, lp+"self_attn.q_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.Attention.KProj, err = makeClippableLinear(linears, tensors, lp+"self_attn.k_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.Attention.VProj, err = makeClippableLinear(linears, tensors, lp+"self_attn.v_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.Attention.OProj, err = makeClippableLinear(linears, tensors, lp+"self_attn.o_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.MLP.GateProj, err = makeClippableLinear(linears, tensors, lp+"mlp.gate_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.MLP.UpProj, err = makeClippableLinear(linears, tensors, lp+"mlp.up_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if layer.MLP.DownProj, err = makeClippableLinear(linears, tensors, lp+"mlp.down_proj"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		tower.Layers[i] = layer
 	}
 
 	if v.Standardize {
 		if tower.StdBias, err = requiredNorm(vt + "std_bias"); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if tower.StdScale, err = requiredNorm(vt + "std_scale"); err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
 
 	projection, err := makeClippableLinear(linears, tensors, root+"embed_vision.embedding_projection")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	m.VisionTower = tower
-	m.EmbedVision = &MultimodalEmbedder{Projection: projection}
-	return nil
+	proj = &MultimodalEmbedder{Projection: projection}
+	return tower, proj, nil
 }
 
 // loadUnifiedVisionWeights loads the encoder-free embedder. Its projections
@@ -249,6 +264,7 @@ func (m *Model) loadUnifiedVisionWeights(tensors map[string]*mlx.Array, linears 
 
 	m.UnifiedEmbedder = e
 	m.EmbedVision = &MultimodalEmbedder{Projection: projection}
+	m.Vision.positionEmbeddingSize = e.PosEmbedding.Dim(0)
 	return nil
 }
 
@@ -340,7 +356,7 @@ func (a *VisionAttention) Forward(x *mlx.Array, cosX, sinX, cosY, sinY *mlx.Arra
 	val = mlx.Transpose(val, 0, 2, 1, 3)
 
 	// Fully bidirectional, and scale 1.0: the Q/K norms control magnitude.
-	out := mlx.FastScaledDotProductAttention(q, k, val, 1.0, "", nil)
+	out := mlx.FastScaledDotProductAttention(q, k, val, 1.0, mlx.FastSDPANoWindow, "", nil)
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), 1, n, heads*headDim)
 	return a.OProj.Forward(out)
 }
@@ -348,15 +364,20 @@ func (a *VisionAttention) Forward(x *mlx.Array, cosX, sinX, cosY, sinY *mlx.Arra
 // encodeImage runs the tower over one whole image. One image per call, no
 // padding; the graph is lazy and evaluates with the consuming forward.
 func (m *Model) encodeImage(pixels *mlx.Array, positions []int32, geom ImageGeometry) *mlx.Array {
-	v := m.Vision
+	return m.VisionTower.Encode(pixels, positions, geom, m.Vision, m.EmbedVision)
+}
+
+// Encode runs the tower over one whole image. One image per call, no
+// padding; the graph is lazy and evaluates with the consuming forward.
+func (t *VisionTower) Encode(pixels *mlx.Array, positions []int32, geom ImageGeometry, v *VisionConfig, proj *MultimodalEmbedder) *mlx.Array {
 	n := geom.PatchesH * geom.PatchesW
 
 	// The processor rescales to [0,1]; the reference folds the [-1,1]
 	// normalization into the patch embedder, in f32 before the cast.
 	x := mlx.MulScalar(mlx.AddScalar(pixels, -0.5), 2).AsType(mlx.DTypeBFloat16)
-	h := m.VisionTower.PatchEmbedder.InputProj.Forward(x)
+	h := t.PatchEmbedder.InputProj.Forward(x)
 
-	table := m.VisionTower.PatchEmbedder.PositionEmbeddingTable
+	table := t.PatchEmbedder.PositionEmbeddingTable
 	for axis := range 2 {
 		pos := make([]int32, n)
 		for i := range int(n) {
@@ -370,7 +391,7 @@ func (m *Model) encodeImage(pixels *mlx.Array, positions []int32, geom ImageGeom
 	cosX, sinX := visionRopeTables(positions, 0, n, v.HeadDim, v.RopeTheta)
 	cosY, sinY := visionRopeTables(positions, 1, n, v.HeadDim, v.RopeTheta)
 
-	for _, l := range m.VisionTower.Layers {
+	for _, l := range t.Layers {
 		x1 := mlx.RMSNormFn(h, l.InputNorm, v.RMSNormEps)
 		attn := l.Attention.Forward(x1, cosX, sinX, cosY, sinY, n, v)
 		h = mlx.Add(h, mlx.RMSNormFn(attn, l.PostAttnNorm, v.RMSNormEps))
@@ -389,16 +410,18 @@ func (m *Model) encodeImage(pixels *mlx.Array, positions []int32, geom ImageGeom
 	f = mlx.Reshape(f, n/(pool*pool), v.HiddenSize)
 	f = f.AsType(mlx.DTypeBFloat16).AsType(mlx.DTypeFloat32)
 	f = mlx.MulScalar(f, float32(math.Sqrt(float64(v.HiddenSize))))
-	if m.VisionTower.StdBias != nil {
-		f = mlx.Mul(mlx.Sub(f, m.VisionTower.StdBias.AsType(mlx.DTypeFloat32)), m.VisionTower.StdScale.AsType(mlx.DTypeFloat32))
+	if t.StdBias != nil {
+		f = mlx.Mul(mlx.Sub(f, t.StdBias.AsType(mlx.DTypeFloat32)), t.StdScale.AsType(mlx.DTypeFloat32))
 	}
 	f = f.AsType(mlx.DTypeBFloat16)
 
 	f = mlx.RMSNormFn(f, nil, v.RMSNormEps)
-	return m.EmbedVision.Projection.Forward(f)
+	return proj.Projection.Forward(f)
 }
 
-func validateVisionSoftTokenBudget(budget int32) error {
+// ValidateVisionSoftTokenBudget reports whether the budget is one the
+// reference processor supports.
+func ValidateVisionSoftTokenBudget(budget int32) error {
 	if !slices.Contains(visionSoftTokenBudgets, budget) {
 		return fmt.Errorf("unsupported vision soft token budget %d", budget)
 	}
