@@ -847,6 +847,7 @@ MESSAGE assistant Hi! How are you?
 				From:       "test",
 				License:    []string{"license1", "license2"},
 				System:     "You are a bot.",
+				SystemSet:  true,
 				Parameters: map[string]any{"temperature": float32(0.5), "top_k": int64(1)},
 				Messages: []api.Message{
 					{Role: "user", Content: "Hello there!"},
