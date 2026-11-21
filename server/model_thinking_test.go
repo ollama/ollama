@@ -105,6 +105,8 @@ func TestModelThinking(t *testing.T) {
 		{"unknown renderer", Model{Config: model.ConfigV2{Renderer: "unknown"}}, nil},
 		{"nonthinking", Model{Config: model.ConfigV2{Renderer: "qwen3-coder"}}, &model.Thinking{Values: []any{false}, Default: false}},
 		{"known template", Model{HasGoTemplate: true, templateDigest: known}, &model.Thinking{Values: []any{false, true}, Default: true}},
+		{"explicit completion suppresses template thinking", Model{HasGoTemplate: true, templateDigest: known, Config: model.ConfigV2{Capabilities: []string{"completion"}, CapabilitiesExplicit: true}}, &model.Thinking{Values: []any{false}, Default: false}},
+		{"explicit thinking preserves renderer controls", Model{Config: model.ConfigV2{Renderer: "qwen3.8", Parser: "qwen3.5", Capabilities: []string{"completion", "thinking"}, CapabilitiesExplicit: true}}, &model.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}},
 		{"custom template", Model{HasGoTemplate: true, templateDigest: "custom"}, nil},
 		{"inactive template", Model{templateDigest: known}, nil},
 		{"remote", Model{Config: model.ConfigV2{RemoteHost: "https://ollama.com", Renderer: "qwen3.8", Parser: "qwen3.5"}}, nil},
@@ -136,6 +138,10 @@ func TestModelThinking(t *testing.T) {
 		}
 		if harmony.genericThinking() != nil {
 			t.Fatal("Harmony must retain legacy inference behavior")
+		}
+		harmony.Config.SetCapabilities("completion")
+		if got := harmony.Thinking(); !reflect.DeepEqual(got, &model.Thinking{Values: []any{false}, Default: false}) {
+			t.Fatalf("explicit completion-only Harmony thinking = %#v", got)
 		}
 	}
 }

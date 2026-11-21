@@ -105,7 +105,7 @@ func TestCapabilitiesExposeNemotronSafetensorsVision(t *testing.T) {
 		ModelFormat: "safetensors",
 		Renderer:    "nemotron-3-nano",
 		Parser:      "nemotron-3-nano",
-	}}).filterUnsupportedCapabilities(caps, "")
+	}}).filterUnsupportedCapabilities(caps)
 
 	for _, capability := range []model.Capability{
 		model.CapabilityCompletion,

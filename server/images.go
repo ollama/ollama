@@ -167,11 +167,13 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-// publicCapabilities limits decision models to decision and the vision and
-// audio they declare or ship a projector for, not media inherited from a base
-// model. Serving still uses Capabilities.
+// publicCapabilities hides inferred capabilities for legacy decision models.
+// Explicit declarations are shared by discovery and serving.
 func (m *Model) publicCapabilities() []model.Capability {
 	capabilities := m.Capabilities()
+	if m.Config.CapabilitiesExplicit {
+		return capabilities
+	}
 	if slices.Contains(capabilities, model.CapabilityDecision) {
 		public := []model.Capability{model.CapabilityDecision}
 		if slices.Contains(m.Config.Capabilities, "vision") || len(m.ProjectorPaths) > 0 {
@@ -186,16 +188,32 @@ func (m *Model) publicCapabilities() []model.Capability {
 }
 
 func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model.Capability {
-	capabilities := []model.Capability{}
-	var modelArch string
+	var capabilities []model.Capability
+	if m.Config.CapabilitiesExplicit {
+		capabilities = m.configCapabilities(nil)
+	} else {
+		capabilities = m.inferCapabilities(source)
+	}
 
-	capabilities = m.configCapabilities(capabilities)
-	capabilities, modelArch = m.ggufCapabilities(capabilities, source)
+	return m.filterUnsupportedCapabilities(capabilities)
+}
+
+// inferCapabilities derives the capabilities a model serves from its declared
+// config, weights, projector, template, parser, and family.
+func (m *Model) inferCapabilities(source templateCapabilitySource) []model.Capability {
+	capabilities := m.configCapabilities(nil)
+	capabilities = m.ggufCapabilities(capabilities, source)
 	capabilities = m.projectorCapabilities(capabilities)
 	capabilities = m.templateCapabilities(capabilities, source)
 	capabilities = m.parserCapabilities(capabilities)
 	capabilities = m.modelFamilyCapabilities(capabilities)
-	capabilities = m.filterUnsupportedCapabilities(capabilities, modelArch)
+
+	if m.metadata.String("decision.type") != "" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
+				c == model.CapabilityTools || c == model.CapabilityThinking
+		})
+	}
 
 	return capabilities
 }
@@ -207,9 +225,9 @@ func (m *Model) configCapabilities(capabilities []model.Capability) []model.Capa
 	return capabilities
 }
 
-func (m *Model) ggufCapabilities(capabilities []model.Capability, source templateCapabilitySource) ([]model.Capability, string) {
+func (m *Model) ggufCapabilities(capabilities []model.Capability, source templateCapabilitySource) []model.Capability {
 	if m.ModelPath == "" || !m.isGGUF() {
-		return capabilities, ""
+		return capabilities
 	}
 
 	switch source {
@@ -236,7 +254,7 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 		capabilities = appendCapability(capabilities, model.CapabilityAudio)
 	}
 
-	return capabilities, m.metadata.String("general.architecture")
+	return capabilities
 }
 
 func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate string) []model.Capability {
@@ -508,14 +526,8 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 	return capabilities
 }
 
-func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
-	if m.metadata.String("decision.type") != "" {
-		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
-				c == model.CapabilityTools || c == model.CapabilityThinking
-		})
-	}
-	if suppressAudioCapability(m, modelArch) {
+func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability) []model.Capability {
+	if suppressAudioCapability(m) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityAudio
 		})
@@ -524,7 +536,7 @@ func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, m
 	return capabilities
 }
 
-func suppressAudioCapability(m *Model, arch string) bool {
+func suppressAudioCapability(m *Model) bool {
 	if m.Config.ModelFormat == "safetensors" && m.Config.Renderer == "glimmer" {
 		return true
 	}
@@ -532,6 +544,7 @@ func suppressAudioCapability(m *Model, arch string) bool {
 		return true
 	}
 
+	arch := m.metadata.String("general.architecture")
 	if arch == "nemotron_h_omni" ||
 		m.Config.ModelFamily == "nemotron_h_omni" ||
 		slices.Contains(m.Config.ModelFamilies, "nemotron_h_omni") {
@@ -697,10 +710,15 @@ func (m *Model) String() string {
 			Args: m.Config.Parser,
 		})
 	}
-	for _, capability := range m.Config.Capabilities {
+	capabilities := m.configCapabilities(nil)
+	if len(capabilities) > 0 && !m.Config.CapabilitiesExplicit {
+		// Recreating this Modelfile makes its declarations authoritative.
+		capabilities = m.publicCapabilities()
+	}
+	for _, capability := range capabilities {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "capability",
-			Args: capability,
+			Args: string(capability),
 		})
 	}
 

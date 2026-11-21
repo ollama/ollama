@@ -1958,7 +1958,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp.Renderer = resolveRendererName(m)
 	resp.Parser = m.Config.Parser
 	resp.TemplateSource = m.templateSource()
-	if !slices.Contains(resp.Capabilities, model.CapabilityDecision) {
+	if !slices.Contains(resp.Capabilities, model.CapabilityDecision) ||
+		slices.Contains(resp.Capabilities, model.CapabilityThinking) {
 		resp.Thinking = m.Thinking()
 	}
 	if slices.Contains(resp.Capabilities, model.CapabilitySpeech) {
