@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"testing"
@@ -17,6 +19,27 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
+
+func TestModelCloseReleasesPLEMappings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ple")
+	if err := os.WriteFile(path, []byte{1}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mapping, err := model.OpenHostMapping(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Model{hostPLE: map[string]*hostPLETable{"ple": {shards: []*hostPLEShard{{mapping: mapping}}}}}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mapping.Bytes(0, 1); err == nil {
+		t.Fatal("PLE mapping remains readable after model close")
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("second model close: %v", err)
+	}
+}
 
 func TestHostPLELookupMatchesResidentEmbedding(t *testing.T) {
 	const (
@@ -85,7 +108,7 @@ func TestHostPLELookupMatchesResidentEmbedding(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(table.close)
+			t.Cleanup(func() { _ = table.close() })
 			m := &Model{hostPLE: map[string]*hostPLETable{prefix: table}}
 			var wantNames []string
 			for _, layer := range layers {

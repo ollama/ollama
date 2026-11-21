@@ -29,7 +29,11 @@ func Open(modelName string) (*Root, error) {
 	if err != nil {
 		return nil, err
 	}
+	return OpenManifest(m)
+}
 
+// OpenManifest scans a parsed manifest for per-tensor quantization metadata.
+func OpenManifest(m *manifest.Manifest) (*Root, error) {
 	root := &Root{
 		Manifest:    m,
 		tensorQuant: make(map[string]*TensorQuantInfo),

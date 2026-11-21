@@ -27,7 +27,9 @@ const (
 	// TransformRelabelU8 relabels an F8_E4M3 scale as U8 so the loader reads
 	// its raw bytes; the bytes themselves are unchanged.
 	TransformRelabelU8 Transform = "relabel_u8"
-
+	// TransformExpandE8M0 repeats each 32-row block scale for every output
+	// row, preserving its E8M0 byte value for MLX's row-wise MXFP8 layout.
+	TransformExpandE8M0 Transform = "expand_e8m0"
 	// TransformScalarF32 validates that the source is a scalar F32 and copies
 	// it through (a global scale stored as-is).
 	TransformScalarF32 Transform = "scalar_f32"
@@ -102,7 +104,11 @@ func Plan(inv Inventory, class Classification, policy quantizePolicy) ([]BlobSpe
 	case SourceFloat:
 		specs, err = planFloat(inv, class.Quantize, policy)
 	case SourcePrequantized:
-		specs, err = planPrequantized(inv)
+		if inv.Config.Architecture() == "DeepseekV41ForCausalLM" {
+			specs, err = planDeepSeekV41(inv)
+		} else {
+			specs, err = planPrequantized(inv)
+		}
 	case SourceBlockFP8:
 		specs, err = planBlockFP8(inv, class.Quantize, policy)
 	default:

@@ -1,7 +1,6 @@
 package create
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 
@@ -33,6 +32,29 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 			td.Shape = append([]int32(nil), ts.OutShape...)
 		}
 		return td, nil
+
+	case TransformExpandE8M0:
+		if len(sources) != 1 || sources[0].Dtype != "F8_E8M0" || len(sources[0].Shape) != 2 ||
+			len(ts.OutShape) != 2 || ts.OutDtype != "U8" ||
+			ts.OutShape[0] != sources[0].Shape[0]*32 || ts.OutShape[1] != sources[0].Shape[1] ||
+			sources[0].Size != int64(sources[0].Shape[0])*int64(sources[0].Shape[1]) {
+			return nil, fmt.Errorf("expand_e8m0 requires a 32-row E8M0 block scale and matching U8 output")
+		}
+		if sources[0].Size > 64<<20 {
+			return nil, fmt.Errorf("expand_e8m0 scale %s exceeds 64 MiB", sources[0].Name)
+		}
+		in := make([]byte, sources[0].Size)
+		if _, err := io.ReadFull(sources[0].Reader(), in); err != nil {
+			return nil, fmt.Errorf("expand_e8m0 read %s: %w", sources[0].Name, err)
+		}
+		cols := int(sources[0].Shape[1])
+		out := make([]byte, len(in)*32)
+		for row := range int(sources[0].Shape[0]) {
+			for repeat := range 32 {
+				copy(out[(row*32+repeat)*cols:], in[row*cols:(row+1)*cols])
+			}
+		}
+		return safetensors.NewTensorDataFromBytes(ts.Name, "U8", ts.OutShape, out), nil
 
 	case TransformScalarF32:
 		if len(sources) != 1 {
@@ -67,14 +89,10 @@ func stackExpertTensors(name, dtype string, shape []int32, sources []*safetensor
 	if len(sources) == 0 {
 		return nil, fmt.Errorf("stack_experts expects at least one source")
 	}
-	var buf bytes.Buffer
 	for i, s := range sources {
 		if s.Dtype != sources[0].Dtype {
 			return nil, fmt.Errorf("stack_experts source %d dtype %s != %s", i, s.Dtype, sources[0].Dtype)
 		}
-		if _, err := io.Copy(&buf, s.Reader()); err != nil {
-			return nil, fmt.Errorf("stack_experts read source %d (%s): %w", i, s.Name, err)
-		}
 	}
-	return safetensors.NewTensorDataFromBytes(name, dtype, append([]int32(nil), shape...), buf.Bytes()), nil
+	return safetensors.ConcatTensorData(name, dtype, shape, sources)
 }

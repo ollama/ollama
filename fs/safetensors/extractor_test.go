@@ -623,3 +623,29 @@ func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
 		t.Errorf("TensorCount() = %d, want 1 (metadata should be stripped)", ext.TensorCount())
 	}
 }
+
+func TestConcatTensorData(t *testing.T) {
+	parts := []*TensorData{
+		NewTensorDataFromBytes("first", "U8", []int32{2}, []byte{1, 2}),
+		NewTensorDataFromBytes("empty", "U8", []int32{0}, nil),
+		NewTensorDataFromBytes("last", "U8", []int32{3}, []byte{3, 4, 5}),
+	}
+	joined, err := ConcatTensorData("bank", "U8", []int32{5}, parts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined.Size != 5 || !slices.Equal(joined.Shape, []int32{5}) {
+		t.Fatalf("joined metadata = %+v", joined)
+	}
+	data, err := io.ReadAll(joined.Reader())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, []byte{1, 2, 3, 4, 5}) {
+		t.Fatalf("joined bytes = %v", data)
+	}
+	var crossing [3]byte
+	if _, err := joined.reader.ReadAt(crossing[:], 1); err != nil || crossing != [3]byte{2, 3, 4} {
+		t.Fatalf("cross-boundary ReadAt = %v, %v", crossing, err)
+	}
+}
