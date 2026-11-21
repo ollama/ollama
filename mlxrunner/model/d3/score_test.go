@@ -2,6 +2,7 @@ package d3
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,51 +43,7 @@ func TestScorePrompt(t *testing.T) {
 
 func TestNoncausalForwardAndReadout(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		identity := []float32{
-			1, 0, 0, 0,
-			0, 1, 0, 0,
-			0, 0, 1, 0,
-			0, 0, 0, 1,
-		}
-		linear := func(values []float32, rows int) *nn.Linear {
-			return &nn.Linear{Weight: mlx.FromValues(values, rows, 4)}
-		}
-		norm := func() *nn.RMSNorm {
-			return &nn.RMSNorm{Weight: mlx.FromValues([]float32{1, 1, 1, 1}, 4)}
-		}
-		qGate := append(append([]float32(nil), identity...), make([]float32, 16)...)
-		zeroMLP := &qwen3_5.DenseMLP{
-			GateProj: linear(make([]float32, 16), 4),
-			UpProj:   linear(make([]float32, 16), 4),
-			DownProj: linear(make([]float32, 16), 4),
-		}
-		layers := make([]*qwen3_5.Layer, 2)
-		for i := range layers {
-			layers[i] = &qwen3_5.Layer{
-				InputNorm: norm(), PostAttentionNorm: norm(), MLP: zeroMLP,
-				FullAttn: &qwen3_5.FullAttention{
-					QProj: linear(qGate, 8), KProj: linear(identity, 4),
-					VProj: linear(identity, 4), OProj: linear(identity, 4),
-					QNorm: norm(), KNorm: norm(),
-				},
-			}
-		}
-		cfg := &qwen3_5.Config{
-			HiddenSize: 4, NumAttentionHeads: 1, NumKeyValueHeads: 1,
-			HeadDim: 4, RopeDim: 4, RopeTheta: 10000, Scale: 0.5,
-			RMSNormEps: 1e-6, NoncausalFullAttention: true,
-		}
-		backbone := &qwen3_5.Model{
-			Config: cfg, EmbedTokens: &nn.Embedding{Weight: mlx.FromValues([]float32{
-				1, 0, 0, 0,
-				0, 1, 0, 0,
-				0, 0, 1, 0,
-			}, 3, 4)},
-			Layers: layers, Norm: norm(),
-		}
-		readout := make([]float32, 255*4)
-		readout[0], readout[5] = 1, 1
-		m := &Model{Model: backbone, Readout: linear(readout, 255), config: config{Temperature: 2}}
+		m := testDecisionModel()
 		if caches := m.NewCaches(); caches != nil {
 			t.Fatalf("noncausal model returned %d caches", len(caches))
 		}
@@ -105,7 +62,7 @@ func TestNoncausalForwardAndReadout(t *testing.T) {
 			t.Fatalf("readout logits %v do not match the last hidden token %v", got, lastValues)
 		}
 
-		cfg.NoncausalFullAttention = false
+		m.Config.NoncausalFullAttention = false
 		causal, _ := m.Forward(b, nil)
 		causalLast := causal.Slice(mlx.Slice(), mlx.Slice(2, 3), mlx.Slice()).AsType(mlx.DTypeFloat32)
 		mlx.Eval(causalLast)
@@ -115,6 +72,87 @@ func TestNoncausalForwardAndReadout(t *testing.T) {
 		}
 		if drift < 1e-3 {
 			t.Fatalf("two-layer noncausal forward matched causal forward (drift %g)", drift)
+		}
+	})
+}
+
+func testDecisionModel() *Model {
+	identity := []float32{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	}
+	linear := func(values []float32, rows int) *nn.Linear {
+		return &nn.Linear{Weight: mlx.FromValues(values, rows, 4)}
+	}
+	norm := func() *nn.RMSNorm {
+		return &nn.RMSNorm{Weight: mlx.FromValues([]float32{1, 1, 1, 1}, 4)}
+	}
+	qGate := append(append([]float32(nil), identity...), make([]float32, 16)...)
+	zeroMLP := &qwen3_5.DenseMLP{
+		GateProj: linear(make([]float32, 16), 4),
+		UpProj:   linear(make([]float32, 16), 4),
+		DownProj: linear(make([]float32, 16), 4),
+	}
+	layers := make([]*qwen3_5.Layer, 2)
+	for i := range layers {
+		layers[i] = &qwen3_5.Layer{
+			InputNorm: norm(), PostAttentionNorm: norm(), MLP: zeroMLP,
+			FullAttn: &qwen3_5.FullAttention{
+				QProj: linear(qGate, 8), KProj: linear(identity, 4),
+				VProj: linear(identity, 4), OProj: linear(identity, 4),
+				QNorm: norm(), KNorm: norm(),
+			},
+		}
+	}
+	cfg := &qwen3_5.Config{
+		HiddenSize: 4, NumAttentionHeads: 1, NumKeyValueHeads: 1,
+		HeadDim: 4, RopeDim: 4, RopeTheta: 10000, Scale: 0.5,
+		RMSNormEps: 1e-6, NoncausalFullAttention: true,
+	}
+	backbone := &qwen3_5.Model{
+		Config: cfg, EmbedTokens: &nn.Embedding{Weight: mlx.FromValues([]float32{
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0,
+		}, 3, 4)},
+		Layers: layers, Norm: norm(),
+	}
+	readout := make([]float32, 255*4)
+	readout[0], readout[5] = 1, 1
+	return &Model{Model: backbone, Readout: linear(readout, 255), config: config{Temperature: 2}}
+}
+
+func TestPrefixBidirectionalQuestionsAreIndependent(t *testing.T) {
+	done := t.Context().Done()
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m := testDecisionModel()
+		m.config.AttentionMode = prefixBidir
+		if caches := m.NewCaches(); caches != nil {
+			t.Fatalf("D3.1 registered %d caches with the runner", len(caches))
+		}
+		layout := func(ends ...int) *prefixLayout {
+			l := &prefixLayout{done: done, stateEnd: 2}
+			for _, end := range ends {
+				l.questions = append(l.questions, prefixQuestion{end: end})
+			}
+			return l
+		}
+
+		// Two rows with the same state and final question. The first row also
+		// asks another question. The shorter second row requires padding.
+		b := &batch.Batch{
+			InputIDs:     mlx.FromValues([]int32{0, 1, 2, 0, 1, 2, 1, 0, 1, 1, 2, 1, 0, 0}, 2, 7),
+			SeqOffsets:   []int32{0, 0},
+			SeqQueryLens: []int32{7, 5},
+			Layout:       []any{layout(4, 7), layout(5)},
+		}
+		hidden, _ := m.Forward(b, nil)
+		one := hidden.Slice(mlx.Slice(0, 1), mlx.Slice(6, 7), mlx.Slice()).Floats()
+		two := hidden.Slice(mlx.Slice(1, 2), mlx.Slice(4, 5), mlx.Slice()).Floats()
+		if !slices.Equal(one, two) {
+			t.Fatalf("preceding question changed final hidden state: %v, want %v", one, two)
 		}
 	})
 }

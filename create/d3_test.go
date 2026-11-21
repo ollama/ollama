@@ -61,6 +61,27 @@ func TestD3ImportRetainsFP32ReadoutAndExcludesPublisherManifest(t *testing.T) {
 	}
 }
 
+func TestD3ImportPrefixBidirectionalCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	writeD3Source(t, dir)
+	path := filepath.Join(dir, "decision_config.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "noncausal_full_attention", "prefix_bidir", 1))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newCaptureStore()
+	if err := Create(t.Context(), "d3-prefix-test", dir, testPipelineOptions(), store, func(context.Context, string, ManifestInfo) error { return nil }, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(store.blobs["decision_config.json"]); !strings.Contains(got, `"attention_mode":"prefix_bidir"`) {
+		t.Fatalf("decision config = %s", got)
+	}
+}
+
 func TestD3RejectsNonFP32ReadoutBeforeWriting(t *testing.T) {
 	dir := t.TempDir()
 	writeD3Source(t, dir)
