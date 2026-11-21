@@ -147,14 +147,8 @@ func newAssistantModel(root *model.Root, target model.Model) (model.DraftModel, 
 		tensorPrefix:    tensorPrefix,
 		target:          targetGemma,
 		Layers:          make([]*AssistantLayer, cfg.TextConfig.NumHiddenLayers),
-		TensorQuant:     root.AllTensorQuant(),
 	}
-	if qt := root.QuantType(); qt != "" {
-		m.QuantGroupSize, m.QuantBits, m.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			m.QuantGroupSize = gs
-		}
-	}
+	m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant = root.Quantization()
 	for i := range m.Layers {
 		m.Layers[i] = &AssistantLayer{
 			IsSliding: isLayerSliding(int32(i), &m.TextConfig),
