@@ -3239,6 +3239,57 @@ func TestMemoryParsingWriterParsesLinesSplitAcrossWrites(t *testing.T) {
 	}
 }
 
+
+func TestMemoryParsingWriterBoundsOversizedIncompleteLines(t *testing.T) {
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	oversized := make([]byte, maxMemoryParsingLineBytes+1)
+	for i := range oversized {
+		oversized[i] = 'x'
+	}
+	if _, err := w.Write(oversized); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.pending) != 0 {
+		t.Fatalf("pending buffer retained %d bytes after limit was exceeded", len(w.pending))
+	}
+	if !w.discardingLongLine {
+		t.Fatal("writer did not enter long-line discard mode")
+	}
+
+	validLine := []byte("load_tensors:        CUDA0 model buffer size =   840.00 MiB\n")
+	remainder := append([]byte{'\n'}, validLine...)
+	if _, err := w.Write(remainder); err != nil {
+		t.Fatal(err)
+	}
+	if w.discardingLongLine {
+		t.Fatal("writer did not leave long-line discard mode at the next newline")
+	}
+	if got, want := runner.vramByDevice["CUDA0"], uint64(840*1024*1024); got != want {
+		t.Errorf("vramByDevice[CUDA0] = %d, want %d", got, want)
+	}
+}
+
+func TestMemoryParsingWriterSkipsOversizedCompleteLineAndContinues(t *testing.T) {
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	oversized := make([]byte, maxMemoryParsingLineBytes+1)
+	for i := range oversized {
+		oversized[i] = 'x'
+	}
+	payload := append(oversized, '\n')
+	payload = append(payload, []byte("load_tensors:        CUDA0 model buffer size =   840.00 MiB\n")...)
+	if _, err := w.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := runner.vramByDevice["CUDA0"], uint64(840*1024*1024); got != want {
+		t.Errorf("vramByDevice[CUDA0] = %d, want %d", got, want)
+	}
+}
+
+
 func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {
 	runner := &llamaServerRunner{}
 	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
