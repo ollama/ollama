@@ -5,15 +5,9 @@ import (
 	"sync"
 )
 
-// MLX derives its NVFP4 scale from the block maximum divided by 6. The 4-over-6
-// variant also tries a divisor of 4 and compares both reconstruction errors in one pass.
-var nvfp4Activation = &gpuKernel{
-	name:    "nvfp4_activation",
-	inputs:  []string{"x"},
-	outputs: []string{"inner", "amax"},
-	cuda:    nvfp4ActivationCUDA,
-	metal: gpuSource{
-		header: `
+// nvfp4RoundingMetal rounds nonnegative values to E4M3FN and signed values to
+// E2M1, each to nearest even.
+const nvfp4RoundingMetal = `
 #include <metal_stdlib>
 using namespace metal;
 
@@ -35,7 +29,39 @@ inline float round_e2m1(float x) {
     if (m > 5.0f) q = 6.0f;
     return x < 0.0f ? -q : q;
 }
-`,
+
+// Reconstructs 16 values of a row from E2M1 with an E4M3 block scale, using
+// the 4 or 6 range with the smaller L1 error. Ties select the 6 range.
+inline void nvfp4_4over6(thread const float* data, float block_max, float row_max, float max_product, thread float* out) {
+#pragma clang fp contract(off) reassociate(off)
+    float normalizer = min(max_product / row_max, FLT_MAX);
+    float decoder = 1.0f / normalizer;
+    float outer = row_max * (1.0f / max_product);
+    float scale_a = round_e4m3(min(block_max * (normalizer * (1.0f / 6.0f)), 448.0f));
+    float scale_b = round_e4m3(min(block_max * (normalizer * 0.25f), 448.0f));
+    float inv_a = min(1.0f / (scale_a * decoder), FLT_MAX);
+    float inv_b = min(1.0f / (scale_b * decoder), FLT_MAX);
+    float candidate_a[16], candidate_b[16];
+    float error_a = 0.0f, error_b = 0.0f;
+    for (uint i = 0; i < 16; ++i) {
+        candidate_a[i] = round_e2m1(data[i] * inv_a) * scale_a;
+        candidate_b[i] = round_e2m1(data[i] * inv_b) * scale_b;
+        error_a += abs(data[i] - candidate_a[i] * outer);
+        error_b += abs(data[i] - candidate_b[i] * outer);
+    }
+    for (uint i = 0; i < 16; ++i) out[i] = error_b < error_a ? candidate_b[i] : candidate_a[i];
+}
+`
+
+// MLX derives its NVFP4 scale from the block maximum divided by 6. The 4-over-6
+// variant also tries a divisor of 4 and compares both reconstruction errors in one pass.
+var nvfp4Activation = &gpuKernel{
+	name:    "nvfp4_activation",
+	inputs:  []string{"x"},
+	outputs: []string{"inner", "amax"},
+	cuda:    nvfp4ActivationCUDA,
+	metal: gpuSource{
+		header: nvfp4RoundingMetal,
 		source: `
 #pragma clang fp contract(off) reassociate(off)
 uint row = threadgroup_position_in_grid.y;
@@ -58,25 +84,9 @@ threadgroup_barrier(mem_flags::mem_threadgroup);
 float row_max = simd_max(lane < G / 32 ? partial[lane] : 0.0f);
 if (worker == 0) amax[row] = row_max;
 if (!active) return;
-
-float normalizer = min(float(MaxProduct) / row_max, FLT_MAX);
-float decoder = 1.0f / normalizer;
-float outer = row_max * (1.0f / float(MaxProduct));
-float scale_a = round_e4m3(min(block_max * (normalizer * (1.0f / 6.0f)), 448.0f));
-float scale_b = round_e4m3(min(block_max * (normalizer * 0.25f), 448.0f));
-float inv_a = min(1.0f / (scale_a * decoder), FLT_MAX);
-float inv_b = min(1.0f / (scale_b * decoder), FLT_MAX);
-float candidate_a[16], candidate_b[16];
-float error_a = 0.0f, error_b = 0.0f;
-for (uint i = 0; i < 16; ++i) {
-    candidate_a[i] = round_e2m1(data[i] * inv_a) * scale_a;
-    candidate_b[i] = round_e2m1(data[i] * inv_b) * scale_b;
-    error_a += abs(data[i] - candidate_a[i] * outer);
-    error_b += abs(data[i] - candidate_b[i] * outer);
-}
-for (uint i = 0; i < 16; ++i) {
-    inner[start + i] = error_b < error_a ? candidate_b[i] : candidate_a[i];
-}
+float values[16];
+nvfp4_4over6(data, block_max, row_max, float(MaxProduct), values);
+for (uint i = 0; i < 16; ++i) inner[start + i] = values[i];
 `,
 	},
 }
