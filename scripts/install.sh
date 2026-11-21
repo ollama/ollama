@@ -125,7 +125,7 @@ if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 fi
 
-NEEDS=$(require curl awk grep sed tee xargs)
+NEEDS=$(require curl awk grep sed tee xargs sha256sum)
 if [ -n "$NEEDS" ]; then
     status "ERROR: The following tools are required but missing:"
     for NEED in $NEEDS; do
@@ -134,11 +134,39 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
+# Verify a downloaded archive against the checksum published for this version.
+verify_download() {
+    local filename="$1"
+    local download_url="$2"
+    local archive_path="$TEMP_DIR/$filename"
+    local checksum_file="$TEMP_DIR/sha256sum.txt"
+    local expected_checksum
+
+    if [ ! -f "$checksum_file" ]; then
+        curl --fail --show-error --location --silent \
+            --output "$checksum_file" "https://ollama.com/download/sha256sum.txt${DOWNLOAD_PARAM}"
+    fi
+
+    expected_checksum=$(awk -v filename="./$filename" '$2 == filename { print $1; exit }' "$checksum_file")
+    if [ -z "$expected_checksum" ]; then
+        error "No SHA256 checksum found for $filename"
+    fi
+
+    curl --fail --show-error --location --progress-bar \
+        --output "$archive_path" "$download_url"
+
+    if ! printf '%s  %s\n' "$expected_checksum" "$archive_path" | sha256sum --check --status; then
+        error "SHA256 checksum mismatch for $filename"
+    fi
+}
+
 # Function to download and extract with fallback from zst to tgz
 download_and_extract() {
     local url_base="$1"
     local dest_dir="$2"
     local filename="$3"
+    local archive_name
+    local archive_path
 
     # Check if .tar.zst is available
     if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${DOWNLOAD_PARAM}" >/dev/null 2>&1; then
@@ -151,17 +179,19 @@ download_and_extract() {
         fi
 
         status "Downloading ${filename}.tar.zst"
-        curl --fail --show-error --location --progress-bar \
-            "${url_base}/${filename}.tar.zst${DOWNLOAD_PARAM}" | \
-            zstd -d | $SUDO tar -xf - -C "${dest_dir}"
+        archive_name="${filename}.tar.zst"
+        archive_path="$TEMP_DIR/$archive_name"
+        verify_download "$archive_name" "${url_base}/${archive_name}${DOWNLOAD_PARAM}"
+        zstd -d "$archive_path" | $SUDO tar -xf - -C "${dest_dir}"
         return 0
     fi
 
     # Fall back to .tgz for older versions
     status "Downloading ${filename}.tgz"
-    curl --fail --show-error --location --progress-bar \
-        "${url_base}/${filename}.tgz${DOWNLOAD_PARAM}" | \
-        $SUDO tar -xzf - -C "${dest_dir}"
+    archive_name="${filename}.tgz"
+    archive_path="$TEMP_DIR/$archive_name"
+    verify_download "$archive_name" "${url_base}/${archive_name}${DOWNLOAD_PARAM}"
+    $SUDO tar -xzf "$archive_path" -C "${dest_dir}"
 }
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
