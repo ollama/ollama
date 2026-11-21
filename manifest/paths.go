@@ -3,6 +3,7 @@ package manifest
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -374,7 +375,7 @@ func resolveBlobDigestPrefix(prefix string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	matches, err := filepath.Glob(filepath.Join(root, "sha256-"+prefix+"*"))
+	matches, err := fs.Glob(os.DirFS(root), "sha256-"+prefix+"*")
 	if err != nil {
 		return "", err
 	}
