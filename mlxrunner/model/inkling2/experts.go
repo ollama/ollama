@@ -24,7 +24,14 @@ func (e expertBank) project(x, indices, inputRows *mlx.Array, grouped bool) *mlx
 	}
 	if e.Maxima == nil {
 		values := mxfp8ExpertInput(x)
-		result := mlx.GatherQMM(values, e.Weight, e.BlockScales, nil, nil, indices, true, 32, 8, "mxfp8", nil, false)
+		if grouped {
+			// E4M3 values times power-of-two block scales are exact in BF16.
+			values = values.AsType(mlx.DTypeBFloat16)
+		}
+		if inputRows != nil {
+			values = mlx.Take(values, inputRows, 0)
+		}
+		result := mlx.GatherQMM(values, e.Weight, e.BlockScales, nil, nil, indices, true, 32, 8, "mxfp8", nil, grouped)
 		return result.AsType(x.DType())
 	}
 	result, activationMax := e.nvfp4Inner(x, indices, inputRows, grouped)
@@ -114,7 +121,7 @@ func (e routedExperts) forward(x *mlx.Array) *mlx.Array {
 	// The Metal grouped gather reuses each expert when there are at least
 	// four routes per expert on average. Keep short target verification rows
 	// on the width-stable path even if multiple requests share a batch.
-	grouped := e.GateUp.Maxima != nil && e.Down.Maxima != nil &&
+	grouped := e.GateUp.BlockScales != nil && e.Down.BlockScales != nil &&
 		tokens >= 64 && batch*tokens*e.topK/e.Router.Dim(0) >= 4 && mlx.MetalIsAvailable()
 	return e.combine(flat, indices, weights, grouped).Reshape(batch, tokens, width)
 }
