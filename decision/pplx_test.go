@@ -130,6 +130,61 @@ func TestPplxRejectsEmptyImageBeforeScoring(t *testing.T) {
 	}
 }
 
+func TestPplxLocateMixedRequest(t *testing.T) {
+	var req Request
+	data := `{"model":"pplx-test","state":"Ada met René.","questions":{"people":{"type":"locate","instructions":"Person names"},"known":{"type":"noul","instructions":"Any people?"},"names":{"type":"locate","instructions":null}}}`
+	if err := json.Unmarshal([]byte(data), &req); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Compile(req, "pplx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Request.Rows) != 3 || c.Request.Rows[0].Question.Instructions != "Person names" || c.Request.Rows[2].Question.Instructions != "names" {
+		t.Fatalf("Locate questions = %+v", c.Request.Rows)
+	}
+	result := llm.ScoreResponse{
+		Logits: [][]float32{nil, {0, 1}, nil},
+		Answers: []json.RawMessage{
+			json.RawMessage(`{"type":"locate","spans":[{"start":0,"end":3,"text":"Ada","score":0.9}]}`),
+			nil,
+			json.RawMessage(`{"type":"locate","spans":[]}`),
+		},
+	}
+	response, err := c.Answer("pplx-test", result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := response.Answers.Get("people")
+	if string(first.(json.RawMessage)) != string(result.Answers[0]) {
+		t.Fatalf("first Locate answer = %s", first)
+	}
+	last, _ := response.Answers.Get("names")
+	if string(last.(json.RawMessage)) != string(result.Answers[2]) {
+		t.Fatalf("last Locate answer = %s", last)
+	}
+	if _, ok := response.Answers.Get("known"); !ok {
+		t.Fatal("mixed decision answer missing")
+	}
+}
+
+func TestPplxLocateRequiresTextWithoutImages(t *testing.T) {
+	for _, request := range []string{
+		`{"model":"x","state":{},"questions":{"q":{"type":"locate"}}}`,
+		`{"model":"x","state":"","questions":{"q":{"type":"locate"}}}`,
+		`{"model":"x","state":"Ada","images":["YQ=="],"questions":{"q":{"type":"locate"}}}`,
+		`{"model":"x","state":"Ada","questions":{"q":{"type":"locate","instructions":7}}}`,
+	} {
+		var req Request
+		if err := json.Unmarshal([]byte(request), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Compile(req, "pplx"); err == nil {
+			t.Fatalf("accepted invalid Locate request %s", request)
+		}
+	}
+}
+
 func FuzzPplxCompile(f *testing.F) {
 	f.Add([]byte(`{"model":"pplx-test","state":"x","questions":{"kind":{"type":"choice","criteria":{"a":"A","b":"B"}}}}`))
 	f.Add([]byte(`{"model":"pplx-test","state":{},"questions":{"rating":{"type":"score","criteria":[0,1]}}}`))

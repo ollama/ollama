@@ -30,13 +30,23 @@ type jointConfig struct {
 	Template      string `json:"template"`
 	Marker        string `json:"marker"`
 	ReadoutOffset int    `json:"readout_offset"`
+	Separator     string `json:"separator"`
+	Usage         string `json:"usage"`
+	MaxQuestions  *int   `json:"max_questions"`
+	MaxLength     *int   `json:"max_length"`
 }
 
 type Model struct {
 	*qwen3_5.Model
-	Readout  *nn.Linear
-	config   config
-	markerID int32
+	Readout     *nn.Linear
+	LocateHead  *spanHead
+	config      config
+	markerID    int32
+	joint       jointConfig
+	separatorID int32
+	locate      locateConfig
+	locateEmbed *locateEmbedding
+	locateLoRA  []locateLinear
 }
 
 func NewModel(root *model.Root) (model.Model, error) {
@@ -48,7 +58,11 @@ func NewModel(root *model.Root) (model.Model, error) {
 	if err := root.Manifest.ReadConfigJSON("joint_config.json", &joint); err != nil {
 		return nil, fmt.Errorf("read Perplexity joint config: %w", err)
 	}
-	if joint.Version != 3 || joint.Template != "joint-question-inline-readout-v1" || joint.Marker != "<|fim_suffix|>" || joint.ReadoutOffset != 0 {
+	legacy := joint.Version == 3 && joint.Template == "joint-question-inline-readout-v1"
+	chunked := joint.Version == 4 && joint.Template == "joint-chunked-readout-v1" &&
+		joint.Separator == "<|fim_middle|>" && joint.Usage == "nonpadding_joint_sequence_including_template_and_image_positions" &&
+		joint.MaxQuestions == nil && joint.MaxLength == nil
+	if (!legacy && !chunked) || joint.Marker != readoutMarker || joint.ReadoutOffset != 0 {
 		return nil, fmt.Errorf("unsupported Perplexity joint protocol")
 	}
 	if cfg.FormatVersion != 2 || len(cfg.Codes) != 255 || len(cfg.TokenIDs) != len(cfg.Codes) {
@@ -67,7 +81,7 @@ func NewModel(root *model.Root) (model.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	m := &Model{Model: backbone.(*qwen3_5.Model), config: cfg}
+	m := &Model{Model: backbone.(*qwen3_5.Model), config: cfg, joint: joint}
 	m.Config.NoncausalFullAttention = true
 	// Match the publisher's FP32 recurrent decay over long decision rows.
 	m.Config.PreciseGatedDeltaDecay = true
@@ -94,6 +108,22 @@ func NewModel(root *model.Root) (model.Model, error) {
 	if m.markerID, ok = m.Tokenizer().GetSpecialToken(joint.Marker); !ok || m.markerID != markerIDs[0] {
 		return nil, fmt.Errorf("Perplexity readout marker is not a special token")
 	}
+	if chunked {
+		separatorIDs := m.Tokenizer().Encode(joint.Separator, false)
+		if len(separatorIDs) != 1 {
+			return nil, fmt.Errorf("Perplexity context separator must be one token")
+		}
+		m.separatorID, ok = m.Tokenizer().GetSpecialToken(joint.Separator)
+		if !ok || m.separatorID != separatorIDs[0] {
+			return nil, fmt.Errorf("Perplexity context separator is not a special token")
+		}
+		if err := root.Manifest.ReadConfigJSON("locate-span/locate_config.json", &m.locate); err != nil {
+			return nil, fmt.Errorf("read Perplexity Locate configuration: %w", err)
+		}
+		if err := m.validateLocateConfig(); err != nil {
+			return nil, err
+		}
+	}
 	return m, nil
 }
 
@@ -102,6 +132,16 @@ func NewModel(root *model.Root) (model.Model, error) {
 func (m *Model) NewCaches() []cache.Cache { return nil }
 
 func (m *Model) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
+	locate := false
+	if len(b.Layout) == 1 {
+		_, locate = b.Layout[0].(*qwen3_5.IsolatedLayout)
+	}
+	if m.locateEmbed != nil {
+		m.locateEmbed.Enabled = locate
+		for _, adapter := range m.locateLoRA {
+			adapter.setEnabled(locate)
+		}
+	}
 	return m.Model.Forward(b, nil)
 }
 
@@ -114,5 +154,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		return fmt.Errorf("Perplexity requires a BF16 readout weight of shape [255,%d]", m.Config.HiddenSize)
 	}
 	m.Readout = &nn.Linear{Weight: w}
+	if m.joint.Version == 4 {
+		if err := m.loadLocateWeights(tensors); err != nil {
+			return err
+		}
+	}
 	return nil
 }
