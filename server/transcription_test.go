@@ -221,6 +221,7 @@ func audioTestServerFunc(t *testing.T, name, renderer string, audioInput bool, r
 		},
 	}
 	s := &Server{
+		metrics: newTestMetrics(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
