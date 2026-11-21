@@ -1,8 +1,13 @@
 import { Link } from "@/components/ui/link";
 import { ChatIcon } from "@/components/ChatIcon";
-import { Cog6ToothIcon, RectangleGroupIcon } from "@heroicons/react/24/outline";
+import {
+  Cog6ToothIcon,
+  RectangleGroupIcon,
+  MagnifyingGlassIcon,
+  BookmarkIcon,
+} from "@heroicons/react/24/outline";
 
-type AppSection = "apps" | "chat" | "settings";
+type AppSection = "apps" | "chat" | "explore" | "saved" | "settings";
 
 export function AppNavigation({ current }: { current: AppSection }) {
   const itemClass = (section: AppSection) =>
@@ -25,6 +30,14 @@ export function AppNavigation({ current }: { current: AppSection }) {
       >
         <ChatIcon />
         <span className="truncate">Chat</span>
+      </Link>
+      <Link to="/explore" className={itemClass("explore")} draggable={false}>
+        <MagnifyingGlassIcon className="h-5 w-5 stroke-current" />
+        <span className="truncate">Explore</span>
+      </Link>
+      <Link to="/saved" className={itemClass("saved")} draggable={false}>
+        <BookmarkIcon className="h-5 w-5 stroke-current" />
+        <span className="truncate">Saved</span>
       </Link>
       <Link to="/settings" className={itemClass("settings")} draggable={false}>
         <Cog6ToothIcon className="h-5 w-5 stroke-current" />

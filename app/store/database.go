@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 19
+const currentSchemaVersion = 20
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -151,6 +151,11 @@ func (db *database) init() error {
 		email TEXT NOT NULL DEFAULT '',
 		plan TEXT NOT NULL DEFAULT '',
 		cached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE IF NOT EXISTS saved_models (
+		model TEXT PRIMARY KEY,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	`, currentSchemaVersion)
 
@@ -291,6 +296,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v18 to v19: %w", err)
 			}
 			version = 19
+		case 19:
+			// add saved_models table
+			if err := db.migrateV19ToV20(); err != nil {
+				return fmt.Errorf("migrate v19 to v20: %w", err)
+			}
+			version = 20
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -572,6 +583,22 @@ func (db *database) migrateV16ToV17() error {
 	_, err = db.conn.Exec(`UPDATE settings SET onboarding_version = 1, last_home_view = 'chat', schema_version = 17`)
 	if err != nil {
 		return fmt.Errorf("complete onboarding for existing users: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV19ToV20 adds the saved_models table
+func (db *database) migrateV19ToV20() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS saved_models (
+			model TEXT PRIMARY KEY,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		UPDATE settings SET schema_version = 20;
+	`)
+	if err != nil {
+		return fmt.Errorf("create saved_models table: %w", err)
 	}
 
 	return nil
@@ -1284,6 +1311,48 @@ func (db *database) markOnboardingCompleted() error {
 func (db *database) markCodexDesktopUsed() error {
 	_, err := db.conn.Exec(`UPDATE settings SET codex_desktop_used = 1`)
 	return err
+}
+
+// getSavedModels returns the saved model names ordered by when they were saved.
+func (db *database) getSavedModels() ([]string, error) {
+	rows, err := db.conn.Query(`SELECT model FROM saved_models ORDER BY created_at DESC, model ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("get saved models: %w", err)
+	}
+	defer rows.Close()
+
+	models := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan saved model: %w", err)
+		}
+		models = append(models, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate saved models: %w", err)
+	}
+
+	return models, nil
+}
+
+// saveModel records a model as saved. Saving an already saved model is a no-op.
+func (db *database) saveModel(name string) error {
+	_, err := db.conn.Exec(`INSERT OR IGNORE INTO saved_models (model) VALUES (?)`, name)
+	if err != nil {
+		return fmt.Errorf("save model: %w", err)
+	}
+	return nil
+}
+
+// unsaveModel removes a model from the saved collection. Removing a model that
+// is not saved is a no-op.
+func (db *database) unsaveModel(name string) error {
+	_, err := db.conn.Exec(`DELETE FROM saved_models WHERE model = ?`, name)
+	if err != nil {
+		return fmt.Errorf("unsave model: %w", err)
+	}
+	return nil
 }
 
 func (db *database) isCloudSettingMigrated() (bool, error) {

@@ -12,7 +12,9 @@
 
 import { Route as rootRoute } from './routes/__root'
 import { Route as SettingsImport } from './routes/settings'
+import { Route as SavedImport } from './routes/saved'
 import { Route as OnboardingImport } from './routes/onboarding'
+import { Route as ExploreImport } from './routes/explore'
 import { Route as ConnectImport } from './routes/connect'
 import { Route as IndexImport } from './routes/index'
 import { Route as CChatIdImport } from './routes/c.$chatId'
@@ -25,9 +27,21 @@ const SettingsRoute = SettingsImport.update({
   getParentRoute: () => rootRoute,
 } as any)
 
+const SavedRoute = SavedImport.update({
+  id: '/saved',
+  path: '/saved',
+  getParentRoute: () => rootRoute,
+} as any)
+
 const OnboardingRoute = OnboardingImport.update({
   id: '/onboarding',
   path: '/onboarding',
+  getParentRoute: () => rootRoute,
+} as any)
+
+const ExploreRoute = ExploreImport.update({
+  id: '/explore',
+  path: '/explore',
   getParentRoute: () => rootRoute,
 } as any)
 
@@ -67,11 +81,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectImport
       parentRoute: typeof rootRoute
     }
+    '/explore': {
+      id: '/explore'
+      path: '/explore'
+      fullPath: '/explore'
+      preLoaderRoute: typeof ExploreImport
+      parentRoute: typeof rootRoute
+    }
     '/onboarding': {
       id: '/onboarding'
       path: '/onboarding'
       fullPath: '/onboarding'
       preLoaderRoute: typeof OnboardingImport
+      parentRoute: typeof rootRoute
+    }
+    '/saved': {
+      id: '/saved'
+      path: '/saved'
+      fullPath: '/saved'
+      preLoaderRoute: typeof SavedImport
       parentRoute: typeof rootRoute
     }
     '/settings': {
@@ -96,7 +124,9 @@ declare module '@tanstack/react-router' {
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/connect': typeof ConnectRoute
+  '/explore': typeof ExploreRoute
   '/onboarding': typeof OnboardingRoute
+  '/saved': typeof SavedRoute
   '/settings': typeof SettingsRoute
   '/c/$chatId': typeof CChatIdRoute
 }
@@ -104,7 +134,9 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/connect': typeof ConnectRoute
+  '/explore': typeof ExploreRoute
   '/onboarding': typeof OnboardingRoute
+  '/saved': typeof SavedRoute
   '/settings': typeof SettingsRoute
   '/c/$chatId': typeof CChatIdRoute
 }
@@ -113,24 +145,50 @@ export interface FileRoutesById {
   __root__: typeof rootRoute
   '/': typeof IndexRoute
   '/connect': typeof ConnectRoute
+  '/explore': typeof ExploreRoute
   '/onboarding': typeof OnboardingRoute
+  '/saved': typeof SavedRoute
   '/settings': typeof SettingsRoute
   '/c/$chatId': typeof CChatIdRoute
 }
 
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/connect' | '/onboarding' | '/settings' | '/c/$chatId'
+  fullPaths:
+    | '/'
+    | '/connect'
+    | '/explore'
+    | '/onboarding'
+    | '/saved'
+    | '/settings'
+    | '/c/$chatId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/connect' | '/onboarding' | '/settings' | '/c/$chatId'
-  id: '__root__' | '/' | '/connect' | '/onboarding' | '/settings' | '/c/$chatId'
+  to:
+    | '/'
+    | '/connect'
+    | '/explore'
+    | '/onboarding'
+    | '/saved'
+    | '/settings'
+    | '/c/$chatId'
+  id:
+    | '__root__'
+    | '/'
+    | '/connect'
+    | '/explore'
+    | '/onboarding'
+    | '/saved'
+    | '/settings'
+    | '/c/$chatId'
   fileRoutesById: FileRoutesById
 }
 
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ConnectRoute: typeof ConnectRoute
+  ExploreRoute: typeof ExploreRoute
   OnboardingRoute: typeof OnboardingRoute
+  SavedRoute: typeof SavedRoute
   SettingsRoute: typeof SettingsRoute
   CChatIdRoute: typeof CChatIdRoute
 }
@@ -138,7 +196,9 @@ export interface RootRouteChildren {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ConnectRoute: ConnectRoute,
+  ExploreRoute: ExploreRoute,
   OnboardingRoute: OnboardingRoute,
+  SavedRoute: SavedRoute,
   SettingsRoute: SettingsRoute,
   CChatIdRoute: CChatIdRoute,
 }
@@ -155,7 +215,9 @@ export const routeTree = rootRoute
       "children": [
         "/",
         "/connect",
+        "/explore",
         "/onboarding",
+        "/saved",
         "/settings",
         "/c/$chatId"
       ]
@@ -166,8 +228,14 @@ export const routeTree = rootRoute
     "/connect": {
       "filePath": "connect.tsx"
     },
+    "/explore": {
+      "filePath": "explore.tsx"
+    },
     "/onboarding": {
       "filePath": "onboarding.tsx"
+    },
+    "/saved": {
+      "filePath": "saved.tsx"
     },
     "/settings": {
       "filePath": "settings.tsx"
