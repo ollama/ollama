@@ -133,9 +133,9 @@ func (b *BrowserSearch) Execute(ctx context.Context, args map[string]any) (any, 
 		return nil, "", fmt.Errorf("query parameter is required")
 	}
 
-	topn, ok := args["topn"].(int)
-	if !ok {
-		topn = 5
+	topn, err := integerArgument(args, "topn", 5)
+	if err != nil {
+		return nil, "", err
 	}
 
 	searchArgs := map[string]any{
@@ -501,28 +501,17 @@ func (b *BrowserOpen) Schema() map[string]any {
 }
 
 func (b *BrowserOpen) Execute(ctx context.Context, args map[string]any) (any, string, error) {
-	// Get cursor parameter first
-	cursor := -1
-	if c, ok := args["cursor"].(float64); ok {
-		cursor = int(c)
-	} else if c, ok := args["cursor"].(int); ok {
-		cursor = c
+	cursor, err := integerArgument(args, "cursor", -1)
+	if err != nil {
+		return nil, "", err
 	}
-
-	// Get loc parameter
-	loc := 0
-	if l, ok := args["loc"].(float64); ok {
-		loc = int(l)
-	} else if l, ok := args["loc"].(int); ok {
-		loc = l
+	loc, err := integerArgument(args, "loc", 0)
+	if err != nil {
+		return nil, "", err
 	}
-
-	// Get num_lines parameter
-	numLines := -1
-	if n, ok := args["num_lines"].(float64); ok {
-		numLines = int(n)
-	} else if n, ok := args["num_lines"].(int); ok {
-		numLines = n
+	numLines, err := integerArgument(args, "num_lines", -1)
+	if err != nil {
+		return nil, "", err
 	}
 
 	// get page from cursor
@@ -596,11 +585,14 @@ func (b *BrowserOpen) Execute(ctx context.Context, args map[string]any) (any, st
 	}
 
 	// Try to get id as integer (link ID from current page)
-	if id, ok := args["id"].(float64); ok {
+	if id, present := args["id"]; present && id != nil {
+		idInt, err := integerArgument(args, "id", 0)
+		if err != nil {
+			return nil, "", err
+		}
 		if page == nil {
 			return nil, "", fmt.Errorf("no current page to resolve link from")
 		}
-		idInt := int(id)
 		pageURL, ok := page.Links[idInt]
 		if !ok {
 			return nil, "", fmt.Errorf("invalid link id %d", idInt)
@@ -750,9 +742,9 @@ func (b *BrowserFind) Execute(ctx context.Context, args map[string]any) (any, st
 	}
 
 	// Get cursor parameter if provided, default to current page
-	cursor := -1
-	if c, ok := args["cursor"].(float64); ok {
-		cursor = int(c)
+	cursor, err := integerArgument(args, "cursor", -1)
+	if err != nil {
+		return nil, "", err
 	}
 
 	// Get the page to search in
