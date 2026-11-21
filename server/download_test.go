@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -190,6 +191,85 @@ func TestDownloadRedirect(t *testing.T) {
 		} else if err == nil || !strings.Contains(err.Error(), "not allowed") || hits.Load() != 0 {
 			t.Fatalf("download: error = %v, requests = %d, want rejection before request", err, hits.Load())
 		}
+	}
+}
+
+// newInterruptedDownload leaves the on-disk state of a download that was
+// stopped after Prepare and run started: three 100-byte parts and a 300-byte
+// data file.
+func newInterruptedDownload(t *testing.T) *blobDownload {
+	t.Helper()
+	d := &blobDownload{
+		Name:   filepath.Join(t.TempDir(), "blob"),
+		Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+	}
+	for i := range 3 {
+		if err := d.newPart(int64(i)*100, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(d.Name+"-partial", make([]byte, 300), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestPrepareResumesCompleteParts(t *testing.T) {
+	d := newInterruptedDownload(t)
+
+	var heads atomic.Int32
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		heads.Add(1)
+	}))
+	t.Cleanup(registry.Close)
+	requestURL, _ := url.Parse(registry.URL)
+
+	resumed := &blobDownload{Name: d.Name, Digest: d.Digest}
+	if err := resumed.Prepare(t.Context(), requestURL, &registryOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Total != 300 || len(resumed.Parts) != 3 || heads.Load() != 0 {
+		t.Fatalf("Total = %d, parts = %d, requests = %d; want 300, 3, 0", resumed.Total, len(resumed.Parts), heads.Load())
+	}
+}
+
+func TestPrepareRestartsWhenPartsAreMissing(t *testing.T) {
+	for _, missing := range [][]int{{0}, {2}, {0, 1}} {
+		t.Run(fmt.Sprint(missing), func(t *testing.T) {
+			d := newInterruptedDownload(t)
+			for _, n := range missing {
+				if err := os.Remove(d.Parts[n].Name()); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Length", "300")
+			}))
+			t.Cleanup(registry.Close)
+			requestURL, _ := url.Parse(registry.URL)
+
+			resumed := &blobDownload{Name: d.Name, Digest: d.Digest}
+			if err := resumed.Prepare(t.Context(), requestURL, &registryOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if resumed.Total != 300 || resumed.Completed.Load() != 0 {
+				t.Fatalf("Total = %d, Completed = %d; want 300, 0", resumed.Total, resumed.Completed.Load())
+			}
+			var offset int64
+			for i, p := range resumed.Parts {
+				if p.N != i || p.Offset != offset {
+					t.Fatalf("part %d: N = %d, Offset = %d; want %d, %d", i, p.N, p.Offset, i, offset)
+				}
+				offset += p.Size
+			}
+			if offset != 300 {
+				t.Fatalf("parts cover %d bytes, want 300", offset)
+			}
+			if _, err := os.Stat(d.Name + "-partial"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("stale data file kept: %v", err)
+			}
+		})
 	}
 }
 
