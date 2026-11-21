@@ -461,6 +461,24 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 	return &resp, nil
 }
 
+// Tokenize converts text to the model's token IDs.
+func (c *Client) Tokenize(ctx context.Context, req *TokenizeRequest) (*TokenizeResponse, error) {
+	var resp TokenizeResponse
+	if err := c.do(ctx, http.MethodPost, "/api/tokenize", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Detokenize converts the model's token IDs to text.
+func (c *Client) Detokenize(ctx context.Context, req *DetokenizeRequest) (*DetokenizeResponse, error) {
+	var resp DetokenizeResponse
+	if err := c.do(ctx, http.MethodPost, "/api/detokenize", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // Embeddings generates an embedding from a model.
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse

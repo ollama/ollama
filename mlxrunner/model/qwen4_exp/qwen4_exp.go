@@ -56,20 +56,9 @@ func NewModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 
-	tokenizerData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.Tokenizer()
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer: %w", err)
-	}
-	tokenizerConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
-	if data, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokenizerConfig.GenerationConfigJSON = data
-	}
-	if data, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokenizerConfig.TokenizerConfigJSON = data
-	}
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokenizerData, tokenizerConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 	group, bits, mode := model.QuantizationParams(root.QuantType())
 	if root.GroupSize() > 0 {

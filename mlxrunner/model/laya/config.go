@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 type encoderConfig struct {
@@ -41,7 +40,7 @@ type config struct {
 	TemperatureByOptions map[string]float32 `json:"temperature_by_options"`
 }
 
-func init() { model.Register("LayaForDecision", newModel) }
+func init() { model.Register("LayaForDecision", newModel, model.WithTokenizerDir("tokenizer")) }
 
 func newModel(root *model.Root) (model.Model, error) {
 	// Laya needs extra precision.
@@ -83,11 +82,8 @@ func newModel(root *model.Root) (model.Model, error) {
 	if v := e.RopeParameters["sliding_attention"].Theta; v != 0 {
 		e.LocalTheta = v
 	}
-	data, err := root.Manifest.ReadConfig("tokenizer/tokenizer.json")
-	if err != nil {
-		return nil, err
-	}
-	m.tok, err = tokenizer.LoadFromBytes(data)
+	var err error
+	m.tok, err = root.Tokenizer()
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +92,7 @@ func newModel(root *model.Root) (model.Model, error) {
 		SEP  string `json:"sep_token"`
 		Mask string `json:"mask_token"`
 	}
-	data, err = root.Manifest.ReadConfig("tokenizer/tokenizer_config.json")
+	data, err := root.Manifest.ReadConfig("tokenizer/tokenizer_config.json")
 	if err != nil {
 		return nil, err
 	}

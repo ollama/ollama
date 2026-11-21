@@ -12,9 +12,14 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 )
 
+// DecisionGenerationConfig gives decision checkpoints, which never generate
+// and ship no generation_config.json, their special token IDs.
+var DecisionGenerationConfig = []byte(fmt.Sprintf(`{"bos_token_id":%d,"eos_token_id":%d,"pad_token_id":%d}`, bosTokenID, imEndTokenID, padTokenID))
+
 // NewDecisionBackbone loads the LFM3-VL or LFM3-Omni backbone of a decision
 // checkpoint: the decoder with its image encoder and, for Omni, its audio
-// encoder, without speech output or chat-time token suppression.
+// encoder, without speech output or chat-time token suppression. Callers
+// register their architecture with WithGenerationConfig(DecisionGenerationConfig).
 func NewDecisionBackbone(root *model.Root) (*VLModel, error) {
 	data, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
@@ -47,8 +52,7 @@ func NewDecisionBackbone(root *model.Root) (*VLModel, error) {
 	default:
 		return nil, fmt.Errorf("unsupported decision backbone %q", cfg.ModelType)
 	}
-	// Decision checkpoints never generate and ship no generation_config.json.
-	m, err := newModelFromConfig(root, textConfig, []byte(fmt.Sprintf(`{"bos_token_id":%d,"eos_token_id":%d,"pad_token_id":%d}`, bosTokenID, imEndTokenID, padTokenID)))
+	m, err := newModelFromConfig(root, textConfig)
 	if err != nil {
 		return nil, err
 	}
