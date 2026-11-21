@@ -381,7 +381,17 @@ func IsProcRunning(procName string) []uint32 {
 		slog.Debug("failed to check for running installers", "error", err)
 		return nil
 	}
-	pids = pids[:ret]
+	// EnumProcesses reports the number of bytes written, not the number of
+	// process IDs. A full buffer means the list may have been truncated, so
+	// grow it and query again instead of slicing past the end of the buffer.
+	for ret == uint32(len(pids))*uint32(unsafe.Sizeof(pids[0])) {
+		pids = make([]uint32, len(pids)*2)
+		if err := windows.EnumProcesses(pids, &ret); err != nil || ret == 0 {
+			slog.Debug("failed to check for running installers", "error", err)
+			return nil
+		}
+	}
+	pids = pids[:ret/uint32(unsafe.Sizeof(pids[0]))]
 	matches := []uint32{}
 	for _, pid := range pids {
 		if pid == 0 {
@@ -391,23 +401,25 @@ func IsProcRunning(procName string) []uint32 {
 		if err != nil {
 			continue
 		}
-		defer windows.CloseHandle(hProcess)
 		var module windows.Handle
 		var cbNeeded uint32
 		cb := uint32(unsafe.Sizeof(module))
 		if err := windows.EnumProcessModules(hProcess, &module, cb, &cbNeeded); err != nil {
+			windows.CloseHandle(hProcess)
 			continue
 		}
 		var sz uint32 = 1024 * 8
 		moduleName := make([]uint16, sz)
 		cb = uint32(len(moduleName)) * uint32(unsafe.Sizeof(uint16(0)))
 		if err := windows.GetModuleBaseName(hProcess, module, &moduleName[0], cb); err != nil && err != syscall.ERROR_INSUFFICIENT_BUFFER {
+			windows.CloseHandle(hProcess)
 			continue
 		}
 		exeFile := path.Base(strings.ToLower(syscall.UTF16ToString(moduleName)))
 		if strings.EqualFold(exeFile, procName) {
 			matches = append(matches, pid)
 		}
+		windows.CloseHandle(hProcess)
 	}
 	return matches
 }
