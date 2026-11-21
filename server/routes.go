@@ -2386,6 +2386,9 @@ func llamaServerConfigForModel(m *Model) llm.LlamaServerConfig {
 }
 
 func usesOllamaRenderedChat(m *Model) bool {
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		return true // Force Go renderer so we can inject tags into the prompt string
+	}
 	return m != nil && (m.Config.Renderer != "" || m.Config.Parser != "" || shouldUseHarmony(m) || shouldUseGoTemplate(m))
 }
 
@@ -2722,6 +2725,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		prompt += "\n<channel|>\n</think>\n"
 	}
 
 	// If debug mode is enabled, return the rendered template instead of calling the model
