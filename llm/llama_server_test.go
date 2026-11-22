@@ -4106,6 +4106,24 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 }
 
+// A runner that can't confirm its process is gone has to say so, otherwise the
+// scheduler unloads it, frees its VRAM on paper, and starts a second runner
+// next to the one that never went away.
+func TestLlamaServerCloseReportsSurvivingProcess(t *testing.T) {
+	cmd := fakeRunningCmd()
+	done := make(chan struct{})
+
+	s := &llamaServerRunner{cmd: cmd, done: done}
+	start := time.Now()
+	err := s.Close()
+	if err == nil {
+		t.Fatal("Close must not claim a still-running process is gone")
+	}
+	if elapsed := time.Since(start); elapsed < llamaServerExitTimeout-500*time.Millisecond {
+		t.Fatalf("returned after %s, expected to wait for the exit timeout", elapsed)
+	}
+}
+
 func TestNoShiftNumPredict(t *testing.T) {
 	tests := []struct {
 		name         string
