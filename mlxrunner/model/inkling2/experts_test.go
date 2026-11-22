@@ -1,6 +1,7 @@
 package inkling2
 
 import (
+	"math"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -22,7 +23,7 @@ func TestNVFP4ExpertAppliesActivationAndWeightScales(t *testing.T) {
 			}
 			input := mlx.FromValues(slices.Repeat([]float32{2}, width), 1, 1, 1, width).AsType(mlx.DTypeBFloat16)
 			selected := mlx.FromValues([]int32{1, 0}, 1, 2)
-			got := bank.project(input, selected, nil, false).AsType(mlx.DTypeFloat32).Floats()
+			got := bank.project(input, selected).AsType(mlx.DTypeFloat32).Floats()
 			want := append(slices.Repeat([]float32{96}, outputs), slices.Repeat([]float32{64}, outputs)...)
 			if !slices.Equal(got, want) {
 				t.Errorf("expert outputs = %v, want %v", got, want)
@@ -114,8 +115,35 @@ func TestGroupedNVFP4ExpertsPreserveRouting(t *testing.T) {
 			gains := mlx.FromValues(weights, rows, topK)
 			want := e.combine(x, ids, gains, false).AsType(mlx.DTypeFloat32).Floats()
 			got := e.combine(x, ids, gains, true).AsType(mlx.DTypeFloat32).Floats()
+			// The sorted products round to BF16 before the outer scale, which can
+			// move a value across an NVFP4 boundary. Misrouted rows differ wholesale.
+			var diff, scale float64
+			for i := range want {
+				diff += math.Abs(float64(got[i] - want[i]))
+				scale += math.Abs(float64(want[i]))
+			}
+			if diff > scale/100 {
+				t.Fatalf("grouping changed the routed expert result: mean difference %g of mean magnitude %g", diff/float64(len(want)), scale/float64(len(want)))
+			}
+		})
+	})
+}
+
+func TestMXFP8QuantizeMatchesGraph(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() {
+			t.Skip("requires Metal")
+		}
+		mlx.Scoped(func() {
+			values := make([]float32, 4*2304)
+			for i := range values {
+				values[i] = float32((i*7919)%2003-1001) * float32(math.Pow(2, float64(i%23-11))) / 97
+			}
+			x := mlx.FromValues(values, 4, 2304).AsType(mlx.DTypeBFloat16)
+			want := mxfp8ExpertInput(x).Floats()
+			got := mlx.MXFP8Quantize(x, mlx.DTypeFloat32).Floats()
 			if !slices.Equal(got, want) {
-				t.Fatal("grouping changed the routed expert result")
+				t.Fatal("MXFP8 kernel differs from the graph")
 			}
 		})
 	})

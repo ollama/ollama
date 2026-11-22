@@ -849,7 +849,7 @@ func TestBatchBlockDepthChoosesForCurrentRequests(t *testing.T) {
 	const width = 7
 	draft := &dflashDrafter{blockSize: width + 1}
 	row := func(enabled bool, accepted int) *batchSlot {
-		spec := &speculation{drafter: draft, depth: newDepthController()}
+		spec := &speculation{drafter: draft, depth: newBlockDepthController()}
 		spec.depth.drafterLimit = width
 		session := &speculationSession{spec: spec, depth: spec.depth, enabled: enabled}
 		if enabled {
@@ -915,6 +915,9 @@ func TestBatchSchedulerBlockAcceptanceFollowsEachRow(t *testing.T) {
 		selector := &selectedBlockDraft{&fakeBlockDraft{predict: predict, blockSize: 8, maskToken: 7}}
 		draft := &adaptiveBlockSelector{&observeProposalRows{selectedBlockDraft: selector}}
 		r.spec = newSpeculation(r, pipelineSlot, draft, r.cache.caches, nil)
+		if !r.spec.depth.block || !r.spec.depth.acc.pooled {
+			t.Fatal("an adaptive block selector's speculation lacks the pooled block depth controller")
+		}
 		s := &batchScheduler{r: r, slots: make([]*batchSlot, 3)}
 		defer func() {
 			for _, slot := range s.slots {

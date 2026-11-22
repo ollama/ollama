@@ -1,13 +1,53 @@
 package inkling2
 
 import (
+	"fmt"
 	"math"
+	"math/rand/v2"
 	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
+
+// residualTestStream returns two BF16 residual blocks and an FP32 partial
+// block of random [rows, tokens, width] values.
+func residualTestStream(rng *rand.Rand, rows, tokens, width int) residualStream {
+	return residualStream{
+		blocks:  []*mlx.Array{draftTestValues(rng, 1, rows, tokens, width), draftTestValues(rng, 1, rows, tokens, width)},
+		partial: draftTestValues(rng, 1, rows, tokens, width).AsType(mlx.DTypeFloat32),
+	}
+}
+
+// mixNorm normalizes a vector query's mixture in the residual mixer's launch
+// where it runs, reproducing modelRMS of the separate mixture bit for bit.
+func TestMixNormMatchesSeparateNorm(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() {
+			t.Skip("requires Metal")
+		}
+		const width = 2304
+		rng := rand.New(rand.NewPCG(23, 31))
+		cfg := textConfig{NormalizeResidualValues: true, NormEps: 1e-5}
+		for _, sh := range [][2]int{{1, 1}, {2, 8}, {1, 37}} {
+			mlx.Scoped(func() {
+				name := fmt.Sprintf("B=%d T=%d", sh[0], sh[1])
+				state := residualTestStream(rng, sh[0], sh[1], width)
+				query := draftTestValues(rng, 1, width)
+				weight := mlx.AddScalar(draftTestValues(rng, 0.1, width).AsType(mlx.DTypeFloat32), 1)
+				got := state.mixNorm(query, weight, cfg)
+				requireIdentical(t, name, got, modelRMS(state.mix(query, true), weight, cfg.NormEps))
+				sources := append(slices.Clone(state.blocks), state.partial)
+				if fused := mlx.BlockResidualMixNorm(sources, query, weight, residualEpsilon, cfg.NormEps); fused != nil {
+					requireIdentical(t, name+" fused mixer", got, fused)
+				} else {
+					t.Logf("%s: the normalizing residual mixer declines on this device", name)
+				}
+			})
+		}
+	})
+}
 
 func TestResidualMixPreservesIndependentQueries(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {

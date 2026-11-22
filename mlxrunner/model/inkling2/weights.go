@@ -15,22 +15,19 @@ func (m *targetModel) LoadWeights(tensors map[string]*mlx.Array) error {
 	c := m.config
 	embedding := reader.tensor(textPrefix+"embed.weight", c.VocabSize, c.HiddenSize)
 	output := reader.tensor(textPrefix+"unembed.weight", c.VocabSize, c.HiddenSize)
-	m.EmbedNorm = reader.tensor(textPrefix+"embed_norm.weight", c.HiddenSize)
-	m.OutputNorm = reader.tensor(textPrefix+"norm.weight", c.HiddenSize)
+	m.EmbedNorm = reader.float32(textPrefix+"embed_norm.weight", c.HiddenSize)
+	m.OutputNorm = reader.float32(textPrefix+"norm.weight", c.HiddenSize)
 	m.OutputQuery = reader.tensor(textPrefix+"attn_res.output_query", c.HiddenSize)
 	if reader.err != nil {
 		return reader.err
 	}
 	m.Embed = nn.NewEmbedding(embedding)
-	// Retain complete BF16 tiles beside the FP32 fallback for short projections.
-	const compactVocab = 200058
-	const paddedVocab = (compactVocab + 7) / 8 * 8
-	if m.fp32Output && c.UnpaddedVocab == compactVocab && c.HiddenSize == 2304 &&
-		output.DType() == mlx.DTypeBFloat16 && output.Dim(0) >= paddedVocab && mlx.SupportsBF16WeightMatmul() {
-		m.CompactOutput = output.Slice(mlx.Slice(0, paddedVocab), mlx.Slice())
-	}
 	output = output.Slice(mlx.Slice(0, c.UnpaddedVocab), mlx.Slice())
 	if m.fp32Output {
+		// Short products read the BF16 head and accumulate in FP32.
+		if mlx.MetalIsAvailable() {
+			m.ShortOutput = nn.NewLinear(output, nil)
+		}
 		output = output.AsType(mlx.DTypeFloat32)
 	}
 	m.Output = nn.NewLinear(output, nil)
@@ -75,6 +72,15 @@ func (r *weightReader) tensor(name string, shape ...int) *mlx.Array {
 	return tensor
 }
 
+// float32 returns a tensor that is used in FP32: norms, the router and its bias.
+func (r *weightReader) float32(name string, shape ...int) *mlx.Array {
+	weight := r.tensor(name, shape...)
+	if r.err != nil {
+		return weight
+	}
+	return weight.AsType(mlx.DTypeFloat32)
+}
+
 func (r *weightReader) linear(name string, out, in int) *nn.Linear {
 	return nn.NewLinear(r.tensor(name, out, in), nil)
 }
@@ -84,12 +90,12 @@ func (r *weightReader) layer(c textConfig, index int, local bool, queries, kvQue
 	attention := r.attention(c, prefix+"attn.", local)
 	layer := decoderLayer{
 		Attention:         attention,
-		AttentionOutput:   r.shortConv(prefix+"attn_sconv", c.ConvTaps, c.HiddenSize, 0, 0),
-		FeedForwardNorm:   r.tensor(prefix+"mlp_norm.weight", c.HiddenSize),
+		AttentionOutput:   r.shortConv(prefix+"attn_sconv", c.ConvTaps, c.HiddenSize, 0),
+		FeedForwardNorm:   r.float32(prefix+"mlp_norm.weight", c.HiddenSize),
 		FeedForwardQuery:  r.tensor(fmt.Sprintf("%sattn_res.mlp_queries.%d", textPrefix, index), c.HiddenSize),
-		FeedForwardOutput: r.shortConv(prefix+"mlp_sconv", c.ConvTaps, c.HiddenSize, 0, 0),
+		FeedForwardOutput: r.shortConv(prefix+"mlp_sconv", c.ConvTaps, c.HiddenSize, 0),
 		FeedForward: routedExperts{
-			Router:     r.tensor(prefix+"mlp.gate.weight", c.Experts, c.HiddenSize),
+			Router:     r.float32(prefix+"mlp.gate.weight", c.Experts, c.HiddenSize),
 			GateUp:     r.expertBank(prefix+"mlp.experts.w13_weight", c.Experts, 2*c.ExpertWidth, c.HiddenSize),
 			Down:       r.expertBank(prefix+"mlp.experts.w2_weight", c.Experts, c.HiddenSize, c.ExpertWidth),
 			topK:       c.TopK,
@@ -99,16 +105,19 @@ func (r *weightReader) layer(c textConfig, index int, local bool, queries, kvQue
 		},
 	}
 	if c.GateBias {
-		layer.FeedForward.Bias = r.tensor(prefix+"mlp.gate.bias", c.Experts)
+		layer.FeedForward.Bias = r.float32(prefix+"mlp.gate.bias", c.Experts)
 	}
 	if local {
-		norm := r.tensor(prefix+"attn_norm.weight", c.HiddenSize)
+		norm := r.float32(prefix+"attn_norm.weight", c.HiddenSize)
 		layer.AttentionNorm = []*mlx.Array{norm, norm, norm}
 	} else {
 		layer.AttentionNorm = make([]*mlx.Array, 3)
 		for i, projection := range []string{"q", "k", "v"} {
-			layer.AttentionNorm[i] = r.tensor(prefix+projection+"_input_norm.weight", c.HiddenSize)
+			layer.AttentionNorm[i] = r.float32(prefix+projection+"_input_norm.weight", c.HiddenSize)
 		}
+	}
+	if r.err == nil {
+		layer.AttentionNorms = mlx.Stack(layer.AttentionNorm, 0)
 	}
 	if index > 0 {
 		shape := []int{3, c.HiddenSize}
@@ -124,22 +133,22 @@ func (r *weightReader) layer(c textConfig, index int, local bool, queries, kvQue
 		kv := kvQueries.Slice(mlx.Slice(row, row+2), mlx.Slice())
 		ffn := queries.Slice(mlx.Slice(row+1, row+2), mlx.Slice())
 		layer.MessageQueries = mlx.Concatenate([]*mlx.Array{q, kv, ffn}, 0)
-		for i, name := range []string{"attn", "k", "v", "mlp"} {
+		var downs, gates []*mlx.Array
+		for _, name := range []string{"attn", "k", "v", "mlp"} {
 			stem := prefix + "controllers." + name + "."
-			gate := messageGate{
-				Down:   r.linear(stem+"down_weight", c.Loop.GateRank, 2*c.HiddenSize),
-				Gain:   r.linear(stem+"gain_weight", c.HiddenSize, c.Loop.GateRank),
-				Forget: r.linear(stem+"forget_weight", c.HiddenSize, c.Loop.GateRank),
-			}
+			gain := r.float32(stem+"gain_weight", c.HiddenSize, c.Loop.GateRank)
+			forget := r.float32(stem+"forget_weight", c.HiddenSize, c.Loop.GateRank)
+			down := r.tensor(stem+"down_weight", c.Loop.GateRank, 2*c.HiddenSize)
 			if r.err == nil {
-				gate.Gain.Weight = gate.Gain.Weight.AsType(mlx.DTypeFloat32)
-				gate.Forget.Weight = gate.Forget.Weight.AsType(mlx.DTypeFloat32)
-				if mlx.SupportsPackedController() && c.Loop.GateRank == 64 && c.HiddenSize == 2304 {
-					gate.GainForget = nn.NewLinear(mlx.Concatenate([]*mlx.Array{gate.Gain.Weight, gate.Forget.Weight}, 0), nil)
-					gate.Gain, gate.Forget = nil, nil
-				}
+				downs = append(downs, down)
+				gates = append(gates, mlx.Concatenate([]*mlx.Array{gain, forget}, 0).Transpose(1, 0))
 			}
-			layer.MessageProjections[i] = gate
+		}
+		if r.err == nil {
+			layer.Controllers = newLoopControllers(mlx.Stack(downs, 0), mlx.Stack(gates, 0))
+			for i := range layer.MessageProjections {
+				layer.MessageProjections[i] = layer.Controllers.gate(i)
+			}
 		}
 	}
 	return layer
@@ -153,39 +162,64 @@ func (r *weightReader) attention(c textConfig, prefix string, local bool) selfAt
 		relativeRange, window, dynamicHeads = c.Window, c.Window, 0
 	}
 	width, kvWidth := dim*heads, dim*kvHeads
-	return selfAttention{
-		Query:              r.linear(prefix+"wq_du.weight", width, c.HiddenSize),
-		Key:                r.linear(prefix+"wk_dv.weight", kvWidth, c.HiddenSize),
-		Value:              r.linear(prefix+"wv_dv.weight", kvWidth, c.HiddenSize),
+	query := r.tensor(prefix+"wq_du.weight", width, c.HiddenSize)
+	relative := r.tensor(prefix+"wr_du.weight", heads*c.RelativeDim, c.HiddenSize)
+	gate := r.tensor(prefix+"gate_attn.weight", width, c.HiddenSize)
+	sink := r.tensor(prefix+"attn_sink_proj.weight", heads, c.HiddenSize)
+	key := r.tensor(prefix+"wk_dv.weight", kvWidth, c.HiddenSize)
+	value := r.tensor(prefix+"wv_dv.weight", kvWidth, c.HiddenSize)
+	var keyTaps, valueTaps *mlx.Array
+	if dynamicHeads > 0 {
+		keyTaps = r.tensor(prefix+"k_sconv.weight_proj", dynamicHeads*c.ConvTaps, c.HiddenSize)
+		valueTaps = r.tensor(prefix+"v_sconv.weight_proj", dynamicHeads*c.ConvTaps, c.HiddenSize)
+	}
+	a := selfAttention{
 		Output:             r.linear(prefix+"wo_ud.weight", c.HiddenSize, width),
-		Relative:           r.linear(prefix+"wr_du.weight", heads*c.RelativeDim, c.HiddenSize),
-		Gate:               r.linear(prefix+"gate_attn.weight", width, c.HiddenSize),
-		Sink:               r.linear(prefix+"attn_sink_proj.weight", heads, c.HiddenSize),
 		PositionProjection: r.tensor(prefix+"rel_logits_proj.proj", c.RelativeDim, relativeRange),
 		// The manifest loader maps the publisher's .scale suffix to _scale.
 		QueryScale:    r.tensor(prefix+"q_l2_clip_scale", heads, dim),
 		RelativeScale: r.tensor(prefix+"rel_l2_clip_scale", heads, c.RelativeDim),
-		KeyConv:       r.shortConv(prefix+"k_sconv", c.ConvTaps, kvWidth, dynamicHeads, c.HiddenSize),
-		ValueConv:     r.shortConv(prefix+"v_sconv", c.ConvTaps, kvWidth, dynamicHeads, c.HiddenSize),
+		KeyConv:       r.shortConv(prefix+"k_sconv", c.ConvTaps, kvWidth, dynamicHeads),
+		ValueConv:     r.shortConv(prefix+"v_sconv", c.ConvTaps, kvWidth, dynamicHeads),
 		headDim:       dim, heads: heads, kvHeads: kvHeads, window: window,
 		rmsEpsilon: c.NormEps, qkClip: c.QKClip, relativeClip: c.RelativeClip,
 		logFloor: c.LogFloor, logAlpha: c.LogAlpha,
 	}
+	if r.err != nil {
+		return a
+	}
+	groups := [][]*mlx.Array{{query, relative, gate, sink}, {key, keyTaps}, {value, valueTaps}}
+	var stacked []*mlx.Array
+	var ends [3]int
+	for i, group := range groups {
+		for _, w := range group {
+			if w != nil {
+				stacked = append(stacked, w)
+				ends[i] += w.Dim(0)
+			}
+		}
+		if i > 0 {
+			ends[i] += ends[i-1]
+		}
+	}
+	projection := mlx.Concatenate(stacked, 0)
+	rows := func(start, end int) *nn.Linear {
+		return nn.NewLinear(projection.Slice(mlx.Slice(start, end), mlx.Slice()), nil)
+	}
+	a.Projection = nn.NewLinear(projection, nil)
+	a.QueryRows, a.KeyRows, a.ValueRows = rows(0, ends[0]), rows(ends[0], ends[1]), rows(ends[1], ends[2])
+	return a
 }
 
-func (r *weightReader) shortConv(prefix string, taps, channels, heads, inputWidth int) shortConv {
+func (r *weightReader) shortConv(prefix string, taps, channels, heads int) shortConv {
 	if heads > 0 {
-		return shortConv{
-			Weight:  r.tensor(prefix+".static_w", taps, channels),
-			Dynamic: r.linear(prefix+".weight_proj", heads*taps, inputWidth),
-			heads:   heads,
-		}
+		return shortConv{Weight: r.tensor(prefix+".static_w", taps, channels), heads: heads}
 	}
 	weight := r.tensor(prefix+".weight", channels, 1, taps)
 	if r.err != nil {
 		return shortConv{}
 	}
-	return shortConv{Weight: weight.Squeeze(1).Transpose(1, 0)}
+	return shortConv{Weight: mlx.Contiguous(weight.Squeeze(1).Transpose(1, 0), false)}
 }
 
 func (r *weightReader) expertBank(name string, experts, rows, cols int) expertBank {

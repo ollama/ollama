@@ -8,11 +8,13 @@ import (
 // Short target forwards cover the anchor and up to seven draft proposals.
 const shortTargetRows = 8
 
-// projectTarget keeps the same matrix shape for short prefill, ordinary
+// projectTarget gives each row the same result in short prefill, ordinary
 // decode, and draft verification. Different MLX kernels round BF16 results
-// differently, and the routed experts can amplify that difference. Flatten
-// requests before partitioning the rows so joining a batch cannot change the
-// kernel either. Larger prefill forwards keep the usual projection path.
+// differently, and the routed experts can amplify that difference. Short
+// products compute each row independently; without them, tiles are padded to
+// one matrix shape. Flatten requests before partitioning the rows so joining a
+// batch cannot change the kernel either. Larger prefill forwards keep the
+// usual projection path.
 func projectTarget(projection *nn.Linear, x *mlx.Array) *mlx.Array {
 	if x.NumDims() != 3 || x.Dim(1) > shortTargetRows {
 		return projection.Forward(x)
@@ -27,7 +29,16 @@ func projectTarget(projection *nn.Linear, x *mlx.Array) *mlx.Array {
 	for begin := 0; begin < total; begin += shortTargetRows {
 		end := min(total, begin+shortTargetRows)
 		n := end - begin
-		tile := x.Slice(mlx.Slice(begin, end), mlx.Slice())
+		tile := x
+		if n < total {
+			tile = x.Slice(mlx.Slice(begin, end), mlx.Slice())
+		}
+		if projection.Bias == nil {
+			if result := mlx.ShortMatmul(tile, projection.Weight); result != nil {
+				results = append(results, result)
+				continue
+			}
+		}
 		if n < shortTargetRows {
 			tile = mlx.PadConstant(tile, []int{0}, []int{0}, []int{shortTargetRows - n})
 		}

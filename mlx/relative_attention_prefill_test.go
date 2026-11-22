@@ -12,9 +12,6 @@ func TestRelativeAttentionPrefill(t *testing.T) {
 		if !MetalIsAvailable() {
 			t.Skip("requires Metal")
 		}
-		if !supportsRelativeAttentionPrefill(kernelDevice()) {
-			t.Skip("requires a Metal device with qualified tiled prefill")
-		}
 		check := func(queries, keys, heads, kvHeads, width, distances, window int) {
 			scale := float32(1 / math.Sqrt(float64(width)))
 			Scoped(func() {

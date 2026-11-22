@@ -133,7 +133,7 @@ func (b *batchDrafting) begin(slots []*batchSlot) *depthController {
 	same := slices.Equal(requests, b.requests)
 	if block && !same {
 		// The batch shape keeps its measured costs. A different group starts
-		// a fresh probe schedule and brings its own per-request acceptance.
+		// a fresh probe schedule; each request's acceptance stays with its slot.
 		c = c.forBlock()
 		b.depths[size] = c
 	}

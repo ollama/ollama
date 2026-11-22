@@ -6,7 +6,7 @@ import (
 )
 
 func TestAdaptiveBlockFollowsCurrentAcceptance(t *testing.T) {
-	slot := newDepthController()
+	slot := newBlockDepthController()
 	slot.drafterLimit = 7
 	for n := 0; n <= slot.drafterLimit; n++ {
 		slot.cost.observe(n, time.Duration(40+10*n)*time.Millisecond)
@@ -31,8 +31,53 @@ func TestAdaptiveBlockFollowsCurrentAcceptance(t *testing.T) {
 	}
 
 	next := slot.forBlock()
-	if next.cost != c.cost || next.acc == c.acc || next.frontier() != 0 || next.scheduled != 7 {
-		t.Fatalf("new request: depth %d, frontier %d, shared costs %v", next.scheduled, next.frontier(), next.cost == c.cost)
+	if next.cost != c.cost || next.acc != c.acc || next.scheduled != 7 {
+		t.Fatalf("new request: depth %d, shared costs %v, shared acceptance %v", next.scheduled, next.cost == c.cost, next.acc == c.acc)
+	}
+}
+
+// One rejection in a new request's first round does not cap its depth: the
+// carried, pooled acceptance absorbs it.
+func TestAdaptiveBlockFirstRoundDoesNotCapDepth(t *testing.T) {
+	slot := newBlockDepthController()
+	slot.drafterLimit = 7
+	for n := 0; n <= slot.drafterLimit; n++ {
+		slot.cost.observe(n, time.Duration(12+3*n)*time.Millisecond)
+	}
+	// Each position accepts 3 times in 4.
+	draw := deterministicDraw(func(int) float64 { return 0.75 })
+	run := func(c *depthController, steps, from int) {
+		for step := range steps {
+			n := c.scheduled
+			accepted := 0
+			for accepted < n && draw(accepted+1, from+step) {
+				accepted++
+			}
+			c.acc.observe(n, accepted)
+			c.next()
+		}
+	}
+	run(slot.forBlock(), 200, 0)
+	c := slot.forBlock()
+	c.acc.observe(c.scheduled, 0) // the new request's first round rejects its first draft
+	c.next()
+	if got := c.selected(c.limit(), c.expectedCommitted); got < 2 {
+		t.Fatalf("one rejection at the first position capped the depth at %d", got)
+	}
+}
+
+// A block draft's positions past the first share one rate, so rejections at
+// position 2 move the rate of position 6 as well.
+func TestBlockAcceptancePoolsDeepPositions(t *testing.T) {
+	a := newBlockAcceptanceModel()
+	for range 20 {
+		a.observe(7, 7)
+	}
+	for range 20 {
+		a.observe(5, 1)
+	}
+	if got := a.acceptance(6); got > 0.5 {
+		t.Fatalf("position 6 kept rate %.2f after position 2 rejected", got)
 	}
 }
 

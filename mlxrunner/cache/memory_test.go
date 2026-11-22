@@ -13,8 +13,11 @@ func TestEstimateMemory(t *testing.T) {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		full := NewKVCache()
 		window := NewRotatingKVCache(4)
+		ordered := NewOrderedWindowKVCache(4)
 		full.Update(b, k, k)
 		window.Update(b, k, k)
+		ordered.Update(b, k, k)
+		defer ordered.Free()
 		recurrent := NewRecurrentCache(3, 8, 2, 4, 8)
 		recurrent.Get(b, mlx.DTypeFloat16)
 		recurrent.Put(b, []*mlx.Array{recurrent.convState}, []*mlx.Array{recurrent.deltaState})
@@ -31,6 +34,7 @@ func TestEstimateMemory(t *testing.T) {
 			{"capacity_rounding", full, 257, 0, 2 * 512 * 128},
 			{"window", window, 1024, 2, 4 * 4 * 128},
 			{"short_window", window, 2, 0, 2 * 2 * 128},
+			{"ordered_window", ordered, 1024, 2, int64(4*4+2*ordered.step) * 128},
 			{"recurrent", recurrent, 1024, 2, 4 * (3*8*2 + 2*4*8*4)},
 			{"shared_layer", nil, 1024, 2, 0},
 		} {

@@ -33,15 +33,6 @@ func gateUpInputsFor(rows, topK int) gateUpInputs {
 	for i := range wmax {
 		wmax[i] = float32(i + 1)
 	}
-	if rows >= 2 {
-		// Two captured routes put the final weighted FP32 product exactly
-		// halfway between adjacent BF16 values on Metal.
-		inner[0], inner[1] = 1809456, -2859888
-		inner[topK*2304], inner[topK*2304+1] = 888816, 1665824
-		xmax[0], xmax[1] = 1.640625, 1.7734375
-		wmax[ids[0]], wmax[ids[topK]] = 0.14305396, 0.11680993
-		scores[0], scores[topK] = 0.53709847, 0.4751412
-	}
 	return gateUpInputs{
 		inner:       mlx.FromValues(inner, rows, topK, 1, 2304),
 		xmax:        mlx.FromValues(xmax, rows, 1, 1, 1),
@@ -62,12 +53,7 @@ func (in gateUpInputs) eager() *mlx.Array {
 	return mlx.Mul(mlx.Mul(mlx.Mul(gateFactor, gate.Sigmoid()), upFactor), in.scores.ExpandDims(-1).ExpandDims(-1)).AsType(mlx.DTypeBFloat16)
 }
 
-func (in gateUpInputs) compiled() *mlx.Array {
-	gate, up := splitGateUp(in.inner)
-	return compiledGateUpEpilogue(gate, up, in.xmax, in.wmax, in.denominator, in.ids, in.scores)[0]
-}
-
-func TestNVFP4GateUpEpilogue(t *testing.T) {
+func TestNVFP4SwiGLUQuantize(t *testing.T) {
 	for _, tc := range []struct{ rows, topK int }{{2, 8}, {16, 1}} {
 		t.Run(fmt.Sprintf("rows%d/top%d", tc.rows, tc.topK), func(t *testing.T) {
 			mlxtest.Run(t, func(t *mlxtest.T) {
@@ -75,16 +61,30 @@ func TestNVFP4GateUpEpilogue(t *testing.T) {
 					if !mlx.MetalIsAvailable() {
 						t.Skip("Metal epilogue required")
 					}
-					mlx.EnableCompile()
 					in := gateUpInputsFor(tc.rows, tc.topK)
-					want := in.eager().AsType(mlx.DTypeFloat32).Floats()
-					got := in.compiled().AsType(mlx.DTypeFloat32).Floats()
-					if !slices.Equal(got, want) {
-						t.Error("compiled gate/up result differs from the eager graph")
+					wantValues, wantMax := mlx.QuantizeNVFP4Activation4Over6(in.eager(), nvfp4ActivationDenominator)
+					inner := in.inner.Reshape(tc.rows*tc.topK, 2304)
+					values, maxima := mlx.NVFP4SwiGLUQuantize(inner, in.xmax, in.wmax, in.denominator, in.ids.Reshape(-1),
+						in.scores.Reshape(-1), tc.topK, 4, 25, nvfp4ActivationDenominator, mlx.DTypeFloat32)
+					if values == nil {
+						t.Fatal("kernel did not run")
 					}
-					for i, bits := range []uint32{0xbb9a0000, 0x3a6e0000} {
-						if actual := math.Float32bits(got[i*tc.topK*1152]); actual != bits {
-							t.Errorf("route %d rounded to %08x, want %08x", i, actual, bits)
+					got, want := values.Floats(), wantValues.Floats()
+					same := 0
+					for i := range got {
+						if got[i] == want[i] {
+							same++
+						}
+					}
+					// The fused kernel's transcendental functions can move a value
+					// across a BF16 rounding boundary, which can change its block.
+					if same < len(got)*999/1000 {
+						t.Errorf("%d of %d quantized values match the eager graph", same, len(got))
+					}
+					for i, m := range maxima.Floats() {
+						w := wantMax.Floats()[i]
+						if math.Abs(float64(m-w)) > math.Abs(float64(w))/128 {
+							t.Errorf("route %d maximum %g, want %g", i, m, w)
 						}
 					}
 				})
@@ -101,7 +101,7 @@ func TestGateUpFloatBank(t *testing.T) {
 			flat := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 2, 64), 1)
 			ids := mlx.FromValues([]uint32{1, 0}, 2, 1)
 			scores := mlx.FromValues([]float32{0.25, 0.75}, 2, 1)
-			got := e.gateUpInput(flat, ids, nil, scores, false)
+			got := e.gateUpInput(flat, ids, scores)
 			pair := mlx.GatherMM(flat.Reshape(2, 1, 1, 64), weight.Transpose(0, 2, 1), nil, ids, false)
 			gate, up := splitGateUp(pair)
 			want := weightedSwiGLU(gate, up, scores, 2, 7, mlx.DTypeFloat32)
@@ -110,43 +110,4 @@ func TestGateUpFloatBank(t *testing.T) {
 			}
 		})
 	})
-}
-
-func BenchmarkInklingGateUpEpilogue(b *testing.B) {
-	worker := mlxtest.Worker(b)
-	var metal bool
-	if err := worker.Do(b.Context(), func() error { metal = mlx.MetalIsAvailable(); return nil }); err != nil {
-		b.Fatal(err)
-	}
-	if !metal {
-		b.Skip("Metal epilogue required")
-	}
-	for _, tc := range []struct{ rows, topK int }{{1, 8}, {8, 8}, {512, 1}} {
-		for _, mode := range []string{"eager", "compiled"} {
-			b.Run(fmt.Sprintf("rows%d/top%d/%s", tc.rows, tc.topK, mode), func(b *testing.B) {
-				err := worker.Do(b.Context(), func() error {
-					mlx.Scoped(func() {
-						mlx.EnableCompile()
-						in := gateUpInputsFor(tc.rows, tc.topK)
-						mlx.Eval(in.inner, in.xmax, in.wmax, in.denominator, in.ids, in.scores)
-						op := in.eager
-						if mode == "compiled" {
-							op = in.compiled
-						}
-						eval := func() { mlx.Eval(op()) }
-						mlx.Scoped(eval)
-						b.ResetTimer()
-						for range b.N {
-							mlx.Scoped(eval)
-						}
-						b.StopTimer()
-					})
-					return nil
-				})
-				if err != nil {
-					b.Fatal(err)
-				}
-			})
-		}
-	}
 }
