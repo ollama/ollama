@@ -913,6 +913,48 @@ func TestPiPaths(t *testing.T) {
 	})
 }
 
+func TestPiAgentDirEnv(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pi := &Pi{}
+	for _, tt := range []struct {
+		name string
+		env  func(home string) string
+	}{
+		{"absolute path", func(home string) string { return filepath.Join(home, "custom-agent") }},
+		{"tilde path", func(string) string { return "~/custom-agent" }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			t.Setenv("PI_CODING_AGENT_DIR", tt.env(tmpDir))
+
+			if err := pi.Edit(launchModelsFromNames([]string{"llama3.2"})); err != nil {
+				t.Fatalf("Edit() error = %v", err)
+			}
+
+			agentDir := filepath.Join(tmpDir, "custom-agent")
+			want := []string{filepath.Join(agentDir, "models.json"), filepath.Join(agentDir, "settings.json")}
+			if got := pi.Paths(); !slices.Equal(got, want) {
+				t.Errorf("Paths() = %v, want %v", got, want)
+			}
+			if got := pi.Models(); !slices.Equal(got, []string{"llama3.2"}) {
+				t.Errorf("Models() = %v, want [llama3.2]", got)
+			}
+			if model, err := pi.currentModel(); err != nil || model != "llama3.2" {
+				t.Errorf("currentModel() = %q, %v, want llama3.2", model, err)
+			}
+			if _, err := os.Stat(filepath.Join(tmpDir, ".pi")); !os.IsNotExist(err) {
+				t.Errorf("default ~/.pi was written despite PI_CODING_AGENT_DIR (stat err = %v)", err)
+			}
+		})
+	}
+}
+
 func TestPiEdit(t *testing.T) {
 	// Mock Ollama server for createConfig calls during Edit
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

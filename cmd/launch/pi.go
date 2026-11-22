@@ -205,12 +205,31 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	return launchAfterConfiguration("pi", pi, runtimeModel, models, req)
 }
 
-func (p *Pi) currentModel() (string, error) {
+// piAgentDir resolves Pi's config directory the way Pi does: PI_CODING_AGENT_DIR
+// (with a leading ~ expanded), falling back to ~/.pi/agent.
+func piAgentDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(home, ".pi", "agent", "settings.json")
+	dir := os.Getenv("PI_CODING_AGENT_DIR")
+	switch {
+	case dir == "":
+		return filepath.Join(home, ".pi", "agent"), nil
+	case dir == "~":
+		return home, nil
+	case strings.HasPrefix(dir, "~/"), runtime.GOOS == "windows" && strings.HasPrefix(dir, `~\`):
+		return filepath.Join(home, dir[2:]), nil
+	}
+	return dir, nil
+}
+
+func (p *Pi) currentModel() (string, error) {
+	dir, err := piAgentDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "settings.json")
 	settings, err := fileutil.ReadJSON(path)
 	if os.IsNotExist(err) {
 		return "", nil
@@ -890,17 +909,17 @@ func npmLatestPackageVersion(pkg string) (string, error) {
 }
 
 func (p *Pi) Paths() []string {
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return nil
 	}
 
 	var paths []string
-	modelsPath := filepath.Join(home, ".pi", "agent", "models.json")
+	modelsPath := filepath.Join(dir, "models.json")
 	if _, err := os.Stat(modelsPath); err == nil {
 		paths = append(paths, modelsPath)
 	}
-	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	settingsPath := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(settingsPath); err == nil {
 		paths = append(paths, settingsPath)
 	}
@@ -922,13 +941,13 @@ func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, er
 	}
 
 	primary := models[0].Name
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return "", err
 	}
 
-	configPath := filepath.Join(home, ".pi", "agent", "models.json")
-	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	configPath := filepath.Join(dir, "models.json")
+	settingsPath := filepath.Join(dir, "settings.json")
 	configs := make([]map[string]any, 2)
 	for i, path := range []string{configPath, settingsPath} {
 		data, err := fileutil.ReadJSON(path)
@@ -1048,12 +1067,12 @@ func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, er
 }
 
 func (p *Pi) Models() []string {
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return nil
 	}
 
-	configPath := filepath.Join(home, ".pi", "agent", "models.json")
+	configPath := filepath.Join(dir, "models.json")
 	config, err := fileutil.ReadJSON(configPath)
 	if err != nil {
 		return nil
