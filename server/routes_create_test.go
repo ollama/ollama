@@ -626,6 +626,27 @@ func TestCreateModelRejectsMissingSplitGGUFShard(t *testing.T) {
 	if !strings.Contains(err.Error(), "has 1 shards, expected 2") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if !strings.Contains(err.Error(), "missing model-00002-of-00002.gguf") {
+		t.Fatalf("error %v does not name the missing shard", err)
+	}
+}
+
+func TestCreateModelRejectsMissingFirstSplitGGUFShard(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.1.attn_q.weight")
+
+	_, err := convertModelFromFiles(t.Context(), map[string]string{
+		"model-00002-of-00002.gguf": secondDigest,
+	}, func(api.ProgressResponse) {})
+	if err == nil {
+		t.Fatal("convertModelFromFiles() succeeded, want missing shard error")
+	}
+	if !errors.Is(err, errInvalidSplitGGUF) {
+		t.Fatalf("convertModelFromFiles() error = %v, want errInvalidSplitGGUF", err)
+	}
+	if !strings.Contains(err.Error(), "missing model-00001-of-00002.gguf") {
+		t.Fatalf("error %v does not name the missing shard", err)
+	}
 }
 
 func TestCreateModelRejectsTooManySplitGGUFShards(t *testing.T) {
