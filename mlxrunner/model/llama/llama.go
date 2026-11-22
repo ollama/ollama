@@ -75,6 +75,15 @@ type MLP struct {
 	DownProj nn.LinearLayer
 }
 
+func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
+	for _, prefix := range []string{"", "language_model."} {
+		if tensors[prefix+"model.embed_tokens.weight"] != nil {
+			return prefix
+		}
+	}
+	return ""
+}
+
 func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
@@ -134,7 +143,7 @@ func newModel(root *model.Root) (model.Model, error) {
 // LoadWeights receives all tensors loaded from the manifest and assigns them
 // to model fields.
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
-	m.weightPrefix, _ = model.WeightPrefix(tensors, "model.embed_tokens.weight", "", "language_model.")
+	m.weightPrefix = resolveWeightPrefix(tensors)
 	prefix := m.weightPrefix
 	linears := model.NewLinearFactory(tensors, m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
 

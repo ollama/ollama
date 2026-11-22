@@ -525,6 +525,15 @@ func numHeadsForLayer(cfg *Config, layer int32) int32 {
 	return cfg.NumAttentionHeads
 }
 
+func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
+	for _, prefix := range []string{"model.", "", "language_model.model.", "language_model.", "model.language_model.model.", "model.language_model."} {
+		if tensors[prefix+"embed_tokens.weight"] != nil {
+			return prefix
+		}
+	}
+	return "model."
+}
+
 func transposeExpertWeightViewForGatherMM(w *mlx.Array) *mlx.Array {
 	if w == nil || w.NumDims() != 3 {
 		return w
@@ -865,10 +874,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 }
 
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
-	prefix, ok := model.WeightPrefix(tensors, "embed_tokens.weight", "model.", "", "language_model.model.", "language_model.", "model.language_model.model.", "model.language_model.")
-	if !ok {
-		prefix = "model."
-	}
+	prefix := resolveWeightPrefix(tensors)
 	cfg := m.Config
 	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
 	routedScale := mlx.FromValue(cfg.MoeRoutedScalingFactor)

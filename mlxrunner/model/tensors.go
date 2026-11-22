@@ -24,16 +24,6 @@ func FreeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 	}
 }
 
-// WeightPrefix returns the first candidate prefix under which key is present.
-func WeightPrefix(tensors map[string]*mlx.Array, key string, candidates ...string) (string, bool) {
-	for _, prefix := range candidates {
-		if tensors[prefix+key] != nil {
-			return prefix, true
-		}
-	}
-	return "", false
-}
-
 // SupportsGatherQMM reports whether MLX has a GatherQMM kernel for the
 // quantization mode and bit width.
 func SupportsGatherQMM(mode string, bits int) bool {
