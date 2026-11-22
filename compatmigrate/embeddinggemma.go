@@ -6,7 +6,6 @@ import (
 
 type embeddingGemmaMigrator struct{}
 
-// Mirrors detect_ollama_embeddinggemma in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (embeddingGemmaMigrator) NeedsMigration(src *SourceModel) bool {
 	return src.GGUF.KeyValue("general.architecture").String() == "gemma3" &&
 		sourceTensorExists(src, "dense.0.weight")

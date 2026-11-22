@@ -108,6 +108,10 @@ func compatibilityMigrationModelNames() []string {
 	names := make([]string, 0, len(compatibilityModelMatrix))
 	for _, name := range compatibilityModelMatrix {
 		switch name {
+		case "gemma4:e2b", "gemma4:e4b", "gemma4:26b", "gemma4:31b", "qwen3.5:2b", "qwen3.5:35b":
+			// These library tags now select compatible GGUF/MLX artifacts.
+			// Migration coverage must use an explicitly selected legacy backup.
+			continue
 		case "glm-4.7-flash:q8_0", "glm-4.7-flash:bf16":
 			// These published variants already use llama.cpp-compatible
 			// deepseek2 metadata, so there is no lazy conversion to validate.

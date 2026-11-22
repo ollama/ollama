@@ -9,7 +9,6 @@ import (
 
 type llama3Migrator struct{}
 
-// Mirrors detect_ollama_llama3_metadata_gap in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (llama3Migrator) NeedsMigration(src *SourceModel) bool {
 	return llama3NeedsMetadataFix(src)
 }

@@ -1,0 +1,23 @@
+{%- macro json(value) -%}
+{{- value | tojson(separators=[', ', ': ']) | replace('<', '\\u003c') | replace('>', '\\u003e') -}}
+{%- endmacro -%}
+{%- macro text(value) -%}
+{{- value if value is string else value | tojson(separators=[',', ':']) -}}
+{%- endmacro -%}
+{%- set ollama_content -%}
+{"context": {{ json(text(state)) }}, "schema": [
+{%- for q in questions -%}
+{"name": {{ json(q.id) }}, "description": {{ json(text(q.instructions)) }}, "choices": [
+{%- for o in q.options -%}
+{"code": {{ json(o.label) }}, "value": {% if q.type == 'noul' %}{{ o.key }}{% else %}{{ json(o.key) }}{% endif %}, "description": {{ json(o.description if o.description is not none else ('No' if o.key == 'false' and q.type == 'noul' else 'Yes' if o.key == 'true' and q.type == 'noul' else o.key)) }}}{{ ', ' if not loop.last else '' }}
+{%- endfor -%}
+]}{{ ', ' if not loop.last else '' }}
+{%- endfor -%}
+]}{{ '\n\nRequested field: ' }}{{ json(id) }}
+{%- endset -%}
+{%- set messages = [{'role': 'user', 'content': ollama_content}] -%}
+{%- if ollama_system -%}
+{%- set messages = [{'role': 'system', 'content': ollama_system}] + messages -%}
+{%- endif -%}
+{%- set enable_thinking = false -%}
+{%- set add_generation_prompt = true -%}
