@@ -12,10 +12,13 @@ func TensorAny(tensors map[string]*mlx.Array, keys ...string) (*mlx.Array, strin
 	return nil, ""
 }
 
-// FreeTensorKeys removes keys from tensors, skipping empty keys.
+// FreeTensorKeys removes the keys that hold a tensor, skipping empty keys.
 func FreeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 	for _, k := range keys {
-		if k != "" {
+		if k == "" {
+			continue
+		}
+		if t := tensors[k]; t != nil {
 			delete(tensors, k)
 		}
 	}
