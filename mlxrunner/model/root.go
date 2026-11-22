@@ -2,10 +2,12 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlxrunner/tokenizer"
 	modeltypes "github.com/ollama/ollama/types/model"
 )
 
@@ -120,4 +122,35 @@ func (r *Root) AllTensorQuant() map[string]*TensorQuantInfo {
 		out[k] = &copy
 	}
 	return out
+}
+
+// Quantization returns the model-level quantization defaults that linear
+// layers fall back to, and a copy of the per-tensor metadata.
+func (r *Root) Quantization() (groupSize, bits int, mode string, tensorQuant map[string]*TensorQuantInfo) {
+	groupSize, bits, mode = QuantizationParams(r.QuantType())
+	if gs := r.GroupSize(); gs > 0 {
+		groupSize = gs
+	}
+	return groupSize, bits, mode, r.AllTensorQuant()
+}
+
+// LoadTokenizer loads tokenizer.json with configJSON (the model's config.json)
+// and, when present, generation_config.json and tokenizer_config.json.
+func (r *Root) LoadTokenizer(configJSON []byte) (*tokenizer.Tokenizer, error) {
+	data, err := r.Manifest.ReadConfig("tokenizer.json")
+	if err != nil {
+		return nil, fmt.Errorf("load tokenizer: %w", err)
+	}
+	config := &tokenizer.TokenizerConfig{ConfigJSON: configJSON}
+	if data, err := r.Manifest.ReadConfig("generation_config.json"); err == nil {
+		config.GenerationConfigJSON = data
+	}
+	if data, err := r.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
+		config.TokenizerConfigJSON = data
+	}
+	tok, err := tokenizer.LoadFromBytesWithConfig(data, config)
+	if err != nil {
+		return nil, fmt.Errorf("parse tokenizer: %w", err)
+	}
+	return tok, nil
 }

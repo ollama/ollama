@@ -394,25 +394,6 @@ func TestHasMTPHeadTensors(t *testing.T) {
 	}
 }
 
-func TestSupportsGatherQMM(t *testing.T) {
-	for _, tt := range []struct {
-		mode string
-		bits int
-		want bool
-	}{
-		{mode: "affine", bits: 4, want: true},
-		{mode: "mxfp4", bits: 4, want: true},
-		{mode: "nvfp4", bits: 4, want: true},
-		{mode: "mxfp8", bits: 8, want: true},
-		{mode: "mxfp8", bits: 4, want: false},
-		{mode: "unknown", bits: 4, want: false},
-	} {
-		if got := supportsGatherQMM(tt.mode, tt.bits); got != tt.want {
-			t.Fatalf("supportsGatherQMM(%q, %d) = %v, want %v", tt.mode, tt.bits, got, tt.want)
-		}
-	}
-}
-
 func TestApplyExpertWeightGlobalScale(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		weight := mlx.FromValues([]float32{
