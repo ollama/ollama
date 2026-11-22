@@ -37,6 +37,9 @@ func ReadFileMetadata(path string, maxArraySize int) (_ *Metadata, err error) {
 
 	m := &Metadata{values: make(map[string]Value)}
 	for _, kv := range f.KeyValues() {
+		if _, ok := m.values[kv.Key]; ok {
+			return nil, fmt.Errorf("%w GGUF contains duplicate key %q", ErrUnsupported, kv.Key)
+		}
 		m.values[kv.Key] = kv.Value
 		if _, ok := kv.Value.value.(skippedArray); ok {
 			m.omitted = append(m.omitted, kv.Key)
