@@ -46,19 +46,6 @@ func (p *expertProjection) Forward(x, indices *mlx.Array, sorted bool) *mlx.Arra
 	return mlx.GatherMM(x, p.Weight, nil, indices, sorted)
 }
 
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
 func (m *Model) loadExpertProjection(tensors map[string]*mlx.Array, base string) (*expertProjection, error) {
 	p := &expertProjection{}
 	var key string
@@ -77,7 +64,7 @@ func (m *Model) loadExpertProjection(tensors map[string]*mlx.Array, base string)
 	} else {
 		p.Biases = tensors[key+"_qbias"]
 		p.GroupSize, p.Bits, p.Mode = model.ResolveLinearQuantParams(m.quantGroup, m.quantBits, m.quantMode, m.tensorQuant, key, p.Weight, p.Scales)
-		if !supportsGatherQMM(p.Mode, p.Bits) {
+		if !model.SupportsGatherQMM(p.Mode, p.Bits) {
 			return nil, fmt.Errorf("packed expert tensor %q uses unsupported quantization mode=%q bits=%d", key, p.Mode, p.Bits)
 		}
 	}

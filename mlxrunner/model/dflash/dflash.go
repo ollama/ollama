@@ -350,14 +350,8 @@ func newModel(root *model.Root, targetModel model.Model, ctxLayerNorm bool) (*Mo
 		ctxLayerNorm: ctxLayerNorm,
 		tensorPrefix: tensorPrefix,
 		Layers:       make([]*Layer, cfg.NumHiddenLayers),
-		TensorQuant:  root.AllTensorQuant(),
 	}
-	if qt := root.QuantType(); qt != "" {
-		m.QuantGroupSize, m.QuantBits, m.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			m.QuantGroupSize = gs
-		}
-	}
+	m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant = root.Quantization()
 	return m, nil
 }
 

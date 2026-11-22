@@ -141,11 +141,7 @@ func NewModel(root *model.Root) (model.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(root.QuantType())
-	if groupSize := root.GroupSize(); groupSize > 0 {
-		cfg.QuantGroupSize = groupSize
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
 	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
 	if err != nil {

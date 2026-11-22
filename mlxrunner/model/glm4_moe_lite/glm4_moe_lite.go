@@ -381,20 +381,6 @@ func computeScale(cfg *Config) float32 {
 	return scale
 }
 
-// supportsGatherQMM returns true if the quantization mode has GatherQMM kernel support.
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
 // ExpertWeight holds a single expert's weight with optional quantization components.
 type ExpertWeight struct {
 	Weight          *mlx.Array
@@ -428,7 +414,7 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 		)
 
 		globalScale, _ := model.ReadGlobalScale(tensors, path+".weight", path)
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		if useQuantized && model.SupportsGatherQMM(mode, bits) {
 			return &ExpertWeight{
 				Weight: w, Scales: scales, Biases: qbiases,
 				GlobalScale: globalScale,
@@ -478,7 +464,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, base string, useQuanti
 		key, w, scales,
 	)
 	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if useQuantized && model.SupportsGatherQMM(mode, bits) {
 		return &StackedExpertWeights{
 			Weight: w, Scales: scales, Biases: qbiases,
 			GlobalScales: globalScale,
@@ -638,37 +624,12 @@ func newModel(root *model.Root) (model.Model, error) {
 	cfg.Scale = computeScale(&cfg)
 
 	// Set up quantization parameters from pre-scanned metadata
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
 	// Load tokenizer
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
-	}
-
-	tokConfig := &tokenizer.TokenizerConfig{
-		ConfigJSON: configData,
-	}
-
-	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = genConfigData
-	}
-
-	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = tokConfigData
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 
 	m := &Model{
@@ -686,14 +647,14 @@ func newModel(root *model.Root) (model.Model, error) {
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	cfg := m.Config
 	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
-	useQuantized := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantized := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantized && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantized = true
 				break
 			}
