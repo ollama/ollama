@@ -6,10 +6,19 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/term"
 )
+
+var disabled atomic.Bool
+
+// SetEnabled enables or disables progress rendering globally. Disabled progress
+// writes nothing, so callers can keep stderr for their own messages.
+func SetEnabled(enabled bool) {
+	disabled.Store(!enabled)
+}
 
 const (
 	defaultTermWidth  = 80
@@ -38,6 +47,12 @@ type Progress struct {
 }
 
 func NewProgress(w io.Writer) *Progress {
+	if disabled.Load() {
+		p := &Progress{w: bufio.NewWriter(io.Discard), done: make(chan struct{}), loopDone: make(chan struct{})}
+		close(p.loopDone)
+		return p
+	}
+
 	p := &Progress{w: bufio.NewWriter(w), done: make(chan struct{}), loopDone: make(chan struct{})}
 	go p.start()
 	return p

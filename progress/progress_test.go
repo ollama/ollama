@@ -7,6 +7,22 @@ import (
 	"time"
 )
 
+func TestDisabledProgressWritesNothing(t *testing.T) {
+	SetEnabled(false)
+	t.Cleanup(func() { SetEnabled(true) })
+
+	var buf bytes.Buffer
+	p := NewProgress(&buf)
+	p.Add("spin", NewSpinner("working"))
+	p.Add("bar", NewBar("dl", 100, 0))
+	time.Sleep(250 * time.Millisecond)
+	p.StopAndClear()
+
+	if buf.Len() != 0 {
+		t.Fatalf("disabled progress wrote %d bytes: %q", buf.Len(), buf.String())
+	}
+}
+
 // TestStopIsIdempotent pins the contract cmd relies on: a second Stop (e.g. a
 // deferred StopAndClear after an explicit one) reports false so callers don't
 // emit trailing output twice.
