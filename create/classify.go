@@ -50,8 +50,21 @@ func Classify(inv Inventory, requested string) (Classification, error) {
 		return Classification{}, fmt.Errorf("unsupported fp8 source: tensor %s is F8_E5M2; only F8_E4M3 block-FP8 sources are supported", name)
 	}
 
-	switch detectKind(inv) {
+	kind := detectKind(inv)
+	if inv.Config.Architecture() == inkling2Architecture {
+		kind, err = classifyInkling2Banks(inv, kind)
+		if err != nil {
+			return Classification{}, err
+		}
+		if kind == SourceFloat && requested != "" {
+			return Classification{}, fmt.Errorf("Inkling 2 requires importing the source weights without --quantize (requested %q)", requested)
+		}
+	}
+	switch kind {
 	case SourceFloat:
+		if requested != "" && inv.Config.Architecture() == "Inkling2ForConditionalGenerationMTP" {
+			return Classification{}, fmt.Errorf("Inkling 2 MTP requires importing the draft weights without --draft-quantize (requested %q)", requested)
+		}
 		return Classification{Kind: SourceFloat, Quantize: requested}, nil
 
 	case SourcePrequantized:
@@ -121,7 +134,7 @@ func normalizeRequested(requested string) (string, error) {
 // missing (e.g. a ModelOpt checkpoint without hf_quant_config.json) is still
 // recognized as already-quantized and not mistaken for a float model.
 func detectKind(inv Inventory) SourceKind {
-	var hasMLXScales, hasPacked, hasNVFP4Scale, hasFP8Weight bool
+	var hasMLXScales, hasPacked, hasPrequantScale, hasFP8Weight bool
 	for name, t := range inv.Tensors {
 		switch {
 		case strings.HasSuffix(name, ".scales"):
@@ -129,11 +142,12 @@ func detectKind(inv Inventory) SourceKind {
 		case strings.HasSuffix(name, ".weight_packed"):
 			hasPacked = true
 		case strings.HasSuffix(name, ".weight_scale"):
-			// An NVFP4 per-block scale sits on a packed (U8) weight. A
-			// block-FP8 source also has a scale companion, but its weight is
-			// F8_E4M3 — so the base weight's dtype disambiguates the two.
-			if bt, ok := inv.Tensors[strings.TrimSuffix(name, "_scale")]; ok && isPackedDtype(bt.Dtype) {
-				hasNVFP4Scale = true
+			// ModelOpt NVFP4 uses a packed weight with an FP8 scale; its
+			// MXFP8 uses an FP8 weight with a U8 scale. HF block-FP8 also
+			// has a scale companion but is decoded through a separate path.
+			if bt, ok := inv.Tensors[strings.TrimSuffix(name, "_scale")]; ok &&
+				(isPackedDtype(bt.Dtype) || isE4M3Dtype(bt.Dtype) && strings.EqualFold(t.Dtype, "U8")) {
+				hasPrequantScale = true
 			}
 		}
 		if strings.HasSuffix(name, ".weight") && isE4M3Dtype(t.Dtype) {
@@ -142,7 +156,7 @@ func detectKind(inv Inventory) SourceKind {
 	}
 
 	switch {
-	case hasMLXScales || hasPacked || hasNVFP4Scale:
+	case hasMLXScales || hasPacked || hasPrequantScale:
 		return SourcePrequantized
 	case hasFP8Weight:
 		return SourceBlockFP8

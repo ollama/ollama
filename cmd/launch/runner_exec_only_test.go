@@ -79,6 +79,11 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 
 			home := t.TempDir()
 			setTestHome(t, home)
+			if tt.name == "opencode" {
+				previous := openCodeLoadedContextLength
+				openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+				t.Cleanup(func() { openCodeLoadedContextLength = previous })
+			}
 
 			binDir := t.TempDir()
 			writeFakeBinary(t, binDir, tt.binary)

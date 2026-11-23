@@ -357,26 +357,33 @@ func museApplyLoadedContext(models []LaunchModel) []LaunchModel {
 
 // museLoadedContextLength reports the effective context length of a model as
 // the server loaded it, swappable so tests never touch a live server.
-var museLoadedContextLength = loadedContextLength
+var museLoadedContextLength = func(model string) int {
+	n, _ := loadedContextLength(model)
+	return n
+}
 
 // loadedContextLength loads model and reads the running instance's context
 // length from the process list — the size the scheduler actually allocated.
 // An empty generate request is ollama's load-only call: it returns once the
 // model is resident without generating tokens, and the launch pays a load the
-// first muse request would otherwise pay. Returns 0 when anything fails, and
-// the caller keeps the inventory value.
-func loadedContextLength(model string) int {
+// first inference request would otherwise pay. Load failures return an error;
+// a successful load with unavailable context metadata returns 0, nil.
+func loadedContextLength(model string) (int, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		return 0
+		return 0, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), museLoadTimeout)
 	defer cancel()
 	if err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(api.GenerateResponse) error { return nil }); err != nil {
-		return 0
+		return 0, err
 	}
-	return LoadedContextWindow(ctx, client, model)
+	// Context metadata is optional; a stalled lookup must not hold up launch
+	// for the remainder of a large model's load timeout.
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelLookup()
+	return LoadedContextWindow(lookupCtx, client, model), nil
 }
 
 // museRunModels puts the model being launched first, since muse takes its

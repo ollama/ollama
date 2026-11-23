@@ -6,6 +6,12 @@ import (
 	"github.com/ollama/ollama/mlx"
 )
 
+func TestSupportsRippleArchitecture(t *testing.T) {
+	if !SupportsArchitecture("RicursiveForCausalLM") {
+		t.Fatal("missing model architecture")
+	}
+}
+
 func TestCheckRuntimeRequiresLoadedLibrary(t *testing.T) {
 	_, loadErr := mlx.LoadedLibraryPath()
 	err := CheckRuntime()

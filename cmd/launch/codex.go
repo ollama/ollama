@@ -706,6 +706,27 @@ func writeCodexModelCatalog(catalogPath string, models []LaunchModel) error {
 	return os.WriteFile(catalogPath, data, 0o644)
 }
 
+func launchReasoningEffortLevels(thinking *model.Thinking) ([]string, string) {
+	contract, ok := codexAppThinkingContractFromRecommendation(thinking)
+	if !ok {
+		return nil, ""
+	}
+	var levels []string
+	for _, level := range contract.levels {
+		value := contract.values[level]
+		converted, err := openai.ThinkingFromReasoningEffort(level, thinking)
+		if err != nil || converted == nil {
+			continue
+		}
+		resolved := renderers.ResolveThinking(converted, thinking)
+		if resolved == nil || resolved.Value != value {
+			continue
+		}
+		levels = append(levels, level)
+	}
+	return levels, contract.defaultLevel
+}
+
 func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 	modelName := launchModel.Name
 	contextWindow := codexFallbackContextWindow
@@ -738,25 +759,15 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 
 	supportedReasoningLevels := make([]any, 0)
 	var defaultReasoningLevel any
-	if contract, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
-		for _, level := range contract.levels {
-			value := contract.values[level]
-			converted, err := openai.ThinkingFromReasoningEffort(level, launchModel.Thinking)
-			if err != nil || converted == nil {
-				continue
-			}
-			resolved := renderers.ResolveThinking(converted, launchModel.Thinking)
-			if resolved == nil || resolved.Value != value {
-				continue
-			}
-			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
-				"effort":      level,
-				"description": codexAppThinkingLevelDescription(level),
-			})
-		}
-		if contract.defaultLevel != "" {
-			defaultReasoningLevel = contract.defaultLevel
-		}
+	levels, defaultLevel := launchReasoningEffortLevels(launchModel.Thinking)
+	for _, level := range levels {
+		supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
+			"effort":      level,
+			"description": codexAppThinkingLevelDescription(level),
+		})
+	}
+	if defaultLevel != "" {
+		defaultReasoningLevel = defaultLevel
 	}
 
 	return map[string]any{

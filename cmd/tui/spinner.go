@@ -12,7 +12,7 @@ import (
 )
 
 // spinnerStyle dims the spinner so it reads as ancillary status text, matching
-// the sign-in/upgrade spinners in signin.go.
+// the sign-in spinner in signin.go.
 var spinnerStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
 

@@ -92,9 +92,158 @@ All timestamps are in UTC. Each `from` is inclusive and each `until` is exclusiv
 
 `partial` indicates whether the hour or day is still in progress, rather than whether all usage has been recorded.
 
+## Model breakdown
+
+Add `group_by=model` to see usage by model:
+
+```shell
+curl 'https://ollama.com/api/usage?range=7d&group_by=model' \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
+
+The response includes `groups` in both `totals` and every bucket.
+
+```json Response excerpt
+{
+  "totals": {
+    "groups": [
+      {
+        "model": "glm-5.3-flash",
+        "request_count": 12,
+        "usage_usd": 0.0132
+      }
+    ]
+  },
+  "buckets": [
+    {
+      "from": "2026-09-30T00:00:00Z",
+      "until": "2026-10-01T00:00:00Z",
+      "groups": [
+        {
+          "model": "glm-5.3-flash",
+          "request_count": 6,
+          "usage_usd": 0.0066
+        }
+      ]
+    }
+  ]
+}
+```
+
+<Accordion title="Example with multiple models and buckets">
+
+```json Response (6 empty buckets omitted)
+{
+  "range": "7d",
+  "scope": "self",
+  "granularity": "day",
+  "group_by": "model",
+  "from": "2026-09-24T00:00:00Z",
+  "until": "2026-10-01T02:30:00Z",
+  "totals": {
+    "request_count": 16,
+    "usage_usd": 0.0268,
+    "input_tokens": 116000,
+    "cached_input_tokens": 60000,
+    "output_tokens": 15000,
+    "groups": [
+      {
+        "model": "glm-5.3-flash",
+        "request_count": 12,
+        "usage_usd": 0.0132,
+        "input_tokens": 96000,
+        "cached_input_tokens": 60000,
+        "output_tokens": 12000
+      },
+      {
+        "model": "glm-5.3",
+        "request_count": 2,
+        "usage_usd": 0.01,
+        "input_tokens": 4000,
+        "cached_input_tokens": 0,
+        "output_tokens": 1000
+      },
+      {
+        "model": "gpt-oss:120b",
+        "request_count": 2,
+        "usage_usd": 0.0036,
+        "input_tokens": 16000,
+        "cached_input_tokens": 0,
+        "output_tokens": 2000
+      }
+    ]
+  },
+  "buckets": [
+    {
+      "from": "2026-09-30T00:00:00Z",
+      "until": "2026-10-01T00:00:00Z",
+      "request_count": 8,
+      "usage_usd": 0.0166,
+      "input_tokens": 52000,
+      "cached_input_tokens": 30000,
+      "output_tokens": 7000,
+      "groups": [
+        {
+          "model": "glm-5.3-flash",
+          "request_count": 6,
+          "usage_usd": 0.0066,
+          "input_tokens": 48000,
+          "cached_input_tokens": 30000,
+          "output_tokens": 6000
+        },
+        {
+          "model": "glm-5.3",
+          "request_count": 2,
+          "usage_usd": 0.01,
+          "input_tokens": 4000,
+          "cached_input_tokens": 0,
+          "output_tokens": 1000
+        }
+      ]
+    },
+    {
+      "from": "2026-10-01T00:00:00Z",
+      "until": "2026-10-01T02:30:00Z",
+      "partial": true,
+      "request_count": 8,
+      "usage_usd": 0.0102,
+      "input_tokens": 64000,
+      "cached_input_tokens": 30000,
+      "output_tokens": 8000,
+      "groups": [
+        {
+          "model": "glm-5.3-flash",
+          "request_count": 6,
+          "usage_usd": 0.0066,
+          "input_tokens": 48000,
+          "cached_input_tokens": 30000,
+          "output_tokens": 6000
+        },
+        {
+          "model": "gpt-oss:120b",
+          "request_count": 2,
+          "usage_usd": 0.0036,
+          "input_tokens": 16000,
+          "cached_input_tokens": 0,
+          "output_tokens": 2000
+        }
+      ]
+    }
+  ]
+}
+```
+
+</Accordion>
+
+Currently, up to 10 groups appear under `groups`, ranked by total `usage_usd` across the range.
+
+Every bucket uses the same selection and order. Groups with no requests in a bucket are omitted; an empty bucket has `groups: []`.
+
+Additional groups are combined under `remainder`, omitted when empty. Totals always include all usage.
+
 <Accordion title="Legacy plans">
 
-For legacy plans, only request counts are available. If a bucket or total includes legacy requests, cost and token counts are omitted.
+For usage that includes requests from legacy plans, only request counts are available. If the range includes legacy requests, groups are ranked by request count instead of cost.
 
 </Accordion>
 
@@ -115,6 +264,6 @@ curl 'https://ollama.com/api/usage?range=7d&scope=team' \
 
 ## Coming soon
 
-We plan to add custom time ranges, usage breakdowns by model and API key, and breakdowns by team member for team admins.
+We plan to add custom time ranges, usage breakdowns by API key, and breakdowns by team member for team admins.
 
 ## Reference

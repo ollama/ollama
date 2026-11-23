@@ -6,11 +6,19 @@ import (
 	"github.com/ollama/ollama/mlx"
 )
 
-// Cache is common state management shared by every cache kind. Writers
-// live on the specific caches
-type Cache interface {
-	// State returns the cache-owned state roots that should be kept/evaluated.
+// Layer is one cache slot used during a model forward. Attention and Recurrent
+// provide its read/write operations. It may be a request's Cache or a temporary
+// view of the corresponding caches from several requests. The view does not own
+// those caches and cannot manage their snapshots or lifetime.
+type Layer interface {
+	// State returns state roots that should be kept/evaluated.
 	State() []*mlx.Array
+}
+
+// Cache owns one cache slot's state and snapshots for a single request.
+// A model usually needs one slot per layer, returned together by NewCaches.
+type Cache interface {
+	Layer
 	Free()
 	Offset() int
 
@@ -50,6 +58,19 @@ type Cache interface {
 	// Takes ownership of the input. Cache types that cannot split
 	// (e.g. recurrent) return (nil, snapshot).
 	Split(snapshot Snapshot, at int) (parent, child Snapshot)
+}
+
+// Layers exposes a request's cache slots through the forward-only interface.
+// It converts the slice without copying any cache state or transferring ownership.
+func Layers(caches []Cache) []Layer {
+	if caches == nil {
+		return nil
+	}
+	layers := make([]Layer, len(caches))
+	for i, c := range caches {
+		layers[i] = c
+	}
+	return layers
 }
 
 // Snapshot is paged-out cache state that can be restored later.
@@ -145,4 +166,58 @@ func (p *pendingSnapshots) scheduledIn(start, end int) []int {
 		}
 	}
 	return boundaries
+}
+
+// PendingCopyBytes bounds the additional storage a lazy snapshot may need before
+// its live buffers can be reused. It does not evaluate or materialize the snapshot.
+func PendingCopyBytes(s Snapshot) int {
+	if s == nil {
+		return 0
+	}
+	if lazy, ok := s.(interface{ pendingBytes() int }); ok {
+		return lazy.pendingBytes()
+	}
+	return 0
+}
+
+// CopyBytes measures the buffers a write may need to copy. Attention caches can
+// keep capacity beyond their current offset, including after a rewind. State
+// only exposes the live prefix and would undercount that copy.
+func CopyBytes(c Cache) int {
+	if c == nil {
+		return 0
+	}
+	var state []*mlx.Array
+	switch c := c.(type) {
+	case *KVCache:
+		state = []*mlx.Array{c.keys, c.values}
+	case *RotatingKVCache:
+		state = []*mlx.Array{c.keys, c.values}
+	default:
+		state = c.State()
+	}
+	var size int
+	for _, a := range state {
+		if a != nil {
+			size += a.NumBytes()
+		}
+	}
+	return size
+}
+
+// CanMergeWithoutCopy reports whether Merge can compact these snapshots without
+// allocating native storage. Unknown cache implementations remain conservative.
+func CanMergeWithoutCopy(c Cache, parent, child Snapshot) bool {
+	switch c.(type) {
+	case *RecurrentCache, *RotatingKVCache:
+		return child != nil // Keep the last valid state if the child has no capture.
+	case *KVCache:
+		if parent == nil || child == nil {
+			return false // Do not merge across a missing part of sliceable history.
+		}
+		p, next := parent.(*kvSnapshot), child.(*kvSnapshot)
+		return p.keys == nil && next.keys == nil && p.cache == next.cache && p.toOffset == next.fromOffset
+	default:
+		return c == nil
+	}
 }

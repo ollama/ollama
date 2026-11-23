@@ -28,12 +28,12 @@ func TestDownloadChunkRedirects(t *testing.T) {
 		wantErr  string
 		wantHits int32
 	}{
-		{name: "public", location: "https://203.0.113.2/data", wantHits: 2},
+		{name: "public", location: "https://8.8.8.8/data", wantHits: 2},
 		{name: "private", location: "https://127.0.0.1/data", wantErr: "not allowed", wantHits: 1},
-		{name: "downgrade", location: "http://203.0.113.2/data", wantErr: "not allowed", wantHits: 1},
+		{name: "downgrade", location: "http://8.8.8.8/data", wantErr: "not allowed", wantHits: 1},
 		{name: "lookup", wantErr: "not allowed"},
 		{name: "insecure", insecure: true, wantHits: 2},
-		{name: "loop", location: "https://203.0.113.1/start", wantErr: "stopped after 10 redirects", wantHits: 10},
+		{name: "loop", location: "https://8.8.4.4/start", wantErr: "stopped after 10 redirects", wantHits: 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var hits atomic.Int32
@@ -53,18 +53,23 @@ func TestDownloadChunkRedirects(t *testing.T) {
 			}
 			client := transfer.NewRedirectClient("https://registry.example", tc.insecure)
 			t.Cleanup(client.CloseIdleConnections)
-			tr := client.Transport.(*http.Transport)
-			tr.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+			tr := server.Client().Transport.(*http.Transport).Clone()
+			client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if err := transfer.ValidateRedirectTarget(req.Context(), req.URL, "https://registry.example", tc.insecure); err != nil {
+					return nil, err
+				}
+				return tr.RoundTrip(req)
+			})
 			tr.TLSClientConfig.ServerName = "127.0.0.1"
 			dial := tr.DialContext
 			tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 				// Route only the public fixture addresses to the test server.
-				if addr == "203.0.113.1:443" || addr == "203.0.113.2:443" || addr == "203.0.113.2:80" {
+				if addr == "8.8.4.4:443" || addr == "8.8.8.8:443" || addr == "8.8.8.8:80" {
 					return new(net.Dialer).DialContext(ctx, network, server.Listener.Addr().String())
 				}
 				return dial(ctx, network, addr)
 			}
-			requestURL, _ := url.Parse("https://203.0.113.1/start")
+			requestURL, _ := url.Parse("https://8.8.4.4/start")
 			if tc.name == "lookup" {
 				requestURL, _ = url.Parse(strings.Replace(server.URL, "127.0.0.1", "localhost", 1) + "/data")
 			}
@@ -86,6 +91,73 @@ func TestDownloadChunkRedirects(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDownloadDiscoveryRedirectOrigin(t *testing.T) {
+	t.Run("same origin", func(t *testing.T) {
+		var hits atomic.Int32
+		registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			if r.URL.Path == "/start" {
+				http.Redirect(w, r, "/data", http.StatusTemporaryRedirect)
+				return
+			}
+			fmt.Fprint(w, "ok")
+		}))
+		defer registry.Close()
+		base, _ := url.Parse(registry.URL)
+		client := &http.Client{CheckRedirect: downloadDiscoveryRedirect(base)}
+		resp, err := client.Get(registry.URL + "/start")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || hits.Load() != 2 {
+			t.Fatalf("same-origin redirect: status %d, hits %d", resp.StatusCode, hits.Load())
+		}
+	})
+
+	t.Run("different port", func(t *testing.T) {
+		var targetHits atomic.Int32
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			targetHits.Add(1)
+		}))
+		defer target.Close()
+		registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/private", http.StatusFound)
+		}))
+		defer registry.Close()
+		base, _ := url.Parse(registry.URL)
+		client := &http.Client{CheckRedirect: downloadDiscoveryRedirect(base)}
+		resp, err := client.Get(registry.URL + "/start")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusFound || targetHits.Load() != 0 {
+			t.Fatalf("different-port redirect: status %d, target hits %d", resp.StatusCode, targetHits.Load())
+		}
+	})
+
+	t.Run("https downgrade", func(t *testing.T) {
+		var registryURL string
+		registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			loc := strings.Replace(registryURL, "https://", "http://", 1) + "/data"
+			http.Redirect(w, r, loc, http.StatusTemporaryRedirect)
+		}))
+		defer registry.Close()
+		registryURL = registry.URL
+		base, _ := url.Parse(registry.URL)
+		client := registry.Client()
+		client.CheckRedirect = downloadDiscoveryRedirect(base)
+		resp, err := client.Get(registry.URL + "/start")
+		if err == nil {
+			resp.Body.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "not allowed") {
+			t.Fatalf("HTTPS downgrade was followed: %v", err)
+		}
+	})
 }
 
 func TestDownloadRedirect(t *testing.T) {

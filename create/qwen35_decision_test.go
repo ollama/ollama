@@ -3,7 +3,7 @@ package create
 import "testing"
 
 func TestQwen35DecisionQuantizationPolicy(t *testing.T) {
-	for _, arch := range []string{"ClefForDecision", "StrandsDeciderForDecision", "KevForDecision"} {
+	for _, arch := range []string{"ClefForDecision", "StrandsDeciderForDecision", "KevForDecision", "AutoTrustDecision"} {
 		inv := Inventory{Config: sourceModelConfig{Architectures: []string{arch}}}
 		policy, err := newTensorImportTransform(inv)
 		if err != nil {

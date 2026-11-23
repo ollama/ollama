@@ -16,6 +16,18 @@ var (
 func init() {
 	integrations = buildTestIntegrations()
 	integrationAliases = buildTestIntegrationAliases()
+	lookupServerModelMetadata = func(string) (serverModelMetadata, bool) { return serverModelMetadata{}, false }
+}
+
+func useServerContextLookup(t *testing.T) {
+	old := lookupServerModelMetadata
+	lookupServerModelMetadata = cachedServerModelMetadata
+	serverModelMetadataCache.Clear()
+	serverModelMetadataUnavailable.Store(false)
+	t.Cleanup(func() {
+		lookupServerModelMetadata = old
+		serverModelMetadataUnavailable.Store(false)
+	})
 }
 
 func buildTestIntegrations() map[string]Runner {
@@ -43,8 +55,11 @@ func setTestHome(t *testing.T, dir string) {
 	codexAppNativeCatalog = func(string) ([]byte, error) {
 		return []byte(`{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol","description":"Native Codex test model","priority":10,"supported_in_api":true,"base_instructions":"You are Codex, an agent based on GPT-5. Work carefully."}]}`), nil
 	}
+	oldOpenCodeReadConfig := openCodeReadConfig
+	openCodeReadConfig = func() ([]byte, error) { return []byte(`{}`), nil }
 	t.Cleanup(func() {
 		codexAppNativeCatalog = oldNativeCatalog
+		openCodeReadConfig = oldOpenCodeReadConfig
 	})
 }
 

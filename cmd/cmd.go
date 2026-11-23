@@ -85,14 +85,6 @@ func init() {
 		return userName, err
 	}
 
-	launch.DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		plan, err := tui.RunUpgrade(modelName, requiredPlan)
-		if errors.Is(err, tui.ErrCancelled) {
-			return "", launch.ErrCancelled
-		}
-		return plan, err
-	}
-
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
 
 	launch.DefaultSpinner = tui.RunSpinner
@@ -911,23 +903,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	prompts := args[1:]
-	// prepend stdin to the prompt if provided
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		in, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-
-		// Only prepend stdin content if it's not empty
-		stdinContent := string(in)
-		if len(stdinContent) > 0 {
-			prompts = append([]string{stdinContent}, prompts...)
-		}
+	stdinPiped := !term.IsTerminal(int(os.Stdin.Fd()))
+	if stdinPiped {
 		opts.ShowConnect = false
 		opts.WordWrap = false
 		interactive = false
 	}
-	opts.Prompt = strings.Join(prompts, " ")
 	if len(prompts) > 0 {
 		interactive = false
 	}
@@ -940,7 +921,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	opts.WordWrap = !nowrap
+	// Wrapping rewrites the line with cursor escapes, which only a terminal
+	// can interpret; piped or redirected output stays plain text.
+	opts.WordWrap = !nowrap && term.IsTerminal(int(os.Stdout.Fd()))
 
 	// Fill out the rest of the options based on information about the
 	// model.
@@ -972,23 +955,36 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
+	applyShowResponseToRunOptions(&opts, info)
 
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
+	// prepend stdin to the prompt if provided; speech models read it as it
+	// arrives instead. Models that also chat speak when --voice is given and
+	// chat otherwise.
+	speech := slices.Contains(info.Capabilities, model.CapabilitySpeech) &&
+		(!slices.Contains(info.Capabilities, model.CapabilityCompletion) || cmd.Flags().Changed("voice"))
+	if stdinPiped && !speech {
+		in, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+
+		// Only prepend stdin content if it's not empty
+		stdinContent := string(in)
+		if len(stdinContent) > 0 {
+			prompts = append([]string{stdinContent}, prompts...)
 		}
 	}
+	opts.Prompt = strings.Join(prompts, " ")
 
-	applyShowResponseToRunOptions(&opts, info)
+	if slices.Contains(info.Capabilities, model.CapabilityDecision) {
+		return runDecision(cmd, opts, interactive)
+	}
+	if cmd.Flags().Changed("ask") {
+		return fmt.Errorf("%s is not a decision model, so it can't answer --ask questions", name)
+	}
+	if cmd.Flags().Changed("voice") && !speech {
+		return fmt.Errorf("%s is not a speech model, so it can't use --voice", name)
+	}
 
 	// Check if this is an embedding model
 	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
@@ -1011,6 +1007,18 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
+	}
+
+	if speech {
+		voice, err := cmd.Flags().GetString("voice")
+		if err != nil {
+			return err
+		}
+		var input io.Reader
+		if stdinPiped {
+			input = os.Stdin
+		}
+		return runSpeech(cmd.Context(), name, voice, opts.Prompt, input, interactive)
 	}
 
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
@@ -1278,7 +1286,10 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			} else {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
-			ctxStr := strconv.Itoa(m.ContextLength)
+			ctxStr := "-"
+			if m.ContextLength > 0 {
+				ctxStr = strconv.Itoa(m.ContextLength)
+			}
 			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, m.Runner, until})
 		}
 	}
@@ -1465,6 +1476,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		if resp.Requires != "" {
 			rows = append(rows, []string{"", "requires", resp.Requires})
 		}
+		if resp.Renderer != "" {
+			rows = append(rows, []string{"", "renderer", resp.Renderer})
+		}
+		if resp.Parser != "" {
+			rows = append(rows, []string{"", "parser", resp.Parser})
+		}
+		if resp.TemplateSource != "" && resp.TemplateSource != "none" {
+			rows = append(rows, []string{"", "template source", resp.TemplateSource})
+		}
 		if len(resp.Manifests) > 0 {
 			if runner, ok := showSelectedRunner(resp.Manifests); ok {
 				rows = append(rows, []string{"", "runner", runner})
@@ -1490,6 +1510,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 						[]string{"", "    default", fmt.Sprint(resp.Thinking.Default)},
 					)
 				}
+			}
+			return
+		})
+	}
+
+	if len(resp.Voices) > 0 {
+		tableRender("Voices", func() (rows [][]string) {
+			for _, voice := range resp.Voices {
+				rows = append(rows, []string{"", voice})
 			}
 			return
 		})
@@ -1594,13 +1623,18 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		})
 	}
 
-	if len(resp.Tensors) > 0 && verbose {
-		tableRender("Tensors", func() (rows [][]string) {
-			for _, t := range resp.Tensors {
-				rows = append(rows, []string{"", t.Name, t.Type, fmt.Sprint(t.Shape)})
+	if verbose && len(resp.Tensors) > 0 {
+		var rows [][]string
+		for _, t := range resp.Tensors {
+			if resp.Details.Format == manifest.FormatSafetensors && len(t.Shape) == 1 &&
+				(strings.HasSuffix(t.Name, ".bias") || strings.HasSuffix(t.Name, ".gamma")) {
+				continue
 			}
-			return
-		})
+			rows = append(rows, []string{"", t.Name, t.Type, fmt.Sprint(t.Shape)})
+		}
+		if len(rows) > 0 {
+			tableRender("Tensors", func() [][]string { return rows })
+		}
 	}
 
 	head := func(s string, n int) (rows [][]string) {
@@ -1824,6 +1858,8 @@ type runOptions struct {
 	Think          *api.ThinkValue
 	HideThinking   bool
 	ShowConnect    bool
+	Decision       bool
+	Questions      *api.SystemOneQuestions
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1876,12 +1912,27 @@ func (r runOptions) Copy() runOptions {
 		Think:          think,
 		HideThinking:   r.HideThinking,
 		ShowConnect:    r.ShowConnect,
+		Decision:       r.Decision,
+		Questions:      r.Questions,
 	}
 }
 
 func applyShowResponseToRunOptions(opts *runOptions, info *api.ShowResponse) {
 	opts.ParentModel = info.Details.ParentModel
 	opts.LoadedMessages = slices.Clone(info.Messages)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) ||
+		slices.Contains(info.Capabilities, model.CapabilityAudio)
+
+	// Keep media input working with older servers that do not report capabilities.
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for key := range info.ModelInfo {
+		if strings.Contains(key, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
 }
 
 type displayResponseState struct {
@@ -2363,18 +2414,6 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 		return err
 	}
 
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for key := range info.ModelInfo {
-		if strings.Contains(key, ".vision.") {
-			opts.MultiModal = true
-			break
-		}
-	}
-
 	applyShowResponseToRunOptions(&opts, info)
 
 	if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -2520,19 +2559,23 @@ func NewCLI() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if version, _ := cmd.Flags().GetBool("version"); version {
 				versionHandler(cmd, args)
-				return
+				return nil
+			}
+			if !isInteractiveTerminal() {
+				return cmd.Help()
 			}
 
 			if err := runWelcome(); err != nil {
 				if !errors.Is(err, launch.ErrCancelled) {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				}
-				return
+				return nil
 			}
 			runInteractiveTUI(cmd)
+			return nil
 		},
 	}
 
@@ -2571,8 +2614,18 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
 	runCmd := &cobra.Command{
-		Use:     "run MODEL [PROMPT]",
-		Short:   "Run a model",
+		Use:   "run MODEL [PROMPT]",
+		Short: "Run a model",
+		Example: `  ollama run gemma4
+  ollama run gemma4 "Why is the sky blue?"
+  ollama run nimble --ask "Is a refund being requested?" < ticket.txt
+  ollama run nimble --ask "Which team should handle this?" \
+    --choice billing="Payments and refunds" \
+    --choice technical="Software problems" < ticket.txt
+  ollama run nimble --ask "How urgent is this?" \
+    --level "Routine" \
+    --level "Soon" \
+    --level "Immediate" < ticket.txt`,
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    RunHandler,
@@ -2590,6 +2643,11 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	runCmd.Flags().String("voice", "", "Voice to speak with (speech models only)")
+	var asked []askedQuestion
+	runCmd.Flags().Var(questionFlag{"ask", &asked}, "ask", "Ask a decision model a question, answered yes or no unless --choice or --level follow")
+	runCmd.Flags().Var(questionFlag{"choice", &asked}, "choice", `Add a label for the preceding --ask to choose from, e.g. billing="Payments and refunds"`)
+	runCmd.Flags().Var(questionFlag{"level", &asked}, "level", "Add a level to score the preceding --ask on, from lowest to highest")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",

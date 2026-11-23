@@ -13,7 +13,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
-var _ model.CachedScorer = (*Model)(nil)
+var _ model.Scorer = (*Model)(nil)
 
 // ScoreRow is one independent question. Pointers refer to real option tokens;
 // the query is the final real token, even when the forward row is padded.
@@ -106,15 +106,11 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model
 		return result, err
 	}
 	for _, row := range rows {
-		mlx.Scoped(func() {
-			var hidden *mlx.Array
-			var restored int
-			hidden, restored, err = forward(ctx, &model.PreparedRequest{Tokens: row.Tokens}, nil)
-			cached += restored
-			if err == nil {
-				result.Logits = append(result.Logits, m.FinishScore(row, hidden))
-			}
+		restored, err := forward(ctx, &model.PreparedRequest{Tokens: row.Tokens}, nil, func(hidden *mlx.Array) error {
+			result.Logits = append(result.Logits, m.FinishScore(row, hidden))
+			return nil
 		})
+		cached += restored
 		if err != nil {
 			return result, err
 		}

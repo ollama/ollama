@@ -217,7 +217,7 @@ func (a *VisionAttention) Forward(x, cos, sin, mask *mlx.Array, heads int) *mlx.
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	out := mlx.FastScaledDotProductAttention(q, k, v, float32(1/math.Sqrt(float64(headDim))), "", mask)
+	out := mlx.FastScaledDotProductAttention(q, k, v, float32(1/math.Sqrt(float64(headDim))), mlx.FastSDPANoWindow, "", mask)
 	out = mlx.Transpose(out, 0, 2, 1, 3)
 	return a.OProj.Forward(mlx.Reshape(out, batchSize, sequence, width))
 }

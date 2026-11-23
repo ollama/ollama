@@ -136,6 +136,31 @@ func resolveRecurrentConfig(opts []RecurrentOption) recurrentConfig {
 // unsegmented conv.
 func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, opts ...RecurrentOption) (out *mlx.Array, states []*mlx.Array) {
 	cfg := resolveRecurrentConfig(opts)
+	L := int32(input.Dim(1))
+	window := causalConvInput(b, input, cfg, L)
+	if cfg.convSiLU {
+		if w := depthwiseConvWeight(conv); w != nil {
+			out = mlx.DepthwiseConvSiLU(window, w, conv.Bias, int(L))
+		} else {
+			out = mlx.SiLU(conv.Forward(window))
+		}
+	} else {
+		out = conv.Forward(window)
+	}
+	return out, causalConvTails(b, window, convTail, cfg.splits, L)
+}
+
+// CausalConvWindow returns a window prefixed with the cached history and the
+// input tails to save at snapshot boundaries. Use it for convolutions whose
+// coefficients depend on the current token.
+func CausalConvWindow(b *batch.Batch, input *mlx.Array, convTail int, opts ...RecurrentOption) (window *mlx.Array, states []*mlx.Array) {
+	cfg := resolveRecurrentConfig(opts)
+	L := int32(input.Dim(1))
+	window = causalConvInput(b, input, cfg, L)
+	return window, causalConvTails(b, window, convTail, cfg.splits, L)
+}
+
+func causalConvInput(b *batch.Batch, input *mlx.Array, cfg recurrentConfig, L int32) *mlx.Array {
 	var prior *mlx.Array
 	if cfg.history != nil {
 		prior = cfg.history.ConvState()
@@ -145,28 +170,20 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 
 	// concat is [prior(convTail); input]; each boundary tail is sliced from it
 	// below.
-	L := int32(input.Dim(1))
 	if mask := paddingMask(b, L); mask != nil {
 		zero := mlx.FromValue(float32(0)).AsType(input.DType())
 		input = mlx.Where(mlx.ExpandDims(mask, 2), input, zero)
 	}
-	concat := mlx.Concatenate([]*mlx.Array{prior, input}, 1)
-	if cfg.convSiLU {
-		if w := depthwiseConvWeight(conv); w != nil {
-			out = mlx.DepthwiseConvSiLU(concat, w, conv.Bias, int(L))
-		} else {
-			out = mlx.SiLU(conv.Forward(concat))
-		}
-	} else {
-		out = conv.Forward(concat)
-	}
+	return mlx.Concatenate([]*mlx.Array{prior, input}, 1)
+}
 
+func causalConvTails(b *batch.Batch, concat *mlx.Array, convTail int, splits []int, L int32) []*mlx.Array {
 	// Snapshot the conv tail at each segment boundary: interior splits in
 	// ascending order, then the forward end at L. Each boundary at offset O
 	// captures input positions [O-convTail, O) — the trailing convTail rows of
 	// the window through token O.
-	segs := segmentRanges(cfg.splits, L)
-	states = make([]*mlx.Array, 0, len(segs))
+	segs := segmentRanges(splits, L)
+	states := make([]*mlx.Array, 0, len(segs))
 	for _, s := range segs {
 		st := convStateAt(concat, b.SeqQueryLens, convTail, s.end)
 		if L > 1 {
@@ -175,7 +192,7 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 		}
 		states = append(states, st)
 	}
-	return out, states
+	return states
 }
 
 // depthwiseConvWeight returns the [C, K] weight view the fused conv kernel

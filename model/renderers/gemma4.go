@@ -15,6 +15,12 @@ import (
 type Gemma4Renderer struct {
 	useImgTags          bool
 	emptyBlockOnNothink bool
+	// Render assistant content before its tool calls instead of after the
+	// tool responses.
+	contentBeforeToolCalls bool
+	// Ask for speech translation in the model card's transcribe-then-translate
+	// format, which the large models follow and the small ones don't.
+	transcribeThenTranslate bool
 }
 
 const (
@@ -94,6 +100,12 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			sb.WriteString("\n<channel|>")
 		}
 
+		contentFirst := r.contentBeforeToolCalls && role == "model" && len(message.ToolCalls) > 0
+		messageHadContent := false
+		if contentFirst {
+			messageHadContent = r.renderMessageContent(&sb, message, role, &imageOffset)
+		}
+
 		if len(message.ToolCalls) > 0 {
 			for _, tc := range message.ToolCalls {
 				sb.WriteString(r.formatToolCall(tc))
@@ -111,18 +123,8 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			}
 		}
 
-		messageHadContent := false
-		switch role {
-		case "model":
-			if message.Content != "" || len(message.Images) > 0 {
-				message.Content = stripThinking(message.Content)
-				r.renderContent(&sb, message, &imageOffset, false)
-				messageHadContent = r.messageHasContent(message)
-			}
-		default:
-			r.renderContent(&sb, message, &imageOffset, true)
-			message.Content = strings.TrimSpace(message.Content)
-			messageHadContent = r.messageHasContent(message)
+		if !contentFirst {
+			messageHadContent = r.renderMessageContent(&sb, message, role, &imageOffset)
 		}
 
 		nextNonToolRole := r.nextNonToolRole(loopMessages, i)
@@ -167,6 +169,22 @@ func stripThinking(text string) string {
 		text = text[start+end+len("<channel|>"):]
 	}
 	return strings.TrimSpace(result.String())
+}
+
+// renderMessageContent writes a message's content and reports whether it had any.
+func (r *Gemma4Renderer) renderMessageContent(sb *strings.Builder, message api.Message, role string, imageOffset *int) bool {
+	if role == "model" {
+		if message.Content == "" && len(message.Images) == 0 {
+			return false
+		}
+		message.Content = stripThinking(message.Content)
+		r.renderContent(sb, message, imageOffset, false)
+		return r.messageHasContent(message)
+	}
+
+	r.renderContent(sb, message, imageOffset, true)
+	message.Content = strings.TrimSpace(message.Content)
+	return r.messageHasContent(message)
 }
 
 // renderContent writes a message's content, interleaving [img-N] tags for images.
@@ -524,18 +542,18 @@ func schemaValueFromToolProperty(prop api.ToolProperty) map[string]any {
 	if len(prop.Required) > 0 {
 		out["required"] = prop.Required
 	}
+	if nullable, ok := prop.Extra["nullable"]; ok {
+		out["nullable"] = nullable
+	}
 	return out
 }
 
 func topLevelTypedSchemaValueFromToolProperty(prop api.ToolProperty) map[string]any {
 	out := make(map[string]any)
 	if len(prop.Type) > 0 {
-		// api.ToolProperty intentionally models nullability through type unions
-		// that include "null" rather than OpenAPI 3.0's nullable:true keyword.
-		// Gemma's template accepts nullable:true as well, but our typed top-level
-		// tool properties do not carry that field. For multi-type unions, the
-		// template stringifies the uppercase list rather than emitting a structured
-		// type array. That is odd, but we match upstream here.
+		// For multi-type unions, the template stringifies the uppercase list
+		// rather than emitting a structured type array. That is odd, but we
+		// match upstream here.
 		out["type"] = upstreamTypedPropertyTypeValue(prop.Type)
 	} else if unionTypes, ok := simpleAnyOfTypes(prop); ok {
 		// Gemma's declaration format does not have a dedicated anyOf construct, so
@@ -557,6 +575,9 @@ func topLevelTypedSchemaValueFromToolProperty(prop api.ToolProperty) map[string]
 	}
 	if len(prop.Required) > 0 {
 		out["required"] = prop.Required
+	}
+	if nullable, ok := prop.Extra["nullable"]; ok {
+		out["nullable"] = nullable
 	}
 	return out
 }

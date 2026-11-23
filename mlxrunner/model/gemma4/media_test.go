@@ -203,7 +203,8 @@ func TestPrepareMediaExpansion(t *testing.T) {
 	m := visionTestModel()
 	m.Vision = &VisionConfig{
 		ModelType:             "gemma4_vision",
-		HiddenSize:            12,
+		HiddenSize:            768,
+		NumHiddenLayers:       16,
 		PatchSize:             16,
 		PoolingKernelSize:     3,
 		RMSNormEps:            1e-6,
@@ -224,9 +225,9 @@ func TestPrepareMediaExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 96x96 selects 70 and resizes to 384x384: 24x24 patches, 64 soft tokens,
+	// 96x96 selects 70 and rounds up to 432x432: 27x27 patches, 81 soft tokens,
 	// spliced after the one-token text run.
-	wantSoft := 64
+	wantSoft := 81
 	if len(prepared.Tokens) != 1+wantSoft+2 || prepared.Tokens[0] != 9 {
 		t.Fatalf("stream length = %d, want %d", len(prepared.Tokens), 1+wantSoft+2)
 	}
@@ -246,14 +247,14 @@ func TestPrepareMediaExpansion(t *testing.T) {
 			t.Fatalf("soft token = %d", tok)
 		}
 	}
-	if item.Dims[0] != 24*24 || item.Dims[1] != 16*16*3 {
+	if item.Dims[0] != 27*27 || item.Dims[1] != 16*16*3 {
 		t.Fatalf("dims = %v", item.Dims)
 	}
 	if len(item.MediaData) != item.Dims[0]*item.Dims[1] {
 		t.Fatalf("media data length = %d", len(item.MediaData))
 	}
 	p := item.Opaque.(preparedImage)
-	if p.geom.NumSoftTokens != int32(wantSoft) || len(p.positions) != 2*24*24 {
+	if p.geom.NumSoftTokens != int32(wantSoft) || len(p.positions) != 2*27*27 {
 		t.Fatalf("geometry = %+v, positions = %d", p.geom, len(p.positions))
 	}
 
@@ -295,6 +296,8 @@ func TestPrepareMediaDynamicImages(t *testing.T) {
 				m.UnifiedEmbedder = &UnifiedVisionEmbedder{}
 				patch, pool = 48, 1
 			} else {
+				m.Vision.HiddenSize = 768
+				m.Vision.NumHiddenLayers = 16
 				m.VisionTower = &VisionTower{}
 			}
 
@@ -308,13 +311,19 @@ func TestPrepareMediaDynamicImages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(prepared.Items) != 2 || len(prepared.Tokens) != 1+65+2+1075 {
-				t.Fatalf("items = %d, tokens = %d", len(prepared.Items), len(prepared.Tokens))
-			}
-			for i, want := range []struct{ start, end, w, h, soft int }{
+			type expectedImage struct{ start, end, w, h, soft int }
+			want := []expectedImage{
 				{1, 66, 432, 336, 63},
 				{68, 1143, 1776, 1392, 1073},
-			} {
+			}
+			if !m.Vision.unified() {
+				want[0] = expectedImage{1, 83, 480, 384, 80}
+				want[1].start, want[1].end = 85, 1160
+			}
+			if len(prepared.Items) != 2 || len(prepared.Tokens) != want[1].end {
+				t.Fatalf("items = %d, tokens = %d", len(prepared.Items), len(prepared.Tokens))
+			}
+			for i, want := range want {
 				item := prepared.Items[i]
 				if item.Range != [2]int{want.start, want.end} || item.Source != 2*i+1 {
 					t.Fatalf("item %d: range = %v, source = %d", i, item.Range, item.Source)

@@ -49,6 +49,13 @@ func (t *Array) AsType(dtype DType) *Array {
 	return out
 }
 
+// View reinterprets the array's storage as dtype without converting the values.
+func (t *Array) View(dtype DType) *Array {
+	out := New("VIEW")
+	mlxCheck(C.mlx_view(&out.ctx, t.ctx, C.mlx_dtype(dtype), DefaultStream().ctx))
+	return out
+}
+
 func (t *Array) BitwiseXor(other *Array) *Array {
 	out := New("BITWISE_XOR")
 	mlxCheck(C.mlx_bitwise_xor(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))

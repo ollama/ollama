@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -71,10 +72,6 @@ var DefaultMultiSelectorWithUpdates MultiSelectorWithUpdates
 // Returns the signed-in username or an error.
 var DefaultSignIn func(modelName, signInURL string) (string, error)
 
-// DefaultUpgrade provides a TUI-based upgrade flow.
-// Returns the updated plan or an error.
-var DefaultUpgrade func(modelName, requiredPlan string) (string, error)
-
 type launchConfirmPolicy struct {
 	yes               bool
 	requireYesMessage bool
@@ -105,7 +102,7 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 		return true, nil
 	}
 	if currentLaunchConfirmPolicy.requireYesMessage {
-		return false, fmt.Errorf("%s requires confirmation; re-run with --yes to continue", prompt)
+		return false, fmt.Errorf("confirmation required: %s; re-run with --yes to continue", strings.TrimSuffix(prompt, "?"))
 	}
 
 	if DefaultConfirmPrompt != nil {

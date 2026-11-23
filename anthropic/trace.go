@@ -211,11 +211,12 @@ func traceTools(tools []Tool) []map[string]any {
 // TraceTool returns a compact trace representation of an Anthropic Tool.
 func TraceTool(t Tool) map[string]any {
 	return map[string]any{
-		"type":         t.Type,
-		"name":         t.Name,
-		"description":  TraceTruncateString(t.Description),
-		"input_schema": TraceJSON(t.InputSchema),
-		"max_uses":     t.MaxUses,
+		"type":          t.Type,
+		"name":          t.Name,
+		"description":   TraceTruncateString(t.Description),
+		"input_schema":  TraceJSON(t.InputSchema),
+		"defer_loading": t.DeferLoading,
+		"max_uses":      t.MaxUses,
 	}
 }
 
