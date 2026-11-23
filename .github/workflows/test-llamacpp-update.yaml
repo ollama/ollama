@@ -307,6 +307,7 @@ jobs:
             cuda-components:
               - '"cudart"'
               - '"nvcc"'
+              - '"nvml_dev"'
               - '"cublas"'
               - '"cublas_dev"'
             cuda-version: '12.8'
@@ -318,6 +319,7 @@ jobs:
             cuda-components:
               - '"cudart"'
               - '"nvcc"'
+              - '"nvml_dev"'
               - '"cublas"'
               - '"cublas_dev"'
               - '"crt"'
@@ -341,6 +343,7 @@ jobs:
             cuda-cross-components:
               - '"cudart_cross"'
               - '"nvcc_cross"'
+              - '"nvml_dev_cross"'
               - '"cublas_cross"'
             cuda-version: '13.5'
           - os: windows
@@ -383,7 +386,7 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}${{ matrix.cuda-cross-install }}
+          key: ${{ matrix.install }}${{ matrix.cuda-cross-install }}-${{ join(matrix.cuda-components, '-') }}-${{ join(matrix.cuda-cross-components, '-') }}
       - if: startsWith(matrix.preset, 'CUDA ')
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
@@ -450,7 +453,7 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}${{ matrix.cuda-cross-install }}
+          key: ${{ matrix.install }}${{ matrix.cuda-cross-install }}-${{ join(matrix.cuda-components, '-') }}-${{ join(matrix.cuda-cross-components, '-') }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
