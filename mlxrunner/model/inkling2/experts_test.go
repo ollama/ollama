@@ -10,6 +10,36 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
 
+// A token's router scores must not depend on how many rows share its block, so
+// decode and draft verification route it to the same experts on every backend.
+func TestRouterLogitsRowStable(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.Scoped(func() {
+			const experts, width = 64, 2304
+			rng := rand.New(rand.NewPCG(5, 9))
+			normal := func(n int) []float32 {
+				values := make([]float32, n)
+				for i := range values {
+					values[i] = float32(rng.NormFloat64())
+				}
+				return values
+			}
+			e := routedExperts{Router: mlx.FromValues(normal(experts*width), experts, width)}
+			x := mlx.FromValues(normal(shortTargetRows*width), 1, shortTargetRows, width).AsType(mlx.DTypeBFloat16)
+			for _, rows := range []int{1, 3, shortTargetRows} {
+				block := x.Slice(mlx.Slice(), mlx.Slice(0, rows), mlx.Slice())
+				got := e.routerLogits(block)
+				for row := range rows {
+					want := e.routerLogits(x.Slice(mlx.Slice(), mlx.Slice(row, row+1), mlx.Slice()))
+					if !slices.Equal(got.Slice(mlx.Slice(row, row+1), mlx.Slice()).Floats(), want.Floats()) {
+						t.Fatalf("%d-row block: row %d scores differ from a one-row block", rows, row)
+					}
+				}
+			}
+		})
+	})
+}
+
 func TestNVFP4ExpertAppliesActivationAndWeightScales(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		mlx.Scoped(func() {

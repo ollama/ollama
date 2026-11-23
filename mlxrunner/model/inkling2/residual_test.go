@@ -9,7 +9,37 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlxrunner/batch"
 )
+
+// Early submission runs only for decode and verification rounds, never for the
+// load-time shape check at offset zero or for longer blocks.
+func TestSubmitsEarly(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() {
+			t.Skip("early submission is Metal only")
+		}
+		for _, tc := range []struct {
+			name    string
+			tokens  int
+			offsets []int32
+			want    bool
+		}{
+			{"decode", 1, []int32{2048}, true},
+			{"verification", 4, []int32{2048}, true},
+			{"two requests", 4, []int32{2048, 300}, true},
+			{"shape check", 1, []int32{0}, false},
+			{"new request beside a decode", 4, []int32{2048, 0}, false},
+			{"long block", shortTargetRows + 1, []int32{2048}, false},
+			{"three requests", 1, []int32{1, 2, 3}, false},
+		} {
+			b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, len(tc.offsets), tc.tokens), SeqOffsets: tc.offsets}
+			if got := submitsEarly(b); got != tc.want {
+				t.Errorf("%s: submitsEarly = %t, want %t", tc.name, got, tc.want)
+			}
+		}
+	})
+}
 
 // residualTestStream returns two BF16 residual blocks and an FP32 partial
 // block of random [rows, tokens, width] values.

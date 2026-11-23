@@ -42,10 +42,11 @@ func relativeAttentionSplitParts(architecture string) int {
 // A positive window limits history to that many keys including the query's
 // own position. Zero allows its entire history. Unsupported inputs return nil.
 //
-// The kernel reads its inputs in place. K and V may be windows of a longer
-// cache buffer: they must share one layout of contiguous 128-channel rows with
-// a head stride of whole rows. Q, the table and the sink may be views with a
-// contiguous last axis. Other layouts produce NaN.
+// The kernel reads its inputs in place. It is fastest when K and V are windows
+// of a cache buffer that share one layout of contiguous 128-channel rows with a
+// head stride of whole rows, and Q, the table and the sink are views with a
+// contiguous last axis. Other layouts are read through their strides, one key
+// at a time.
 func RelativePositionAttention(q, k, v, table, sink *Array, window int, scale float32) *Array {
 	if !relativeAttentionShapes(q, k, v, table, sink, window) {
 		return nil
@@ -54,8 +55,40 @@ func RelativePositionAttention(q, k, v, table, sink *Array, window int, scale fl
 	if queries > 8 {
 		return relativeAttentionPrefill(q, k, v, table, sink, window, scale)
 	}
-	kernel, parts := relativeSplit(queries, relativeAttentionVisible(k, window))
+	if m := relativeBlockSplit(queries, k.Dim(2), window); m > 0 {
+		// The first m queries see histories that single-token decode splits
+		// into a different number of partitions; give them their own launch.
+		query := func(x *Array, from, to int) *Array { return x.Slice(Slice(), Slice(), Slice(from, to), Slice()) }
+		keys := k.Dim(2) - (queries - m)
+		early := RelativePositionAttention(query(q, 0, m), query(k, 0, keys), query(v, 0, keys), query(table, 0, m), query(sink, 0, m), window, scale)
+		late := RelativePositionAttention(query(q, m, queries), k, v, query(table, m, queries), query(sink, m, queries), window, scale)
+		if early == nil || late == nil {
+			return nil
+		}
+		return Concatenate([]*Array{early, late}, 2)
+	}
+	kernel, parts := relativeSplitFor(queries, k, window)
 	return relativeAttentionSplitMerge(kernel, parts, q, k, v, table, sink, window, scale)
+}
+
+// relativeBlockSplit returns how many leading queries of a block over keys take
+// a different partition count than its last query when each is decoded alone,
+// or 0 when the whole block agrees. Partials depend only on a query's own keys
+// and the partition count, so a block that agrees matches single-token decode.
+func relativeBlockSplit(queries, keys, window int) int {
+	visible := func(n int) int {
+		if window > 0 {
+			return min(n, window)
+		}
+		return n
+	}
+	_, last := relativeSplit(1, visible(keys))
+	for j := range queries - 1 {
+		if _, parts := relativeSplit(1, visible(keys-(queries-1-j))); parts == last {
+			return j
+		}
+	}
+	return queries - 1
 }
 
 // relativeAttentionSplitMerge runs one split-pass kernel over parts partitions
@@ -85,7 +118,8 @@ func relativeAttentionSplitMerge(kernel *gpuKernel, parts int, q, k, v, table, s
 // [requests, queries, heads*128] with a contiguous last axis; it may be a column
 // view of a wider projection. The BF16 result has the gate's shape and holds
 // attention * sigmoid(gate), with each request's queries before its heads.
-// It returns nil when RelativePositionAttention would decline any request.
+// It returns nil when RelativePositionAttention would decline any request, or
+// would split a request's block at a partition-count change.
 func RelativePositionAttentionGated(q, k, v, table, sink []*Array, gate *Array, window int, scale float32) *Array {
 	requests := len(q)
 	if requests < 1 || requests > 2 || len(k) != requests || len(v) != requests || len(table) != requests ||
@@ -102,13 +136,18 @@ func RelativePositionAttentionGated(q, k, v, table, sink []*Array, gate *Array, 
 			q[i].DType() != q[0].DType() || q[i].Dim(1) != q[0].Dim(1) || q[i].Dim(2) != q[0].Dim(2) {
 			return nil
 		}
+		// A block that straddles a partition-count change takes the separate
+		// route, which splits it as single-token decode would.
+		if relativeBlockSplit(queries, k[i].Dim(2), window) > 0 {
+			return nil
+		}
 	}
 	// Each request splits as it would alone, so its sums do not depend on the
 	// other request's history length.
 	var inputs []*Array
 	parts := make([]int, 2)
 	for i := range requests {
-		kernel, p := relativeSplit(queries, relativeAttentionVisible(k[i], window))
+		kernel, p := relativeSplitFor(queries, k[i], window)
 		partials := relativeAttentionSplitPass(kernel, q[i], k[i], v[i], table[i], sink[i], window, scale, p)
 		if partials == nil {
 			return nil
@@ -173,11 +212,22 @@ func relativeSplit(queries, visible int) (*gpuKernel, int) {
 	return relativeSplitConfig(base, queries, visible, kernelArchitecture())
 }
 
+// relativeSplitFor picks the split for a block of queries over k. The shared
+// kernel numbers key blocks from the start of the view the queries share, which
+// matches each query's single-token decode only without a window.
+func relativeSplitFor(queries int, k *Array, window int) (*gpuKernel, int) {
+	kernel, parts := relativeSplit(queries, relativeAttentionVisible(k, window))
+	if window > 0 && kernel == relativeAttentionSharedPart {
+		kernel = relativeAttentionBlockPart
+	}
+	return kernel, parts
+}
+
 // relativeSplitConfig tunes the split pass by architecture generation, then
 // size class, then shape. base is the device's native partition count. The
 // partition count follows the block's visible keys, not its number of queries,
-// so a query's sums match single-token decode except when the block crosses a
-// history length where the count changes.
+// so a query's sums match single-token decode; RelativePositionAttention splits
+// a block that crosses a history length where the count changes.
 func relativeSplitConfig(base, queries, visible int, architecture string) (*gpuKernel, int) {
 	generation, size := appleGPU(architecture)
 	if generation >= 16 && size == 's' {
@@ -319,20 +369,56 @@ for (uint i = shard; i < visible; i += Parts) {
 // (l >> 2) & 7, so the SIMD group updates the softmax for eight keys at once
 // instead of reducing and updating once per key.
 
-// relativeSplitUnsupported fills one query's partial sums with NaN when the
-// including kernel's layout check fails.
+// relativeSplitUnsupported computes one query's partial sums when the including
+// kernel's layout check fails: it reads every input through its strides, one key
+// at a time, and takes the keys numbered shard mod Parts. Each key still belongs
+// to one partition, so the merge is unchanged. The check depends only on the
+// launch, so a whole threadgroup takes this path before any barrier.
 const relativeSplitUnsupported = `
 if (!supported) {
+	float4 q[Sharing], value[Sharing];
+	float shift[Sharing], peak[Sharing], weight[Sharing];
+	long bias_row[Sharing];
 	for (uint s = 0; s < Sharing; s++) {
-		uint idx = ((group * Sharing + s) * Queries + proposal) * Parts + shard;
-		if (lane == 0) {
-			statistics[2 * idx] = NAN;
-			statistics[2 * idx + 1] = NAN;
-		}
+		long head = group * Sharing + s;
+		bias_row[s] = head * relative_strides[1] + long(proposal) * relative_strides[2];
+		shift[s] = float(sink[head * sink_strides[1] + long(proposal) * sink_strides[2]]);
+		long query_row = head * query_strides[1] + long(proposal) * query_strides[2];
 		for (uint j = 0; j < 4; j++) {
-			numerators[idx * 128 + component + j] = T(NAN);
+			q[s][j] = float(query[query_row + long(component + j) * query_strides[3]]) * scale;
+		}
+		peak[s] = shard == 0 ? 0.0f : -INFINITY;
+		weight[s] = shard == 0 ? 1.0f : 0.0f;
+		value[s] = float4(0.0f);
+	}
+	for (uint i = shard; i < visible; i += Parts) {
+		long key = long(i + end - visible);
+		float4 k, v;
+		for (uint j = 0; j < 4; j++) {
+			long channel = long(component + j);
+			k[j] = float(keys[group * keys_strides[1] + key * keys_strides[2] + channel * keys_strides[3]]);
+			v[j] = float(values[group * values_strides[1] + key * values_strides[2] + channel * values_strides[3]]);
+		}
+		uint distance = visible - i - 1;
+		for (uint s = 0; s < Sharing; s++) {
+			float dot = 0.0f;
+			for (uint j = 0; j < 4; j++) {
+				dot = fma(q[s][j], k[j], dot);
+			}
+			float bias = distance < Distances ? float(relative[bias_row[s] + long(distance) * relative_strides[3]]) : 0.0f;
+			bias = float(T(bias - shift[s]));
+			float score = simd_sum(dot) + bias;
+			float next = max(peak[s], score);
+			float prior = fast::exp(peak[s] - next);
+			float prob = fast::exp(score - next);
+			for (uint j = 0; j < 4; j++) {
+				value[s][j] = fma(value[s][j], prior, prob * v[j]);
+			}
+			weight[s] = fma(weight[s], prior, prob);
+			peak[s] = next;
 		}
 	}
+` + relativeSplitEpilogue + `
 	return;
 }
 `
@@ -485,8 +571,9 @@ uint row_base = group * uint(head_stride) + component;
 	float(source[row_base + min(start + (t), newest) * Row + 3]))
 #define RELATIVE_KEY(t) RELATIVE_LOAD(keys, t)
 #define RELATIVE_VALUE(t) RELATIVE_LOAD(values, t)
-for (uint block = start_block; block * 8 < hi; block += Parts) {
-	uint start = block * 8;
+// Blocks start at this query's first visible key, as in single-token decode,
+// so a windowed query's sums do not depend on where the block's view begins.
+for (uint start = begin + shard * 8; start < end; start += Parts * 8) {
 ` + relativeSplitBlock + `
 }
 ` + relativeSplitEpilogue},

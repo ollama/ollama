@@ -43,6 +43,32 @@ func TestRouteSigmoidTopK(t *testing.T) {
 		if ids[8] != 5 {
 			t.Errorf("row 1 first choice %d, want the one finite logit 5", ids[8])
 		}
+
+		// Gates that all underflow still share the weight. Row 0 ties every
+		// expert at -100; row 1 spreads the chosen logits from -100 to -107.
+		low := make([]float32, 2*16)
+		for i := range 16 {
+			low[i] = -100
+			low[16+i] = -100 - float32(i)
+		}
+		_, weights := RouteSigmoidTopK(FromValues(low, 2, 16), nil, 8, 2)
+		if weights == nil {
+			t.Fatal("kernel did not run")
+		}
+		got := weights.Floats()
+		var total float64
+		for k := range 8 {
+			total += math.Exp(-float64(k))
+		}
+		for k := range 8 {
+			if got[k] != 0.25 {
+				t.Errorf("tied underflow weight %d = %v, want 0.25", k, got[k])
+			}
+			want := 2 * math.Exp(-float64(k)) / total
+			if math.Abs(float64(got[8+k])-want) > 1e-6*want {
+				t.Errorf("spread underflow weight %d = %v, want %v", k, got[8+k], want)
+			}
+		}
 	})
 }
 

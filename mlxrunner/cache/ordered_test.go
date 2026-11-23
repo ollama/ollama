@@ -256,6 +256,38 @@ func TestOrderedSnapshotHoldsOneWindow(t *testing.T) {
 	})
 }
 
+// TestOrderedSnapshotOwnsItsWindow checks that a short prefix snapshot keeps
+// only its own rows alive, not the buffer's spare capacity, so the prefix
+// cache's byte count matches the memory it holds.
+func TestOrderedSnapshotOwnsItsWindow(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.ClearCache()
+		before := mlx.ActiveMemory()
+		var snap Snapshot
+		capacity := 0
+		mlx.Scoped(func() {
+			c := NewOrderedWindowKVCache(1024)
+			k := mlx.Zeros(mlx.DTypeBFloat16, 1, 8, 1, 128)
+			c.Update(newKVBatch(0, 1), k, k)
+			// Serving evaluates the buffer before the prefix cache saves it.
+			mlx.Eval(c.keys, c.values)
+			snap = c.Snapshot(0)
+			capacity = c.keys.Dim(2)
+			c.Free()
+		})
+		defer snap.Close()
+		if capacity < 8 {
+			t.Fatalf("buffer holds %d rows, want spare capacity past the prefix", capacity)
+		}
+		mlx.DefaultStream().Synchronize()
+		mlx.ClearCache()
+		// Allocator rounding keeps a little beyond the snapshot's rows.
+		if retained, counted := mlx.ActiveMemory()-before, snap.Size(); retained > counted+64<<10 {
+			t.Fatalf("snapshot counts %d bytes but keeps %d alive", counted, retained)
+		}
+	})
+}
+
 // TestOrderedWindowAppendsInPlace checks that a full window takes short writes
 // without rebuilding it, including speculative rounds that schedule rollback
 // points and rewind. Rebuilding would allocate a new window for keys and values.

@@ -58,6 +58,7 @@ float gate = 1.0f / (1.0f + metal::precise::exp(-logit));
 float score = HasBias ? gate + bias[e] : gate;
 threadgroup float ranked[Experts];
 threadgroup float chosenGate[TopK];
+threadgroup float chosenLogit[TopK];
 threadgroup uint chosen[TopK];
 // NaN ranks last, so the ranks stay a permutation and every slot is chosen.
 score = isnan(score) ? -INFINITY : score;
@@ -73,13 +74,28 @@ for (uint other = 0; other < Experts; ++other) {
 if (rank < TopK) {
     chosen[rank] = e;
     chosenGate[rank] = gate;
+    chosenLogit[rank] = logit;
 }
 threadgroup_barrier(mem_flags::mem_threadgroup);
 if (e < TopK) {
     float total = 0.0f;
     for (uint k = 0; k < TopK; ++k) total += chosenGate[k];
+    float weight = chosenGate[e] / total;
+    if (total < FLT_MIN) {
+        // Every chosen gate underflowed (logits near -100 and below), so
+        // normalize their log-sigmoids relative to the largest instead.
+        float top = -INFINITY;
+        for (uint k = 0; k < TopK; ++k) top = max(top, log_sigmoid(chosenLogit[k]));
+        float sum = 0.0f;
+        for (uint k = 0; k < TopK; ++k) sum += metal::precise::exp(log_sigmoid(chosenLogit[k]) - top);
+        weight = metal::precise::exp(log_sigmoid(chosenLogit[e]) - top) / sum;
+    }
     indices[row * TopK + e] = chosen[e];
-    weights[row * TopK + e] = chosenGate[e] / total * as_type<float>(ScaleBits);
+    weights[row * TopK + e] = weight * as_type<float>(ScaleBits);
+}
+`, header: `
+inline float log_sigmoid(float x) {
+    return -(metal::max(-x, 0.0f) + metal::precise::log(1.0f + metal::precise::exp(-metal::fabs(x))));
 }
 `},
 }

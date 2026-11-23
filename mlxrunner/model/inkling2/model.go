@@ -157,11 +157,20 @@ func (m *targetModel) embedTokens(ids *mlx.Array) *mlx.Array {
 	return modelRMS(m.Embed.Forward(ids), m.EmbedNorm, m.config.NormEps)
 }
 
+// submitsEarly reports whether a forward submits every two visits so Metal
+// executes them while the host builds the rest of the round. It is limited to
+// the decode and verification rounds it was measured on: one or two requests,
+// short blocks, each past its prompt. The load-time shape check runs at offset
+// zero and evaluates nothing, so it must not queue GPU work.
+func submitsEarly(b *batch.Batch) bool {
+	if b.InputIDs.Dim(0) > 2 || b.InputIDs.Dim(1) > shortTargetRows || !mlx.MetalIsAvailable() {
+		return false
+	}
+	return len(b.SeqOffsets) > 0 && !slices.Contains(b.SeqOffsets, 0)
+}
+
 func (m *targetModel) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
-	// Short forwards submit every two visits so Metal executes them while the host
-	// builds the rest of the verification round. Submission is limited to the one-
-	// and two-request forwards it was measured on.
-	submitShort := b.InputIDs.Dim(0) <= 2 && b.InputIDs.Dim(1) <= shortTargetRows && mlx.MetalIsAvailable()
+	submitShort := submitsEarly(b)
 	embeddings := m.embedTokens(b.InputIDs)
 	state := residualStream{partial: m.imageEmbeddings(b, embeddings)}
 	var prelude residualStream

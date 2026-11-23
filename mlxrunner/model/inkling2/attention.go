@@ -257,13 +257,16 @@ func relativeCachedSDPA(b *batch.Batch, q, table, sink *mlx.Array, history *nn.K
 			return out
 		}
 	}
+	stored := history
 	history = history.AsType(mlx.DTypeFloat32)
 	if queries == 1 || queries > shortTargetRows {
 		return relativeWindowSDPA(b, q, table, sink, keys, maskWindow, scale, nn.WithKVHistory(history))
 	}
 
 	// Short blocks share their projections and cache write. Give each query
-	// the same ordered window and kernel extent it sees in single-token decode.
+	// the same ordered window, kernel and extent it sees in single-token decode:
+	// a block that starts under the split kernels' history threshold can end
+	// past it.
 	output := make([]*mlx.Array, queries)
 	for i := range queries {
 		row := &batch.Batch{
@@ -279,10 +282,15 @@ func relativeCachedSDPA(b *batch.Batch, q, table, sink *mlx.Array, history *nn.K
 		if window > 0 {
 			start = max(0, end-window)
 		}
-		k := history.K().Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, end), mlx.Slice())
-		v := history.V().Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, end), mlx.Slice())
+		rows := func(x *mlx.Array) *mlx.Array {
+			return x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, end), mlx.Slice())
+		}
+		if out := mlx.RelativePositionAttention(selectQuery(q), rows(stored.K()), rows(stored.V()), selectQuery(table), selectQuery(sink), window, scale); out != nil {
+			output[i] = out
+			continue
+		}
 		output[i] = relativeWindowSDPA(row, selectQuery(q), selectQuery(table), selectQuery(sink),
-			end-start, 0, scale, nn.WithKV(k, v, nil))
+			end-start, 0, scale, nn.WithKV(rows(history.K()), rows(history.V()), nil))
 	}
 	return mlx.Concatenate(output, 2)
 }

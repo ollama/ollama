@@ -48,14 +48,32 @@ func closeCaches(caches []cache.Cache) {
 	}
 }
 
+// relativeAttentionQualified reports whether this device runs the split
+// attention kernels; others, such as paravirtual GPUs, take the stock graph.
+func relativeAttentionQualified() bool {
+	if !mlx.MetalIsAvailable() {
+		return false
+	}
+	var launched bool
+	mlx.Scoped(func() {
+		bf16 := mlx.DTypeBFloat16
+		q := mlx.Zeros(mlx.DTypeFloat32, 1, gateTestHeads, 1, gateTestWidth)
+		k := mlx.Zeros(bf16, 1, gateTestKVHeads, 1100, gateTestWidth)
+		table := mlx.Zeros(bf16, 1, gateTestHeads, 1, 1024)
+		sink := mlx.Zeros(bf16, 1, gateTestHeads, 1, 1)
+		launched = mlx.RelativePositionAttention(q, k, k, table, sink, 0, 0.125) != nil
+	})
+	return launched
+}
+
 // For two requests, the gate folded into the attention merge must give the
 // same BF16 bits as relativeSDPA followed by the graph gate (tolerance zero):
 // local and global caches and every short block width, with the gate a column
 // view of the stacked projection as in forward.
 func TestGatedShortAttentionMatchesStockGate(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		if !mlx.MetalIsAvailable() {
-			t.Skip("requires Metal")
+		if !relativeAttentionQualified() {
+			t.Skip("requires a qualified relative-attention Metal device")
 		}
 		const heads, width, distances, rows = gateTestHeads, gateTestWidth, 1024, 2
 		rng := rand.New(rand.NewPCG(7, 23))
@@ -114,6 +132,8 @@ func TestGatedShortAttentionDeclines(t *testing.T) {
 		if !mlx.MetalIsAvailable() {
 			t.Skip("requires Metal")
 		}
+		// Devices without the split kernels must decline every case.
+		qualified := relativeAttentionQualified()
 		const heads, width = gateTestHeads, gateTestWidth
 		bf16 := mlx.DTypeBFloat16
 		zeros := func(shape ...int) *mlx.Array { return mlx.Zeros(bf16, shape...) }
@@ -144,8 +164,81 @@ func TestGatedShortAttentionDeclines(t *testing.T) {
 				table := zeros(rows, heads, tc.queries, 1024)
 				sink := zeros(rows, heads, tc.queries, 1)
 				gate := zeros(rows, tc.queries, heads*width)
-				if got := gatedShortAttention(b, q, table, sink, gate, history, tc.window, 0.125); (got != nil) != tc.launch {
-					t.Fatalf("%s: fused gate launched %t, want %t", tc.name, got != nil, tc.launch)
+				want := tc.launch && qualified
+				if got := gatedShortAttention(b, q, table, sink, gate, history, tc.window, 0.125); (got != nil) != want {
+					t.Fatalf("%s: fused gate launched %t, want %t", tc.name, got != nil, want)
+				}
+			})
+		}
+	})
+}
+
+// A verification block whose first query sees fewer keys than the split
+// kernels serve and whose last query sees more must still score every query
+// bit for bit as single-token decode does, for global and windowed caches.
+func TestRelativeSDPABlockMatchesDecodeAcrossThreshold(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !relativeAttentionQualified() {
+			t.Skip("requires a qualified relative-attention Metal device")
+		}
+		const queries, prefix = 4, 1021
+		rng := rand.New(rand.NewPCG(3, 5))
+		normal := func(dtype mlx.DType, shape ...int) *mlx.Array {
+			n := 1
+			for _, d := range shape {
+				n *= d
+			}
+			data := make([]float32, n)
+			for i := range data {
+				data[i] = float32(rng.NormFloat64())
+			}
+			return mlx.FromValues(data, shape...).AsType(dtype)
+		}
+		bf16 := mlx.DTypeBFloat16
+		scale := float32(1 / math.Sqrt(gateTestWidth))
+		for _, window := range []int{0, 1024} {
+			mlx.Scoped(func() {
+				k := normal(bf16, 1, gateTestKVHeads, prefix+queries, gateTestWidth)
+				v := normal(bf16, 1, gateTestKVHeads, prefix+queries, gateTestWidth)
+				q := normal(mlx.DTypeFloat32, 1, gateTestHeads, queries, gateTestWidth)
+				table := normal(bf16, 1, gateTestHeads, queries, 1024)
+				sink := normal(bf16, 1, gateTestHeads, queries, 1)
+				span := func(x *mlx.Array, from, to int) *mlx.Array {
+					return x.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
+				}
+				rows := func(from, to int) *batch.Batch {
+					return &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, to-from), SeqOffsets: []int32{int32(from)}, SeqQueryLens: []int32{int32(to - from)}}
+				}
+				// decode writes the first n positions and returns the history of the last.
+				decode := func(n int) (*nn.KVHistory, cache.Cache) {
+					var c cache.Cache = cache.NewKVCache()
+					if window > 0 {
+						c = cache.NewOrderedWindowKVCache(window)
+					}
+					attention := c.(cache.Attention)
+					attention.Update(rows(0, n-1), span(k, 0, n-1), span(v, 0, n-1))
+					return attention.Update(rows(n-1, n), span(k, n-1, n), span(v, n-1, n)), c
+				}
+				var c cache.Cache = cache.NewKVCache()
+				if window > 0 {
+					c = cache.NewOrderedWindowKVCache(window)
+				}
+				defer c.Free()
+				attention := c.(cache.Attention)
+				attention.Update(rows(0, prefix), span(k, 0, prefix), span(v, 0, prefix))
+				history := attention.Update(rows(prefix, prefix+queries), span(k, prefix, prefix+queries), span(v, prefix, prefix+queries))
+				block := relativeSDPA(rows(prefix, prefix+queries), q, nil, nil, table, sink, history, window, scale)
+				for i := range queries {
+					h, single := decode(prefix + i + 1)
+					want := relativeSDPA(rows(prefix+i, prefix+i+1), span(q, i, i+1), nil, nil, span(table, i, i+1), span(sink, i, i+1), h, window, scale)
+					got := mlx.Contiguous(span(block, i, i+1), false).Floats()
+					wantValues := mlx.Contiguous(want, false).Floats()
+					for j := range wantValues {
+						if math.Float32bits(got[j]) != math.Float32bits(wantValues[j]) {
+							t.Fatalf("window %d: query %d value %d is %v, single-token decode gives %v", window, i, j, got[j], wantValues[j])
+						}
+					}
+					single.Free()
 				}
 			})
 		}

@@ -74,6 +74,60 @@ func requireStockAttention(label string, got, want *Array, kernel *gpuKernel, pa
 	return requireClose(label, Contiguous(got, false), Contiguous(want, false), tol)
 }
 
+// Draft verification must score each query exactly as single-token decode does
+// at its position, so which drafts are accepted cannot depend on the block
+// width. Cover blocks that straddle a history length where the split changes,
+// long blocks past it, and a local window.
+func TestRelativeAttentionBlockMatchesDecode(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if relativeAttentionParts() == 0 {
+			t.Skip("requires an Apple GPU")
+		}
+		scale := float32(1 / math.Sqrt(128))
+		for _, tc := range []struct {
+			queries, keys, window int
+			// rolling views start at the newest window, as an ordered window
+			// cache hands them out: a block's view starts at its first query's
+			// window, single-token decode's at its own.
+			rolling bool
+		}{
+			{8, 4100, 0, false}, {4, 4098, 0, false}, {8, 5000, 0, false}, {8, 16388, 0, false}, {3, 2050, 0, false},
+			{8, 1100, 1024, false}, {4, 3000, 1024, true}, {8, 3000, 1024, true},
+		} {
+			Scoped(func() {
+				q, k, v, table, sink := relativeAttentionInputs(tc.queries, tc.keys, 24, 8, 128, 1024)
+				q = q.AsType(DTypeFloat32)
+				first := tc.keys - tc.queries
+				start := func(end int) int {
+					if tc.rolling {
+						return max(0, end-tc.window)
+					}
+					return 0
+				}
+				view := func(x *Array, from, to int) *Array { return x.Slice(Slice(), Slice(), Slice(from, to), Slice()) }
+				from := start(first + 1)
+				block := RelativePositionAttention(q, view(k, from, tc.keys), view(v, from, tc.keys), table, sink, tc.window, scale)
+				if block == nil {
+					t.Fatalf("%d queries over %d keys declined", tc.queries, tc.keys)
+				}
+				for j := range tc.queries {
+					query := func(x *Array) *Array { return x.Slice(Slice(), Slice(), Slice(j, j+1), Slice()) }
+					end := first + j + 1
+					single := RelativePositionAttention(query(q), view(k, start(end), end), view(v, start(end), end), query(table), query(sink), tc.window, scale)
+					got, want := Contiguous(query(block), false).Floats(), Contiguous(single, false).Floats()
+					for i := range want {
+						if math.Float32bits(got[i]) != math.Float32bits(want[i]) {
+							t.Errorf("%d queries over %d keys, window %d: query %d value %d is %v, single-token decode gives %v",
+								tc.queries, tc.keys, tc.window, j, i, got[i], want[i])
+							return
+						}
+					}
+				}
+			})
+		}
+	})
+}
+
 // Long global histories take larger partition counts than the 1-8K the
 // split was first tuned at. Every count must still agree with native SDPA.
 func TestRelativeAttentionLongHistories(t *testing.T) {
@@ -263,19 +317,31 @@ func TestRelativeAttentionReadsStridedInputs(t *testing.T) {
 				}
 			})
 		}
-		// Token-major keys do not have contiguous rows; the kernel must not
-		// read them as if they did.
+		// Token-major keys and values do not have contiguous rows. Every split
+		// kernel reads them through their strides and agrees with the stock graph.
 		Scoped(func() {
-			q, k, v, table, sink := relativeAttentionInputs(1, 1031, 24, 8, 128, 1024)
-			tokenMajor := Contiguous(k.Transpose(0, 2, 1, 3), false).Transpose(0, 2, 1, 3)
-			got := RelativePositionAttention(q, tokenMajor, v, table, sink, 1024, scale)
+			q, k, v, table, sink := relativeAttentionInputs(4, 1031, 24, 8, 128, 1024)
+			q = q.AsType(DTypeFloat32)
+			tokenMajor := func(x *Array) *Array { return Contiguous(x.Transpose(0, 2, 1, 3), false).Transpose(0, 2, 1, 3) }
+			want := stockRelativeAttention(q, k.AsType(DTypeFloat32), v.AsType(DTypeFloat32), table, sink, 1024, scale)
+			parts := relativeAttentionParts()
+			for name, kernel := range map[string]*gpuKernel{
+				"per-key": relativeAttentionPart, "block": relativeAttentionBlockPart, "shared": relativeAttentionSharedPart,
+			} {
+				got := relativeAttentionSplitMerge(kernel, parts, q, tokenMajor(k), tokenMajor(v), table, sink, 1024, scale)
+				if got == nil {
+					t.Fatalf("%s kernel declined token-major keys", name)
+				}
+				if err := requireStockAttention(name+" kernel, token-major keys", got, want, kernel, parts, relativeAttentionFP32Tol); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := RelativePositionAttention(q, tokenMajor(k), v, table, sink, 1024, scale)
 			if got == nil {
 				t.Fatal("eligible shape declined")
 			}
-			for i, x := range Contiguous(got.AsType(DTypeFloat32), false).Floats() {
-				if !math.IsNaN(float64(x)) {
-					t.Fatalf("unsupported key layout produced %v at %d, want NaN", x, i)
-				}
+			if err := requireStockAttention("token-major keys", got, want, nil, 0, relativeAttentionFP32Tol); err != nil {
+				t.Fatal(err)
 			}
 		})
 	})

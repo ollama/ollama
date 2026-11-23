@@ -98,20 +98,29 @@ type routedExperts struct {
 func (e routedExperts) forward(x *mlx.Array) *mlx.Array {
 	batch, tokens, width := x.Dim(0), x.Dim(1), x.Dim(2)
 	flat := x.Reshape(batch*tokens, width)
-	router := nn.Linear{Weight: e.Router}
-	// Short products read BF16 rows directly and accumulate in FP32.
-	routerInput := x
-	if tokens > shortTargetRows || !mlx.MetalIsAvailable() {
-		routerInput = flat.AsType(mlx.DTypeFloat32)
-	}
-	logits := projectTarget(&router, routerInput).Reshape(batch*tokens, e.Router.Dim(0))
-	indices, weights := routeExperts(logits, e.Bias, e.topK, e.routeScale)
+	indices, weights := routeExperts(e.routerLogits(x), e.Bias, e.topK, e.routeScale)
 	// The Metal grouped gather reuses each expert when there are at least
 	// four routes per expert on average. Keep short target verification rows
 	// on the width-stable path even if multiple requests share a batch.
 	grouped := e.GateUp.BlockScales != nil && e.Down.BlockScales != nil &&
 		tokens >= 64 && batch*tokens*e.topK/e.Router.Dim(0) >= 4 && mlx.MetalIsAvailable()
 	return e.combine(flat, indices, weights, grouped).Reshape(batch, tokens, width)
+}
+
+// routerLogits returns FP32 router scores, [batch*tokens, experts]. Short
+// products read BF16 rows directly and accumulate in FP32. Without them, short
+// blocks stay 3-D so projectTarget pads decode and draft verification to one
+// matrix shape.
+func (e routedExperts) routerLogits(x *mlx.Array) *mlx.Array {
+	batch, tokens, width := x.Dim(0), x.Dim(1), x.Dim(2)
+	router := nn.Linear{Weight: e.Router}
+	input := x
+	if tokens > shortTargetRows {
+		input = x.Reshape(batch*tokens, width).AsType(mlx.DTypeFloat32)
+	} else if !mlx.MetalIsAvailable() {
+		input = x.AsType(mlx.DTypeFloat32)
+	}
+	return projectTarget(&router, input).Reshape(batch*tokens, e.Router.Dim(0))
 }
 
 // combine evaluates the selected experts and sums them for each token.

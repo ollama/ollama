@@ -478,8 +478,16 @@ func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
 		}
 		idx = c.maxSize
 	}
-	k := state[0].Clone()
-	v := state[1].Clone()
+	k, v := state[0].Clone(), state[1].Clone()
+	if c.ordered {
+		// An ordered buffer keeps spare capacity past its window. A view would
+		// keep all of it alive while the snapshot counts only the window, so
+		// copy the window out.
+		copies := mlx.ScopedAsyncEval(func() []*mlx.Array {
+			return []*mlx.Array{mlx.Contiguous(state[0], false), mlx.Contiguous(state[1], false)}
+		})
+		k, v = copies[0], copies[1]
+	}
 	scope := mlx.NewScope()
 	scope.Attach(k, v)
 
