@@ -101,7 +101,11 @@ func TestNemotron3NanoParser(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &Nemotron3NanoParser{}
-			p.Init(nil, nil, tt.thinkValue)
+			var tools []api.Tool
+			for _, call := range tt.expectedCalls {
+				tools = append(tools, tool(call.Function.Name, nil))
+			}
+			p.Init(tools, nil, tt.thinkValue)
 
 			content, thinking, calls, err := p.Add(tt.input, false)
 			if err != nil {
@@ -238,7 +242,11 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &Nemotron3NanoParser{}
-			p.Init(nil, nil, tt.thinkValue)
+			var tools []api.Tool
+			for _, call := range tt.expectedCalls {
+				tools = append(tools, tool(call.Function.Name, nil))
+			}
+			p.Init(tools, nil, tt.thinkValue)
 
 			var allContent string
 			var allThinking string
@@ -349,7 +357,7 @@ func TestNemotron3NanoParser_DoneFlushesBufferedText(t *testing.T) {
 
 func TestNemotron3NanoParser_DoneFlushesUnterminatedToolCall(t *testing.T) {
 	p := &Nemotron3NanoParser{}
-	p.Init(nil, nil, &api.ThinkValue{Value: true})
+	p.Init([]api.Tool{tool("test", nil)}, nil, &api.ThinkValue{Value: true})
 	content, thinking, calls, err := p.Add("reasoning<tool_call><function=test>", false)
 	if err != nil {
 		t.Fatal(err)
@@ -499,7 +507,7 @@ func TestNemotron3NanoParser_ToolCallWithoutThinkClose(t *testing.T) {
 	}
 
 	p := &Nemotron3NanoParser{}
-	p.Init(nil, nil, &api.ThinkValue{Value: true}) // thinking ENABLED but model doesn't output </think>
+	p.Init([]api.Tool{tool("get_weather", nil)}, nil, &api.ThinkValue{Value: true}) // thinking ENABLED but model doesn't output </think>
 
 	var allContent string
 	var allThinking string

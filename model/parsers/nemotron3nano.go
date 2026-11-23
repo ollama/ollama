@@ -117,7 +117,10 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 
 	// Look for end of thinking: </think> or <tool_call> (model may skip </think>)
 	thinkIdx := strings.Index(bufStr, nemotronThinkClose)
-	toolIdx := strings.Index(bufStr, nemotronToolCallOpen)
+	toolIdx := -1
+	if len(p.toolParser.tools) > 0 {
+		toolIdx = strings.Index(bufStr, nemotronToolCallOpen)
+	}
 
 	var endIdx int = -1
 	var remainder string
@@ -155,9 +158,10 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 // emitThinking returns unambiguous thinking content, keeping potential partial tags in buffer
 func (p *Nemotron3NanoParser) emitThinking(bufStr string) string {
 	// Check for partial </think> or <tool_call> at end
-	thinkOverlap := overlap(bufStr, nemotronThinkClose)
-	toolOverlap := overlap(bufStr, nemotronToolCallOpen)
-	maxOverlap := max(thinkOverlap, toolOverlap)
+	maxOverlap := overlap(bufStr, nemotronThinkClose)
+	if len(p.toolParser.tools) > 0 {
+		maxOverlap = max(maxOverlap, overlap(bufStr, nemotronToolCallOpen))
+	}
 
 	if maxOverlap > 0 {
 		beforePartialTag := bufStr[:len(bufStr)-maxOverlap]

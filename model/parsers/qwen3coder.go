@@ -61,6 +61,9 @@ func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thin
 }
 
 func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
+	if len(p.tools) == 0 {
+		return s, "", nil, nil
+	}
 	p.acc.WriteString(s)
 
 	events := p.parseEvents()

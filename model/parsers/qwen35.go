@@ -219,7 +219,14 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				p.state = qwen35ParserStateCollectingContent
 			}
 			return events, true
-		} else if overlapLen := max(overlap(acc, qwen35ThinkingCloseTag), overlap(acc, qwen35ToolCallOpenTag)); overlapLen > 0 {
+		}
+
+		overlapLen := overlap(acc, qwen35ThinkingCloseTag)
+		hasTools := len(p.toolParser.tools) > 0
+		if hasTools {
+			overlapLen = max(overlapLen, overlap(acc, qwen35ToolCallOpenTag))
+		}
+		if overlapLen > 0 {
 			beforePartialTag := acc[:len(acc)-overlapLen]
 			trailingWsLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWsLen
@@ -232,7 +239,7 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				events = append(events, qwen35EventThinkingContent{content: unambiguous})
 			}
 			return events, false
-		} else if strings.Contains(acc, qwen35ToolCallOpenTag) {
+		} else if hasTools && strings.Contains(acc, qwen35ToolCallOpenTag) {
 			// qwen3.5:9b model forgets sometimes to use </think> tag before the <tool_call> block starts
 			// this condition ends the Think block and continues with the <tool_call> when the tag
 			// is found
