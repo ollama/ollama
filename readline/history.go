@@ -62,19 +62,18 @@ func (h *History) Init() error {
 	r := bufio.NewReader(f)
 	for {
 		line, err := r.ReadString('\n')
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
+		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 
-		line = strings.TrimSpace(line)
-		if len(line) == 0 {
-			continue
+		// at EOF, line holds the last line when the file has no trailing newline
+		if line = strings.TrimSpace(line); len(line) > 0 {
+			h.Add(line)
 		}
 
-		h.Add(line)
+		if err != nil {
+			break
+		}
 	}
 
 	return nil
@@ -140,10 +139,15 @@ func (h *History) Save() error {
 		line, _ := h.Buf.Get(cnt)
 		fmt.Fprintln(buf, line)
 	}
-	buf.Flush()
-	f.Close()
-
-	if err = os.Rename(tmpFile, h.Filename); err != nil {
+	err = buf.Flush()
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(tmpFile, h.Filename)
+	}
+	if err != nil {
+		os.Remove(tmpFile)
 		return err
 	}
 
