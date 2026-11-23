@@ -12,6 +12,16 @@
       }
     },
     {
+      "name": "mlx_cpu",
+      "inherits": [ "default" ],
+      "binaryDir": "${sourceDir}/../../build/mlx",
+      "cacheVariables": {
+        "MLX_BUILD_CUDA": "OFF",
+        "MLX_BUILD_METAL": "OFF",
+        "OLLAMA_RUNNER_DIR": "mlx"
+      }
+    },
+    {
       "name": "mlx_cuda_v13_base",
       "hidden": true,
       "inherits": [ "default" ],
@@ -63,6 +73,11 @@
     }
   ],
   "buildPresets": [
+    {
+      "name": "mlx_cpu",
+      "configurePreset": "mlx_cpu",
+      "targets": [ "mlx", "mlxc" ]
+    },
     {
       "name": "mlx_cuda_v13_linux",
       "configurePreset": "mlx_cuda_v13_linux",
