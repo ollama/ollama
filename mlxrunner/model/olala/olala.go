@@ -150,6 +150,8 @@ type Model struct {
 	Layers []*Layer
 	// shiftSlot[i] is the cache index of attention layer i's token-shift state
 	shiftSlot []int
+	// Fast holds the weights of the fused decode path, nil when unavailable.
+	Fast []*fastLayer
 }
 
 type Layer struct {
@@ -194,6 +196,9 @@ type MoE struct {
 }
 
 type expertWeights struct {
+	// Raw is the stacked (E, out, in) weight as stored; W is what GatherMM /
+	// GatherQMM read.
+	Raw               *mlx.Array
 	W, Scales, Biases *mlx.Array
 	GroupSize, Bits   int
 	Mode              string
@@ -351,6 +356,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		l.Moe.Up = loadExperts(tensors, cfg, p+".mlp.experts.experts.weight")
 		l.Moe.Down = loadExperts(tensors, cfg, p+".mlp.experts.output_experts.weight")
 	}
+	m.Fast = m.buildFast()
 	return nil
 }
 
@@ -364,12 +370,12 @@ func loadExperts(tensors map[string]*mlx.Array, cfg *Config, key string) expertW
 	}
 	scales := tensors[key+"_scale"]
 	if scales == nil {
-		return expertWeights{W: model.TransposeExpertWeightForGatherMM(w)}
+		return expertWeights{Raw: w, W: model.TransposeExpertWeightForGatherMM(w)}
 	}
 	qbias := tensors[key+"_qbias"]
 	groupSize, bits, mode := model.ResolveLinearQuantParams(cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, w, scales)
 	if model.SupportsGatherQMM(mode, bits) {
-		return expertWeights{W: w, Scales: scales, Biases: qbias, GroupSize: groupSize, Bits: bits, Mode: mode, Quantized: true}
+		return expertWeights{Raw: w, W: w, Scales: scales, Biases: qbias, GroupSize: groupSize, Bits: bits, Mode: mode, Quantized: true}
 	}
 	deq := mlx.Dequantize(w, scales, qbias, groupSize, bits, mode, nil)
 	return expertWeights{W: model.TransposeExpertWeightForGatherMM(deq)}
@@ -420,6 +426,11 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	dtype := m.computeDType()
+
+	if m.canDecodeFused(b, caches) {
+		h := m.decodeFused(b, caches)
+		return h, h
+	}
 
 	x := f32(m.Embed.Forward(b.InputIDs))
 	if cfg.NormalizeEmbedNGPT {

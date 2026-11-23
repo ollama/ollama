@@ -446,6 +446,7 @@ func TestLongPrefillMatchesShortPieces(t *testing.T) {
 func TestChunkedPrefillMatchesStepByStep(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		m := newTinyModel(t, 0, 0)
+		m.Fast = nil
 		ids := tinyTokens(45) // two Mamba chunks, the second one partial
 
 		got := forward(m, m.NewCaches(), ids, 0)
@@ -461,4 +462,50 @@ func TestChunkedPrefillMatchesStepByStep(t *testing.T) {
 		}
 		t.Logf("relative error %.5f", e)
 	})
+}
+
+func testFusedDecode(t *mlxtest.T, bits, expertBits int, tol float64) {
+	m := newTinyModel(t, bits, expertBits)
+	if m.Fast == nil {
+		t.Skip("fused Olala kernels unavailable")
+	}
+	fast := m.Fast
+	prompt := tinyTokens(40)
+	next := []int32{5, 17, 33, 2}
+
+	run := func(fused bool) [][]float32 {
+		if fused {
+			m.Fast = fast
+		} else {
+			m.Fast = nil
+		}
+		caches := m.NewCaches()
+		forward(m, caches, prompt, 0)
+		var out [][]float32
+		for i, id := range next {
+			out = append(out, forward(m, caches, []int32{id}, len(prompt)+i))
+		}
+		return out
+	}
+	want := run(false)
+	got := run(true)
+	for i := range want {
+		e := relErr(got[i], want[i])
+		if e > tol {
+			t.Fatalf("decode step %d: fused path differs from the graph path: relative error %.4f", i, e)
+		}
+		t.Logf("decode step %d: relative error %.5f", i, e)
+	}
+}
+
+func TestFusedDecodeMatchesGraphBF16(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) { testFusedDecode(t, 0, 0, 1e-2) })
+}
+
+func TestFusedDecodeMatchesGraphInt8(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) { testFusedDecode(t, 8, 8, 1e-2) })
+}
+
+func TestFusedDecodeMatchesGraphInt4Experts(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) { testFusedDecode(t, 8, 4, 1e-2) })
 }
