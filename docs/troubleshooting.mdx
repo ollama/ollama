@@ -79,6 +79,12 @@ If your system is configured with the "noexec" flag where Ollama stores its temp
 
 ## Linux docker
 
+For containers with a finite cgroup v2 memory limit, available CPU memory is
+bounded by both the host's available RAM and the container's remaining allowance.
+Check `memory.max`, `memory.current`, and the host's `MemAvailable` when diagnosing
+memory-related model load failures. A limit above physical RAM does not increase
+capacity, and usage at or above the limit leaves no reported headroom.
+
 If Ollama initially works on the GPU in a docker container, but then switches to running on CPU after some period of time with errors in the server log reporting GPU discovery failures, this can be resolved by disabling systemd cgroup management in Docker. Edit `/etc/docker/daemon.json` on the host and add `"exec-opts": ["native.cgroupdriver=cgroupfs"]` to the docker configuration.
 
 ## NVIDIA GPU Discovery
