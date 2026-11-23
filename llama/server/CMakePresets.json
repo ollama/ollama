@@ -134,7 +134,8 @@
       "cacheVariables": {
         "GGML_CUDA": "ON",
         "OLLAMA_RUNNER_DIR": "cuda_jetpack5",
-        "OLLAMA_GPU_BACKEND": "cuda"
+        "OLLAMA_GPU_BACKEND": "cuda",
+        "GGML_CUDA_NO_VMM": "ON"
       }
     },
     {
@@ -157,7 +158,8 @@
       "cacheVariables": {
         "GGML_CUDA": "ON",
         "OLLAMA_RUNNER_DIR": "cuda_jetpack6",
-        "OLLAMA_GPU_BACKEND": "cuda"
+        "OLLAMA_GPU_BACKEND": "cuda",
+        "GGML_CUDA_NO_VMM": "ON"
       }
     },
     {
