@@ -336,6 +336,7 @@ jobs:
             cuda-components:
               - '"cudart"'
               - '"nvcc"'
+              - '"nvml_dev"'
               - '"cublas_dev"'
               - '"crt"'
               - '"nvvm"'
@@ -343,7 +344,6 @@ jobs:
             cuda-cross-components:
               - '"cudart_cross"'
               - '"nvcc_cross"'
-              - '"nvml_dev_cross"'
               - '"cublas_cross"'
             cuda-version: '13.5'
           - os: windows
