@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/gguf"
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/openai"
@@ -255,6 +256,29 @@ func TestLoadedModelLookupDoesNotWaitForUnrelatedRunner(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("lookup waited for an unrelated loading runner")
+	}
+}
+
+func TestInkling2ChatMapsDeveloperInstructions(t *testing.T) {
+	m := &Model{System: "model default"}
+	m.Config.Renderer = "inkling2"
+	request := []api.Message{
+		{Role: "developer", Content: "follow the tool instructions"},
+		{Role: "user", Content: "find the weather"},
+		{Role: "developer", Content: "return a tool call"},
+	}
+	want := slices.Clone(request)
+	want[0].Role = "system"
+	want[2].Role = "system"
+	if got := chatMessagesForRequest(m, request); !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %+v, want %+v", got, want)
+	}
+	if request[0].Role != "developer" || request[2].Role != "developer" {
+		t.Fatal("request messages were modified")
+	}
+	m.Config.Renderer = "flint"
+	if got := chatMessagesForRequest(m, request); len(got) != 4 || got[1].Role != "developer" || got[3].Role != "developer" {
+		t.Fatalf("explicit developer roles were changed for another renderer: %+v", got)
 	}
 }
 
@@ -2494,5 +2518,54 @@ func TestShowRendererParserAndTemplateSource(t *testing.T) {
 	resp = show(t, "show-bare")
 	if resp.TemplateSource != "none" {
 		t.Errorf("template source = %q, want none", resp.TemplateSource)
+	}
+}
+
+func TestGenerateInklingStructuredFormat(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	const name = "inkling-structured"
+	mock := mockRunner{CompletionResponse: llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop}}
+	s := newServerWithMockRunner(t, &mock)
+	createSafetensorsTestModel(t, name, model.ConfigV2{
+		ModelFormat: "safetensors", Renderer: "inkling2", Parser: "inkling2", Capabilities: []string{"completion", "thinking"},
+	}, nil)
+	const answer = `{"text":"<|end_message|><|content_thinking|>"}`
+	const thought, text, end = "<|message_model|><|content_thinking|>", "<|message_model|><|content_text|>", "<|end_message|>"
+	for _, tc := range []struct {
+		name, template string
+		think          bool
+		generation     string
+		wantThinking   string
+		wantFrames     bool
+	}{
+		{"publisher", "", true, thought + "check" + end + text + answer, "check", true},
+		{"publisher no thought", "", false, text + answer, "", true},
+		{"custom", "{{ .Prompt }}", true, thought + "check" + end + text + answer, "check", false},
+		{"custom plain", "{{ .Prompt }}", false, answer, "", false},
+		{"open thought", "{{ .Prompt }}" + thought + "\n", true, "check" + end + text + answer, "check", true},
+		{"open hidden thought", "{{ .Prompt }}" + thought, false, "check" + end + text + answer, "", true},
+		{"open answer", "{{ .Prompt }}" + text + " ", true, answer, "", false},
+		{"open answer no thought", "{{ .Prompt }}" + text, false, answer, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock.CompletionResponse.Content = tc.generation
+			w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+				Model: name, Prompt: "hello", Template: tc.template, Format: json.RawMessage(`"json"`),
+				Think: &api.ThinkValue{Value: tc.think}, Stream: new(false),
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("generate status %d: %s", w.Code, w.Body)
+			}
+			var response api.GenerateResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Response != answer || response.Thinking != tc.wantThinking {
+				t.Fatalf("content %q, thinking %q", response.Response, response.Thinking)
+			}
+			if frames := mock.CompletionRequest.FormatFrames; (frames != nil) != tc.wantFrames {
+				t.Errorf("grammar frames = %+v, want frames %v", frames, tc.wantFrames)
+			}
+		})
 	}
 }

@@ -372,6 +372,120 @@ func (d *selectedBlockDraft) Select(_ *mlx.Array, logits *mlx.Array, _ *mlx.Arra
 	return tokens.Reshape(1, n), ids.Reshape(1, n, 2), probs.Reshape(1, n, 2)
 }
 
+type vocabularyBlockSelector struct{ *selectedBlockDraft }
+
+func (*vocabularyBlockSelector) Select(_ *mlx.Array, logits *mlx.Array, _ *mlx.Array, choose func(*mlx.Array, *mlx.Array) (*mlx.Array, *mlx.Array)) (tokens, ids, probs *mlx.Array) {
+	rows, vocab := logits.Dim(1), logits.Dim(2)
+	ids = mlx.BroadcastTo(mlx.Arange(0, float64(vocab), 1, mlx.DTypeInt32), int32(rows), int32(vocab))
+	tokens, probs = choose(ids, logits.Squeeze(0))
+	return tokens.ExpandDims(0), nil, probs.ExpandDims(0)
+}
+
+func TestBlockSelectorVocabularyOrderWithTopKTarget(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		r, draft, session, _ := newBlockTestSession(t, nil, 3)
+		defer session.close()
+		r.spec.draft = &vocabularyBlockSelector{&selectedBlockDraft{draft}}
+		r.Sampler.Remove(pipelineSlot)
+		r.Sampler.Add(pipelineSlot, sampler.Options{Temperature: 1, TopK: 2, UseSeed: true, Seed: 42}, nil)
+
+		// After the unused anchor row, the first proposal is uniform and the
+		// second assigns more than half its mass to token 3.
+		logits := mlx.FromValues([]float32{
+			0, 0, 0, 0,
+			0, 0, 0, 0,
+			0, 0, 0, 2,
+		}, 1, 3, 4)
+		q := session.selectBlock(logits, mlx.FromValues([]int32{0}, 1), 2, 2).dist
+		if q.IDs != nil || !slices.Equal(q.Probs.Dims(), []int{2, 4}) {
+			t.Fatalf("proposal IDs %v, shape %v, want dense [2 4]", q.IDs, q.Probs.Dims())
+		}
+		// Target row 0 splits its mass equally between tokens 0 and 2.
+		// Row 1 splits between 1 and 3, so only token 1 has residual mass.
+		p := r.Sampler.Distribution(pipelineSlot, mlx.FromValues([]float32{1, 0, 1, 0, 0, 1, 0, 1}, 2, 4), nil)
+		residual := p.ResidualAgainst(q)
+		query := mlx.FromValues([]int32{2, 0, 1, 1, 3, 2}, 2, 3)
+		if got, want := residual.ProbsForIDs(query).Floats(), []float32{.5, .5, 0, 1, 0, 0}; !slices.Equal(got, want) {
+			t.Fatalf("residual probabilities = %v, want %v", got, want)
+		}
+	})
+}
+
+type observeProposalRows struct {
+	*selectedBlockDraft
+	unembed, hidden, logits int
+}
+
+func (d *observeProposalRows) Unembed(h *mlx.Array) *mlx.Array {
+	d.unembed = h.Dim(1)
+	return d.selectedBlockDraft.Unembed(h)
+}
+
+func (d *observeProposalRows) Select(hidden, logits, anchor *mlx.Array, choose func(*mlx.Array, *mlx.Array) (*mlx.Array, *mlx.Array)) (*mlx.Array, *mlx.Array, *mlx.Array) {
+	d.hidden = hidden.Dim(1)
+	d.logits = logits.Dim(1)
+	return d.selectedBlockDraft.Select(hidden, logits, anchor, choose)
+}
+
+type adaptiveBlockSelector struct{ *observeProposalRows }
+
+func (*adaptiveBlockSelector) AdaptiveDraftDepth() bool { return true }
+
+func TestBlockProposalIgnoresPaddedHidden(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		r, draft, session, _ := newBlockTestSession(t, nil, 8)
+		defer session.close()
+		hidden := oneHotLogits([]int32{1, 2, 3, 4, 5})
+		current := mlx.FromValues([]int32{1}, 1)
+		if got := session.selectBlock(hidden, current, 2, 2).tokens.Ints(); !slices.Equal(got, []int32{2, 3}) {
+			t.Fatalf("padded block proposed %v, want [2 3]", got)
+		}
+		selector := &observeProposalRows{selectedBlockDraft: &selectedBlockDraft{draft}}
+		r.spec.draft = selector
+		got := session.selectBlock(hidden, current, 2, 2)
+		if got.tokens.Dim(1) != 2 || selector.unembed != 2 {
+			t.Fatalf("padded selector projected %d rows and proposed %d, want 2 each", selector.unembed, got.tokens.Dim(1))
+		}
+	})
+}
+
+func TestProposalPrefixAfterFullVocabularyProjection(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		for _, adaptive := range []bool{false, true} {
+			for n := range 8 {
+				mlx.Scoped(func() {
+					r, fake, _, caches := newBlockTestSession(t, map[int32]int32{0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 1}, 8)
+					observer := &observeProposalRows{selectedBlockDraft: &selectedBlockDraft{fake}}
+					var selector model.BlockSelector = observer
+					rows := n
+					if adaptive {
+						selector = &adaptiveBlockSelector{observer}
+						rows = 7
+					}
+					r.spec = newSpeculation(r, pipelineSlot, selector, caches[:1], caches[1:])
+					session := r.spec.drafter.open(nil)
+					defer session.close()
+					session.committed(mlx.FromValues([]int32{1}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
+					got := session.propose(mlx.FromValues([]int32{1}, 1), n)
+					if n == 0 {
+						if got != nil || len(fake.calls) != 0 {
+							t.Fatalf("zero budget produced a proposal or a forward")
+						}
+						return
+					}
+					mlx.Eval(got.Arrays()...)
+					if len(fake.calls) != 1 || len(fake.calls[0].block) != rows+1 || observer.unembed != rows {
+						t.Fatalf("adaptive=%v, %d proposals: draft calls %v, projected %d rows, want %d", adaptive, n, fake.calls, observer.unembed, rows)
+					}
+					if observer.hidden != n || observer.logits != n || !slices.Equal(got.tokens.Dims(), []int{1, n}) || got.dist.Probs.Dim(0) != n || got.dist.IDs.Dim(0) != n {
+						t.Fatalf("%d proposals: selector rows %d/%d, tokens %v, probabilities %v, IDs %v", n, observer.hidden, observer.logits, got.tokens.Dims(), got.dist.Probs.Dims(), got.dist.IDs.Dims())
+					}
+				})
+			}
+		}
+	})
+}
+
 func TestBlockSelectorProposalAndRejection(t *testing.T) {
 	for _, tc := range []struct {
 		slot        int
@@ -436,33 +550,32 @@ func TestBlockSelectorProposalAndRejection(t *testing.T) {
 // round accepts, without training the depth controller; a plain block draft
 // still takes the controller's depth.
 func TestSelectorDraftKeepsFixedDepth(t *testing.T) {
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		r, draft, session, _ := newBlockTestSession(t, map[int32]int32{1: 2}, 8)
-		session.close()
-		req := request{Tokens: []int32{1, 2, 3}}
+	draft := &fakeBlockDraft{blockSize: 8}
+	r := &Runner{}
+	r.spec = newSpeculation(r, pipelineSlot, draft, nil, nil)
+	req := request{Tokens: []int32{1, 2, 3}}
 
-		plain := r.spec.open(req, nil)
-		if plain.fixedDepth || plain.limit != r.spec.depth.scheduled {
-			t.Fatalf("block draft: fixedDepth %v limit %d, want the controller's %d", plain.fixedDepth, plain.limit, r.spec.depth.scheduled)
-		}
-		plain.close()
+	plain := r.spec.open(req, nil)
+	if plain.fixedDepth || plain.limit != r.spec.depth.scheduled {
+		t.Fatalf("block draft: fixedDepth %v limit %d, want the controller's %d", plain.fixedDepth, plain.limit, r.spec.depth.scheduled)
+	}
+	plain.close()
 
-		r.spec.draft = &selectedBlockDraft{draft}
-		s := r.spec.open(req, nil)
-		defer s.close()
-		if !s.fixedDepth || s.limit != dflash2Depth {
-			t.Fatalf("selector draft: fixedDepth %v limit %d, want %d", s.fixedDepth, s.limit, dflash2Depth)
+	r.spec.draft = &selectedBlockDraft{draft}
+	s := r.spec.open(req, nil)
+	defer s.close()
+	if !s.fixedDepth || s.limit != dflash2Depth {
+		t.Fatalf("selector draft: fixedDepth %v limit %d, want %d", s.fixedDepth, s.limit, dflash2Depth)
+	}
+	scheduled := r.spec.depth.scheduled
+	for _, accepted := range []int{0, 3, dflash2Depth} {
+		s.beginRound()
+		s.endRound(dflash2Depth, accepted, dflash2Depth)
+		if s.limit != dflash2Depth {
+			t.Fatalf("limit %d after accepting %d, want %d", s.limit, accepted, dflash2Depth)
 		}
-		scheduled := r.spec.depth.scheduled
-		for _, accepted := range []int{0, 3, dflash2Depth} {
-			s.beginRound()
-			s.endRound(dflash2Depth, accepted, dflash2Depth)
-			if s.limit != dflash2Depth {
-				t.Fatalf("limit %d after accepting %d, want %d", s.limit, accepted, dflash2Depth)
-			}
-		}
-		if slices.ContainsFunc(r.spec.depth.acc.seen, func(n int) bool { return n != 0 }) || r.spec.depth.scheduled != scheduled {
-			t.Fatalf("fixed-depth rounds trained the depth controller: seen %v, scheduled %d -> %d", r.spec.depth.acc.seen, scheduled, r.spec.depth.scheduled)
-		}
-	})
+	}
+	if slices.ContainsFunc(r.spec.depth.acc.seen, func(n int) bool { return n != 0 }) || r.spec.depth.scheduled != scheduled {
+		t.Fatalf("fixed-depth rounds trained the depth controller: seen %v, scheduled %d -> %d", r.spec.depth.acc.seen, scheduled, r.spec.depth.scheduled)
+	}
 }

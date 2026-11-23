@@ -173,15 +173,7 @@ func newModelFromConfig(root *model.Root, data, generationConfig []byte) (*Model
 		return nil, fmt.Errorf("unsupported sliding_attention partial_rotary_factor: %g", factor)
 	}
 	cfg.Scale = float32(1 / math.Sqrt(float64(cfg.HeadDim)))
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if root.GroupSize() > 0 {
-			cfg.QuantGroupSize = root.GroupSize()
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
 	// Full attention rotates only part of each head. Its frequencies still use
 	// the complete head width as the exponent denominator.

@@ -338,15 +338,7 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
 	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
 	if err != nil {

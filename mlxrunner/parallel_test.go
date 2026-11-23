@@ -6,6 +6,48 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
 
+func TestParallelContextUsesExplicitNumCtx(t *testing.T) {
+	const trained = 1 << 20
+	for _, tc := range []struct {
+		name string
+		auto bool
+		want int
+	}{
+		{"VRAM tier", true, 256 << 10},
+		{"explicit", false, 4096},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Client{softContextLength: 4096, numCtxAuto: tc.auto}
+			if got := parallelContextLength(trained, c.parallelContextHint()); got != tc.want {
+				t.Errorf("projected context = %d, want %d", got, tc.want)
+			}
+			if got := c.reportedContextLength(trained); got != 4096 {
+				t.Errorf("reported context = %d, want 4096", got)
+			}
+		})
+	}
+}
+
+func TestParallelContextLength(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		trained, requested, want int
+	}{
+		{"unknown model size", 0, 4096, 0},
+		{"short model", 8192, 0, 8192},
+		{"short requested window", 1 << 20, 4096, 4096},
+		{"request exceeds model", 8192, 32768, 8192},
+		{"large model default", 1 << 20, 0, 256 << 10},
+		{"large requested window", 1 << 20, 512 << 10, 256 << 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parallelContextLength(tc.trained, tc.requested); got != tc.want {
+				t.Fatalf("projected context = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDefaultParallelism(t *testing.T) {
 	const gib = 1 << 30
 	for _, tc := range []struct {

@@ -14,6 +14,11 @@ import (
 	"github.com/ollama/ollama/mlxrunner/sample"
 )
 
+// snapshotAlignedPrefill keeps prefill batch widths consistent across restores.
+type snapshotAlignedPrefill interface {
+	AlignPrefillToSnapshots()
+}
+
 type batchSlot struct {
 	id          int
 	cache       *prefixCache
@@ -86,12 +91,19 @@ type batchDrafting struct {
 
 func (b *batchDrafting) reset() {
 	b.requests = nil
+	b.interrupt()
+}
+
+// Interleaved work invalidates the timing sample. The same ready requests
+// can still finish their scheduled probe on the next complete decode round.
+func (b *batchDrafting) interrupt() {
 	b.started = time.Time{}
 }
 
 func (b *batchDrafting) begin(slots []*batchSlot) *depthController {
 	requests := make([]*batchRequest, len(slots))
 	size := draftBatchSize{rows: len(slots)}
+	block := false
 	for i, slot := range slots {
 		req := slot.request
 		if req.spec == nil || req.spec.fixedDepth {
@@ -101,6 +113,7 @@ func (b *batchDrafting) begin(slots []*batchSlot) *depthController {
 		requests[i] = req
 		if req.spec.enabled {
 			size.drafting++
+			block = req.spec.depth.block
 		}
 	}
 	if size.drafting == 0 {
@@ -117,8 +130,15 @@ func (b *batchDrafting) begin(slots []*batchSlot) *depthController {
 		c.drafterLimit = slots[0].speculation.drafter.draftLimit()
 		b.depths[size] = c
 	}
+	same := slices.Equal(requests, b.requests)
+	if block && !same {
+		// The batch shape keeps its measured costs. A different group starts
+		// a fresh probe schedule and brings its own per-request acceptance.
+		c = c.forBlock()
+		b.depths[size] = c
+	}
 	now := time.Now()
-	if !b.started.IsZero() && slices.Equal(requests, b.requests) {
+	if !b.started.IsZero() && same {
 		if b.drafts == b.previousDrafts {
 			c.cost.observe(b.drafts, now.Sub(b.started))
 		}
@@ -131,6 +151,33 @@ func (b *batchDrafting) begin(slots []*batchSlot) *depthController {
 		logutil.Trace("mlx batch draft depth", "rows", len(slots), "drafting", size.drafting, "depth", b.drafts, "cost", c.cost.sampleString())
 	}
 	return c
+}
+
+// A block verifier uses one width for all drafting rows. Its throughput is the
+// sum of their expected committed tokens plus one for each plain row, divided
+// by the measured cost of the whole batch at that width.
+func (b *batchDrafting) next(c *depthController) {
+	if !c.block {
+		c.next()
+		return
+	}
+	frontier := 0
+	for _, req := range b.requests {
+		if req.spec.enabled {
+			frontier = max(frontier, req.spec.depth.frontier())
+		}
+	}
+	c.nextFor(min(frontier+1, c.drafterLimit), func(n int) float64 {
+		var tokens float64
+		for _, req := range b.requests {
+			if req.spec.enabled {
+				tokens += req.spec.depth.acc.expectedCommitted(n)
+			} else {
+				tokens++
+			}
+		}
+		return tokens
+	})
 }
 
 func (r *Runner) onMLX(ctx context.Context, f func() error) error {
@@ -317,7 +364,8 @@ func (s *batchScheduler) admit(pending queuedRequest) bool {
 // available slot. A completed response still draining to its reader is busy.
 func (s *batchScheduler) selectSlot(pending queuedRequest) int {
 	var keys []uint32
-	if req, ok := pending.(request); ok {
+	req, generation := pending.(request)
+	if generation {
 		keys = effectiveKeyTokens(req.Tokens, req.MediaItems)
 	}
 	best, bestMatch := -1, -1
@@ -327,7 +375,9 @@ func (s *batchScheduler) selectSlot(pending queuedRequest) int {
 		}
 		matched := 0
 		if len(keys) > 0 && slot != nil && slot.cache != nil && slot.cache.root != nil {
-			_, matched = findBestMatch(slot.cache.root, slot.cache.key(keys))
+			plan := slot.cache.prefillPlan(len(req.Tokens), req.MediaItems)
+			_, matched = findBestMatch(slot.cache.root, plan.tag(slot.cache.key(keys)))
+			matched = plan.restoreOffset(matched)
 		}
 		if matched > bestMatch {
 			best, bestMatch = i, matched
@@ -355,6 +405,7 @@ func (s *batchScheduler) admitGeneration(request request, best int) {
 		}
 		slot.targets = targets
 		slot.cache = newPrefixCache(slices.Concat(targets, draft))
+		_, slot.cache.alignPrefill = s.r.Model.(snapshotAlignedPrefill)
 		slot.cache.limitBytes = s.r.snapshotLimit()
 		if s.r.spec != nil {
 			slot.speculation = newSpeculation(s.r, slot.id, s.r.spec.draft, targets, draft)
@@ -395,7 +446,12 @@ func (s *batchScheduler) finish(slot *batchSlot, err error) {
 		s.r.Sampler.Remove(slot.id)
 	}
 	req.spec.close()
-	req.session.close()
+	if req.spec != nil && req.spec.failedVerification {
+		// Discard uncommitted writes. Previously saved prefixes remain available on retry.
+		slot.cache.switchToPath([]*trieNode{slot.cache.root}, 0)
+	} else {
+		req.session.close()
+	}
 	if slog.Default().Enabled(req.request.Ctx, logutil.LevelTrace) {
 		slot.cache.dumpTree()
 	}
@@ -452,7 +508,7 @@ func (s *batchScheduler) step() bool {
 		slot := s.slots[i]
 		if slot != nil && slot.evaluation != nil {
 			s.nextPrefill = (i + 1) % len(s.slots)
-			s.drafting.reset()
+			s.drafting.interrupt()
 			s.stepEvaluation(slot)
 			progressed = true
 			break
@@ -461,7 +517,7 @@ func (s *batchScheduler) step() bool {
 			continue
 		}
 		req := slot.request
-		s.drafting.reset()
+		s.drafting.interrupt()
 		before := req.prefill.processed
 		ready, err := req.prefill.step(req.request.Ctx)
 		progressed = progressed || req.prefill.processed != before
@@ -508,7 +564,7 @@ func (s *batchScheduler) step() bool {
 		break
 	}
 	if s.decodeSpeech() {
-		s.drafting.reset()
+		s.drafting.interrupt()
 		progressed = true
 	}
 	var ready []*batchSlot
@@ -596,7 +652,7 @@ func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
 		d.s.lastRoundStart = time.Time{}
 		d.s.prevDrafts, d.s.roundDrafts = -1, -1
 		if d.inner != nil {
-			s.drafting.reset()
+			s.drafting.interrupt()
 			results, err := d.resume()
 			if err == nil {
 				d.advance(results[len(results)-1])
@@ -607,14 +663,14 @@ func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
 		remaining := req.output.limit - req.output.generated
 		candidates := d.s.drafter.propose(d.current.Token, min(limit, remaining-1))
 		if candidates == nil {
-			s.drafting.reset()
+			s.drafting.interrupt()
 			plain = append(plain, slot)
 			continue
 		}
 		mlx.AsyncEval(candidates.Arrays()...)
 		n := candidates.tokens.Dim(1)
 		if n != limit {
-			s.drafting.reset()
+			s.drafting.interrupt()
 		}
 		i := slices.IndexFunc(groups, func(g group) bool { return g.rounds[0].candidates.tokens.Dim(1) == n })
 		if i < 0 {
@@ -631,7 +687,11 @@ func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
 			if out.err == nil {
 				d.s.recordRound(g.rounds[i].candidates.tokens.Dim(1), out.accepted)
 				if controller != nil {
-					controller.acc.observe(out.observed, out.accepted)
+					evidence := controller.acc
+					if controller.block {
+						evidence = d.s.depth.acc
+					}
+					evidence.observe(out.observed, out.accepted)
 				}
 				d.advance(out.results[len(out.results)-1])
 			}
@@ -645,7 +705,7 @@ func (s *batchScheduler) decode(ready []*batchSlot, active int) error {
 	if controller != nil && !s.drafting.started.IsZero() {
 		// Draining a parked pipeline does not execute the scheduled probe.
 		// Hold its depth until a complete round consumes it.
-		controller.next()
+		s.drafting.next(controller)
 	}
 	return err
 }

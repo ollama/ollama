@@ -311,6 +311,12 @@ func NewRowKVHistory(rows []*KVHistory) *KVHistory {
 	return &KVHistory{rows: rows}
 }
 
+// AsType returns a single sequence's keys and values in dtype for an attention
+// operation. It preserves the cache mask and leaves its backing storage intact.
+func (h *KVHistory) AsType(dtype mlx.DType) *KVHistory {
+	return NewKVHistory(h.K().AsType(dtype), h.V().AsType(dtype), h.applier)
+}
+
 // Rows returns the borrowed single-request histories, or nil for a shared
 // rectangular history. Custom attention paths must dispatch these separately;
 // the histories may have different lengths. Callers must not modify the slice.

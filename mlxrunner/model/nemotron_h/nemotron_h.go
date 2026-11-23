@@ -329,32 +329,11 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
-	}
-
-	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
-	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = genConfigData
-	}
-	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = tokConfigData
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 
 	var preprocessorData []byte
@@ -428,37 +407,6 @@ func sanitizeConvWeight(w *mlx.Array) *mlx.Array {
 	return w
 }
 
-func stackAndClone(parts []*mlx.Array) *mlx.Array {
-	if len(parts) == 0 {
-		return nil
-	}
-	return mlx.Stack(parts, 0).Clone()
-}
-
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
-func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
-	for _, key := range keys {
-		if key == "" {
-			continue
-		}
-		if tensors[key] != nil {
-			delete(tensors, key)
-		}
-	}
-}
-
 func combinedTensorGlobalScale(tensors map[string]*mlx.Array, key string) (*mlx.Array, []string) {
 	return model.ReadGlobalScale(tensors, key, key+".weight")
 }
@@ -491,13 +439,6 @@ func applyExpertWeightGlobalScale(weight, scale *mlx.Array) *mlx.Array {
 	return mlx.Mul(weight, scale)
 }
 
-func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || w.NumDims() != 3 {
-		return w
-	}
-	return mlx.Transpose(w, 0, 2, 1).Clone()
-}
-
 func sliceAxis(a *mlx.Array, axis int, start, stop int32) *mlx.Array {
 	dims := a.Dims()
 	starts := make([]int32, len(dims))
@@ -512,13 +453,6 @@ func sliceAxis(a *mlx.Array, axis int, start, stop int32) *mlx.Array {
 
 func appendAndClone(dst, src *mlx.Array) *mlx.Array {
 	return mlx.Concatenate([]*mlx.Array{dst, src}, 0).Clone()
-}
-
-func stackSlicesAndClone(slices []*mlx.Array) *mlx.Array {
-	if len(slices) == 0 {
-		return nil
-	}
-	return mlx.Stack(slices, 0).Clone()
 }
 
 func foldSharedExperts(m *SparseMoE, cfg *Config) bool {
@@ -678,7 +612,7 @@ func stackQuantizedUpParts(a *mlx.Array, partSize int32, parts int32) *mlx.Array
 		start := i * partSize
 		slices = append(slices, sliceAxis(a, 0, start, start+partSize))
 	}
-	return stackSlicesAndClone(slices)
+	return model.StackAndClone(slices)
 }
 
 func stackQuantizedDownParts(a *mlx.Array, packedPartSize int, parts int32) *mlx.Array {
@@ -690,20 +624,11 @@ func stackQuantizedDownParts(a *mlx.Array, packedPartSize int, parts int32) *mlx
 		start := int(i) * packedPartSize
 		slices = append(slices, sliceAxis(a, 1, int32(start), int32(start+packedPartSize)))
 	}
-	return stackSlicesAndClone(slices)
-}
-
-func tensorAny(tensors map[string]*mlx.Array, keys ...string) (*mlx.Array, string) {
-	for _, k := range keys {
-		if v := tensors[k]; v != nil {
-			return v, k
-		}
-	}
-	return nil, ""
+	return model.StackAndClone(slices)
 }
 
 func tensorByBase(tensors map[string]*mlx.Array, base string) (*mlx.Array, string) {
-	return tensorAny(tensors, base+".weight", base)
+	return model.TensorAny(tensors, base+".weight", base)
 }
 
 // loadStackedExpertProjection loads a pre-stacked [experts, out, in] expert
@@ -720,7 +645,7 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 	scales := tensors[key+"_scale"]
 	globalScale, globalScaleKeys := combinedTensorGlobalScale(tensors, key)
 	if scales == nil {
-		freeTensorKeys(tensors, append([]string{key}, globalScaleKeys...)...)
+		model.FreeTensorKeys(tensors, append([]string{key}, globalScaleKeys...)...)
 		return &stackedExpertWeights{Weight: applyExpertWeightGlobalScale(w, globalScale)}
 	}
 
@@ -730,13 +655,13 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 		key, w, scales,
 	)
 
-	freeTensorKeys(tensors, append([]string{key, key + "_scale"}, globalScaleKeys...)...)
+	model.FreeTensorKeys(tensors, append([]string{key, key + "_scale"}, globalScaleKeys...)...)
 	if qbiases != nil {
-		freeTensorKeys(tensors, key+"_qbias")
+		model.FreeTensorKeys(tensors, key+"_qbias")
 	}
 
 	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if useQuantized && model.SupportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:       w,
 			Scales:       scales,
@@ -816,7 +741,7 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 			groupSize = gs
 			mode = m
 		}
-		keepQuantized := useQuantized && supportsGatherQMM(m, b)
+		keepQuantized := useQuantized && model.SupportsGatherQMM(m, b)
 		if e == 0 {
 			quantized = keepQuantized
 		} else if quantized != keepQuantized ||
@@ -843,21 +768,21 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 		return nil
 	}
 	out := &stackedExpertWeights{
-		Weight:    stackAndClone(weights),
+		Weight:    model.StackAndClone(weights),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,
 	}
 	if len(scales) == len(weights) {
-		out.Scales = stackAndClone(scales)
+		out.Scales = model.StackAndClone(scales)
 	}
 	if quantized && len(biases) == len(weights) {
-		out.Biases = stackAndClone(biases)
+		out.Biases = model.StackAndClone(biases)
 	}
 	if len(globalScales) == len(weights) {
-		out.GlobalScales = mlx.Reshape(stackAndClone(globalScales), int32(len(weights)))
+		out.GlobalScales = mlx.Reshape(model.StackAndClone(globalScales), int32(len(weights)))
 	}
-	freeTensorKeys(tensors, consumed...)
+	model.FreeTensorKeys(tensors, consumed...)
 	return out
 }
 
@@ -1104,7 +1029,7 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 			moe.UpBits = up.Bits
 			moe.UpMode = up.Mode
 		} else {
-			moe.UpWeight = transposeExpertWeightForGatherMM(up.Weight)
+			moe.UpWeight = model.TransposeExpertWeightForGatherMM(up.Weight)
 		}
 		if down.Scales != nil {
 			moe.DownWeightQ = down.Weight
@@ -1115,7 +1040,7 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 			moe.DownBits = down.Bits
 			moe.DownMode = down.Mode
 		} else {
-			moe.DownWeight = transposeExpertWeightForGatherMM(down.Weight)
+			moe.DownWeight = model.TransposeExpertWeightForGatherMM(down.Weight)
 		}
 		moe.UseQuantized = moe.UpWeightQ != nil || moe.DownWeightQ != nil
 		if moe.UseQuantized {
@@ -1189,14 +1114,14 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			return err
 		}
 	}
-	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantizedExperts := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantizedExperts && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantizedExperts = true
 				break
 			}

@@ -12,6 +12,15 @@ import (
 // additional temporary prefill storage on the older, smaller Mac.
 const parallelWorkspace = 4 << 30
 
+// num_ctx is a sizing hint. Requests can still use the full trained context.
+func parallelContextLength(trained, requested int) int {
+	length := min(trained, 256*1024)
+	if requested > 0 {
+		length = min(length, requested)
+	}
+	return length
+}
+
 func defaultParallelism(fullContextBytes, headroom int64) int {
 	if fullContextBytes <= 0 || headroom <= parallelWorkspace {
 		return 1
@@ -50,5 +59,6 @@ func (r *Runner) configureParallelism() {
 	headroom := min(int64(limit)-int64(mlx.ActiveMemory()), memory.AvailableRAM)
 	r.parallel = defaultParallelism(r.fullContextBytes, headroom)
 	slog.Info("MLX automatic parallelism", "parallel", r.parallel, "context_length", r.contextLength,
+		"projected_context_length", parallelContextLength(r.contextLength, r.parallelContext),
 		"full_context_bytes", r.fullContextBytes, "workspace", parallelWorkspace, "headroom", headroom)
 }

@@ -51,16 +51,9 @@ func newModel(root *model.Root) (model.Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer: %w", err)
-	}
-	tc := &tokenizer.TokenizerConfig{ConfigJSON: configData}
-	tc.GenerationConfigJSON, _ = root.Manifest.ReadConfig("generation_config.json")
-	tc.TokenizerConfigJSON, _ = root.Manifest.ReadConfig("tokenizer_config.json")
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tc)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 	m := &Model{Config: cfg, Layers: make([]*Layer, cfg.NumHiddenLayers), tok: tok}
 	if root.Draft != nil {
@@ -309,10 +302,6 @@ func loadConfig(root *model.Root) (*Config, error) {
 		return nil, fmt.Errorf("invalid embed_scale")
 	}
 	cfg.Scale = float32(1 / math.Sqrt(float64(cfg.HeadDim)))
-	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(root.QuantType())
-	if gs := root.GroupSize(); gs > 0 {
-		cfg.QuantGroupSize = gs
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 	return cfg, nil
 }
