@@ -190,19 +190,79 @@ func ValidateRedirectTarget(ctx context.Context, loc *url.URL, baseURL string, a
 	return err
 }
 
-// checkedDialer resolves, validates, and dials a fixed IP so DNS rebinding
-// can't swap a private address in after validation.
+// lookupDialIPs resolves a host for checkedDialer; tests replace it to
+// control the address order.
+var lookupDialIPs = func(ctx context.Context, r *net.Resolver, host string) ([]net.IP, error) {
+	return r.LookupIP(ctx, "ip", host)
+}
+
+// partialDialDeadline returns the deadline for one dial attempt when
+// addrsRemaining addresses share the overall deadline. Like net.Dialer, each
+// attempt gets an even share (but at least 2s) so one unreachable address
+// can't use up the whole budget.
+func partialDialDeadline(now, deadline time.Time, addrsRemaining int) time.Time {
+	if deadline.IsZero() {
+		return deadline
+	}
+	timeRemaining := deadline.Sub(now)
+	if timeRemaining <= 0 {
+		return deadline
+	}
+	timeout := timeRemaining / time.Duration(addrsRemaining)
+	const saneMinimum = 2 * time.Second
+	if timeout < saneMinimum {
+		timeout = min(timeRemaining, saneMinimum)
+	}
+	return now.Add(timeout)
+}
+
+// dialFirst dials each address in order and returns the first connection
+// that succeeds, or the first error if none do. Callers pass only validated
+// addresses, so falling back never reaches an unchecked IP.
+func dialFirst(ctx context.Context, d *net.Dialer, network string, ips []net.IP, port string) (net.Conn, error) {
+	deadline, _ := ctx.Deadline()
+	if d.Timeout > 0 {
+		if t := time.Now().Add(d.Timeout); deadline.IsZero() || t.Before(deadline) {
+			deadline = t
+		}
+	}
+
+	var firstErr error
+	for i, ip := range ips {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		dialCtx, cancel := ctx, context.CancelFunc(func() {})
+		if pd := partialDialDeadline(time.Now(), deadline, len(ips)-i); !pd.IsZero() {
+			dialCtx, cancel = context.WithDeadline(ctx, pd)
+		}
+		// Canceling after a successful dial doesn't affect the connection.
+		conn, err := d.DialContext(dialCtx, network, net.JoinHostPort(ip.String(), port))
+		cancel()
+		if err == nil {
+			return conn, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, firstErr
+}
+
+// checkedDialer resolves, validates, and dials fixed IPs so DNS rebinding
+// can't swap a private address in after validation. Every resolved address
+// must pass validation; they are then tried in order so an unreachable
+// first address (e.g. IPv6 without a route) falls back to the next.
 func checkedDialer(d *net.Dialer, allowPrivate bool) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	dial := d.DialContext
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
 		}
 
-		dialHost := host
-		if ip := net.ParseIP(host); ip == nil {
-			ips, err := d.Resolver.LookupIP(ctx, "ip", host)
+		ips := []net.IP{net.ParseIP(host)}
+		if ips[0] == nil {
+			ips, err = lookupDialIPs(ctx, d.Resolver, host)
 			if err != nil {
 				return nil, err
 			}
@@ -214,12 +274,11 @@ func checkedDialer(d *net.Dialer, allowPrivate bool) func(ctx context.Context, n
 					return nil, fmt.Errorf("%w: %s resolves to non-public %s", errRedirectNotAllowed, host, ip)
 				}
 			}
-			dialHost = ips[0].String()
-		} else if !allowPrivate && !isPublicIP(ip) {
-			return nil, fmt.Errorf("%w: %s is not a public address", errRedirectNotAllowed, ip)
+		} else if !allowPrivate && !isPublicIP(ips[0]) {
+			return nil, fmt.Errorf("%w: %s is not a public address", errRedirectNotAllowed, ips[0])
 		}
 
-		conn, err := dial(ctx, network, net.JoinHostPort(dialHost, port))
+		conn, err := dialFirst(ctx, d, network, ips, port)
 		if err != nil {
 			return nil, err
 		}
