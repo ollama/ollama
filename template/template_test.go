@@ -281,6 +281,20 @@ func TestExecuteWithMessages(t *testing.T) {
 		expected  string
 	}{
 		{
+			"legacy response in a conditional",
+			[]template{
+				{"if with else", `{{ if .Prompt }}{{ .Prompt }}:{{ .Response }};{{ else }}fallback{{ end }}`},
+			},
+			Values{
+				Messages: []api.Message{
+					{Role: "user", Content: "first"},
+					{Role: "assistant", Content: "answer"},
+					{Role: "user", Content: "next"},
+				},
+			},
+			"first:answer;next:",
+		},
+		{
 			"mistral",
 			[]template{
 				{"no response", `[INST] {{ if .System }}{{ .System }}
