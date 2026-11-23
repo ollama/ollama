@@ -1,5 +1,5 @@
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 2cbee61d4..bfbafd6e3 100644
+index 808fb44d8..5d3274a97 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
 @@ -5,6 +5,7 @@
@@ -51,7 +51,7 @@ index 2cbee61d4..bfbafd6e3 100644
      const void * data = buf;
  
      if (use_mmap) {
-@@ -1791,6 +1805,7 @@ bool llama_model_loader::load_all_data(
+@@ -1792,6 +1806,7 @@ bool llama_model_loader::load_all_data(
          }
  
          size_t n_size = ggml_nbytes(cur);
@@ -60,7 +60,7 @@ index 2cbee61d4..bfbafd6e3 100644
          const bool from_mapping = use_mmap || lazy.has(cur);
  
 diff --git a/tools/mtmd/mtmd-model.cpp b/tools/mtmd/mtmd-model.cpp
-index ae7a942ac..c18fb8627 100644
+index 97dc47598..8c886b34e 100644
 --- a/tools/mtmd/mtmd-model.cpp
 +++ b/tools/mtmd/mtmd-model.cpp
 @@ -8,6 +8,8 @@
@@ -84,15 +84,15 @@ index ae7a942ac..c18fb8627 100644
          const int n_tensors = gguf_get_n_tensors(ctx_gguf.get());
  
          // print gguf info
-@@ -3515,6 +3522,7 @@ struct mtmd_model_loader {
+@@ -4422,6 +4429,7 @@ struct mtmd_model_loader {
                      auto it_off = tensor_offset.find(t->name);
                      GGML_ASSERT(it_off != tensor_offset.end() && "no offset for tensor");
                      const size_t offset = it_off->second;
 +                    if (llama_ollama_compat::maybe_load_tensor(cur, fname.c_str(), offset, buft)) continue;
                      fin.seekg(offset, std::ios::beg);
                      if (!fin) {
-                         throw std::runtime_error(string_format("%s: failed to seek for tensor %s\n", __func__, t->name));
-@@ -4197,6 +4205,15 @@ size_t mtmd_model::cbx_read_tensor(const char * name, float * out, size_t n_max)
+                         throw std::runtime_error(mtmd_format("%s: failed to seek for tensor %s\n", __func__, t->name));
+@@ -5152,6 +5160,15 @@ size_t mtmd_model::cbx_read_tensor(const char * name, float * out, size_t n_max)
  }
  
  int mtmd_model::n_mmproj_embd() const {
