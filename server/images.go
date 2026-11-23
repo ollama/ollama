@@ -1838,21 +1838,33 @@ func getValue(header, key string) string {
 		return ""
 	}
 
-	// Move the index to the starting quote after the key.
-	startIdx += len(key) + 2
-	endIdx := startIdx
-
-	for endIdx < len(header) {
-		if header[endIdx] == '"' {
-			if endIdx+1 < len(header) && header[endIdx+1] != ',' { // If the next character isn't a comma, continue
-				endIdx++
-				continue
-			}
-			break
-		}
-		endIdx++
+	startIdx += len(key) + 1
+	if startIdx >= len(header) {
+		return ""
 	}
-	return header[startIdx:endIdx]
+
+	if header[startIdx] == '"' {
+		startIdx++
+		endIdx := startIdx
+		for endIdx < len(header) {
+			if header[endIdx] == '"' {
+				if endIdx+1 < len(header) && header[endIdx+1] != ',' { // If the next character isn't a comma, continue
+					endIdx++
+					continue
+				}
+				break
+			}
+			endIdx++
+		}
+		return header[startIdx:endIdx]
+	}
+
+	// Unquoted value - ends at comma or end of string.
+	endIdx := strings.Index(header[startIdx:], ",")
+	if endIdx == -1 {
+		return header[startIdx:]
+	}
+	return header[startIdx : startIdx+endIdx]
 }
 
 func parseRegistryChallenge(authStr string) registryChallenge {
