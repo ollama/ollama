@@ -50,25 +50,9 @@ void drag(uintptr_t wndPtr);
 void doubleClick(uintptr_t wndPtr);
 void handleConnectURL();
 bool SetClaudeGatewayInstalled(bool installed, bool restartClaude);
-bool HasUsedClaudeDesktopIntegration(void);
 bool RestoreClaudeGatewayForShutdown(void);
 bool IsClaudeGatewayConfigured(void);
-bool IsClaudeDesktopInstalled(void);
 bool IsClaudeDesktopRunning(void);
-bool IsCodexDesktopInstalled(void);
-bool IsCodexDesktopConnected(void);
-bool IsCodexDesktopDisconnectPending(void);
-bool IsCodexDesktopRunning(void);
-unsigned long long CodexDesktopRequestCount(void);
-bool SetCodexDesktopConnected(bool connected, bool restartConfirmed);
-bool ClaudeGatewayStartFailed(void);
-bool ClaudeGatewayPortConflict(void);
-char *ClaudeGatewayErrorMessage(void);
-int ClaudeGatewayPort(void);
-void RefreshClaudeProxyMenu(void);
-void updateClaudeProxyMenu(unsigned long long routed);
-bool ShowAppsInMenu(void);
-void SetShowAppsInMenu(bool visible);
 enum ClaudeInstallResult
 {
     ClaudeInstallCancelled,

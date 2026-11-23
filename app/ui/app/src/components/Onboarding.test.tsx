@@ -112,7 +112,7 @@ describe("Onboarding", () => {
     expect(authenticationTimeoutAction(true, true)).toBe("ignore");
   });
 
-  it("detects when the menu bar already reached the requested Claude state", () => {
+  it("detects when Claude already matches the requested connection state", () => {
     const status = {
       supported: true,
       installed: true,

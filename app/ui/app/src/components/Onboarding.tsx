@@ -866,9 +866,8 @@ export function ConnectAppsScreen({
     }
     setClaudeStatus(status);
 
-    // The menu-bar control may have reached this target since the app last
-    // refreshed. Sync the row without repeating the profile change or
-    // restarting Claude, while preserving first-use completion behavior.
+    // Claude's profile can change between refreshes. If it already matches
+    // the requested state, finish the UI flow without restarting Claude.
     if (isClaudeConnectionComplete(enabling, status)) {
       claudeRestartConfirmed.current = false;
       const completionError = enabling

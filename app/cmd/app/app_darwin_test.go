@@ -3121,11 +3121,9 @@ func TestClaudeGatewayRejectsOllamaHostPortConflict(t *testing.T) {
 	if claudeAppProxy != nil {
 		t.Fatal("Claude gateway started with a conflicting OLLAMA_HOST")
 	}
-	if !claudeGatewayStartFailed() {
-		t.Fatal("expected the port conflict to remain visible to the menu")
-	}
-	if !claudeGatewayPortConflict() {
-		t.Fatal("expected the menu failure to be classified as a port conflict")
+	status := getClaudeDesktopConnectionSummary()
+	if !status.StartFailed || !status.PortConflict {
+		t.Fatalf("Claude status = %+v, want a failed start with a port conflict", status)
 	}
 }
 
@@ -3140,8 +3138,8 @@ func TestClaudeGatewayPortTracksListenAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if port != "23001" || int(ClaudeGatewayPort()) != 23001 {
-		t.Fatalf("Claude gateway port = %q/%d, want 23001", port, int(ClaudeGatewayPort()))
+	if reported := getClaudeDesktopConnectionSummary().GatewayPort; port != "23001" || reported != 23001 {
+		t.Fatalf("Claude gateway port = %q/%d, want 23001", port, reported)
 	}
 }
 
@@ -3164,7 +3162,7 @@ func TestClaudeGatewayDoesNotReportPortConflictWithoutClaude(t *testing.T) {
 	if err := startClaudeAppProxy(); err != nil {
 		t.Fatalf("startClaudeAppProxy error = %v, want absent Claude to skip the gateway", err)
 	}
-	if claudeGatewayStartFailed() || claudeGatewayPortConflict() {
+	if status := getClaudeDesktopConnectionSummary(); status.StartFailed || status.PortConflict {
 		t.Fatal("absent Claude exposed a gateway port conflict")
 	}
 }
@@ -3189,22 +3187,16 @@ func TestClaudeGatewayRecoversAfterPortConflict(t *testing.T) {
 	if err := startClaudeAppProxy(); err == nil {
 		t.Fatal("startClaudeAppProxy succeeded while another service owned the port")
 	}
-	if !claudeGatewayStartFailed() {
-		t.Fatal("expected the failed start to remain visible to the menu")
-	}
-	if !claudeGatewayPortConflict() {
-		t.Fatal("expected an occupied gateway port to be classified as a conflict")
+	if status := getClaudeDesktopConnectionSummary(); !status.StartFailed || !status.PortConflict {
+		t.Fatalf("Claude status = %+v, want a failed start with a port conflict", status)
 	}
 
 	conflict.Close()
 	if err := startClaudeAppProxy(); err != nil {
 		t.Fatalf("startClaudeAppProxy did not recover after the port was released: %v", err)
 	}
-	if claudeGatewayStartFailed() {
-		t.Fatal("expected a successful retry to clear the menu failure state")
-	}
-	if claudeGatewayPortConflict() {
-		t.Fatal("expected a successful retry to clear the port conflict state")
+	if status := getClaudeDesktopConnectionSummary(); status.StartFailed || status.PortConflict {
+		t.Fatalf("Claude status = %+v, want a successful retry to clear the failure", status)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -3236,7 +3228,7 @@ func TestClaudeGatewayRejectsSpoofedExistingGateway(t *testing.T) {
 	if err := startClaudeAppProxy(); err == nil {
 		t.Fatal("startClaudeAppProxy trusted a listener with a spoofed health response")
 	}
-	if claudeAppProxy != nil || !claudeGatewayPortConflict() {
+	if claudeAppProxy != nil || !getClaudeDesktopConnectionSummary().PortConflict {
 		t.Fatal("spoofed listener was not reported as a port conflict")
 	}
 }
@@ -3267,7 +3259,7 @@ func TestClaudeGatewayWaitsForPreviousListenerToExit(t *testing.T) {
 	if err := startClaudeAppProxy(); err != nil {
 		t.Fatalf("startClaudeAppProxy did not acquire a released handoff port: %v", err)
 	}
-	if claudeGatewayStartFailed() || claudeAppProxy == nil {
+	if getClaudeDesktopConnectionSummary().StartFailed || claudeAppProxy == nil {
 		t.Fatal("released handoff port did not start the Claude gateway")
 	}
 }

@@ -23,7 +23,6 @@ import {
   CogIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
-  Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
@@ -59,11 +58,9 @@ function AnimatedDots() {
 interface SettingsDefaultsActions {
   updateSettings: (settings: SettingsType) => Promise<unknown>;
   updateCloud: (enabled: boolean) => Promise<unknown>;
-  updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
   resetChatGPTModels: () => Promise<boolean>;
   resetClaudeMappings: () => Promise<boolean>;
   currentSettings: SettingsType;
-  currentShowAppsInMenu: boolean;
   cloudSource: CloudStatusSource;
   onSaved: () => void;
 }
@@ -79,11 +76,9 @@ const savedConfirmationDuration = 3000;
 export async function applySettingsDefaults({
   updateSettings,
   updateCloud,
-  updateShowAppsInMenu,
   resetChatGPTModels,
   resetClaudeMappings,
   currentSettings,
-  currentShowAppsInMenu,
   cloudSource,
   onSaved,
 }: SettingsDefaultsActions): Promise<void> {
@@ -108,9 +103,6 @@ export async function applySettingsDefaults({
       }),
     );
     rollbacks.push(() => updateSettings(currentSettings));
-
-    await updateShowAppsInMenu(true);
-    rollbacks.push(() => updateShowAppsInMenu(currentShowAppsInMenu));
 
     // Reset app-specific model settings only after the rest of the page has
     // succeeded, because those native profile changes cannot be rolled back
@@ -143,8 +135,6 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
-  const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
-  const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
@@ -279,15 +269,6 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    window
-      .getShowAppsInMenu?.()
-      .then(setShowAppsInMenuState)
-      .catch((error) =>
-        console.error("Failed to load menu app visibility:", error),
-      );
-  }, []);
-
-  useEffect(() => {
     const handleFocus = () => {
       if (isAwaitingConnection && pollingInterval) {
         // Stop polling when window gets focus
@@ -354,28 +335,6 @@ export default function Settings() {
     [settings, showSavedConfirmation, updateSettingsMutation],
   );
 
-  const updateShowAppsInMenuVisibility = async (checked: boolean) => {
-    const previous = showAppsInMenu;
-    setShowAppsInMenuState(checked);
-    setShowAppsInMenuPending(true);
-    try {
-      await window.setShowAppsInMenu?.(checked);
-    } catch (error) {
-      setShowAppsInMenuState(previous);
-      throw error;
-    } finally {
-      setShowAppsInMenuPending(false);
-    }
-  };
-
-  const handleShowAppsInMenu = (checked: boolean) => {
-    void updateShowAppsInMenuVisibility(checked)
-      .then(showSavedConfirmation)
-      .catch((error) =>
-        console.error("Failed to update menu app visibility:", error),
-      );
-  };
-
   const handleCloudUpdate = (enabled: boolean) => {
     void requestCloudUpdate(enabled)
       .then(showSavedConfirmation)
@@ -405,13 +364,11 @@ export default function Settings() {
         updateSettings: (defaultSettings) =>
           updateSettingsMutation.mutateAsync(defaultSettings),
         updateCloud: requestCloudUpdate,
-        updateShowAppsInMenu: updateShowAppsInMenuVisibility,
         resetChatGPTModels: async () =>
           (await codexModelsSettingsRef.current?.resetToDefaults()) ?? true,
         resetClaudeMappings: async () =>
           (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
-        currentShowAppsInMenu: showAppsInMenu,
         cloudSource,
         onSaved: showSavedConfirmation,
       });
@@ -628,29 +585,6 @@ export default function Settings() {
                   </div>
                 </div>
               </Field>
-
-              {!isWindows && (
-                <Field>
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex flex-1 items-start space-x-3">
-                      <Squares2X2Icon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                      <div>
-                        <Label>Show apps in menu</Label>
-                        <Description>
-                          Show connected apps at the top of the Ollama menu.
-                        </Description>
-                      </div>
-                    </div>
-                    <div className="flex-shrink-0">
-                      <Switch
-                        checked={showAppsInMenu}
-                        disabled={showAppsInMenuPending}
-                        onChange={handleShowAppsInMenu}
-                      />
-                    </div>
-                  </div>
-                </Field>
-              )}
 
               {/* Auto Update */}
               <Field>

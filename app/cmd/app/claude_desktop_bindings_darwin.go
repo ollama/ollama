@@ -84,12 +84,4 @@ func bindClaudeDesktop(wv webview.WebView) {
 		}
 		return result
 	})
-
-	wv.Bind("getShowAppsInMenu", func() bool {
-		return getShowAppsInMenu()
-	})
-
-	wv.Bind("setShowAppsInMenu", func(visible bool) {
-		setShowAppsInMenu(visible)
-	})
 }

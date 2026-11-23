@@ -153,8 +153,6 @@ declare global {
     ) => Promise<CodexDesktopModelsSettingsResult>;
     resetCodexDesktopModels?: () => Promise<CodexDesktopModelsSettingsResult>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
-    getShowAppsInMenu?: () => Promise<boolean>;
-    setShowAppsInMenu?: (visible: boolean) => Promise<void>;
     applyClaudeDesktopMappings?: (
       mappings: Record<string, string>,
       restartConfirmed: boolean,

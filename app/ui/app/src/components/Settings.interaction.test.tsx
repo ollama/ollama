@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   resetChatGPTModels: vi.fn(),
   updateSettings: vi.fn(),
   updateCloudSetting: vi.fn(),
-  setShowAppsInMenu: vi.fn(),
   refetchUser: vi.fn(),
   disconnectUser: vi.fn(),
   isWindows: false,
@@ -169,7 +168,6 @@ describe("Settings reset interactions", () => {
       disabled: false,
       source: "none",
     });
-    mocks.setShowAppsInMenu.mockResolvedValue(undefined);
     mocks.resetChatGPTModels.mockResolvedValue(true);
     mocks.disconnectUser.mockResolvedValue(undefined);
 
@@ -178,8 +176,6 @@ describe("Settings reset interactions", () => {
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout.bind(globalThis),
       clearTimeout: globalThis.clearTimeout.bind(globalThis),
-      getShowAppsInMenu: vi.fn().mockResolvedValue(true),
-      setShowAppsInMenu: mocks.setShowAppsInMenu,
       open: vi.fn(),
       confirm: vi.fn(() => true),
       location: { reload: vi.fn() },

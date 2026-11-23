@@ -19,8 +19,6 @@ static NSString *const ClaudeDownloadPageURL = @"https://claude.com/download";
 static NSString *const ChatGPTDownloadPageURL = @"https://chatgpt.com/download";
 static NSString *const ChatGPTDiskImageURL =
     @"https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-static NSString *const ShowAppsInMenuDefaultsKey = @"ShowAppsInMenu";
-static NSBundle *OllamaResourceBundle(void);
 
 typedef NS_ENUM(NSInteger, DesktopDownloadKind) {
     DesktopDownloadNone,
@@ -56,318 +54,12 @@ static void configureChatGPTRestartAlert(NSAlert *alert,
     [alert addButtonWithTitle:@"Restart ChatGPT"];
 }
 
-static BOOL shouldShowAppsInMenu(void) {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    if ([defaults objectForKey:ShowAppsInMenuDefaultsKey] == nil) {
-        return YES;
-    }
-    return [defaults boolForKey:ShowAppsInMenuDefaultsKey];
-}
-
-static NSImage *integrationAppIcon(NSString *appName,
-                                   NSString *fallbackSymbolName) {
-    NSArray<NSString *> *candidates = @[
-        [NSString stringWithFormat:@"/Applications/%@.app", appName],
-        [NSHomeDirectory() stringByAppendingPathComponent:
-            [NSString stringWithFormat:@"Applications/%@.app", appName]],
-    ];
-    for (NSString *path in candidates) {
-        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            continue;
-        }
-        NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-        if (icon != nil) {
-            [icon setTemplate:NO];
-            return icon;
-        }
-    }
-    NSBundle *bundle = OllamaResourceBundle();
-    NSImage *bundledIcon = [bundle imageForResource:appName.lowercaseString];
-    if (bundledIcon != nil) {
-        [bundledIcon setTemplate:[appName isEqualToString:@"ChatGPT"]];
-        return bundledIcon;
-    }
-    return [NSImage imageWithSystemSymbolName:fallbackSymbolName
-                      accessibilityDescription:nil];
-}
-
-@interface MenuSwitch : NSButton
-@end
-
-@implementation MenuSwitch
-
-- (instancetype)initWithFrame:(NSRect)frameRect {
-    self = [super initWithFrame:frameRect];
-    if (self) {
-        [self setButtonType:NSButtonTypeToggle];
-        [self setBordered:NO];
-        [self setTitle:@""];
-        [self setFocusRingType:NSFocusRingTypeNone];
-        [self setAccessibilityRole:NSAccessibilityCheckBoxRole];
-    }
-    return self;
-}
-
-- (NSSize)intrinsicContentSize {
-    return NSMakeSize(30, 18);
-}
-
-- (void)setState:(NSControlStateValue)state {
-    [super setState:state];
-    [self setNeedsDisplay:YES];
-}
-
-- (void)setEnabled:(BOOL)enabled {
-    [super setEnabled:enabled];
-    [self setNeedsDisplay:YES];
-}
-
-- (void)drawRect:(NSRect)dirtyRect {
-    (void)dirtyRect;
-    NSRect track = NSInsetRect(self.bounds, 0, 1);
-    NSColor *trackColor = self.state == NSControlStateValueOn
-        ? [NSColor systemBlueColor]
-        : [NSColor colorWithWhite:0.55 alpha:1];
-    if (!self.enabled) {
-        trackColor = [trackColor colorWithAlphaComponent:0.45];
-    }
-    [trackColor setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:track
-                                     xRadius:NSHeight(track) / 2
-                                     yRadius:NSHeight(track) / 2] fill];
-
-    CGFloat knobSize = NSHeight(track) - 4;
-    CGFloat knobX = self.state == NSControlStateValueOn
-        ? NSMaxX(track) - knobSize - 2
-        : NSMinX(track) + 2;
-    NSRect knob = NSMakeRect(knobX,
-                             NSMidY(track) - knobSize / 2,
-                             knobSize,
-                             knobSize);
-    [[NSColor whiteColor] setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:knob] fill];
-}
-
-@end
-
-@interface IntegrationMenuRow : NSButton
-@property(strong, nonatomic) NSView *controlSurface;
-@property(strong, nonatomic) NSButton *openButton;
-@property(strong, nonatomic) NSTextField *integrationTitleLabel;
-@property(strong, nonatomic) NSTextField *integrationStatusLabel;
-@property(strong, nonatomic) MenuSwitch *integrationSwitch;
-@property(strong, nonatomic) NSLayoutConstraint *titleWithStatusConstraint;
-@property(strong, nonatomic) NSLayoutConstraint *titleCenteredConstraint;
-@property(strong, nonatomic) NSTrackingArea *hoverTrackingArea;
-@property(assign, nonatomic) BOOL pointerInside;
-@property(assign, nonatomic) SEL integrationOpenAction;
-@property(copy, nonatomic) NSString *activeStatusText;
-@property(copy, nonatomic) NSString *inactiveStatusText;
-- (instancetype)initWithTitle:(NSString *)title
-                   symbolName:(NSString *)symbolName
-                       target:(id)target
-                   openAction:(SEL)openAction
-                 toggleAction:(SEL)toggleAction;
-- (void)setIntegrationActive:(BOOL)active;
-- (void)setIntegrationReady:(BOOL)ready;
-- (void)setActiveStatusText:(NSString *)status;
-- (void)setInactiveStatusText:(NSString *)status;
-- (void)resetHover;
-@end
-
-@implementation IntegrationMenuRow
-
-- (instancetype)initWithTitle:(NSString *)title
-                   symbolName:(NSString *)symbolName
-                       target:(id)target
-                   openAction:(SEL)openAction
-                 toggleAction:(SEL)toggleAction {
-    self = [super initWithFrame:NSMakeRect(0, 0, 310, 50)];
-    if (self) {
-        [self setButtonType:NSButtonTypeMomentaryChange];
-        [self setBordered:NO];
-        [self setTitle:@""];
-        [self setFocusRingType:NSFocusRingTypeNone];
-        [self setTarget:target];
-        [self setAction:openAction];
-        self.integrationOpenAction = openAction;
-        [self setAccessibilityLabel:[NSString stringWithFormat:@"Open %@", title]];
-        [self setAccessibilityRole:NSAccessibilityButtonRole];
-
-        self.controlSurface = [[NSView alloc] initWithFrame:NSZeroRect];
-        [self.controlSurface setWantsLayer:YES];
-        self.controlSurface.layer.cornerRadius = 13;
-        [self.controlSurface setTranslatesAutoresizingMaskIntoConstraints:NO];
-
-        NSImage *icon = integrationAppIcon(title, symbolName);
-        self.openButton = [NSButton buttonWithImage:icon
-                                             target:target
-                                             action:openAction];
-        [self.openButton setBordered:NO];
-        [self.openButton setImagePosition:NSImageOnly];
-        [self.openButton setImageScaling:NSImageScaleProportionallyDown];
-        [self.openButton setFocusRingType:NSFocusRingTypeNone];
-        [self.openButton setAccessibilityLabel:[NSString stringWithFormat:@"Open %@", title]];
-        [self.openButton setTranslatesAutoresizingMaskIntoConstraints:NO];
-
-        self.integrationTitleLabel = [NSTextField labelWithString:title];
-        [self.integrationTitleLabel setFont:[NSFont systemFontOfSize:13 weight:NSFontWeightSemibold]];
-        [self.integrationTitleLabel setLineBreakMode:NSLineBreakByTruncatingTail];
-        [self.integrationTitleLabel setTranslatesAutoresizingMaskIntoConstraints:NO];
-
-        self.integrationStatusLabel = [NSTextField labelWithString:@""];
-        [self.integrationStatusLabel setFont:[NSFont systemFontOfSize:11.5]];
-        [self.integrationStatusLabel setLineBreakMode:NSLineBreakByTruncatingTail];
-        [self.integrationStatusLabel setTranslatesAutoresizingMaskIntoConstraints:NO];
-
-        self.integrationSwitch = [[MenuSwitch alloc] initWithFrame:NSZeroRect];
-        [self.integrationSwitch setTarget:target];
-        [self.integrationSwitch setAction:toggleAction];
-        [self.integrationSwitch setAccessibilityLabel:[NSString stringWithFormat:@"Use Ollama with %@", title]];
-        [self.integrationSwitch setTranslatesAutoresizingMaskIntoConstraints:NO];
-
-        [self addSubview:self.controlSurface];
-        [self addSubview:self.openButton];
-        [self addSubview:self.integrationTitleLabel];
-        [self addSubview:self.integrationStatusLabel];
-        [self addSubview:self.integrationSwitch];
-        self.titleWithStatusConstraint =
-            [self.integrationTitleLabel.bottomAnchor
-                constraintEqualToAnchor:self.controlSurface.centerYAnchor
-                               constant:-1];
-        self.titleCenteredConstraint =
-            [self.integrationTitleLabel.centerYAnchor
-                constraintEqualToAnchor:self.controlSurface.centerYAnchor];
-        [NSLayoutConstraint activateConstraints:@[
-            [self.controlSurface.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:7],
-            [self.controlSurface.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-7],
-            [self.controlSurface.topAnchor constraintEqualToAnchor:self.topAnchor constant:3],
-            [self.controlSurface.bottomAnchor constraintEqualToAnchor:self.bottomAnchor constant:-3],
-            [self.openButton.leadingAnchor constraintEqualToAnchor:self.controlSurface.leadingAnchor constant:9],
-            [self.openButton.centerYAnchor constraintEqualToAnchor:self.controlSurface.centerYAnchor],
-            [self.openButton.widthAnchor constraintEqualToConstant:34],
-            [self.openButton.heightAnchor constraintEqualToConstant:34],
-            [self.integrationTitleLabel.leadingAnchor constraintEqualToAnchor:self.openButton.trailingAnchor constant:10],
-            self.titleWithStatusConstraint,
-            [self.integrationTitleLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.integrationSwitch.leadingAnchor constant:-12],
-            [self.integrationStatusLabel.leadingAnchor constraintEqualToAnchor:self.integrationTitleLabel.leadingAnchor],
-            [self.integrationStatusLabel.topAnchor constraintEqualToAnchor:self.controlSurface.centerYAnchor constant:1],
-            [self.integrationStatusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:self.integrationSwitch.leadingAnchor constant:-12],
-            [self.integrationSwitch.trailingAnchor constraintEqualToAnchor:self.controlSurface.trailingAnchor constant:-12],
-            [self.integrationSwitch.centerYAnchor constraintEqualToAnchor:self.controlSurface.centerYAnchor],
-        ]];
-        [self setIntegrationActive:NO];
-    }
-    return self;
-}
-
-- (NSView *)hitTest:(NSPoint)point {
-    if (!NSPointInRect(point, self.bounds)) {
-        return nil;
-    }
-    if (NSPointInRect(point, self.integrationSwitch.frame)) {
-        return self.integrationSwitch;
-    }
-    if (NSPointInRect(point, self.openButton.frame)) {
-        return self.openButton;
-    }
-    return self;
-}
-
-- (void)updateTrackingAreas {
-    [super updateTrackingAreas];
-    if (self.hoverTrackingArea != nil) {
-        [self removeTrackingArea:self.hoverTrackingArea];
-    }
-    self.hoverTrackingArea = [[NSTrackingArea alloc]
-        initWithRect:NSZeroRect
-             options:NSTrackingMouseEnteredAndExited |
-                     NSTrackingActiveAlways |
-                     NSTrackingInVisibleRect
-               owner:self
-            userInfo:nil];
-    [self addTrackingArea:self.hoverTrackingArea];
-}
-
-- (void)mouseEntered:(NSEvent *)event {
-    (void)event;
-    self.pointerInside = YES;
-    [self updateAppearance];
-}
-
-- (void)mouseExited:(NSEvent *)event {
-    (void)event;
-    self.pointerInside = NO;
-    [self updateAppearance];
-}
-
-- (void)resetHover {
-    self.pointerInside = NO;
-    [self updateAppearance];
-}
-
-- (void)viewDidChangeEffectiveAppearance {
-    [super viewDidChangeEffectiveAppearance];
-    [self updateAppearance];
-}
-
-- (void)updateAppearance {
-    BOOL active = self.integrationSwitch.state == NSControlStateValueOn;
-    BOOL hovered = self.pointerInside && self.enabled;
-    NSColor *surfaceColor = hovered
-        ? [[NSColor labelColor] colorWithAlphaComponent:0.08]
-        : [NSColor clearColor];
-    self.controlSurface.layer.backgroundColor = surfaceColor.CGColor;
-    self.integrationTitleLabel.textColor = [NSColor labelColor];
-    NSString *status = active ? (self.activeStatusText ?: @"Using Ollama")
-                              : (self.inactiveStatusText ?: @"Use Ollama models");
-    BOOL hasStatus = status.length > 0;
-    self.titleWithStatusConstraint.active = hasStatus;
-    self.titleCenteredConstraint.active = !hasStatus;
-    self.integrationStatusLabel.hidden = !hasStatus;
-    self.integrationStatusLabel.stringValue = status;
-    self.integrationStatusLabel.textColor = [NSColor secondaryLabelColor];
-    [self setAccessibilityValue:status];
-}
-
-- (void)setIntegrationActive:(BOOL)active {
-    self.integrationSwitch.state = active ? NSControlStateValueOn
-                                          : NSControlStateValueOff;
-    [self setIntegrationReady:active];
-    [self updateAppearance];
-}
-
-- (void)setIntegrationReady:(BOOL)ready {
-    self.action = ready ? self.integrationOpenAction : nil;
-    self.openButton.enabled = ready;
-    self.openButton.alphaValue = ready ? 1.0 : 0.45;
-}
-
-- (void)setActiveStatusText:(NSString *)status {
-    _activeStatusText = [status copy];
-    [self updateAppearance];
-}
-
-- (void)setInactiveStatusText:(NSString *)status {
-    _inactiveStatusText = [status copy];
-    [self updateAppearance];
-}
-
-@end
-
-@interface AppDelegate () <NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSMenuDelegate, NSURLSessionDownloadDelegate>
+@interface AppDelegate () <NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, NSURLSessionDownloadDelegate>
 @property(strong, nonatomic) NSStatusItem *statusItem;
 @property(assign, nonatomic) BOOL updateAvailable;
 @property(assign, nonatomic) BOOL systemShutdownInProgress;
 @property(strong, nonatomic) NSMenuItem *updateAvailableMenuItem;
 @property(strong, nonatomic) NSMenuItem *restartMenuItem;
-@property(assign, nonatomic) BOOL claudeAppEnabled;
-@property(assign, nonatomic) BOOL claudeAppReady;
-@property(strong, nonatomic) IntegrationMenuRow *claudeAppRow;
-@property(strong, nonatomic) NSMenuItem *claudeMenuItem;
-@property(strong, nonatomic) IntegrationMenuRow *codexAppRow;
-@property(strong, nonatomic) NSMenuItem *codexMenuItem;
-@property(strong, nonatomic) NSMenuItem *claudeMenuSeparatorItem;
 @property(strong, nonatomic) NSURLSession *claudeDownloadSession;
 @property(strong, nonatomic) NSURLSessionDownloadTask *claudeDownloadTask;
 @property(strong, nonatomic) NSAlert *claudeDownloadAlert;
@@ -381,8 +73,6 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL quitInProgress;
 @property(assign, nonatomic) BOOL systemTerminationReplyPending;
 @property(strong, nonatomic) NSApplication *systemTerminationApplication;
-- (void)openClaudeApp:(id)sender;
-- (void)openChatGPTApp:(id)sender;
 - (enum ClaudeInstallResult)downloadClaude;
 - (enum ClaudeInstallResult)downloadChatGPT;
 - (enum ClaudeInstallResult)downloadDesktopApp:(DesktopDownloadKind)kind;
@@ -391,11 +81,6 @@ static NSImage *integrationAppIcon(NSString *appName,
 - (void)showClaudeInstallFailure:(NSError *)error;
 - (void)showChatGPTDownloadFailure:(NSError *)error;
 - (void)showChatGPTInstallFailure:(NSError *)error;
-- (void)toggleClaudeAppProxy:(NSButton *)sender;
-- (void)refreshClaudeAppState;
-- (void)toggleCodexApp:(NSButton *)sender;
-- (void)refreshCodexAppState;
-- (void)applyShowAppsInMenu:(BOOL)visible;
 - (void)requestQuit;
 - (void)completeSystemTermination;
 @end
@@ -471,40 +156,7 @@ static NSImage *ollamaApplicationIcon(void) {
 
     // Create status item and menu
     NSMenu *menu = [[NSMenu alloc] init];
-    [menu setDelegate:self];
     [menu setAutoenablesItems:NO];
-
-    self.claudeMenuItem = [[NSMenuItem alloc] initWithTitle:@"Claude"
-                                                     action:nil
-                                              keyEquivalent:@""];
-    [self.claudeMenuItem setEnabled:YES];
-    self.claudeAppRow = [[IntegrationMenuRow alloc]
-        initWithTitle:@"Claude"
-           symbolName:@"sparkles"
-               target:self
-           openAction:@selector(openClaudeApp:)
-         toggleAction:@selector(toggleClaudeAppProxy:)];
-    [self.claudeMenuItem setView:self.claudeAppRow];
-    [menu addItem:self.claudeMenuItem];
-    [self refreshClaudeAppState];
-
-    self.codexMenuItem = [[NSMenuItem alloc] initWithTitle:@"ChatGPT"
-                                                    action:nil
-                                             keyEquivalent:@""];
-    [self.codexMenuItem setEnabled:YES];
-    self.codexAppRow = [[IntegrationMenuRow alloc]
-        initWithTitle:@"ChatGPT"
-           symbolName:@"bubble.left.and.bubble.right"
-               target:self
-           openAction:@selector(openChatGPTApp:)
-         toggleAction:@selector(toggleCodexApp:)];
-    [self.codexMenuItem setView:self.codexAppRow];
-    [menu addItem:self.codexMenuItem];
-    [self refreshCodexAppState];
-
-    self.claudeMenuSeparatorItem = [NSMenuItem separatorItem];
-    [menu addItem:self.claudeMenuSeparatorItem];
-    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
 
     NSMenuItem *appsMenuItem =
         [[NSMenuItem alloc] initWithTitle:@"Open Ollama"
@@ -684,72 +336,6 @@ static NSImage *ollamaApplicationIcon(void) {
     return YES;
 }
 
-- (void)menuWillOpen:(NSMenu *)menu {
-    if (menu != self.statusItem.menu) {
-        return;
-    }
-    [self refreshClaudeAppState];
-    [self refreshCodexAppState];
-}
-
-- (void)refreshClaudeAppState {
-    BOOL installed = IsClaudeDesktopInstalled();
-    BOOL startFailed = ClaudeGatewayStartFailed();
-    BOOL portConflict = startFailed && ClaudeGatewayPortConflict();
-    BOOL configured = installed && IsClaudeGatewayConfigured();
-    NSString *failureStatus = portConflict
-        ? [NSString stringWithFormat:@"Port %d is in use", ClaudeGatewayPort()]
-        : (startFailed ? @"Unable to use Ollama" : nil);
-    self.claudeAppEnabled = configured;
-    self.claudeAppReady = configured && !startFailed;
-    [self.claudeAppRow setActiveStatusText:configured ? failureStatus : nil];
-    [self.claudeAppRow setInactiveStatusText:configured
-        ? nil
-        : (!installed ? @"Not installed" : failureStatus)];
-    [self.claudeAppRow setIntegrationActive:self.claudeAppEnabled];
-    [self.claudeAppRow setIntegrationReady:self.claudeAppReady];
-    RefreshClaudeProxyMenu();
-    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
-}
-
-- (void)refreshCodexAppState {
-    BOOL installed = IsCodexDesktopInstalled();
-    BOOL connected = IsCodexDesktopConnected();
-    BOOL disconnectPending = IsCodexDesktopDisconnectPending();
-    unsigned long long requests = connected ? CodexDesktopRequestCount() : 0;
-    NSString *activeStatus = requests == 1
-        ? @"1 request this session"
-        : [NSString stringWithFormat:@"%llu requests this session", requests];
-    [self.codexAppRow setActiveStatusText:connected
-        ? activeStatus
-        : nil];
-    [self.codexAppRow setInactiveStatusText:disconnectPending
-        ? @"Try disconnecting again"
-        : (installed ? @"Use Ollama models in ChatGPT" : @"Not installed")];
-    [self.codexAppRow.integrationSwitch setAccessibilityLabel:disconnectPending
-        ? @"Retry disconnecting ChatGPT"
-        : @"Use Ollama with ChatGPT"];
-    [self.codexAppRow setIntegrationActive:connected];
-    [self.codexAppRow setIntegrationReady:installed && connected];
-    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
-}
-
-- (void)applyShowAppsInMenu:(BOOL)visible {
-    BOOL claudeVisible = visible && HasUsedClaudeDesktopIntegration();
-    // Keep the installation flow accessible from the menu.
-    BOOL codexVisible = visible;
-    [self.claudeMenuItem setHidden:!claudeVisible];
-    [self.codexMenuItem setHidden:!codexVisible];
-    [self.claudeMenuSeparatorItem setHidden:!(claudeVisible || codexVisible)];
-}
-
-- (void)menuDidClose:(NSMenu *)menu {
-    if (menu == self.statusItem.menu) {
-        [self.claudeAppRow resetHover];
-        [self.codexAppRow resetHover];
-    }
-}
-
 - (void)showUpdateAvailable {
     self.updateAvailable = YES;
     [self refreshStatusItem];
@@ -771,89 +357,6 @@ static NSImage *ollamaApplicationIcon(void) {
 
 - (void)openUI {
     [self uiRequest:@"/"];
-}
-
-- (void)openClaudeApp:(id)sender {
-    (void)sender;
-    if (!self.claudeAppReady) {
-        return;
-    }
-    [self.statusItem.menu cancelTracking];
-
-    NSArray<NSString *> *candidates = @[
-        @"/Applications/Claude.app",
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/Claude.app"],
-    ];
-    for (NSString *path in candidates) {
-        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            continue;
-        }
-        NSWorkspaceOpenConfiguration *configuration =
-            [NSWorkspaceOpenConfiguration configuration];
-        configuration.activates = YES;
-        configuration.createsNewApplicationInstance = NO;
-        [[NSWorkspace sharedWorkspace]
-            openApplicationAtURL:[NSURL fileURLWithPath:path]
-                   configuration:configuration
-               completionHandler:^(NSRunningApplication *application,
-                                   NSError *error) {
-                   (void)application;
-                   if (error != nil) {
-                       appLogInfo([NSString stringWithFormat:
-                           @"Unable to open Claude: %@", error]);
-                   }
-               }];
-        return;
-    }
-
-    NSAlert *alert = [[NSAlert alloc] init];
-    [alert setAlertStyle:NSAlertStyleWarning];
-    [alert setMessageText:@"Unable to open Claude"];
-    [alert setInformativeText:@"Install Claude in Applications, then try again."];
-    [alert runModal];
-}
-
-- (void)openChatGPTApp:(id)sender {
-    (void)sender;
-    if (!IsCodexDesktopConnected()) {
-        return;
-    }
-    [self.statusItem.menu cancelTracking];
-
-    NSArray<NSString *> *candidates = @[
-        @"/Applications/ChatGPT.app",
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/ChatGPT.app"],
-        @"/Applications/Codex.app",
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/Codex.app"],
-    ];
-    for (NSString *path in candidates) {
-        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            continue;
-        }
-        NSWorkspaceOpenConfiguration *configuration =
-            [NSWorkspaceOpenConfiguration configuration];
-        configuration.activates = YES;
-        configuration.createsNewApplicationInstance = NO;
-        [[NSWorkspace sharedWorkspace]
-            openApplicationAtURL:[NSURL fileURLWithPath:path]
-                   configuration:configuration
-               completionHandler:^(NSRunningApplication *application,
-                                   NSError *error) {
-                   (void)application;
-                   if (error != nil) {
-                       appLogInfo([NSString stringWithFormat:
-                           @"Unable to open ChatGPT: %@", error]);
-                   }
-               }];
-        return;
-    }
-
-    NSAlert *alert = [[NSAlert alloc] init];
-    [alert setAlertStyle:NSAlertStyleWarning];
-    [alert setMessageText:@"Unable to open ChatGPT"];
-    [alert setInformativeText:
-        @"Install ChatGPT in Applications, then try again."];
-    [alert runModal];
 }
 
 - (void)showClaudeDownloadFailure:(NSError *)error {
@@ -972,11 +475,7 @@ static NSImage *ollamaApplicationIcon(void) {
         return ClaudeInstallFailed;
     }
 
-    IntegrationMenuRow *row = chatGPT ? self.codexAppRow : self.claudeAppRow;
     NSString *appName = chatGPT ? @"ChatGPT" : @"Claude";
-    [row setInactiveStatusText:
-        [NSString stringWithFormat:@"Downloading %@…", appName]];
-    [row.integrationSwitch setEnabled:NO];
 
     self.claudeDownloadAlert = [[NSAlert alloc] init];
     [self.claudeDownloadAlert setAlertStyle:NSAlertStyleInformational];
@@ -1149,13 +648,10 @@ didCompleteWithError:(NSError *)error {
 - (enum ClaudeInstallResult)finishDesktopDownload {
     BOOL cancelled = self.claudeDownloadCancelled;
     BOOL chatGPT = self.desktopDownloadKind == DesktopDownloadChatGPT;
-    IntegrationMenuRow *row = chatGPT ? self.codexAppRow : self.claudeAppRow;
     NSString *appName = chatGPT ? @"ChatGPT" : @"Claude";
 
     [self.claudeDownloadProgress stopAnimation:nil];
     [self.claudeDownloadAlert.window orderOut:nil];
-    [row.integrationSwitch setEnabled:YES];
-    [row setInactiveStatusText:@"Not installed"];
     [self.claudeDownloadSession finishTasksAndInvalidate];
     self.claudeDownloadTask = nil;
     self.claudeDownloadSession = nil;
@@ -1193,11 +689,8 @@ didCompleteWithError:(NSError *)error {
         self.desktopDownloadKind = DesktopDownloadNone;
         return ClaudeInstallFailed;
     }
-    [row setInactiveStatusText:
-        [NSString stringWithFormat:@"Installing %@…", appName]];
     BOOL installed = NO;
     if (chatGPT) {
-        [row.integrationSwitch setEnabled:NO];
         NSAlert *installAlert = [[NSAlert alloc] init];
         [installAlert setAlertStyle:NSAlertStyleInformational];
         [installAlert setIcon:ollamaApplicationIcon()];
@@ -1230,7 +723,6 @@ didCompleteWithError:(NSError *)error {
         installed = backgroundInstalled;
         [installProgress stopAnimation:nil];
         [installAlert.window orderOut:nil];
-        [row.integrationSwitch setEnabled:YES];
     } else {
         installed = InstallClaudeDesktopArchive(
             self.claudeDownloadedInstallerURL.fileSystemRepresentation);
@@ -1263,167 +755,7 @@ didCompleteWithError:(NSError *)error {
     self.claudeDownloadCancelled = NO;
     self.claudeDownloadCompleted = NO;
     self.desktopDownloadKind = DesktopDownloadNone;
-    if (chatGPT) {
-        [self refreshCodexAppState];
-    } else {
-        [self refreshClaudeAppState];
-    }
     return installed ? ClaudeInstallerOpened : ClaudeInstallFailed;
-}
-
-- (void)toggleClaudeAppProxy:(NSButton *)sender {
-    BOOL enabled = sender.state == NSControlStateValueOn;
-    if (enabled && !IsClaudeDesktopInstalled()) {
-        [self.claudeAppRow setInactiveStatusText:@"Not installed"];
-        [self.claudeAppRow setIntegrationActive:NO];
-
-        NSAlert *installAlert = [[NSAlert alloc] init];
-        [installAlert setAlertStyle:NSAlertStyleInformational];
-        [installAlert setIcon:ollamaApplicationIcon()];
-        [installAlert setMessageText:@"Claude is not installed"];
-        [installAlert setInformativeText:
-            @"Download Claude to add Ollama models to the Claude app."];
-        [installAlert addButtonWithTitle:@"Download Claude"];
-        [installAlert addButtonWithTitle:@"Cancel"];
-        if ([installAlert runModal] == NSAlertFirstButtonReturn) {
-            if ([self downloadClaude] != ClaudeInstallerOpened) {
-                return;
-            }
-        } else {
-            return;
-        }
-    }
-    BOOL restartClaude = IsClaudeDesktopRunning();
-    if (restartClaude) {
-        NSAlert *restartAlert = [[NSAlert alloc] init];
-        [restartAlert setAlertStyle:NSAlertStyleWarning];
-        [restartAlert setIcon:ollamaApplicationIcon()];
-        [restartAlert setMessageText:enabled
-            ? @"Restart Claude Desktop to use Ollama?"
-            : @"Restart Claude Desktop to remove Ollama?"];
-        [restartAlert setInformativeText:enabled
-            ? @"Claude Desktop must restart to use Ollama. Any running task will stop."
-            : @"Claude Desktop must restart to remove Ollama. Any running task will stop."];
-        [restartAlert addButtonWithTitle:@"Restart Claude Desktop"];
-        [restartAlert addButtonWithTitle:@"Cancel"];
-        if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
-            [self refreshClaudeAppState];
-            return;
-        }
-    }
-
-    [sender setEnabled:NO];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL succeeded = SetClaudeGatewayInstalled(enabled, restartClaude);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [sender setEnabled:YES];
-            if (!succeeded) {
-                BOOL portConflict = enabled && ClaudeGatewayPortConflict();
-                char *rawGatewayError = ClaudeGatewayErrorMessage();
-                NSString *gatewayError = rawGatewayError != NULL && rawGatewayError[0] != '\0'
-                    ? [NSString stringWithUTF8String:rawGatewayError]
-                    : nil;
-                free(rawGatewayError);
-                [self refreshClaudeAppState];
-                NSAlert *alert = [[NSAlert alloc] init];
-                [alert setAlertStyle:NSAlertStyleWarning];
-                [alert setIcon:ollamaApplicationIcon()];
-                [alert setMessageText:portConflict
-                    ? [NSString stringWithFormat:@"Port %d is already in use", ClaudeGatewayPort()]
-                    : (enabled
-                        ? @"Unable to use Ollama with Claude"
-                        : @"Unable to remove Ollama from Claude")];
-                [alert setInformativeText:portConflict
-                    ? [NSString stringWithFormat:@"Change OLLAMA_HOST or quit the app using port %d, then try again.", ClaudeGatewayPort()]
-                    : (gatewayError.length > 0
-                        ? gatewayError
-                        : @"Ollama could not update Claude. Check the Ollama log for details.")];
-                [alert runModal];
-                return;
-            }
-
-            self.claudeAppEnabled = enabled;
-            self.claudeAppReady = enabled;
-            [self.claudeAppRow setActiveStatusText:nil];
-            [self.claudeAppRow setInactiveStatusText:nil];
-            [self.claudeAppRow setIntegrationActive:enabled];
-            [self.claudeAppRow setIntegrationReady:enabled];
-            if (enabled) {
-                RefreshClaudeProxyMenu();
-                [self openClaudeApp:nil];
-            }
-        });
-    });
-}
-
-- (void)toggleCodexApp:(NSButton *)sender {
-    BOOL disconnectPending = IsCodexDesktopDisconnectPending();
-    BOOL enabled = sender.state == NSControlStateValueOn && !disconnectPending;
-    if (disconnectPending) {
-        sender.state = NSControlStateValueOff;
-    }
-    if (enabled && !IsCodexDesktopInstalled()) {
-        [self refreshCodexAppState];
-        NSAlert *installAlert = [[NSAlert alloc] init];
-        [installAlert setAlertStyle:NSAlertStyleInformational];
-        [installAlert setIcon:ollamaApplicationIcon()];
-        [installAlert setMessageText:@"ChatGPT is not installed"];
-        [installAlert setInformativeText:
-            @"Download ChatGPT to add Ollama models to the ChatGPT app."];
-        [installAlert addButtonWithTitle:@"Download ChatGPT"];
-        [installAlert addButtonWithTitle:@"Cancel"];
-        if ([installAlert runModal] == NSAlertFirstButtonReturn) {
-            if ([self downloadChatGPT] != ClaudeInstallerOpened) {
-                return;
-            }
-        } else {
-            return;
-        }
-    }
-
-    BOOL restartChatGPT = IsCodexDesktopRunning();
-    if (restartChatGPT) {
-        NSAlert *restartAlert = [[NSAlert alloc] init];
-        [restartAlert setAlertStyle:NSAlertStyleWarning];
-        [restartAlert setIcon:ollamaApplicationIcon()];
-        configureChatGPTRestartAlert(restartAlert, enabled
-            ? ChatGPTRestartActionAddModels
-            : ChatGPTRestartActionRemoveModels);
-        [restartAlert addButtonWithTitle:@"Cancel"];
-        if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
-            [self refreshCodexAppState];
-            return;
-        }
-    }
-
-    [sender setEnabled:NO];
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL succeeded = SetCodexDesktopConnected(enabled, restartChatGPT);
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [sender setEnabled:YES];
-            [self refreshCodexAppState];
-            if (!succeeded) {
-                NSAlert *alert = [[NSAlert alloc] init];
-                [alert setAlertStyle:NSAlertStyleWarning];
-                [alert setIcon:ollamaApplicationIcon()];
-                [alert setMessageText:enabled
-                    ? @"Couldn’t connect ChatGPT"
-                    : @"Couldn’t disconnect ChatGPT"];
-                [alert setInformativeText:@"Please try again."];
-                if (!enabled && (IsCodexDesktopConnected() || IsCodexDesktopDisconnectPending())) {
-                    [alert addButtonWithTitle:@"Retry"];
-                    [alert addButtonWithTitle:@"Not Now"];
-                    if ([alert runModal] == NSAlertFirstButtonReturn) {
-                        sender.state = NSControlStateValueOff;
-                        [self toggleCodexApp:sender];
-                    }
-                    return;
-                }
-                [alert runModal];
-                return;
-            }
-        });
-    });
 }
 
 - (void)appsUI {
@@ -1584,7 +916,6 @@ didCompleteWithError:(NSError *)error {
             }
 
             self.quitInProgress = NO;
-            [self refreshClaudeAppState];
             NSAlert *alert = [[NSAlert alloc] init];
             [alert setAlertStyle:NSAlertStyleWarning];
             [alert setIcon:ollamaApplicationIcon()];
@@ -2303,33 +1634,6 @@ int installSymlink(const char *cliPath) {
 void updateAvailable() {
     dispatch_async(dispatch_get_main_queue(), ^{
       [appDelegate showUpdateAvailable];
-    });
-}
-
-void updateClaudeProxyMenu(unsigned long long routed) {
-    void (^updateMenu)(void) = ^{
-        NSString *status = routed == 1
-            ? @"1 request this session"
-            : [NSString stringWithFormat:@"%llu requests this session", routed];
-        [appDelegate.claudeAppRow setActiveStatusText:status];
-    };
-    if ([NSThread isMainThread]) {
-        updateMenu();
-    } else {
-        dispatch_async(dispatch_get_main_queue(), updateMenu);
-    }
-}
-
-bool ShowAppsInMenu(void) {
-    return shouldShowAppsInMenu();
-}
-
-void SetShowAppsInMenu(bool visible) {
-    [[NSUserDefaults standardUserDefaults]
-        setBool:visible
-         forKey:ShowAppsInMenuDefaultsKey];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [appDelegate applyShowAppsInMenu:visible];
     });
 }
 

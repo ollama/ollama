@@ -612,12 +612,11 @@ func startClaudeAppProxy() error {
 		return recordClaudeProxyFailure(err, claudeProxyFailureNone)
 	}
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
-		ListenAddr:      claudeProxyListenAddr,
-		OllamaURL:       ollamaURL.String(),
-		Model:           activeModels[0].OllamaModel,
-		Models:          activeModels,
-		Logger:          slog.Default(),
-		OnCountsChanged: updateClaudeProxyMenu,
+		ListenAddr: claudeProxyListenAddr,
+		OllamaURL:  ollamaURL.String(),
+		Model:      activeModels[0].OllamaModel,
+		Models:     activeModels,
+		Logger:     slog.Default(),
 		RefreshModels: func(ctx context.Context, current []proxy.ClaudeDesktopModel) ([]proxy.ClaudeDesktopModel, error) {
 			_, selected, _ := refreshClaudeDesktopCatalog(ctx, current, false)
 			return selected, nil
@@ -1122,19 +1121,6 @@ func claudeGatewayPort() (string, error) {
 	return port, nil
 }
 
-//export ClaudeGatewayPort
-func ClaudeGatewayPort() C.int {
-	portText, err := claudeGatewayPort()
-	if err != nil {
-		return 0
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		return 0
-	}
-	return C.int(port)
-}
-
 // These helpers require claudeProxyMu to be held.
 func setClaudeProxyFailure(err error, failure claudeProxyFailure) error {
 	claudeProxyErr = err
@@ -1162,11 +1148,6 @@ func SetClaudeGatewayInstalled(installed C.bool, restartClaude C.bool) C.bool {
 		return C._Bool(false)
 	}
 	return C._Bool(true)
-}
-
-//export HasUsedClaudeDesktopIntegration
-func HasUsedClaudeDesktopIntegration() C.bool {
-	return C._Bool(hasUsedClaudeDesktopIntegration())
 }
 
 func hasUsedClaudeDesktopIntegration() bool {
@@ -1233,84 +1214,14 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 	return nil
 }
 
-//export IsClaudeDesktopInstalled
-func IsClaudeDesktopInstalled() C.bool {
-	return C._Bool(claudeDesktopInstalled())
-}
-
 //export IsClaudeDesktopRunning
 func IsClaudeDesktopRunning() C.bool {
 	return C._Bool(launch.ClaudeDesktopRunning())
 }
 
-//export IsCodexDesktopInstalled
-func IsCodexDesktopInstalled() C.bool {
-	return C._Bool(codexDesktop.Installed())
-}
-
-//export IsCodexDesktopConnected
-func IsCodexDesktopConnected() C.bool {
-	return C._Bool(codexDesktop.OllamaConfigured())
-}
-
-//export IsCodexDesktopDisconnectPending
-func IsCodexDesktopDisconnectPending() C.bool {
-	return C._Bool(!codexDesktop.OllamaConfigured() && codexDesktop.RestorePending())
-}
-
-//export IsCodexDesktopRunning
-func IsCodexDesktopRunning() C.bool {
-	return C._Bool(codexDesktop.Running())
-}
-
-//export CodexDesktopRequestCount
-func CodexDesktopRequestCount() C.ulonglong {
-	return C.ulonglong(codexDesktop.OllamaRequestCount())
-}
-
-//export SetCodexDesktopConnected
-func SetCodexDesktopConnected(connected, restartConfirmed C.bool) C.bool {
-	shouldConnect := connected != C._Bool(false)
-	confirmed := restartConfirmed != C._Bool(false)
-	result := changeCodexDesktopConnection(shouldConnect, confirmed)
-	return C._Bool(result.Error == "")
-}
-
 //export IsClaudeGatewayConfigured
 func IsClaudeGatewayConfigured() C.bool {
 	return C._Bool(claudeDesktop.UsesOllamaGateway())
-}
-
-//export ClaudeGatewayStartFailed
-func ClaudeGatewayStartFailed() C.bool {
-	return C._Bool(claudeGatewayStartFailed())
-}
-
-func claudeGatewayStartFailed() bool {
-	claudeProxyMu.Lock()
-	defer claudeProxyMu.Unlock()
-	return claudeProxyErr != nil
-}
-
-//export ClaudeGatewayPortConflict
-func ClaudeGatewayPortConflict() C.bool {
-	return C._Bool(claudeGatewayPortConflict())
-}
-
-//export ClaudeGatewayErrorMessage
-func ClaudeGatewayErrorMessage() *C.char {
-	claudeProxyMu.Lock()
-	defer claudeProxyMu.Unlock()
-	if claudeProxyErr == nil {
-		return C.CString("")
-	}
-	return C.CString(claudeProxyErr.Error())
-}
-
-func claudeGatewayPortConflict() bool {
-	claudeProxyMu.Lock()
-	defer claudeProxyMu.Unlock()
-	return claudeProxyFail == claudeProxyFailurePortConflict
 }
 
 func getClaudeDesktopConnectionSummary() claudeDesktopStatus {
@@ -1855,14 +1766,6 @@ func InstallCodexDesktopDiskImage(path *C.cchar_t) C.bool {
 	return C._Bool(true)
 }
 
-func getShowAppsInMenu() bool {
-	return bool(C.ShowAppsInMenu())
-}
-
-func setShowAppsInMenu(visible bool) {
-	C.SetShowAppsInMenu(C._Bool(visible))
-}
-
 func claudeDesktopInstallResultFromCode(code int) claudeDesktopInstallResult {
 	switch code {
 	case int(C.ClaudeInstallerOpened):
@@ -1872,21 +1775,6 @@ func claudeDesktopInstallResultFromCode(code int) claudeDesktopInstallResult {
 	default:
 		return claudeDesktopInstallFailed
 	}
-}
-
-//export RefreshClaudeProxyMenu
-func RefreshClaudeProxyMenu() {
-	claudeProxyMu.Lock()
-	proxy := claudeAppProxy
-	claudeProxyMu.Unlock()
-	if proxy == nil {
-		return
-	}
-	updateClaudeProxyMenu(proxy.Counts())
-}
-
-func updateClaudeProxyMenu(counts proxy.ClaudeDesktopCounts) {
-	C.updateClaudeProxyMenu(C.ulonglong(counts.Routed))
 }
 
 func stopClaudeAppProxy() {

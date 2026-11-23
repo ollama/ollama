@@ -53,7 +53,6 @@ type ClaudeDesktopConfig struct {
 	Model              string
 	Models             []ClaudeDesktopModel
 	Logger             *slog.Logger
-	OnCountsChanged    func(ClaudeDesktopCounts)
 	RefreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	ResolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	ListLocalModels    func(context.Context) ([]string, error)
@@ -82,7 +81,6 @@ type ClaudeDesktop struct {
 	modelsMu           sync.RWMutex
 	models             []ClaudeDesktopModel
 	modelsGeneration   uint64
-	onCountsChanged    func(ClaudeDesktopCounts)
 	refreshModels      func(context.Context, []ClaudeDesktopModel) ([]ClaudeDesktopModel, error)
 	resolveAccessState func(context.Context) (ClaudeDesktopAccessState, error)
 	listLocalModels    func(context.Context) ([]string, error)
@@ -135,7 +133,6 @@ func NewClaudeDesktop(config ClaudeDesktopConfig) (*ClaudeDesktop, error) {
 		model:              config.Model,
 		models:             SelectClaudeDesktopModels(config.Models, nil),
 		modelsGeneration:   1,
-		onCountsChanged:    config.OnCountsChanged,
 		refreshModels:      config.RefreshModels,
 		resolveAccessState: config.ResolveAccessState,
 		listLocalModels:    config.ListLocalModels,
@@ -373,10 +370,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Ollama gateway unavailable", http.StatusBadGateway)
 		return
 	}
-	counts := ClaudeDesktopCounts{Routed: p.routed.Add(1)}
-	if p.onCountsChanged != nil {
-		p.onCountsChanged(counts)
-	}
+	p.routed.Add(1)
 	p.ollamaProxy.ServeHTTP(w, r)
 }
 
