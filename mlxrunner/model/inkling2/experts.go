@@ -16,41 +16,32 @@ type expertBank struct {
 	Denominator *mlx.Array
 }
 
-// inputRows gathers the gate/up activations after quantization, so each
-// token's activation is quantized once even when several experts use it.
-func (e expertBank) project(x, indices, inputRows *mlx.Array, grouped bool) *mlx.Array {
+// project multiplies x by the selected experts without the Metal epilogues.
+func (e expertBank) project(x, indices *mlx.Array) *mlx.Array {
 	if e.BlockScales == nil {
 		return mlx.GatherMM(x, e.Weight.Transpose(0, 2, 1), nil, indices, false)
 	}
 	if e.Maxima == nil {
-		values := mxfp8ExpertInput(x)
-		result := mlx.GatherQMM(values, e.Weight, e.BlockScales, nil, nil, indices, true, 32, 8, "mxfp8", nil, false)
-		return result.AsType(x.DType())
+		return e.gather(mxfp8ExpertInput(x), indices, false).AsType(x.DType())
 	}
-	result, activationMax := e.nvfp4Inner(x, indices, inputRows, grouped)
+	values, activationMax := mlx.QuantizeNVFP4Activation4Over6(x, nvfp4ActivationDenominator)
 	outerScale := nvfp4OuterScale(activationMax, e.Maxima, e.Denominator, indices)
-	return mlx.Mul(result, outerScale).AsType(x.DType())
+	return mlx.Mul(e.gather(values, indices, false), outerScale).AsType(x.DType())
 }
 
-func (e expertBank) nvfp4Inner(x, indices, inputRows *mlx.Array, grouped bool) (*mlx.Array, *mlx.Array) {
-	values, activationMax := mlx.QuantizeNVFP4Activation4Over6(x, nvfp4ActivationDenominator)
-	if inputRows != nil {
-		values = mlx.Take(values, inputRows, 0)
-		activationMax = mlx.Take(activationMax, inputRows, 0)
+// gather multiplies quantized activations by the selected experts.
+func (e expertBank) gather(values, indices *mlx.Array, sorted bool) *mlx.Array {
+	mode, group, bits := "mxfp8", 32, 8
+	if e.Maxima != nil {
+		mode, group, bits = "nvfp4", 16, 4
 	}
-	if !grouped && inputRows == nil && indices.Dim(0) == 4 {
-		if result := mlx.GatherNVFP4QMV(values, e.Weight, e.BlockScales, indices); result != nil {
-			return result, activationMax
+	// Rows of a short forward often share experts; read each one once.
+	if !sorted {
+		if out := mlx.ShortGatherQMM(values, e.Weight, e.BlockScales, indices, mode); out != nil {
+			return out
 		}
 	}
-	if grouped && inputRows != nil && indices.Dim(0) >= 512 && mlx.PrefersCompactNVFP4QMM() {
-		// Each reconstructed E2M1 value times its E4M3 block scale fits exactly in BF16.
-		if result := mlx.GatherNVFP4QMM(values.AsType(mlx.DTypeBFloat16), e.Weight, e.BlockScales, indices); result != nil {
-			return result, activationMax
-		}
-	}
-	result := mlx.GatherQMM(values, e.Weight, e.BlockScales, nil, nil, indices, true, 16, 4, "nvfp4", nil, grouped)
-	return result, activationMax
+	return mlx.GatherQMM(values, e.Weight, e.BlockScales, nil, nil, indices, true, group, bits, mode, nil, sorted)
 }
 
 func nvfp4OuterScale(activationMax, expertMaxima, denominator, indices *mlx.Array) *mlx.Array {
@@ -80,6 +71,9 @@ func mxfp8ExpertInput(x *mlx.Array) *mlx.Array {
 }
 
 func routeExperts(logits, bias *mlx.Array, topK int, scale float32) (indices, weights *mlx.Array) {
+	if indices, weights := mlx.RouteSigmoidTopK(logits, bias, topK, scale); indices != nil {
+		return indices, weights
+	}
 	selection := logits.Sigmoid()
 	if bias != nil {
 		selection = selection.Add(bias)
@@ -104,54 +98,114 @@ type routedExperts struct {
 func (e routedExperts) forward(x *mlx.Array) *mlx.Array {
 	batch, tokens, width := x.Dim(0), x.Dim(1), x.Dim(2)
 	flat := x.Reshape(batch*tokens, width)
-	router := nn.Linear{Weight: e.Router.AsType(mlx.DTypeFloat32)}
-	routerInput := flat.AsType(mlx.DTypeFloat32)
-	if tokens <= shortTargetRows {
-		routerInput = routerInput.Reshape(batch, tokens, width)
-	}
-	logits := projectTarget(&router, routerInput).Reshape(batch*tokens, e.Router.Dim(0))
-	indices, weights := routeExperts(logits, e.Bias, e.topK, e.routeScale)
+	indices, weights := routeExperts(e.routerLogits(x), e.Bias, e.topK, e.routeScale)
 	// The Metal grouped gather reuses each expert when there are at least
 	// four routes per expert on average. Keep short target verification rows
 	// on the width-stable path even if multiple requests share a batch.
-	grouped := e.GateUp.Maxima != nil && e.Down.Maxima != nil &&
+	grouped := e.GateUp.BlockScales != nil && e.Down.BlockScales != nil &&
 		tokens >= 64 && batch*tokens*e.topK/e.Router.Dim(0) >= 4 && mlx.MetalIsAvailable()
 	return e.combine(flat, indices, weights, grouped).Reshape(batch, tokens, width)
 }
 
-// combine evaluates the selected experts and restores their routing order
-// before accumulating the result for each token.
+// routerLogits returns FP32 router scores, [batch*tokens, experts]. Short
+// products read BF16 rows directly and accumulate in FP32. Without them, short
+// blocks stay 3-D so projectTarget pads decode and draft verification to one
+// matrix shape.
+func (e routedExperts) routerLogits(x *mlx.Array) *mlx.Array {
+	batch, tokens, width := x.Dim(0), x.Dim(1), x.Dim(2)
+	router := nn.Linear{Weight: e.Router}
+	input := x
+	if tokens > shortTargetRows {
+		input = x.Reshape(batch*tokens, width).AsType(mlx.DTypeFloat32)
+	} else if !mlx.MetalIsAvailable() {
+		input = x.AsType(mlx.DTypeFloat32)
+	}
+	return projectTarget(&router, input).Reshape(batch*tokens, e.Router.Dim(0))
+}
+
+// combine evaluates the selected experts and sums them for each token.
+// Grouped routes are sorted by expert for the Metal path.
 func (e routedExperts) combine(flat, indices, weights *mlx.Array, grouped bool) *mlx.Array {
+	if out := e.combineQuantized(flat, indices, weights, grouped); out != nil {
+		return out
+	}
+	weighted := e.gateUpInput(flat, indices, weights)
+	down := e.Down.project(weighted, indices).Squeeze(2).AsType(mlx.DTypeFloat32)
+	return mlx.Sum(down, 1, false).AsType(flat.DType())
+}
+
+// combineQuantized runs NVFP4 or MXFP8 experts with fused Metal epilogues:
+// the gate/up scaling, SwiGLU and down quantization, then the down scaling
+// and the sum over routes. It returns nil where those kernels cannot run.
+func (e routedExperts) combineQuantized(flat, indices, weights *mlx.Array, grouped bool) *mlx.Array {
+	if !mlx.MetalIsAvailable() || e.GateUp.BlockScales == nil || e.Down.BlockScales == nil ||
+		(e.GateUp.Maxima == nil) != (e.Down.Maxima == nil) || flat.DType() != mlx.DTypeBFloat16 {
+		return nil
+	}
+	nvfp4 := e.GateUp.Maxima != nil
 	rows, width := flat.Dim(0), flat.Dim(1)
-	var inputRows, inverse *mlx.Array
+	routes := rows * e.topK
+	// Grouped products use BF16 tiles. Quantized activations are exact in BF16.
+	dtype := mlx.DTypeFloat32
+	if grouped {
+		dtype = mlx.DTypeBFloat16
+	}
+	x := flat.ExpandDims(1).ExpandDims(1)
+	var values, xmax *mlx.Array
+	if nvfp4 {
+		values, xmax = mlx.QuantizeNVFP4Activation4Over6(x, nvfp4ActivationDenominator)
+		values = values.AsType(dtype)
+	} else if values = mlx.MXFP8Quantize(x, dtype); values == nil {
+		return nil
+	}
+	xmaxStride := e.topK
+	var inverse *mlx.Array
 	if grouped {
 		flatIndices := indices.Reshape(-1)
 		order := mlx.Argsort(flatIndices, 0)
 		inverse = mlx.Argsort(order, 0)
-		inputRows = mlx.FloorDivideScalar(order, int32(e.topK))
+		inputRows := mlx.FloorDivideScalar(order, int32(e.topK))
 		indices = mlx.Take(flatIndices, order, 0).Reshape(-1, 1)
-		weights = mlx.Take(weights.Reshape(-1), order, 0).Reshape(-1, 1)
+		weights = mlx.Take(weights.Reshape(-1), order, 0)
+		values = mlx.Take(values, inputRows, 0)
+		if nvfp4 {
+			xmax = mlx.Take(xmax, inputRows, 0)
+		}
+		xmaxStride = 1
 	}
-	weighted := e.gateUpInput(flat, indices, inputRows, weights, grouped)
-	down := e.Down.project(weighted, indices, nil, grouped).Squeeze(2).AsType(mlx.DTypeFloat32)
+	var down, downMax *mlx.Array
+	if nvfp4 && !grouped {
+		// The short gate/up gather finishes the SwiGLU in its epilogue, so
+		// only the down quantizer remains.
+		if activated := mlx.ShortGatherNVFP4SwiGLU(values, e.GateUp.Weight, e.GateUp.BlockScales, indices, xmax,
+			e.GateUp.Maxima, e.GateUp.Denominator, weights, xmaxStride, e.gateCap, e.upCap,
+			nvfp4ActivationDenominator); activated != nil {
+			down, downMax = mlx.QuantizeNVFP4Activation4Over6(activated, nvfp4ActivationDenominator)
+		}
+	}
+	if down == nil {
+		inner := e.GateUp.gather(values, indices, grouped).Reshape(routes, -1)
+		if nvfp4 {
+			down, downMax = mlx.NVFP4SwiGLUQuantize(inner, xmax, e.GateUp.Maxima, e.GateUp.Denominator,
+				indices, weights, xmaxStride, e.gateCap, e.upCap, nvfp4ActivationDenominator, dtype)
+		} else {
+			down = mlx.MXFP8SwiGLUQuantize(inner, weights, e.gateCap, e.upCap, dtype)
+		}
+		if down == nil {
+			return nil
+		}
+	}
 	if grouped {
-		down = mlx.Take(down.Reshape(-1, width), inverse, 0).Reshape(rows, e.topK, width)
+		down = down.Reshape(routes, 1, 1, -1)
+	} else {
+		down = down.Reshape(rows, e.topK, 1, -1)
 	}
-	return mlx.Sum(down, 1, false).AsType(flat.DType())
+	inner := e.Down.gather(down, indices, grouped).Reshape(routes, width)
+	return mlx.ExpertSum(inner, downMax, e.Down.Maxima, e.Down.Denominator, indices, inverse, e.topK, nvfp4ActivationDenominator)
 }
 
-// Fuse the checkpoint's NVFP4 outer scale, projection rounding and SwiGLU
-// pointwise operations after the Metal gather.
-func (e routedExperts) gateUpInput(flat, indices, inputRows, scores *mlx.Array, grouped bool) *mlx.Array {
-	x := flat.ExpandDims(1).ExpandDims(1)
-	if mlx.MetalIsAvailable() && flat.DType() == mlx.DTypeBFloat16 && flat.Dim(1) == 2304 &&
-		e.GateUp.BlockScales != nil && e.GateUp.Maxima != nil && e.GateUp.Weight.Dim(0) == 128 && e.GateUp.Weight.Dim(1) == 2304 &&
-		e.topK == 8 && e.gateCap == 4 && e.upCap == 25 {
-		inner, xmax := e.GateUp.nvfp4Inner(x, indices, inputRows, grouped)
-		gate, up := splitGateUp(inner)
-		return compiledGateUpEpilogue(gate, up, xmax, e.GateUp.Maxima, e.GateUp.Denominator, indices, scores)[0]
-	}
-	paired := e.GateUp.project(x, indices, inputRows, grouped).AsType(mlx.DTypeFloat32)
+func (e routedExperts) gateUpInput(flat, indices, scores *mlx.Array) *mlx.Array {
+	paired := e.GateUp.project(flat.ExpandDims(1).ExpandDims(1), indices).AsType(mlx.DTypeFloat32)
 	gate, up := splitGateUp(paired)
 	return weightedSwiGLU(gate, up, scores, e.gateCap, e.upCap, flat.DType())
 }
@@ -167,16 +221,6 @@ func weightedSwiGLU(gate, up, scores *mlx.Array, gateCap, upCap float32, dtype m
 	activated := mlx.Mul(mlx.Mul(softcap(gate, gateCap), gate.Sigmoid()), softcap(up, upCap))
 	return mlx.Mul(activated, scores.ExpandDims(-1).ExpandDims(-1)).AsType(dtype)
 }
-
-var compiledGateUpEpilogue = mlx.Compile("InklingGateUpEpilogue", func(inputs ...*mlx.Array) []*mlx.Array {
-	gate, up := inputs[0], inputs[1]
-	xmax, wmax, denom, ids, scores := inputs[2], inputs[3], inputs[4], inputs[5], inputs[6]
-	outer := nvfp4OuterScale(xmax, wmax, denom, ids)
-	// Each projection rounds to BF16 before either nonlinearity.
-	gate = mlx.Mul(gate, outer).AsType(mlx.DTypeBFloat16).AsType(mlx.DTypeFloat32)
-	up = mlx.Mul(up, outer).AsType(mlx.DTypeBFloat16).AsType(mlx.DTypeFloat32)
-	return []*mlx.Array{weightedSwiGLU(gate, up, scores, 4, 25, mlx.DTypeBFloat16)}
-}, mlx.Shapeless())
 
 func softcap(x *mlx.Array, cap float32) *mlx.Array {
 	if cap <= 0 {

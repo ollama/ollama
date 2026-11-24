@@ -187,8 +187,6 @@ fi
 if [ -f /etc/nv_tegra_release ] ; then
     if grep R36 /etc/nv_tegra_release > /dev/null ; then
         download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
-    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
-        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
     else
         warning "Unsupported JetPack version detected.  GPU may not be supported"
     fi

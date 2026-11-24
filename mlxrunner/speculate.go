@@ -87,7 +87,9 @@ func newSpeculation(r *Runner, slotID int, draft model.DraftModel, targets, draf
 			model.BlockSelector
 			AdaptiveDraftDepth() bool
 		}); ok {
-			s.depth.block = selector.AdaptiveDraftDepth()
+			if selector.AdaptiveDraftDepth() {
+				s.depth = newBlockDepthController()
+			}
 		}
 	} else {
 		s.drafter = newMTPDrafter(s)

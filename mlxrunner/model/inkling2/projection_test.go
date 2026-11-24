@@ -1,6 +1,7 @@
 package inkling2
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -49,6 +50,50 @@ func TestTargetProjectionUsesConsistentRows(t *testing.T) {
 			ordinary := linear.Forward(prefill).AsType(mlx.DTypeFloat32).Flatten(0, -1).Floats()
 			if !slices.Equal(got, ordinary) {
 				t.Error("larger prefill changed from the ordinary projection path")
+			}
+		})
+	})
+}
+
+// Short forwards unembed in launches of shortTargetRows flattened rows that
+// apply the softcap themselves, so requests sharing a launch get the logits
+// each would get alone. Metal's precise tanh and MLX's differ by an FP32
+// rounding or two of the capped values.
+func TestShortVocabularyLogitsTileRequests(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() {
+			t.Skip("the BF16 short head loads on Metal only")
+		}
+		mlx.Scoped(func() {
+			const width, block, copies, logitCap = 2304, 1000, 33, 30
+			rng := rand.New(rand.NewPCG(53, 59))
+			// A vocabulary-sized head takes ShortMatmul's staged rows. Scaled
+			// copies of one random block keep its columns distinct without a
+			// large host buffer.
+			gains := mlx.AddScalar(mlx.MulScalar(mlx.Arange(0, copies, 1, mlx.DTypeFloat32), 1.0/32), 1).AsType(mlx.DTypeBFloat16)
+			head := mlx.Mul(draftTestValues(rng, 0.02, 1, block, width), gains.Reshape(copies, 1, 1)).Reshape(copies*block, width)
+			mlx.Eval(head)
+			m := &targetModel{config: textConfig{LogitCap: logitCap}, Output: nn.NewLinear(head, nil), ShortOutput: nn.NewLinear(head, nil)}
+			for _, sh := range [][2]int{{1, 1}, {3, 3}, {2, shortTargetRows}} {
+				mlx.Scoped(func() {
+					rows, tokens := sh[0], sh[1]
+					name := fmt.Sprintf("%d requests of %d rows", rows, tokens)
+					hidden := draftTestValues(rng, 16, rows, tokens, width)
+					fused := m.shortVocabularyLogits(hidden)
+					if fused == nil {
+						t.Fatalf("%s: the capped short head declined", name)
+					}
+					got := m.Unembed(hidden)
+					requireIdentical(t, name, got, fused)
+					for i := range rows {
+						alone := m.Unembed(hidden.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice()))
+						requireIdentical(t, fmt.Sprintf("%s: request %d alone", name, i), alone, got.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice()))
+					}
+					requireClose(t, name+" against the capped projection", got, softcap(m.shortVocabularyProjection(hidden), logitCap), 1e-5)
+				})
+			}
+			if m.shortVocabularyLogits(draftTestValues(rng, 1, 1, shortTargetRows+1, width)) != nil {
+				t.Fatal("a long forward took the short head")
 			}
 		})
 	})

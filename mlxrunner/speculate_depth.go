@@ -21,8 +21,8 @@ const depthProbeIntervalMax = 512
 // depths from plain decode up to one past the measured acceptance frontier,
 // bounded by the drafter's capacity. A probe can observe a complete block.
 //
-// Sequential drafters carry the learned state across requests. Adaptive block
-// selectors reuse the cost curve and observe acceptance in the current request.
+// Drafters carry the learned state across requests. Adaptive block selectors
+// also restart the probe schedule with a full block for each request.
 type depthController struct {
 	cost   *costModel
 	acc    *acceptanceModel
@@ -53,12 +53,24 @@ func newDepthController() *depthController {
 	return &depthController{cost: newCostModel(), acc: newAcceptanceModel(acceptanceMinSamples), probeInterval: depthProbeInterval}
 }
 
-// A block's hardware costs carry across requests. A full first probe can give
-// acceptance evidence for every position in the new text in a single round.
+// newBlockDepthController is the controller of a drafter whose block selector
+// adapts its depth: each request is a forBlock session sharing its costs and
+// pooled acceptance.
+func newBlockDepthController() *depthController {
+	c := newDepthController()
+	c.block = true
+	c.acc = newBlockAcceptanceModel()
+	return c
+}
+
+// forBlock starts a request's block session. Costs and acceptance carry across
+// requests, and the acceptance EWMA follows a new text within a few rounds. The
+// probe schedule restarts with a full block, which gives evidence for every
+// position in the new text.
 func (c *depthController) forBlock() *depthController {
 	return &depthController{
 		cost:          c.cost,
-		acc:           newAcceptanceModel(1),
+		acc:           c.acc,
 		block:         true,
 		drafterLimit:  c.drafterLimit,
 		scheduled:     c.drafterLimit,
@@ -262,10 +274,26 @@ type acceptanceModel struct {
 	minSamples int
 	rate       []float64 // EWMA acceptance rate given the prefix survived; index i is position i
 	seen       []int     // times position i was reached (warmup gate for rate)
+
+	// pooled shares one rate among the positions past the first. A block
+	// draft's later positions accept at similar rates, and pooling lets every
+	// reached position inform the ones beyond the current depth, which only
+	// probes reach. Their per-position rates still update but are not read.
+	pooled   bool
+	deep     float64
+	deepSeen int
 }
 
 func newAcceptanceModel(minSamples int) *acceptanceModel {
 	return &acceptanceModel{minSamples: minSamples, rate: []float64{0}, seen: []int{0}}
+}
+
+// newBlockAcceptanceModel trusts the first observation of each position, so a
+// full first probe covers the whole block, and pools the positions past the first.
+func newBlockAcceptanceModel() *acceptanceModel {
+	a := newAcceptanceModel(1)
+	a.pooled = true
+	return a
 }
 
 func (a *acceptanceModel) grow(i int) {
@@ -295,13 +323,25 @@ func (a *acceptanceModel) observe(drafted, accepted int) {
 			a.rate[i] += acceptanceEWMAAlpha * (outcome - a.rate[i])
 		}
 		a.seen[i]++
+		if a.pooled && i >= 2 {
+			if a.deepSeen == 0 {
+				a.deep = outcome
+			} else {
+				a.deep += acceptanceEWMAAlpha * (outcome - a.deep)
+			}
+			a.deepSeen++
+		}
 	}
 }
 
 // acceptance returns the rate position i is accepted given its prefix survived. An under-sampled
 // position inherits the deepest trusted rate rather than zero, so the controller
-// keeps exploring deeper instead of locking shallow on noise.
+// keeps exploring deeper instead of locking shallow on noise. A pooled model
+// answers positions past the first with their shared rate once it is trusted.
 func (a *acceptanceModel) acceptance(i int) float64 {
+	if a.pooled && i >= 2 && a.deepSeen >= a.minSamples {
+		return a.deep
+	}
 	if i >= 1 && i < len(a.seen) && a.seen[i] >= a.minSamples {
 		return a.rate[i]
 	}
