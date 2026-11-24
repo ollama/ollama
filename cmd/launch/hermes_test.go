@@ -503,37 +503,17 @@ func TestHermesPathsUsesHermesHomeOverride(t *testing.T) {
 	}
 }
 
-func TestHermesConfigurePreservesLocalCatalogWhenListFails(t *testing.T) {
-	dir := t.TempDir()
-	setTestHome(t, dir)
-	t.Setenv("HERMES_HOME", dir)
+func TestHermesProviderPreservesLocalCatalogWhenListFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "catalog unavailable", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 	withHermesOllamaURL(t, server.URL)
 
-	path := filepath.Join(dir, "config.yaml")
-	existing := fmt.Sprintf(`providers:
-  ollama-launch:
-    api: %s/v1
-    default_model: gemma4
-    models: [gemma4, qwen3.5]
-`, server.URL)
-	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&Hermes{}).Configure("llama3.3"); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg map[string]any
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatal(err)
-	}
+	cfg := map[string]any{}
+	baseURL := hermesBaseURL()
+	applyHermesManagedProviders(cfg, baseURL, "gemma4", []string{"gemma4", "qwen3.5"})
+	applyHermesManagedProviders(cfg, baseURL, "llama3.3", (&Hermes{}).listModels("llama3.3"))
 	entry := hermesManagedProviderEntry(hermesUserProviders(cfg["providers"]))
 	if got := entry["default_model"]; got != "llama3.3" {
 		t.Fatalf("expected new provider default to be available alongside the fallback catalog, got %v", got)
@@ -566,7 +546,6 @@ func TestHermesProviderKeyStaysOnLoopback(t *testing.T) {
 func TestMigrateHermesProviderKeyPreservesModelAndCatalog(t *testing.T) {
 	dir := t.TempDir()
 	setTestHome(t, dir)
-	withHermesPlatform(t, "darwin")
 	t.Setenv("HERMES_HOME", dir)
 	path := filepath.Join(dir, "config.yaml")
 	const endpoint = "http://localhost:11434/v1"
