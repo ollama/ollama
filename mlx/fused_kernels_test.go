@@ -9,8 +9,14 @@ import (
 )
 
 func requireMetal(t *mlxthreadtest.T) {
+	if !MetalIsAvailable() && !CUDAIsAvailable() {
+		t.Skip("requires Metal or CUDA")
+	}
+}
+
+func requireMetalOnly(t *mlxthreadtest.T) {
 	if !MetalIsAvailable() {
-		t.Skip("requires Metal")
+		t.Skip("requires Metal (loop controllers are Metal-only)")
 	}
 }
 
@@ -163,7 +169,7 @@ func controllerGraph(input, message, down, gates *Array, inputs, i int) (compres
 
 func TestFusedLoopControllers(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		requireMetal(t)
+		requireMetalOnly(t)
 		if loopControllerDownConfig(kernelArchitecture()) == 0 {
 			t.Skip("the controller down kernel does not run on this device")
 		}
@@ -222,7 +228,7 @@ func TestFusedLoopControllers(t *testing.T) {
 // read such views in place and match their contiguous copies bit for bit.
 func TestFusedLoopControllersReadViews(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		requireMetal(t)
+		requireMetalOnly(t)
 		if loopControllerDownConfig(kernelArchitecture()) == 0 {
 			t.Skip("the controller down kernel does not run on this device")
 		}
@@ -278,7 +284,7 @@ func TestFusedLoopControllersReadViews(t *testing.T) {
 // for bit.
 func TestFusedLoopControllersReadAnyLayout(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		requireMetal(t)
+		requireMetalOnly(t)
 		if loopControllerDownConfig(kernelArchitecture()) == 0 {
 			t.Skip("the controller down kernel does not run on this device")
 		}
@@ -338,7 +344,7 @@ func TestFusedLoopControllersReadAnyLayout(t *testing.T) {
 
 func TestFusedGroupedShortMatmulMatchesShortMatmul(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		requireMetal(t)
+		requireMetalOnly(t)
 		const width, rows = 2304, 6
 		stack := patternArray(DTypeBFloat16, []int{3000, width}, 0, 0.01, 19, 227)
 		x := patternArray(DTypeBFloat16, []int{rows, 3, width}, 0.02, 0.05, 13, 229)

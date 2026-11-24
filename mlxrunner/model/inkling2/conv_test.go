@@ -160,10 +160,10 @@ func TestShortConvolutionAddMatchesSeparateSum(t *testing.T) {
 	})
 }
 
-func TestMetalConvTapsMatchEager(t *testing.T) {
+func TestCompiledConvTapsMatchEager(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		if !mlx.MetalIsAvailable() {
-			t.Skip("requires Metal")
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("requires Metal or CUDA")
 		}
 		mlx.EnableCompile()
 		random := rand.New(rand.NewPCG(71, 219))

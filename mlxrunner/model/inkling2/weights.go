@@ -25,7 +25,7 @@ func (m *targetModel) LoadWeights(tensors map[string]*mlx.Array) error {
 	output = output.Slice(mlx.Slice(0, c.UnpaddedVocab), mlx.Slice())
 	if m.fp32Output {
 		// Short products read the BF16 head and accumulate in FP32.
-		if mlx.MetalIsAvailable() {
+		if mlx.MetalIsAvailable() || mlx.CUDAIsAvailable() {
 			m.ShortOutput = nn.NewLinear(output, nil)
 		}
 		output = output.AsType(mlx.DTypeFloat32)
@@ -57,6 +57,23 @@ func (m *targetModel) LoadWeights(tensors map[string]*mlx.Array) error {
 type weightReader struct {
 	tensors map[string]*mlx.Array
 	err     error
+}
+
+// roundUpTo128 rounds n up to the next multiple of 128, the tile width the
+// CUDA quantized tensor-core matmul requires for its output dimension.
+func roundUpTo128(n int) int {
+	return (n + 127) / 128 * 128
+}
+
+// padVocabWeight pads the row dimension of a vocabulary projection to a
+// multiple of 128. The extra rows are never sampled and are discarded after
+// the projection.
+func padVocabWeight(w *mlx.Array, vocab int) *mlx.Array {
+	pad := roundUpTo128(vocab) - vocab
+	if pad == 0 {
+		return w
+	}
+	return mlx.PadConstant(w, []int{0}, []int{0}, []int{pad})
 }
 
 func (r *weightReader) tensor(name string, shape ...int) *mlx.Array {

@@ -81,10 +81,13 @@ func (a selfAttention) attend(qp, kp, vp *mlx.Array, dtype mlx.DType, b *batch.B
 	}
 	attended := relativeSDPA(b, q, k, v, table, sink, history, a.window, scale)
 	attended = attended.Transpose(0, 2, 1, 3).Reshape(rows, tokens, a.heads*a.headDim)
-	if compiledGate {
-		return projectTarget(a.Output, compiledAttentionGate(attended, gate))
+	var out *mlx.Array
+	if (mlx.MetalIsAvailable() || mlx.CUDAIsAvailable()) && gate.DType() == dtype {
+		out = projectTarget(a.Output, compiledAttentionGate(attended, gate))
+	} else {
+		out = projectTarget(a.Output, gateAttention(attended, gate, dtype))
 	}
-	return projectTarget(a.Output, gateAttention(attended, gate, dtype))
+	return out
 }
 
 // temperature scales global attention queries by the log of their length
@@ -179,7 +182,7 @@ func clipL2(x, weight, temperature *mlx.Array, threshold float32) *mlx.Array {
 		}
 		inputs = append(inputs, temperature)
 	}
-	if mlx.MetalIsAvailable() {
+	if mlx.MetalIsAvailable() || mlx.CUDAIsAvailable() {
 		return compiledClipL2(inputs...)[0]
 	}
 	return clipL2Tensors(inputs...)[0]
@@ -215,7 +218,11 @@ func relativeSDPA(b *batch.Batch, q, k, v, table, sink *mlx.Array, history *nn.K
 	}
 	// Attention stays in FP32 through its output gate. Preserve the stored
 	// BF16 keys and values, and widen only the views used by this forward.
-	q = q.AsType(mlx.DTypeFloat32)
+	// The CUDA prefill keeps Q in BF16 so the flash SDPA (cuDNN, BF16/FP16
+	// only) is selected instead of the generic matmul+softmax fallback.
+	if !(mlx.CUDAIsAvailable() && q.Dim(2) > shortTargetRows) {
+		q = q.AsType(mlx.DTypeFloat32)
+	}
 	if history == nil {
 		k, v = k.AsType(mlx.DTypeFloat32), v.AsType(mlx.DTypeFloat32)
 		return relativeWindowSDPA(b, q, table, sink, k.Dim(2), window, scale, nn.WithKV(k, v, b.SeqQueryLens))
@@ -236,6 +243,23 @@ func relativeSDPA(b *batch.Batch, q, k, v, table, sink *mlx.Array, history *nn.K
 		}
 	}
 	return relativeCachedSDPA(b, q, table, sink, history, window, 0, scale)
+}
+
+// cudaCachedDecodeSDPA is the CUDA single-query decode attention. The ordered
+// cache enforces the sliding window in storage, so the native kernel sees the
+// whole stored history with no window argument. It reads the stored BF16 keys
+// and values in place instead of widening the full history to FP32 every
+// forward; only the learned relative bias is materialized in FP32, exactly as
+// the tiled prefill path does.
+func cudaCachedDecodeSDPA(q, table, sink *mlx.Array, history *nn.KVHistory, scale float32) *mlx.Array {
+	keys := history.K().Dim(2)
+	shifted := mlx.RelativePositionDecodeBias(table, sink, keys)
+	if shifted == nil {
+		shifted = relativeBiasGraph(table, sink, keys)
+	}
+	return mlx.FastScaledDotProductAttentionWithSinks(
+		q, history.K(), history.V(), scale, mlx.FastSDPANoWindow, "", shifted,
+		mlx.Zeros(q.DType(), q.Dim(1)))
 }
 
 // A cache history normally supplies its own sliding mask. A trimmed chronological
@@ -266,6 +290,11 @@ func relativeCachedSDPA(b *batch.Batch, q, table, sink *mlx.Array, history *nn.K
 		}
 	}
 	stored := history
+	if queries == 1 && mlx.CUDAIsAvailable() && maskWindow == 0 {
+		if out := cudaCachedDecodeSDPA(q, table, sink, history, scale); out != nil {
+			return out
+		}
+	}
 	history = history.AsType(mlx.DTypeFloat32)
 	if queries == 1 || queries > shortTargetRows {
 		return relativeWindowSDPA(b, q, table, sink, keys, maskWindow, scale, nn.WithKVHistory(history))

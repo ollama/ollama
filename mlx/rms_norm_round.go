@@ -20,7 +20,7 @@ func RMSNormPairRoundBF16(a, b *Array, eps float32) *Array {
 }
 
 func rmsNormRound(a, b, weight *Array, eps float32) *Array {
-	if !MetalIsAvailable() || a == nil || a.NumDims() == 0 {
+	if (!MetalIsAvailable() && !CUDAIsAvailable()) || a == nil || a.NumDims() == 0 {
 		return nil
 	}
 	width := a.Dim(-1)
@@ -56,8 +56,17 @@ func rmsNormRound(a, b, weight *Array, eps float32) *Array {
 	}
 	shape[len(shape)-1] = int32(sources * width)
 	threads := (width/8 + 31) / 32 * 32
-	out, ok := rmsNormRoundKernel.applyMetal(gpuLaunch{
+	apply := rmsNormRoundKernel.applyMetal
+	if !MetalIsAvailable() {
+		apply = rmsNormRoundKernel.applyCUDA
+	}
+	// The CUDA custom-kernel cache keys on the kernel name and template
+	// arguments, not the input dtypes. Pass the input dtypes as template
+	// args so BF16 and FP32 callers get distinct compiled kernels instead
+	// of reusing a wrongly-typed one.
+	out, ok := apply(gpuLaunch{
 		inputs:  []*Array{a, second, w},
+		dtypes:  []gpuDTypeArg{{"T", DTypeBFloat16}, {"In0", a.DType()}, {"In1", second.DType()}},
 		ints:    []gpuIntArg{{"Width", width}, {"Sources", sources}, {"HasWeight", hasWeight}, {"EpsBits", int(math.Float32bits(eps))}},
 		outputs: []gpuOutputSpec{{"rms_norm_round", shape, DTypeBFloat16}},
 		grid:    [3]int{threads, rows, sources}, threadGroup: [3]int{threads, 1, 1},
@@ -98,6 +107,39 @@ for (uint i = 0; i < 8; ++i) {
     float y = v[i] * inv;
     if (HasWeight) y = float(weight[t * 8 + i]) * y;
     out[dst + i] = bfloat(y);
+}
+`},
+	cuda: gpuSource{source: `
+const int groups = (Width / 8 + 31) / 32;
+const int t = threadIdx.x;
+const int row = blockIdx.y;
+const int source = blockIdx.z;
+const int lane = threadIdx.x % 32;
+const int warp = threadIdx.x / 32;
+bool active = t * 8 < Width;
+size_t at = (size_t)row * Width + t * 8;
+float v[8];
+float sum = 0.0f;
+#pragma unroll
+for (int i = 0; i < 8; ++i) {
+    v[i] = !active ? 0.0f : (source == 0 ? (float)x0[at + i] : (float)x1[at + i]);
+    sum += v[i] * v[i];
+}
+__shared__ float partial[groups];
+#pragma unroll
+for (int off = 16; off > 0; off >>= 1) sum += __shfl_down_sync(0xffffffff, sum, off);
+if (lane == 0) partial[warp] = sum;
+__syncthreads();
+float total = 0.0f;
+for (int g = 0; g < groups; ++g) total += partial[g];
+float inv = rsqrtf(total / (float)Width + __uint_as_float(EpsBits));
+if (!active) return;
+size_t dst = ((size_t)row * Sources + source) * Width + t * 8;
+#pragma unroll
+for (int i = 0; i < 8; ++i) {
+    float y = v[i] * inv;
+    if (HasWeight) y = (float)weight[t * 8 + i] * y;
+    out[dst + i] = static_cast<T>(y);
 }
 `},
 }

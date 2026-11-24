@@ -1,6 +1,8 @@
 package inkling2
 
 import (
+	"sync"
+
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
@@ -16,17 +18,60 @@ type expertBank struct {
 	Denominator *mlx.Array
 }
 
-// project multiplies x by the selected experts without the Metal epilogues.
-func (e expertBank) project(x, indices *mlx.Array) *mlx.Array {
+// inputRows gathers the gate/up activations after quantization, so each
+// token's activation is quantized once even when several experts use it.
+func (e expertBank) project(x, indices, inputRows *mlx.Array, grouped bool) *mlx.Array {
 	if e.BlockScales == nil {
 		return mlx.GatherMM(x, e.Weight.Transpose(0, 2, 1), nil, indices, false)
 	}
 	if e.Maxima == nil {
-		return e.gather(mxfp8ExpertInput(x), indices, false).AsType(x.DType())
+		values := mxfp8ExpertInput(x)
+		if inputRows != nil {
+			values = mlx.Take(values, inputRows, 0)
+		}
+		// Grouped routes use BF16 tiles. Each reconstructed E4M3 value times
+		// its power-of-two block scale fits exactly in BF16, so this only
+		// changes the accumulation order; on CUDA it selects the CUTLASS
+		// tensor-core gather (qmm_sm80) instead of the SIMT fallback.
+		if grouped {
+			values = values.AsType(mlx.DTypeBFloat16)
+		}
+		result := mlx.GatherQMM(values, e.Weight, e.BlockScales, nil, nil, indices, true, 32, 8, "mxfp8", nil, grouped)
+		return result.AsType(x.DType())
 	}
-	values, activationMax := mlx.QuantizeNVFP4Activation4Over6(x, nvfp4ActivationDenominator)
+	result, activationMax := e.nvfp4Inner(x, indices, inputRows, grouped)
 	outerScale := nvfp4OuterScale(activationMax, e.Maxima, e.Denominator, indices)
-	return mlx.Mul(e.gather(values, indices, false), outerScale).AsType(x.DType())
+	return mlx.Mul(result, outerScale).AsType(x.DType())
+}
+
+func (e expertBank) nvfp4Inner(x, indices, inputRows *mlx.Array, grouped bool) (*mlx.Array, *mlx.Array) {
+	values, activationMax := mlx.QuantizeNVFP4Activation4Over6(x, nvfp4ActivationDenominator)
+	if inputRows != nil {
+		values = mlx.Take(values, inputRows, 0)
+		activationMax = mlx.Take(activationMax, inputRows, 0)
+	}
+	if !grouped && inputRows == nil {
+		if indices.Dim(0) >= 1 && indices.Dim(0) <= 8 {
+			if result := mlx.GatherNVFP4QMV(values, e.Weight, e.BlockScales, indices); result != nil {
+				return result, activationMax
+			}
+		}
+		// Rows of a short forward often share experts; the short gather
+		// reads each one once and keeps small decode batches off the
+		// SIMT fallback that crashes on CUDA for narrow widths.
+		if result := mlx.ShortGatherQMM(values, e.Weight, e.BlockScales, indices, "nvfp4"); result != nil {
+			return result, activationMax
+		}
+	}
+	matmulValues := values
+	if grouped && mlx.CUDAIsAvailable() {
+		// The CUDA tensor-core gather requires a BF16 activation. Each
+		// reconstructed E2M1 value times its E4M3 block scale fits exactly
+		// in BF16, so this only changes the accumulation order.
+		matmulValues = values.AsType(mlx.DTypeBFloat16)
+	}
+	result := mlx.GatherQMM(matmulValues, e.Weight, e.BlockScales, nil, nil, indices, true, 16, 4, "nvfp4", nil, grouped)
+	return result, activationMax
 }
 
 // gather multiplies quantized activations by the selected experts.
@@ -99,11 +144,14 @@ func (e routedExperts) forward(x *mlx.Array) *mlx.Array {
 	batch, tokens, width := x.Dim(0), x.Dim(1), x.Dim(2)
 	flat := x.Reshape(batch*tokens, width)
 	indices, weights := routeExperts(e.routerLogits(x), e.Bias, e.topK, e.routeScale)
-	// The Metal grouped gather reuses each expert when there are at least
-	// four routes per expert on average. Keep short target verification rows
-	// on the width-stable path even if multiple requests share a batch.
+	// The grouped gather reuses each expert when there are at least four
+	// routes per expert on average. On Metal this enables the compact tile
+	// kernels and on CUDA the BF16 tensor-core gather. Keep short target
+	// verification rows on the width-stable path even if multiple requests
+	// share a batch.
 	grouped := e.GateUp.BlockScales != nil && e.Down.BlockScales != nil &&
-		tokens >= 64 && batch*tokens*e.topK/e.Router.Dim(0) >= 4 && mlx.MetalIsAvailable()
+		tokens >= 64 && batch*tokens*e.topK/e.Router.Dim(0) >= 4 &&
+		(mlx.MetalIsAvailable() || mlx.CUDAIsAvailable())
 	return e.combine(flat, indices, weights, grouped).Reshape(batch, tokens, width)
 }
 
@@ -124,21 +172,35 @@ func (e routedExperts) routerLogits(x *mlx.Array) *mlx.Array {
 }
 
 // combine evaluates the selected experts and sums them for each token.
-// Grouped routes are sorted by expert for the Metal path.
+// Grouped routes are sorted by expert for the CUDA path.
 func (e routedExperts) combine(flat, indices, weights *mlx.Array, grouped bool) *mlx.Array {
 	if out := e.combineQuantized(flat, indices, weights, grouped); out != nil {
 		return out
 	}
-	weighted := e.gateUpInput(flat, indices, weights)
-	down := e.Down.project(weighted, indices).Squeeze(2).AsType(mlx.DTypeFloat32)
-	return mlx.Sum(down, 1, false).AsType(flat.DType())
+	rows, width := flat.Dim(0), flat.Dim(1)
+	var inputRows, inverse *mlx.Array
+	if grouped {
+		flatIndices := indices.Reshape(-1)
+		order := mlx.Argsort(flatIndices, 0)
+		inverse = mlx.Argsort(order, 0)
+		inputRows = mlx.FloorDivideScalar(order, int32(e.topK))
+		indices = mlx.Take(flatIndices, order, 0).Reshape(-1, 1)
+		weights = mlx.Take(weights.Reshape(-1), order, 0).Reshape(-1, 1)
+	}
+	weighted := e.gateUpInput(flat, indices, inputRows, weights, grouped)
+	down := e.Down.project(weighted, indices, nil, grouped).Squeeze(2).AsType(mlx.DTypeFloat32)
+	if grouped {
+		down = mlx.Take(down.Reshape(-1, width), inverse, 0).Reshape(rows, e.topK, width)
+	}
+	result := mlx.Sum(down, 1, false).AsType(flat.DType())
+	return result
 }
 
 // combineQuantized runs NVFP4 or MXFP8 experts with fused Metal epilogues:
 // the gate/up scaling, SwiGLU and down quantization, then the down scaling
 // and the sum over routes. It returns nil where those kernels cannot run.
 func (e routedExperts) combineQuantized(flat, indices, weights *mlx.Array, grouped bool) *mlx.Array {
-	if !mlx.MetalIsAvailable() || e.GateUp.BlockScales == nil || e.Down.BlockScales == nil ||
+	if (!mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable()) || e.GateUp.BlockScales == nil || e.Down.BlockScales == nil ||
 		(e.GateUp.Maxima == nil) != (e.Down.Maxima == nil) || flat.DType() != mlx.DTypeBFloat16 {
 		return nil
 	}
@@ -204,10 +266,12 @@ func (e routedExperts) combineQuantized(flat, indices, weights *mlx.Array, group
 	return mlx.ExpertSum(inner, downMax, e.Down.Maxima, e.Down.Denominator, indices, inverse, e.topK, nvfp4ActivationDenominator)
 }
 
-func (e routedExperts) gateUpInput(flat, indices, scores *mlx.Array) *mlx.Array {
-	paired := e.GateUp.project(flat.ExpandDims(1).ExpandDims(1), indices).AsType(mlx.DTypeFloat32)
+func (e routedExperts) gateUpInput(flat, indices, inputRows, scores *mlx.Array, grouped bool) *mlx.Array {
+	x := flat.ExpandDims(1).ExpandDims(1)
+	paired := e.GateUp.project(x, indices, inputRows, grouped).AsType(mlx.DTypeFloat32)
 	gate, up := splitGateUp(paired)
-	return weightedSwiGLU(gate, up, scores, e.gateCap, e.upCap, flat.DType())
+	weighted := weightedSwiGLU(gate, up, scores, e.gateCap, e.upCap, flat.DType())
+	return weighted
 }
 
 func splitGateUp(paired *mlx.Array) (gate, up *mlx.Array) {
@@ -218,9 +282,28 @@ func splitGateUp(paired *mlx.Array) (gate, up *mlx.Array) {
 
 // Routing weights apply before the down projection and its quantizer.
 func weightedSwiGLU(gate, up, scores *mlx.Array, gateCap, upCap float32, dtype mlx.DType) *mlx.Array {
-	activated := mlx.Mul(mlx.Mul(softcap(gate, gateCap), gate.Sigmoid()), softcap(up, upCap))
-	return mlx.Mul(activated, scores.ExpandDims(-1).ExpandDims(-1)).AsType(dtype)
+	cfg := swiGLUConfig{gate: gateCap, up: upCap, dtype: dtype}
+	if fn, ok := weightedSwiGLUKernels.Load(cfg); ok {
+		return fn.(mlx.CompileFunc)(gate, up, scores)[0]
+	}
+	fn := mlx.Compile("InklingWeightedSwiGLU", func(in ...*mlx.Array) []*mlx.Array {
+		gate, up, scores := in[0], in[1], in[2]
+		activated := mlx.Mul(mlx.Mul(softcap(gate, gateCap), gate.Sigmoid()), softcap(up, upCap))
+		return []*mlx.Array{mlx.Mul(activated, scores.ExpandDims(-1).ExpandDims(-1)).AsType(dtype)}
+	}, mlx.Shapeless())
+	weightedSwiGLUKernels.Store(cfg, fn)
+	return fn(gate, up, scores)[0]
 }
+
+// swiGLUConfig keys the compiled softcapped SwiGLU kernel by its per-model
+// softcap and output rounding.
+type swiGLUConfig struct {
+	gate, up float32
+	dtype    mlx.DType
+}
+
+// weightedSwiGLUKernels caches the fused kernel per (gateCap, upCap, dtype).
+var weightedSwiGLUKernels sync.Map
 
 func softcap(x *mlx.Array, cap float32) *mlx.Array {
 	if cap <= 0 {

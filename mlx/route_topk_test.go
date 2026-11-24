@@ -9,7 +9,7 @@ import (
 
 func TestRouteSigmoidTopK(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		if !MetalIsAvailable() {
+		if !MetalIsAvailable() && !CUDAIsAvailable() {
 			t.Skip("requires Metal")
 		}
 		logits := patternArray(DTypeFloat32, []int{3, 128}, 0, 0.05, 37, 101)

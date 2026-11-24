@@ -120,15 +120,51 @@ func TestNVFP4ActivationMatchesEagerAcrossShapes(t *testing.T) {
 				want, wantMax := quantizeNVFP4Blocks(x.Reshape(-1, width/16, 16), FromValue(float32(maxProduct)), FromValue(1/float32(maxProduct)))
 				got, gotMax := fastNVFP4Activation(x, maxProduct)
 				if got == nil {
-					t.Fatalf("Metal activation unavailable for shape %v", tc)
+					t.Fatalf("fast activation unavailable for shape %v", tc)
 				}
 				if !slices.Equal(got.Dims(), x.Dims()) || !slices.Equal(gotMax.Dims(), []int{rows, routes, 1, 1}) ||
 					!slices.Equal(got.Floats(), want.Floats()) || !slices.Equal(gotMax.Floats(), wantMax.Floats()) {
-					t.Errorf("shape %v: Metal activation or row maxima differ from eager", tc)
+					t.Errorf("shape %v: fast activation or row maxima differ from eager", tc)
 				}
 			})
 		}
+		// The kernel indexes rows linearly, so its input conversion must preserve
+		// values for a view whose adjacent channels are not adjacent in storage.
+		Scoped(func() {
+			const rows, width = 4, 2304
+			data := make([]float32, rows*width)
+			for i := range data {
+				data[i] = float32(random.NormFloat64())
+			}
+			x := Transpose(FromValues(data, width, rows), 1, 0).AsType(DTypeBFloat16)
+			want, wantMax := quantizeNVFP4Blocks(x.Reshape(rows, width/16, 16), FromValue(float32(1536)), FromValue(1/float32(1536)))
+			got, gotMax := fastNVFP4Activation(x, 1536)
+			if got == nil {
+				t.Fatal("fast activation unavailable for strided input")
+			}
+			if !slices.Equal(got.Floats(), want.Floats()) || !slices.Equal(gotMax.Floats(), wantMax.Floats()) {
+				t.Error("strided fast activation or row maxima differ from eager")
+			}
+		})
 	})
+}
+
+func TestNVFP4ActivationCUDAArchitectures(t *testing.T) {
+	for _, tc := range []struct {
+		arch string
+		want bool
+	}{
+		{arch: "sm_120", want: true},
+		{arch: "sm_121", want: true},
+		{arch: "sm_119"},
+		{arch: "sm_122"},
+		{arch: "sm_89"},
+		{arch: "applegpu_g16s"},
+	} {
+		if got := supportsNVFP4ActivationCUDA(tc.arch); got != tc.want {
+			t.Errorf("supportsNVFP4ActivationCUDA(%q) = %v, want %v", tc.arch, got, tc.want)
+		}
+	}
 }
 
 func TestNVFP4ActivationFallback(t *testing.T) {
@@ -146,7 +182,8 @@ func TestNVFP4ActivationFallback(t *testing.T) {
 		if CUDAIsAvailable() {
 			arch := kernelArchitecture()
 			values, maxima := fastNVFP4Activation(x.AsType(DTypeBFloat16), 1536)
-			if (values != nil) != (arch == "sm_120") || (maxima != nil) != (arch == "sm_120") {
+			want := supportsNVFP4ActivationCUDA(arch)
+			if (values != nil) != want || (maxima != nil) != want {
 				t.Fatalf("unexpected activation dispatch for %s", arch)
 			}
 		}

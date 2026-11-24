@@ -54,7 +54,7 @@ func (s shortConv) forward(x, dynamic *mlx.Array, b *batch.Batch, layerCache cac
 		perToken = dynamic.AsType(mlx.DTypeFloat32).Reshape(rows, tokens, s.heads, taps)
 	}
 	inputs := convTapArgs(window, x, s.Weight, perToken)
-	if mlx.MetalIsAvailable() {
+	if mlx.MetalIsAvailable() || mlx.CUDAIsAvailable() {
 		return compiledConvTaps(inputs...)[0]
 	}
 	return convTaps(inputs...)[0]

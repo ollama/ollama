@@ -23,7 +23,7 @@ func ShortMatmulSoftcap(x, weight *Array, cap float32) *Array {
 }
 
 func shortMatmulLaunch(x, weight *Array, wide bool, cap float32) *Array {
-	if !MetalIsAvailable() || x == nil || weight == nil || x.NumDims() != 2 || weight.NumDims() != 2 {
+	if (!MetalIsAvailable() && !CUDAIsAvailable()) || x == nil || weight == nil || x.NumDims() != 2 || weight.NumDims() != 2 {
 		return nil
 	}
 	rows, width, columns := x.Dim(0), x.Dim(1), weight.Dim(0)
@@ -49,7 +49,11 @@ func shortMatmulLaunch(x, weight *Array, wide bool, cap float32) *Array {
 		simdgroups = 2
 	}
 	span := simdgroups * perSimdgroup
-	result, ok := shortMatmul.applyMetal(gpuLaunch{
+	apply := shortMatmul.applyMetal
+	if !MetalIsAvailable() {
+		apply = shortMatmul.applyCUDA
+	}
+	result, ok := apply(gpuLaunch{
 		inputs: []*Array{x, weight},
 		dtypes: []gpuDTypeArg{{"OutT", out}},
 		ints: []gpuIntArg{
@@ -146,4 +150,72 @@ if (c < Columns && first + c < columns) {
     y[m * columns + first + c] = OutT(metal::precise::tanh(mine / cap) * cap);
 }
 `},
+	cuda: gpuSource{
+		header: `
+inline void load8(const __nv_bfloat16* p, float* out) {
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) out[i] = (float)p[i];
+}
+inline void load8(const float* p, float* out) {
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) out[i] = p[i];
+}
+`,
+		source: `
+const int columns = weight_shape[0];
+const int lane = threadIdx.x % 32, threads = blockDim.x;
+const int first = (blockIdx.x * (threads / 32) + threadIdx.x / 32) * Columns;
+__shared__ float staged[Staged ? Rows * 256 : 1];
+float acc[Columns][Rows] = {};
+for (int k0 = 0; k0 < Width; k0 += 256) {
+    if (Staged) {
+        for (int i = threadIdx.x; i < Rows * 256; i += threads) {
+            int k = k0 + i % 256;
+            staged[i] = k < Width ? (float)x[(i / 256) * Width + k] : 0.0f;
+        }
+        __syncthreads();
+    }
+    int k = k0 + lane * 8;
+    for (int c = 0; c < Columns && k < Width; ++c) {
+        if (first + c >= columns) break;
+        float wv[8];
+        load8(weight + (size_t)(first + c) * Width + k, wv);
+        for (int m = 0; m < Rows; ++m) {
+            float xv[8];
+            if (Staged) {
+                for (int j = 0; j < 8; ++j) xv[j] = staged[m * 256 + lane * 8 + j];
+            } else {
+                load8(x + m * Width + k, xv);
+            }
+            for (int j = 0; j < 8; ++j) acc[c][m] = __fmaf_rn(xv[j], wv[j], acc[c][m]);
+        }
+    }
+    if (Staged) __syncthreads();
+}
+if (CapBits == 0) {
+    for (int c = 0; c < Columns; ++c) {
+        for (int m = 0; m < Rows; ++m) {
+            float sum = acc[c][m];
+            for (int off = 16; off > 0; off >>= 1) sum += __shfl_down_sync(0xffffffff, sum, off);
+            if (lane == 0 && first + c < columns) y[m * columns + first + c] = (OutT)sum;
+        }
+    }
+    return;
+}
+float mine = 0.0f;
+for (int c = 0; c < Columns; ++c) {
+    for (int m = 0; m < Rows; ++m) {
+        float sum = acc[c][m];
+        for (int off = 16; off > 0; off >>= 1) sum += __shfl_down_sync(0xffffffff, sum, off);
+        sum = __shfl_sync(0xffffffff, sum, 0);
+        if (lane == c * Rows + m) mine = sum;
+    }
+}
+const int c2 = lane / Rows, m2 = lane % Rows;
+if (c2 < Columns && first + c2 < columns) {
+    float cap = __uint_as_float(CapBits);
+    y[m2 * columns + first + c2] = (OutT)(tanhf(mine / cap) * cap);
+}
+`,
+	},
 }

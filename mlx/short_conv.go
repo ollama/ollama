@@ -29,7 +29,7 @@ func ShortConvolutionAdd(state, x, weight, residual *Array, scale float32, dtype
 }
 
 func shortConvolutionLaunch(state, x, weight, dynamic, residual *Array, heads int, scale float32, dtype DType) (y, next *Array) {
-	if !MetalIsAvailable() || state == nil || x == nil || weight == nil || x.NumDims() != 3 ||
+	if (!MetalIsAvailable() && !CUDAIsAvailable()) || state == nil || x == nil || weight == nil || x.NumDims() != 3 ||
 		state.NumDims() != 3 || weight.NumDims() != 2 || state.DType() != x.DType() {
 		return nil, nil
 	}
@@ -59,10 +59,19 @@ func shortConvolutionLaunch(state, x, weight, dynamic, residual *Array, heads in
 		// Without a residual, x fills its slot and is not read there.
 		residual = x
 	}
-	result, ok := shortConvolutionConfig(rows, tokens).applyMetal(gpuLaunch{
+	// The CUDA custom-kernel cache keys on the kernel name and template args,
+	// not the input dtypes. Pass the residual dtype as a template arg so a
+	// residual of a different dtype gets its own compiled kernel.
+	kernel := shortConvolutionConfig(rows, tokens)
+	apply := kernel.applyMetal
+	if !MetalIsAvailable() {
+		apply = kernel.applyCUDA
+	}
+	result, ok := apply(gpuLaunch{
 		inputs: []*Array{state, x, weight, dynamic, residual},
-		dtypes: []gpuDTypeArg{{"T", x.DType()}, {"OutT", out}},
+		dtypes: []gpuDTypeArg{{"T", x.DType()}, {"OutT", out}, {"ResT", residual.DType()}},
 		ints: []gpuIntArg{
+			{"Tokens", tokens},
 			{"Channels", channels},
 			{"Taps", taps},
 			{"Heads", heads},
@@ -156,6 +165,36 @@ sum = sum + float(x[X_AT(r, t, c)]);
 T rounded = T(sum * as_type<float>(ScaleBits));
 const size_t out = (size_t(r) * tokens + t) * Channels + c;
 y[out] = HasResidual ? OutT(float(residual[RESIDUAL_AT(r, t, c)]) + float(rounded)) : OutT(rounded);
+`},
+		cuda: gpuSource{source: `
+const int Tail = Taps - 1;
+const int c = blockIdx.x * blockDim.x + threadIdx.x;
+const int t = blockIdx.y;
+const int r = blockIdx.z;
+const int tokens = Tokens;
+if (c >= Channels) return;
+` + index + `
+#define WINDOW(j) ((j) < Tail ? (float)state[STATE_AT(r, (j), c)] : (float)x[X_AT(r, (j) - Tail, c)])
+if (t < Tail) next[((size_t)r * Tail + t) * Channels + c] = static_cast<T>(WINDOW(tokens + t));
+if (t >= tokens) return;
+const int head = c / (Channels / Heads);
+float sum = 0.0f;
+for (int i = 0; i < Taps; ++i) {
+    float coef = (float)weight[WEIGHT_AT(i, c)];
+    float value;
+    if (Dynamic) {
+        coef = coef + (float)dynamic[DYNAMIC_AT(r, t, head * Taps + i)];
+        value = WINDOW(t + Tail - i);
+    } else {
+        value = WINDOW(t + i);
+    }
+    float product = value * coef;
+    sum = i == 0 ? product : sum + product;
+}
+sum = sum + (float)x[X_AT(r, t, c)];
+T rounded = static_cast<T>(sum * __uint_as_float(ScaleBits));
+const size_t out = ((size_t)r * tokens + t) * Channels + c;
+y[out] = HasResidual ? static_cast<OutT>((float)residual[RESIDUAL_AT(r, t, c)] + (float)rounded) : static_cast<OutT>(rounded);
 `},
 	}
 }

@@ -215,7 +215,8 @@ func (m *targetModel) Forward(b *batch.Batch, caches []cache.Layer) (hidden, aux
 // shortVocabularyProjection returns FP32 logits for up to eight positions per
 // row from the BF16 head, or nil where only the FP32 head applies.
 func (m *targetModel) shortVocabularyProjection(hidden *mlx.Array) *mlx.Array {
-	if m.ShortOutput == nil || hidden.NumDims() != 3 || hidden.Dim(1) > shortTargetRows {
+	if hidden.NumDims() != 3 || hidden.Dim(1) > shortTargetRows ||
+		m.ShortOutput == nil {
 		return nil
 	}
 	return projectTarget(m.ShortOutput, hidden.AsType(mlx.DTypeFloat32))
