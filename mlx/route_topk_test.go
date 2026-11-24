@@ -69,6 +69,19 @@ func TestRouteSigmoidTopK(t *testing.T) {
 				t.Errorf("spread underflow weight %d = %v, want %v", k, got[8+k], want)
 			}
 		}
+
+		// Only one chosen gate underflows: sigmoid(-87) stays normal while
+		// sigmoid(-89) does not, and the weights must still split about 88/12.
+		_, mixed := RouteSigmoidTopK(FromValues([]float32{-87, -89, -120, -120}, 1, 4), nil, 2, 1)
+		if mixed == nil {
+			t.Fatal("kernel did not run")
+		}
+		split := mixed.Floats()
+		for k, want := range []float64{1 / (1 + math.Exp(-2)), 1 / (1 + math.Exp(2))} {
+			if math.Abs(float64(split[k])-want) > 1e-6 {
+				t.Errorf("mixed underflow weight %d = %v, want %v", k, split[k], want)
+			}
+		}
 	})
 }
 

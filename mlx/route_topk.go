@@ -79,11 +79,15 @@ if (rank < TopK) {
 threadgroup_barrier(mem_flags::mem_threadgroup);
 if (e < TopK) {
     float total = 0.0f;
-    for (uint k = 0; k < TopK; ++k) total += chosenGate[k];
+    bool underflow = false;
+    for (uint k = 0; k < TopK; ++k) {
+        total += chosenGate[k];
+        underflow = underflow || chosenGate[k] < FLT_MIN;
+    }
     float weight = chosenGate[e] / total;
-    if (total < FLT_MIN) {
-        // Every chosen gate underflowed (logits near -100 and below), so
-        // normalize their log-sigmoids relative to the largest instead.
+    if (underflow) {
+        // A chosen gate underflowed (logits below about -87) and lost its
+        // share, so normalize the log-sigmoids relative to the largest instead.
         float top = -INFINITY;
         for (uint k = 0; k < TopK; ++k) top = max(top, log_sigmoid(chosenLogit[k]));
         float sum = 0.0f;

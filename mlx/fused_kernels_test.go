@@ -2,7 +2,6 @@ package mlx
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"testing"
 
@@ -13,17 +12,6 @@ func requireMetal(t *mlxthreadtest.T) {
 	if !MetalIsAvailable() {
 		t.Skip("requires Metal")
 	}
-}
-
-// nanCount returns how many elements of x are NaN.
-func nanCount(x *Array) int {
-	n := 0
-	for _, v := range Contiguous(x.AsType(DTypeFloat32), false).Floats() {
-		if math.IsNaN(float64(v)) {
-			n++
-		}
-	}
-	return n
 }
 
 func TestFusedShortMatmulSoftcap(t *testing.T) {
@@ -286,10 +274,9 @@ func TestFusedLoopControllersReadViews(t *testing.T) {
 	})
 }
 
-// Views the controllers cannot read in place fill their outputs with NaN
-// instead of reading the wrong elements; views they can read match their
-// contiguous copies.
-func TestFusedLoopControllersRejectLayouts(t *testing.T) {
+// Layouts the fast loads cannot take still match their contiguous copies bit
+// for bit.
+func TestFusedLoopControllersReadAnyLayout(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
 		requireMetal(t)
 		if loopControllerDownConfig(kernelArchitecture()) == 0 {
@@ -306,47 +293,42 @@ func TestFusedLoopControllersRejectLayouts(t *testing.T) {
 		stored := func(x *Array, perm ...int) *Array {
 			return Contiguous(x.Transpose(perm...), false).Transpose(perm...)
 		}
+		type operands struct{ input, message, down, gates, norms, compressed *Array }
 		for _, tc := range []struct {
-			name           string
-			input, message *Array
-			// Whether the down and gate kernels can read the layout.
-			down, gate bool
+			name string
+			view operands
 		}{
-			{"query_major_message", input, stored(message, 1, 0, 2), true, true},
-			{"strided_width", input, stored(message, 0, 2, 1), false, false},
-			{"unmerged_rows", input, stored(message.Reshape(2, 3, 4, width), 1, 0, 2, 3), false, false},
+			{"query_major_message", operands{input, stored(message, 1, 0, 2), down, gates, norms, compressed}},
+			{"strided_width", operands{input, stored(message, 0, 2, 1), down, gates, norms, compressed}},
+			{"unmerged_rows", operands{input, stored(message.Reshape(2, 3, 4, width), 1, 0, 2, 3), down, gates, norms, compressed}},
 			// Rows of 2306 values are not 16-byte aligned for the down kernel's vector loads.
-			{"unaligned_input_rows", patternArray(DTypeFloat32, []int{rows, width + 2}, 0.02, 0.05, 13, 229).Slice(Slice(), Slice(0, width)), message, false, true},
+			{"unaligned_input_rows", operands{patternArray(DTypeFloat32, []int{rows, width + 2}, 0.02, 0.05, 13, 229).Slice(Slice(), Slice(0, width)), message, down, gates, norms, compressed}},
+			{"strided_weights", operands{input, message, stored(down, 0, 2, 1), stored(gates, 0, 2, 1), stored(norms, 1, 0), stored(compressed, 0, 2, 1)}},
 		} {
-			dense, denseMessage := Contiguous(tc.input, false), Contiguous(tc.message, false)
-			gotDown := LoopControllerDown(tc.input, 1, tc.message, 0, count, down, 1e-6)
-			wantDown := LoopControllerDown(dense, 1, denseMessage, 0, count, down, 1e-6)
-			gotOut, gotSquares := LoopControllerGateNorm(tc.input, 1, tc.message, 0, compressed, gates, norms)
-			wantOut, wantSquares := LoopControllerGateNorm(dense, 1, denseMessage, 0, compressed, gates, norms)
-			if gotDown == nil || wantDown == nil || gotOut == nil || wantOut == nil {
+			v := tc.view
+			d := operands{
+				Contiguous(v.input, false), Contiguous(v.message, false), Contiguous(v.down, false),
+				Contiguous(v.gates, false), Contiguous(v.norms, false), Contiguous(v.compressed, false),
+			}
+			gotDown := LoopControllerDown(v.input, 1, v.message, 0, count, v.down, 1e-6)
+			wantDown := LoopControllerDown(d.input, 1, d.message, 0, count, d.down, 1e-6)
+			gotOut, gotSquares := LoopControllerGateNorm(v.input, 1, v.message, 0, v.compressed, v.gates, v.norms)
+			wantOut, wantSquares := LoopControllerGateNorm(d.input, 1, d.message, 0, d.compressed, d.gates, d.norms)
+			gotPlain := LoopControllerGate(v.input, 1, v.message, 0, v.compressed, v.gates)
+			wantPlain := LoopControllerGate(d.input, 1, d.message, 0, d.compressed, d.gates)
+			if gotDown == nil || wantDown == nil || gotOut == nil || wantOut == nil || gotPlain == nil || wantPlain == nil {
 				t.Fatalf("%s: kernels did not run", tc.name)
 			}
 			for _, check := range []struct {
 				label     string
-				reads     bool
 				got, want *Array
 			}{
-				{"down", tc.down, gotDown, wantDown},
-				{"gate", tc.gate, gotOut, wantOut},
-				{"squares", tc.gate, gotSquares, wantSquares},
+				{"down", gotDown, wantDown},
+				{"gate", gotOut, wantOut},
+				{"squares", gotSquares, wantSquares},
+				{"unscaled gate", gotPlain, wantPlain},
 			} {
-				label := tc.name + " " + check.label
-				nan, size := nanCount(check.got), check.got.Size()
-				if !check.reads {
-					if nan != size {
-						t.Fatalf("%s: %d of %d values are NaN, want all", label, nan, size)
-					}
-					continue
-				}
-				if nan != 0 {
-					t.Fatalf("%s: %d of %d values are NaN", label, nan, size)
-				}
-				if err := requireExact(label, check.got, check.want); err != nil {
+				if err := requireExact(tc.name+" "+check.label, check.got, check.want); err != nil {
 					t.Fatal(err)
 				}
 			}

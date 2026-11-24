@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sync"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -275,8 +276,10 @@ func (d *draft) Forward(b *batch.Batch, _, states []cache.Layer) (hidden, auxHid
 		block = &batch.Batch{InputIDs: b.InputIDs, SeqOffsets: offsets, SeqQueryLens: b.SeqQueryLens}
 	}
 	// Submit a proposal block layer by layer so Metal starts on it while the
-	// host builds the remaining layers and the proposal head.
-	submit := x != nil && mlx.MetalIsAvailable()
+	// host builds the remaining layers and the proposal head. The guard reads
+	// the incoming batch, before its offsets move past the context, so the
+	// load-time shape check at offset zero stays lazy.
+	submit := x != nil && submitsEarly(b)
 	for i, layer := range d.Layers {
 		var k, v *mlx.Array
 		if mixes != nil {
@@ -463,8 +466,13 @@ func correctScores(base, folded, bias *mlx.Array, logitCap float32) *mlx.Array {
 	return softcap(corrected.AsType(mlx.DTypeFloat32), logitCap).AsType(corrected.DType())
 }
 
+// draftCorrections holds one compiled correction per logit cap. A compiled
+// function is never released, so building one per model load would leak.
+var draftCorrections sync.Map // math.Float32bits(logitCap) -> func(base, folded, bias *mlx.Array) *mlx.Array
+
 func compiledCorrection(logitCap float32) func(base, folded, bias *mlx.Array) *mlx.Array {
-	return mlx.Compile3("InklingDraftCorrection", func(base, folded, bias *mlx.Array) *mlx.Array {
+	f, _ := draftCorrections.LoadOrStore(math.Float32bits(logitCap), mlx.Compile3("InklingDraftCorrection", func(base, folded, bias *mlx.Array) *mlx.Array {
 		return correctScores(base, folded, bias, logitCap)
-	})
+	}))
+	return f.(func(base, folded, bias *mlx.Array) *mlx.Array)
 }

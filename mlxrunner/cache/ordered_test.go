@@ -321,6 +321,8 @@ func TestOrderedWindowAppendsInPlace(t *testing.T) {
 				if speculate && !inPlace {
 					compactedSpeculating++
 				}
+				// Measure from an empty allocator cache so earlier writes' buffers do not count.
+				mlx.ClearCache()
 				before := mlx.ActiveMemory()
 				peak := mlx.MeasurePeakMemory(func() {
 					if speculate {

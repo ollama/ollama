@@ -33,10 +33,12 @@ func TestSubmitsEarly(t *testing.T) {
 			{"long block", shortTargetRows + 1, []int32{2048}, false},
 			{"three requests", 1, []int32{1, 2, 3}, false},
 		} {
-			b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, len(tc.offsets), tc.tokens), SeqOffsets: tc.offsets}
-			if got := submitsEarly(b); got != tc.want {
-				t.Errorf("%s: submitsEarly = %t, want %t", tc.name, got, tc.want)
-			}
+			mlx.Scoped(func() {
+				b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, len(tc.offsets), tc.tokens), SeqOffsets: tc.offsets}
+				if got := submitsEarly(b); got != tc.want {
+					t.Errorf("%s: submitsEarly = %t, want %t", tc.name, got, tc.want)
+				}
+			})
 		}
 	})
 }

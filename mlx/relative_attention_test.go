@@ -91,8 +91,14 @@ func TestRelativeAttentionBlockMatchesDecode(t *testing.T) {
 			// window, single-token decode's at its own.
 			rolling bool
 		}{
-			{8, 4100, 0, false}, {4, 4098, 0, false}, {8, 5000, 0, false}, {8, 16388, 0, false}, {3, 2050, 0, false},
-			{8, 1100, 1024, false}, {4, 3000, 1024, true}, {8, 3000, 1024, true},
+			{8, 4100, 0, false},
+			{4, 4098, 0, false},
+			{8, 5000, 0, false},
+			{8, 16388, 0, false},
+			{3, 2050, 0, false},
+			{8, 1100, 1024, false},
+			{4, 3000, 1024, true},
+			{8, 3000, 1024, true},
 		} {
 			Scoped(func() {
 				q, k, v, table, sink := relativeAttentionInputs(tc.queries, tc.keys, 24, 8, 128, 1024)
@@ -293,6 +299,8 @@ func TestRelativeAttentionReadsStridedInputs(t *testing.T) {
 				}
 				Eval(q, k, v, table, sink, want)
 
+				// Measure from an empty allocator cache so earlier tests' buffers do not count.
+				ClearCache()
 				before := ActiveMemory()
 				var got *Array
 				peak := MeasurePeakMemory(func() {

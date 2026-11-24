@@ -157,11 +157,12 @@ func (m *targetModel) embedTokens(ids *mlx.Array) *mlx.Array {
 	return modelRMS(m.Embed.Forward(ids), m.EmbedNorm, m.config.NormEps)
 }
 
-// submitsEarly reports whether a forward submits every two visits so Metal
-// executes them while the host builds the rest of the round. It is limited to
-// the decode and verification rounds it was measured on: one or two requests,
-// short blocks, each past its prompt. The load-time shape check runs at offset
-// zero and evaluates nothing, so it must not queue GPU work.
+// submitsEarly reports whether a target or draft forward submits work before
+// it finishes building, so Metal executes it while the host builds the rest of
+// the round. It is limited to the decode, verification and proposal rounds it
+// was measured on: one or two requests, short blocks, each past its prompt. The
+// load-time shape check runs at offset zero and evaluates nothing, so it must
+// not queue GPU work.
 func submitsEarly(b *batch.Batch) bool {
 	if b.InputIDs.Dim(0) > 2 || b.InputIDs.Dim(1) > shortTargetRows || !mlx.MetalIsAvailable() {
 		return false

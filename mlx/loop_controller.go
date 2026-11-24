@@ -11,12 +11,13 @@ import "math"
 //	out = input * (1 - forget) + message * gain
 //
 // Inputs are [..., inputs, width] (or [..., width] when inputs is 1) and
-// messages [..., messages, width], both FP32 with a contiguous last axis and
-// leading axes that merge into one row axis. The kernels read them in place
+// messages [..., messages, width], both FP32. The kernels read them in place
 // through their strides: the residual mixer returns each query's mixture as
 // one contiguous block, so messages arrive as a transposed view that a
-// contiguous binding would copy for every launch. Weights, gates, norms and
-// compressed values must be row-contiguous.
+// contiguous binding would copy for every launch. Fast loads need a
+// contiguous last axis, leading axes that merge into one row axis and
+// row-contiguous weights, gates, norms and compressed values; any other
+// layout gives the same result from element reads.
 
 // controllerRows bounds the rows one short controller launch keeps in
 // registers. Larger row counts take several tiles.
@@ -24,8 +25,19 @@ const controllerRows = 8
 
 // controllerViewHeader reads the row and slot strides of a [..., (slots,)
 // width] input whose leading axes merge into one row axis, and checks the
-// layouts the kernels assume; an unsupported layout yields NaN outputs.
+// layouts the fast loads assume. Other layouts are read element by element
+// through controller_offset.
 const controllerViewHeader = `
+// controller_offset is the element offset of row-major index i in an array
+// of any layout.
+inline int64_t controller_offset(size_t i, const constant int* shape, const constant int64_t* strides, int ndim) {
+    int64_t at = 0;
+    for (int d = ndim - 1; d >= 0; --d) {
+        at += int64_t(i % size_t(shape[d])) * strides[d];
+        i /= size_t(shape[d]);
+    }
+    return at;
+}
 struct ControllerView { int64_t row, slot; };
 inline ControllerView controller_view(const constant int64_t* strides, int ndim, bool slotted) {
     int last = ndim - (slotted ? 2 : 1);
@@ -53,9 +65,7 @@ inline bool controller_dense(const constant int* shape, const constant int64_t* 
 // controllers with BF16 weights [count, rank, 2*width]. The unweighted RMS
 // scales apply to the FP32 dot products of the input and message halves, and
 // each result rounds through BF16 like the projection it replaces.
-// It returns nil when the Metal kernel cannot run. Inputs or messages in a
-// layout it cannot read, including rows or slots that do not start 16-byte
-// aligned, give NaN-filled outputs rather than nil.
+// It returns nil when the Metal kernel cannot run.
 func LoopControllerDown(input *Array, inputs int, message *Array, first, count int, weight *Array, epsilon float32) *Array {
 	rows, width, ok := controllerShapes(input, inputs, message, first, count)
 	columns := loopControllerDownConfig(kernelArchitecture())
@@ -107,8 +117,7 @@ func loopControllerDownConfig(architecture string) int {
 // LoopControllerGate returns the gated inputs [count, rows, width] in FP32
 // from compressed [count, rows, rank] and FP32 gates [count, rank, 2*width],
 // gain columns then forget columns. It returns nil when the Metal kernel
-// cannot run. Inputs or messages in a layout it cannot read give NaN-filled
-// outputs rather than nil.
+// cannot run.
 func LoopControllerGate(input *Array, inputs int, message *Array, first int, compressed, gates *Array) *Array {
 	out, _ := loopControllerGateLaunch(input, inputs, message, first, compressed, gates, nil)
 	return out
@@ -118,9 +127,7 @@ func LoopControllerGate(input *Array, inputs int, message *Array, first int, com
 // normalization with weights norm [count, width]: it returns out*norm rounded
 // to BF16 and the normalization's partial sums of squares
 // [count, rows, width/128] of the FP32 gated inputs, which GroupedShortMatmul
-// completes. It returns nils when the Metal kernel cannot run. Inputs or
-// messages in a layout it cannot read give NaN-filled outputs and squares
-// rather than nils.
+// completes. It returns nils when the Metal kernel cannot run.
 func LoopControllerGateNorm(input *Array, inputs int, message *Array, first int, compressed, gates, norm *Array) (out, squares *Array) {
 	if norm == nil {
 		return nil, nil
@@ -217,47 +224,75 @@ const uint h = second ? sg - Half : sg;
 const ControllerView in_view = controller_view(input_strides, input_ndim, Inputs > 1);
 const ControllerView msg_view = controller_view(message_strides, message_ndim, true);
 // load8 reads 16-byte vectors, so rows and slots must stay 16-byte aligned.
-const bool supported = controller_merges(input_shape, input_strides, input_ndim, Inputs > 1) &&
+const bool fast = controller_merges(input_shape, input_strides, input_ndim, Inputs > 1) &&
     controller_merges(message_shape, message_strides, message_ndim, true) &&
     controller_dense(weight_shape, weight_strides, weight_ndim) &&
     in_view.row % 4 == 0 && in_view.slot % 4 == 0 && msg_view.row % 4 == 0 && msg_view.slot % 4 == 0 &&
     (ulong(input) & 15) == 0 && (ulong(message) & 15) == 0 && (ulong(weight) & 15) == 0;
-if (!supported) {
-    const uint t = thread_index_in_threadgroup;
-    if (t < Columns * Rows && base + t % Rows < Total) {
-        compressed[(size_t(ctrl) * Total + base + t % Rows) * Rank + first + t / Rows] = NAN;
-    }
-    return;
-}
-const ControllerView view = second ? msg_view : in_view;
-const device float* src = second ? message + (MessageFirst + ctrl) * view.slot
-                                 : input + (Inputs == 1 ? 0u : ctrl) * view.slot;
-const device bfloat16_t* w = weight + (size_t(ctrl) * Rank + first) * (2 * Width) + (second ? Width : 0);
-float acc[Columns][Rows] = {};
-float squares[Rows] = {};
-for (uint chunk = h; chunk < Chunks; chunk += Half) {
-    const uint k = chunk * 256 + lane * 8;
-    if (k >= Width) continue;
-    float wv[Columns][8];
-    for (uint c = 0; c < Columns; ++c) load8(w + c * (2 * Width) + k, wv[c]);
-    for (uint m = 0; m < Rows && base + m < Total; ++m) {
-        float xv[8];
-        load8(src + (base + m) * view.row + k, xv);
-        for (uint j = 0; j < 8; ++j) {
-            squares[m] = fma(xv[j], xv[j], squares[m]);
-            for (uint c = 0; c < Columns; ++c) acc[c][m] = fma(xv[j], wv[c][j], acc[c][m]);
-        }
-    }
-}
 threadgroup float dots[2 * Half][Columns][Rows];
 threadgroup float sums[2 * Half][Rows];
-for (uint m = 0; m < Rows; ++m) {
-    for (uint c = 0; c < Columns; ++c) {
-        float s = simd_sum(acc[c][m]);
-        if (lane == 0) dots[sg][c][m] = s;
+if (fast) {
+    const ControllerView view = second ? msg_view : in_view;
+    const device float* src = second ? message + (MessageFirst + ctrl) * view.slot
+                                     : input + (Inputs == 1 ? 0u : ctrl) * view.slot;
+    const device bfloat16_t* w = weight + (size_t(ctrl) * Rank + first) * (2 * Width) + (second ? Width : 0);
+    float acc[Columns][Rows] = {};
+    float squares[Rows] = {};
+    for (uint chunk = h; chunk < Chunks; chunk += Half) {
+        const uint k = chunk * 256 + lane * 8;
+        if (k >= Width) continue;
+        float wv[Columns][8];
+        for (uint c = 0; c < Columns; ++c) load8(w + c * (2 * Width) + k, wv[c]);
+        for (uint m = 0; m < Rows && base + m < Total; ++m) {
+            float xv[8];
+            load8(src + (base + m) * view.row + k, xv);
+            for (uint j = 0; j < 8; ++j) {
+                squares[m] = fma(xv[j], xv[j], squares[m]);
+                for (uint c = 0; c < Columns; ++c) acc[c][m] = fma(xv[j], wv[c][j], acc[c][m]);
+            }
+        }
     }
-    float s = simd_sum(squares[m]);
-    if (lane == 0) sums[sg][m] = s;
+    for (uint m = 0; m < Rows; ++m) {
+        for (uint c = 0; c < Columns; ++c) {
+            float s = simd_sum(acc[c][m]);
+            if (lane == 0) dots[sg][c][m] = s;
+        }
+        float s = simd_sum(squares[m]);
+        if (lane == 0) sums[sg][m] = s;
+    }
+} else {
+    // Any other layout: the same sums in the same order from element reads,
+    // one row at a time so this path holds fewer registers than the fast one.
+    const device float* data = second ? message : input;
+    const constant int* shape = second ? message_shape : input_shape;
+    const constant int64_t* strides = second ? message_strides : input_strides;
+    const int ndim = second ? message_ndim : input_ndim;
+    const uint slots = second ? uint(message_shape[message_ndim - 2]) : Inputs;
+    const uint slot = second ? MessageFirst + ctrl : (Inputs == 1 ? 0u : ctrl);
+    const size_t w = (size_t(ctrl) * Rank + first) * (2 * Width) + (second ? Width : 0);
+    for (uint m = 0; m < Rows; ++m) {
+        float acc[Columns] = {};
+        float squares = 0.0f;
+        for (uint chunk = h; chunk < Chunks && base + m < Total; chunk += Half) {
+            const uint k = chunk * 256 + lane * 8;
+            if (k >= Width) continue;
+            const size_t at = (size_t(base + m) * slots + slot) * Width + k;
+            for (uint j = 0; j < 8; ++j) {
+                const float x = data[controller_offset(at + j, shape, strides, ndim)];
+                squares = fma(x, x, squares);
+                for (uint c = 0; c < Columns; ++c) {
+                    const float wj = float(weight[controller_offset(w + c * (2 * Width) + k + j, weight_shape, weight_strides, weight_ndim)]);
+                    acc[c] = fma(x, wj, acc[c]);
+                }
+            }
+        }
+        for (uint c = 0; c < Columns; ++c) {
+            float s = simd_sum(acc[c]);
+            if (lane == 0) dots[sg][c][m] = s;
+        }
+        float s = simd_sum(squares);
+        if (lane == 0) sums[sg][m] = s;
+    }
 }
 threadgroup_barrier(mem_flags::mem_threadgroup);
 const uint t = thread_index_in_threadgroup;
@@ -291,16 +326,46 @@ const uint base = threadgroup_position_in_grid.z * RowsPerGroup;
 const uint lane = thread_index_in_simdgroup, sg = simdgroup_index_in_threadgroup;
 const ControllerView in_view = controller_view(input_strides, input_ndim, Inputs > 1);
 const ControllerView msg_view = controller_view(message_strides, message_ndim, true);
-const bool supported = controller_merges(input_shape, input_strides, input_ndim, Inputs > 1) &&
+const bool fast = controller_merges(input_shape, input_strides, input_ndim, Inputs > 1) &&
     controller_merges(message_shape, message_strides, message_ndim, true) &&
     controller_dense(compressed_shape, compressed_strides, compressed_ndim) &&
     controller_dense(gates_shape, gates_strides, gates_ndim) && controller_dense(norm_shape, norm_strides, norm_ndim);
-if (!supported) {
-    for (uint r = 0; r < RowsPerGroup && base + r < rows; ++r) {
-        out[(size_t(ctrl) * rows + base + r) * Width + c] = OutT(NAN);
+threadgroup float partial[Scaled ? 4 * RowsPerGroup : 1];
+if (!fast) {
+    // Any other layout: the same values in the same order from element reads.
+    const uint slot = Inputs == 1 ? 0u : ctrl;
+    const uint messages = message_shape[message_ndim - 2];
+    for (uint r = 0; r < RowsPerGroup; ++r) {
+        const uint row = base + r;
+        float y = 0.0f;
+        if (row < rows) {
+            float gain = 0.0f, forget = 0.0f;
+            for (uint k = 0; k < Rank; ++k) {
+                const float x = compressed[controller_offset((size_t(ctrl) * rows + row) * Rank + k, compressed_shape, compressed_strides, compressed_ndim)];
+                const size_t at = (size_t(ctrl) * Rank + k) * (2 * Width) + c;
+                gain = fma(x, gates[controller_offset(at, gates_shape, gates_strides, gates_ndim)], gain);
+                forget = fma(x, gates[controller_offset(at + Width, gates_shape, gates_strides, gates_ndim)], forget);
+            }
+            float in = input[controller_offset((size_t(row) * Inputs + slot) * Width + c, input_shape, input_strides, input_ndim)];
+            float msg = message[controller_offset((size_t(row) * messages + MessageFirst + ctrl) * Width + c, message_shape, message_strides, message_ndim)];
+            float keep = 1.0f - metal::precise::tanh(forget);
+            y = in * keep + msg * metal::precise::tanh(gain);
+            float scale = Scaled ? float(norm[controller_offset(ctrl * Width + c, norm_shape, norm_strides, norm_ndim)]) : 1.0f;
+            out[(size_t(ctrl) * rows + row) * Width + c] = OutT(Scaled ? y * scale : y);
+        }
+        if (Scaled) {
+            float s = simd_sum(y * y);
+            if (lane == 0) partial[sg * RowsPerGroup + r] = s;
+        }
     }
-    if (Scaled && thread_index_in_threadgroup < RowsPerGroup && base + thread_index_in_threadgroup < rows) {
-        squares[(size_t(ctrl) * rows + base + thread_index_in_threadgroup) * (Width / 128) + threadgroup_position_in_grid.x] = NAN;
+    if (Scaled) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint r = thread_index_in_threadgroup;
+        if (r < RowsPerGroup && base + r < rows) {
+            float s = partial[r];
+            for (uint j = 1; j < 4; ++j) s += partial[j * RowsPerGroup + r];
+            squares[(size_t(ctrl) * rows + base + r) * (Width / 128) + threadgroup_position_in_grid.x] = s;
+        }
     }
     return;
 }
@@ -319,7 +384,6 @@ for (uint k = 0; k < Rank; ++k) {
         forget[r] = fma(shared[r * Rank + k], b, forget[r]);
     }
 }
-threadgroup float partial[Scaled ? 4 * RowsPerGroup : 1];
 for (uint r = 0; r < RowsPerGroup; ++r) {
     const uint row = base + r;
     float y = 0.0f;

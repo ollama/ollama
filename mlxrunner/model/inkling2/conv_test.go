@@ -90,6 +90,11 @@ func TestShortConvolutionSnapshotsEachSplit(t *testing.T) {
 				t.Errorf("final state differs from decode")
 			}
 			snapshots := verified.TakeSnapshots()
+			defer func() {
+				for _, s := range snapshots {
+					s.Close()
+				}
+			}()
 			if len(snapshots) != tokens-1 {
 				t.Fatalf("%d snapshots, want %d", len(snapshots), tokens-1)
 			}
