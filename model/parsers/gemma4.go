@@ -595,12 +595,16 @@ func repairGemma4MissingObjectClose(s string) string {
 	return s[:trimmedEnd] + "}" + s[trimmedEnd:]
 }
 
-// repairGemma4SingleQuotedValues converts single-quoted argument values into
-// Gemma string-delimited values. It also drops a stray Gemma delimiter that
-// sometimes appears immediately after the closing single quote.
+// repairGemma4SingleQuotedValues converts single-quoted argument values and
+// list items into Gemma string-delimited values. It also drops a stray Gemma
+// delimiter that sometimes appears immediately after the closing single quote.
 func repairGemma4SingleQuotedValues(s string) string {
 	var sb strings.Builder
 	sb.Grow(len(s))
+
+	// containers tracks the open '{' and '[' outside of strings, so a ','
+	// is known to separate list items rather than object properties.
+	var containers []byte
 
 	for i := 0; i < len(s); {
 		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
@@ -625,7 +629,17 @@ func repairGemma4SingleQuotedValues(s string) string {
 			}
 		}
 
-		if s[i] != ':' {
+		switch s[i] {
+		case '{', '[':
+			containers = append(containers, s[i])
+		case '}', ']':
+			if len(containers) > 0 {
+				containers = containers[:len(containers)-1]
+			}
+		}
+
+		inList := len(containers) > 0 && containers[len(containers)-1] == '['
+		if s[i] != ':' && s[i] != '[' && !(s[i] == ',' && inList) {
 			sb.WriteByte(s[i])
 			i++
 			continue
