@@ -129,6 +129,11 @@ func (p *CohereParser) eat(done bool) (content string, thinking string, calls []
 			p.state = cohereAwaitingBlock
 			return "", thinking, nil, true
 		}
+		if done {
+			thinking = buf
+			p.buffer.Reset()
+			return "", thinking, nil, false
+		}
 		// Emit all but a possible partial tag / trailing whitespace.
 		keep := overlap(buf, cohereEndThinking)
 		emitEnd := len(buf) - keep
