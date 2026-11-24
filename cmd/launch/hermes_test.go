@@ -211,7 +211,7 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 		"  ollama:\n" +
 		"    name: Ollama\n" +
 		"    api: http://127.0.0.1:11434/v1\n" +
-		"    api_key_env: HERMES_TEST_OLLAMA_KEY\n" +
+		"    key_env: HERMES_TEST_OLLAMA_KEY\n" +
 		"    default_model: old-model\n" +
 		"    models:\n" +
 		"      - old-model\n" +
@@ -289,11 +289,8 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 	if got, _ := ollamaProvider["extra_field"].(string); got != "keep-me" {
 		t.Fatalf("expected providers entry extra_field to be preserved, got %q", got)
 	}
-	if got := ollamaProvider["key_env"]; got != "HERMES_TEST_OLLAMA_KEY" {
-		t.Fatalf("expected credential alias to be available to older Hermes, got %v", got)
-	}
-	if _, exists := ollamaProvider["api_key"]; exists {
-		t.Fatal("launcher placeholder would shadow the configured provider credential")
+	if got := ollamaProvider["key_env"]; got != "HERMES_TEST_OLLAMA_KEY" || ollamaProvider["api_key"] != nil {
+		t.Fatal("expected existing credential source to remain the only provider credential")
 	}
 	providerModels, _ := ollamaProvider["models"].([]any)
 	if len(providerModels) != 3 {
@@ -503,88 +500,15 @@ func TestHermesPathsUsesHermesHomeOverride(t *testing.T) {
 	}
 }
 
-func TestHermesProviderPreservesLocalCatalogWhenListFails(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "catalog unavailable", http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-	withHermesOllamaURL(t, server.URL)
-
-	cfg := map[string]any{}
-	baseURL := hermesBaseURL()
-	applyHermesManagedProviders(cfg, baseURL, "gemma4", []string{"gemma4", "qwen3.5"})
-	applyHermesManagedProviders(cfg, baseURL, "llama3.3", (&Hermes{}).listModels("llama3.3"))
-	entry := hermesManagedProviderEntry(hermesUserProviders(cfg["providers"]))
-	if got := entry["default_model"]; got != "llama3.3" {
-		t.Fatalf("expected new provider default to be available alongside the fallback catalog, got %v", got)
-	}
-	if got, _ := entry["models"].([]any); !slices.Equal(got, []any{"gemma4", "qwen3.5"}) {
-		t.Fatalf("expected saved catalog to survive the catalog error, got %v", got)
-	}
-}
-
 func TestHermesProviderKeyStaysOnLoopback(t *testing.T) {
-	cfg := map[string]any{}
-	const remote = "https://ollama.example/v1"
-	applyHermesManagedProviders(cfg, remote, "gemma4", []string{"gemma4"})
-	entry := hermesManagedProviderEntry(hermesUserProviders(cfg["providers"]))
-	if _, exists := entry["api_key"]; exists {
-		t.Fatal("unexpected placeholder for a remote Ollama host")
+	entry := map[string]any{"api": "http://[::1]:11434/v1"}
+	configureHermesProviderKey(entry, "http://[::1]:11434/v1")
+	if entry["api_key"] != hermesPlaceholderKey {
+		t.Fatal("expected discovery key for IPv6 loopback")
 	}
-
-	applyHermesManagedProviders(cfg, "http://[::1]:11434/v1", "gemma4", []string{"gemma4"})
-	if got := entry["api_key"]; got != hermesPlaceholderKey {
-		t.Fatalf("expected placeholder for IPv6 loopback, got %v", got)
-	}
-
-	applyHermesManagedProviders(cfg, remote, "gemma4", []string{"gemma4"})
+	configureHermesProviderKey(entry, "https://ollama.example/v1")
 	if _, exists := entry["api_key"]; exists {
 		t.Fatal("unexpected loopback placeholder after switching to a remote Ollama host")
-	}
-}
-
-func TestMigrateHermesProviderKeyPreservesModelAndCatalog(t *testing.T) {
-	dir := t.TempDir()
-	setTestHome(t, dir)
-	t.Setenv("HERMES_HOME", dir)
-	path := filepath.Join(dir, "config.yaml")
-	const endpoint = "http://localhost:11434/v1"
-	const original = `model:
-  provider: ollama-launch
-  default: qwen3.5
-  base_url: http://localhost:11434/v1
-providers:
-  ollama-launch:
-    api: http://localhost:11434/v1
-    default_model: gemma4
-    models: [gemma4, qwen3.5]
-`
-	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	withHermesOllamaURL(t, strings.TrimSuffix(endpoint, "/v1"))
-	if model := (&Hermes{}).CurrentModel(); model != "qwen3.5" {
-		t.Fatalf("expected Hermes's selected model qwen3.5, got %q", model)
-	}
-	if err := migrateHermesProviderKey(endpoint); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var want map[string]any
-	if err := yaml.Unmarshal([]byte(original), &want); err != nil {
-		t.Fatal(err)
-	}
-	entry := hermesManagedProviderEntry(hermesUserProviders(want["providers"]))
-	entry["api_key"] = hermesPlaceholderKey
-	encoded, err := yaml.Marshal(want)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(encoded) {
-		t.Fatalf("migration changed more than the provider key:\n%s", data)
 	}
 }
 
@@ -632,7 +556,7 @@ func TestHermesCurrentModelRequiresHealthyManagedConfig(t *testing.T) {
 				"  base_url: http://127.0.0.1:11434/v1\n",
 		},
 		{
-			name: "missing managed provider default",
+			name: "inconsistent managed provider entry",
 			cfg: "" +
 				"model:\n" +
 				"  provider: ollama-launch\n" +
@@ -640,7 +564,8 @@ func TestHermesCurrentModelRequiresHealthyManagedConfig(t *testing.T) {
 				"  base_url: http://127.0.0.1:11434/v1\n" +
 				"providers:\n" +
 				"  ollama-launch:\n" +
-				"    api: http://127.0.0.1:11434/v1\n",
+				"    api: http://127.0.0.1:11434/v1\n" +
+				"    default_model: qwen3.5\n",
 		},
 		{
 			name: "legacy launch managed config",
