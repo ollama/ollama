@@ -3,7 +3,6 @@
 ARG FLAVOR=${TARGETARCH}
 
 ARG ROCMVERSION=7.2.1
-ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
 ARG NINJAVERSION=1.12.1
@@ -160,29 +159,6 @@ COPY --from=llama-server-vulkan dist/lib/ollama /lib/ollama/
 # JetPack stages — self-contained with their own base images
 #
 
-FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
-ARG CMAKEVERSION
-ARG NINJAVERSION
-RUN apt-get update && apt-get install -y curl ccache git unzip \
-    && curl --retry 3 -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz -o /tmp/cmake.tar.gz \
-    && tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components 1 \
-    && rm /tmp/cmake.tar.gz \
-    && curl --retry 3 -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
-    && unzip /tmp/ninja.zip -d /usr/local/bin \
-    && rm /tmp/ninja.zip
-ENV CMAKE_GENERATOR=Ninja
-COPY LLAMA_CPP_VERSION .
-COPY llama/server llama/server
-COPY llama/compat llama/compat
-COPY cmake cmake
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset llama_cuda_jetpack5 \
-        && cmake --build build/llama-server-cuda_jetpack5 -- -l $(nproc) \
-        && cmake --install build/llama-server-cuda_jetpack5 --component llama-server --strip
-
-FROM scratch AS publish-llama-server-cuda_jetpack5
-COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/
-
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
 ARG CMAKEVERSION
 ARG NINJAVERSION
@@ -296,7 +272,6 @@ FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
-COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
