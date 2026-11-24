@@ -77,13 +77,17 @@ func writeToolsSection(sb *strings.Builder, tools []api.Tool) error {
 
 // cohereToolResult is one entry of a <|START_TOOL_RESULT|> array.
 func writeToolResult(sb *strings.Builder, callID string, content string) error {
+	encodedID, err := json.Marshal(callID)
+	if err != nil {
+		return err
+	}
 	wrapped, err := marshalWithSpaces(map[string]string{"content": content})
 	if err != nil {
 		return err
 	}
-	sb.WriteString("\n    {\n        \"tool_call_id\": \"")
-	sb.WriteString(callID)
-	sb.WriteString("\",\n        \"results\": {\n\n            \n            \"0\": ")
+	sb.WriteString("\n    {\n        \"tool_call_id\": ")
+	sb.Write(encodedID)
+	sb.WriteString(",\n        \"results\": {\n\n            \n            \"0\": ")
 	sb.WriteString(string(wrapped))
 	sb.WriteString("\n\n        },\n        \"is_error\": null\n    }")
 	return nil
@@ -122,23 +126,47 @@ func (r *CohereRenderer) Render(messages []api.Message, tools []api.Tool, think 
 	// conversation (regen_tool_call_ids default); results reference the
 	// index of their originating call.
 	callIndex := 0
-	callIDToIndex := map[string]string{}
+	callIDQueues := map[string][]string{}
+	lastCallID := map[string]string{}
+	var pendingIndices []string
 	nextCallID := func(id string) string {
 		idx := strconv.Itoa(callIndex)
 		callIndex++
+		pendingIndices = append(pendingIndices, idx)
 		if id != "" {
-			if _, seen := callIDToIndex[id]; !seen {
-				callIDToIndex[id] = idx
-			}
+			callIDQueues[id] = append(callIDQueues[id], idx)
+			lastCallID[id] = idx
 		}
 		return idx
 	}
+	consumePending := func(idx string) {
+		for j, p := range pendingIndices {
+			if p == idx {
+				pendingIndices = append(pendingIndices[:j], pendingIndices[j+1:]...)
+				return
+			}
+		}
+	}
 	resolveResultID := func(m api.Message) string {
-		if idx, ok := callIDToIndex[m.ToolCallID]; ok {
-			return idx
+		if m.ToolCallID != "" {
+			if q := callIDQueues[m.ToolCallID]; len(q) > 0 {
+				idx := q[0]
+				callIDQueues[m.ToolCallID] = q[1:]
+				consumePending(idx)
+				return idx
+			}
+			if idx, ok := lastCallID[m.ToolCallID]; ok {
+				return idx
+			}
+			return m.ToolCallID
 		}
 		// Fall back to call order when ids are absent.
-		return m.ToolCallID
+		if len(pendingIndices) > 0 {
+			idx := pendingIndices[0]
+			pendingIndices = pendingIndices[1:]
+			return idx
+		}
+		return ""
 	}
 
 	prefill := false
@@ -166,15 +194,19 @@ func (r *CohereRenderer) Render(messages []api.Message, tools []api.Tool, think 
 				}
 				sb.WriteString("<|START_ACTION|>[")
 				for j, tc := range message.ToolCalls {
+					name, err := json.Marshal(tc.Function.Name)
+					if err != nil {
+						return "", err
+					}
 					args, err := marshalWithSpaces(tc.Function.Arguments)
 					if err != nil {
 						return "", err
 					}
 					sb.WriteString("\n\n    {\"tool_call_id\": \"")
 					sb.WriteString(nextCallID(toolCallID(tc)))
-					sb.WriteString("\", \"tool_name\": \"")
-					sb.WriteString(tc.Function.Name)
-					sb.WriteString("\", \"parameters\": ")
+					sb.WriteString("\", \"tool_name\": ")
+					sb.Write(name)
+					sb.WriteString(", \"parameters\": ")
 					sb.WriteString(string(args))
 					sb.WriteString("}")
 					if j < len(message.ToolCalls)-1 {
