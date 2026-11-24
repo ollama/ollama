@@ -416,7 +416,7 @@ func (h *Hermes) listModels(defaultModel string) []string {
 	client := hermesOllamaClient()
 	resp, err := client.List(context.Background())
 	if err != nil {
-		return []string{defaultModel}
+		return nil
 	}
 
 	models := make([]string, 0, len(resp.Models)+1)
@@ -706,15 +706,23 @@ func applyHermesManagedProviders(cfg map[string]any, baseURL string, model strin
 		entry = make(map[string]any)
 	}
 	oldURL, _ := entry["api"].(string)
-	if hermesNeedsLocalProviderKey(entry, baseURL) {
-		entry["api_key"] = hermesPlaceholderKey
-	} else if entry["api_key"] == hermesPlaceholderKey && hermesLoopbackURL(oldURL) && !hermesLoopbackURL(baseURL) {
+	local := hermesLoopbackURL(baseURL)
+	if local {
+		ensureHermesProviderCredential(entry)
+	} else if entry["api_key"] == hermesPlaceholderKey && hermesLoopbackURL(oldURL) {
 		delete(entry, "api_key")
 	}
 	entry["name"] = hermesProviderName
 	entry["api"] = baseURL
 	entry["default_model"] = model
-	entry["models"] = hermesStringListAny(models)
+	// A transient catalog failure should leave the same local endpoint's
+	// saved fallback intact.
+	if models != nil || entry["models"] == nil || !local || hermesNormalizeURL(oldURL) != hermesNormalizeURL(baseURL) {
+		if models == nil {
+			models = []string{model}
+		}
+		entry["models"] = hermesStringListAny(models)
+	}
 	providers[hermesProviderKey] = entry
 	delete(providers, hermesLegacyKey)
 	cfg["providers"] = providers
@@ -736,15 +744,19 @@ func hermesLoopbackURL(raw string) bool {
 	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
 }
 
-func hermesNeedsLocalProviderKey(entry map[string]any, baseURL string) bool {
-	if !hermesLoopbackURL(baseURL) {
-		return false
-	}
-	for _, field := range []string{"api_key", "key_env", "api_key_env", "key_cmd"} {
+func ensureHermesProviderCredential(entry map[string]any) bool {
+	for _, field := range []string{"api_key", "key_env", "key_cmd"} {
 		if value, _ := entry[field].(string); strings.TrimSpace(value) != "" {
 			return false
 		}
 	}
+	// Older Hermes pickers only look up environment credentials via key_env.
+	if alias, _ := entry["api_key_env"].(string); strings.TrimSpace(alias) != "" {
+		entry["key_env"] = alias
+		return true
+	}
+	// Hermes treats a keyless provider's saved model list as an allowlist.
+	entry["api_key"] = hermesPlaceholderKey
 	return true
 }
 
@@ -773,11 +785,9 @@ func migrateHermesProviderKey(baseURL string) error {
 		return nil
 	}
 	entry := hermesManagedProviderEntry(hermesUserProviders(cfg["providers"]))
-	if !hermesNeedsLocalProviderKey(entry, baseURL) {
+	if !ensureHermesProviderCredential(entry) {
 		return nil
 	}
-	// Hermes treats a keyless provider's saved model list as an allowlist.
-	entry["api_key"] = hermesPlaceholderKey
 	data, err = yaml.Marshal(cfg)
 	if err != nil {
 		return err
@@ -822,7 +832,10 @@ func hermesManagedCurrentModel(cfg map[string]any, baseURL string) string {
 	}
 
 	defaultModel, _ := entry["default_model"].(string)
-	if strings.TrimSpace(defaultModel) != current {
+	defaultModel = strings.TrimSpace(defaultModel)
+	// Hermes persists local picker selections in model.default. The provider
+	// default can still describe the older catalog snapshot.
+	if defaultModel == "" || (defaultModel != current && !hermesLoopbackURL(baseURL)) {
 		return ""
 	}
 
