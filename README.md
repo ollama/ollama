@@ -270,6 +270,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [WAJ AI Engine](https://github.com/waj-1/ai-engine) - Self-hosted agent platform configured from a portal or over MCP
 
 ### RAG & Knowledge Bases
 
