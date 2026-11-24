@@ -1343,11 +1343,16 @@ func DefaultOptions() Options {
 		// options set on request to runner
 		NumPredict: -1,
 
+		// The sampling defaults are llama.cpp's (common_params_sampling), which
+		// the external engines start from too: every field is sent to the
+		// engine on each request, so a default that differs here overrides
+		// the engine's own even when nothing set it.
 		// set a minimal num_keep to avoid issues on context shifts
 		NumKeep:          4,
 		Temperature:      0.8,
 		TopK:             40,
-		TopP:             0.9,
+		TopP:             0.95,
+		MinP:             0.05,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
 		RepeatPenalty:    1.0,
