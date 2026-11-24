@@ -512,6 +512,40 @@ func TestHermesProviderKeyStaysOnLoopback(t *testing.T) {
 	}
 }
 
+func TestMigrateHermesProviderKey(t *testing.T) {
+	dir := t.TempDir()
+	setTestHome(t, dir)
+	t.Setenv("HERMES_HOME", dir)
+	path := filepath.Join(dir, "config.yaml")
+	const endpoint = "http://localhost:11434/v1"
+	const original = `model:
+    base_url: http://localhost:11434/v1
+    default: gemma4
+    provider: ollama-launch
+providers:
+    ollama-launch:
+        api: http://localhost:11434/v1
+        default_model: gemma4
+        models:
+            - gemma4
+            - qwen3.5
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateHermesProviderKey(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(original, "        default_model:", "        api_key: ollama\n        default_model:", 1)
+	if string(data) != want {
+		t.Fatalf("migration should add only the provider key, got:\n%s", data)
+	}
+}
+
 func TestHermesCurrentModelRequiresHealthyManagedConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)

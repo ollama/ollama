@@ -85,6 +85,9 @@ func (h *Hermes) Run(_ string, _ []LaunchModel, args []string) error {
 	}); err != nil {
 		return err
 	}
+	if err := migrateHermesProviderKey(hermesBaseURL()); err != nil {
+		return err
+	}
 	return hermesAttachedCommand(bin, args...).Run()
 }
 
@@ -719,21 +722,56 @@ func applyHermesManagedProviders(cfg map[string]any, baseURL string, model strin
 	cfg["custom_providers"] = customProviders
 }
 
-func configureHermesProviderKey(entry map[string]any, baseURL string) {
+func configureHermesProviderKey(entry map[string]any, baseURL string) bool {
 	if !hermesLoopbackURL(baseURL) {
 		previousURL, _ := entry["api"].(string)
 		if entry["api_key"] == hermesPlaceholderKey && hermesLoopbackURL(previousURL) {
 			delete(entry, "api_key")
+			return true
 		}
-		return
+		return false
 	}
 	for _, field := range []string{"api_key", "key_env", "api_key_env", "key_cmd"} {
 		if value, _ := entry[field].(string); strings.TrimSpace(value) != "" {
-			return
+			return false
 		}
 	}
 	// Hermes treats a keyless provider's saved list as an allowlist.
 	entry["api_key"] = hermesPlaceholderKey
+	return true
+}
+
+func migrateHermesProviderKey(baseURL string) error {
+	if !hermesLoopbackURL(baseURL) {
+		return nil
+	}
+	path, err := hermesConfigPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("parse hermes config: %w", err)
+	}
+	if hermesManagedCurrentModel(cfg, baseURL) == "" {
+		return nil
+	}
+	entry := hermesManagedProviderEntry(hermesUserProviders(cfg["providers"]))
+	if !configureHermesProviderKey(entry, baseURL) {
+		return nil
+	}
+	data, err = yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(path, data, "hermes")
 }
 
 func hermesLoopbackURL(raw string) bool {
