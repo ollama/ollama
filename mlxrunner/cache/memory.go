@@ -31,6 +31,10 @@ func EstimateMemory(c Cache, tokens, checkpoints int) (int64, bool) {
 	case *RotatingKVCache:
 		bytes /= int64(min(c.Offset(), c.maxSize))
 		count = int64(min(tokens, c.maxSize)) * (2 + int64(checkpoints))
+		if c.ordered {
+			// The live buffer and its compaction copy each keep spare rows.
+			count += 2 * int64(c.step)
+		}
 	case *RecurrentCache:
 		// Bounded state is retained at each prompt checkpoint, plus live state
 		// and a copy when the next request resumes or rewinds it.

@@ -49,14 +49,15 @@ func TestDraftBlockKeepsFullPrecedingWindow(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		mlx.Scoped(func() {
 			const bf16 = mlx.DTypeBFloat16
-			zero := nn.NewLinear(mlx.Zeros(bf16, 2, 2), nil)
-			identity := nn.NewLinear(mlx.FromValues([]float32{1, 0, 0, 1}, 2, 2).AsType(bf16), nil)
+			zero := mlx.Zeros(bf16, 2, 2)
+			identity := mlx.FromValues([]float32{1, 0, 0, 1}, 2, 2).AsType(bf16)
 			norm := mlx.FromValues([]float32{1, 1}, 2).AsType(bf16)
 			d := &draft{
 				config: draftConfig{Window: 2, Heads: 1, KVHeads: 1, HeadDim: 2, RopeTheta: 10000, Epsilon: 1e-6},
 				Layers: []draftLayer{{
 					local: true, InputNorm: norm, FfNorm: norm, QueryNorm: norm, KeyNorm: norm,
-					Query: zero, Key: zero, Value: zero, AttentionOutput: identity, Gate: zero, Up: zero, Down: zero,
+					QKV: newDraftProjection(0, zero, zero, zero), Output: newDraftProjection(0, identity),
+					GateUp: newDraftProjection(0, zero, zero), Down: newDraftProjection(0, zero),
 				}},
 			}
 			states := d.NewCaches()
@@ -104,11 +105,12 @@ func TestDraftRoundsCorrectedScoresToBF16(t *testing.T) {
 		mlx.Scoped(func() {
 			const bf16 = mlx.DTypeBFloat16
 			d := &draft{
-				config:    draftConfig{Width: 1, StateWidth: 1},
-				target:    &targetModel{config: textConfig{LogitCap: 30}},
-				Previous:  nn.NewEmbedding(mlx.Zeros(bf16, 2, 1)),
-				Recurrent: nn.NewLinear(mlx.Zeros(bf16, 3, 4), nil),
-				Folded:    nn.NewLinear(mlx.Zeros(bf16, 2, 1), mlx.FromValues([]float32{0, 1.0 / 256}, 2).AsType(bf16)),
+				config:     draftConfig{Width: 1, StateWidth: 1},
+				Previous:   nn.NewEmbedding(mlx.Zeros(bf16, 2, 1)),
+				Recurrent:  nn.NewLinear(mlx.Zeros(bf16, 3, 4), nil),
+				Folded:     newDraftProjection(0, mlx.Zeros(bf16, 2, 1)),
+				FoldedBias: mlx.FromValues([]float32{0, 1.0 / 256}, 2).AsType(bf16),
+				correct:    compiledCorrection(30),
 			}
 			hidden := mlx.Zeros(bf16, 1, 1, 2)
 			base := mlx.FromValues([]float32{2, 2}, 1, 1, 2).AsType(bf16)

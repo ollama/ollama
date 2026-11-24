@@ -5,20 +5,12 @@ import (
 	"slices"
 )
 
-func supportsRelativeAttentionPrefill(name, arch string) bool {
-	return isM5MatrixDevice(name, arch) ||
-		name == "Apple M2 Pro" && arch == "applegpu_g14s" ||
-		name == "Apple M2 Ultra" && arch == "applegpu_g14d" ||
-		name == "Apple M3 Ultra" && arch == "applegpu_g15d" ||
-		name == "Apple M4 Pro" && arch == "applegpu_g16s"
-}
-
 // Stock SDPA takes a dense bias for learned relative positions. Tiling the queries
 // limits both the bias allocation and the attention work to the keys each tile can see.
 func relativeAttentionPrefill(q, k, v, table, sink *Array, window int, scale float32) *Array {
 	// Native matrix attention uses the same key-tile alignment for these widths.
 	width := q.Dim(3)
-	if (width != 64 && width != 128) || !MetalIsAvailable() || !supportsRelativeAttentionPrefill(kernelDevice()) {
+	if (width != 64 && width != 128) || !MetalIsAvailable() {
 		return nil
 	}
 	heads, queries, keys := q.Dim(1), q.Dim(2), k.Dim(2)
@@ -67,7 +59,7 @@ func relativeAttentionPrefill(q, k, v, table, sink *Array, window int, scale flo
 // All keys are causal for this row; the caller applies any sliding-window mask.
 func RelativePositionDecodeBias(table, sink *Array, keys int) *Array {
 	if table == nil || sink == nil || keys < 1 || keys > math.MaxInt32 ||
-		!MetalIsAvailable() || !supportsRelativeAttentionPrefill(kernelDevice()) {
+		!MetalIsAvailable() {
 		return nil
 	}
 	if table.NumDims() != 4 || table.Dim(0) != 1 || table.Dim(2) != 1 ||

@@ -25,6 +25,9 @@ func TestPendingSnapshotCopiesAcrossBoundaries(t *testing.T) {
 							mlx.DefaultStream().Synchronize()
 						}
 						update(0, 256)
+						// Measure from an empty allocator cache: buffers cached by earlier
+						// tests can be reused at a larger size and count as active memory.
+						mlx.ClearCache()
 						before := mlx.ActiveMemory()
 						var snaps []Snapshot
 						var pending int

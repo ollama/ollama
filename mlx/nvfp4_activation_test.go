@@ -103,7 +103,7 @@ func TestNVFP4ActivationMatchesEagerAcrossShapes(t *testing.T) {
 			}
 		}
 		random := rand.New(rand.NewPCG(41, 723))
-		for _, tc := range [][4]int{{1, 1, 2304, 1536}, {8, 8, 1152, 1536}, {67, 1, 2304, 1536}, {13, 8, 1152, 1536}, {2, 1, 16, Nvfp4MaxProduct}, {3, 2, 528, Nvfp4MaxProduct}, {1, 2, 4096, 1536}} {
+		for _, tc := range [][4]int{{1, 1, 2304, 1536}, {8, 8, 1152, 1536}, {67, 1, 2304, 1536}, {13, 8, 1152, 1536}, {2, 1, 16, Nvfp4MaxProduct}, {3, 2, 528, Nvfp4MaxProduct}, {1, 2, 4096, 1536}, {160, 1, 2304, 1536}, {17, 8, 1152, 1536}} {
 			Scoped(func() {
 				rows, routes, width, maxProduct := tc[0], tc[1], tc[2], tc[3]
 				data := make([]float32, rows*routes*width)
@@ -144,7 +144,7 @@ func TestNVFP4ActivationFallback(t *testing.T) {
 			}
 		}
 		if CUDAIsAvailable() {
-			_, arch := kernelDevice()
+			arch := kernelArchitecture()
 			values, maxima := fastNVFP4Activation(x.AsType(DTypeBFloat16), 1536)
 			if (values != nil) != (arch == "sm_120") || (maxima != nil) != (arch == "sm_120") {
 				t.Fatalf("unexpected activation dispatch for %s", arch)

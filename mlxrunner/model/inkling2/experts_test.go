@@ -1,6 +1,7 @@
 package inkling2
 
 import (
+	"math"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -8,6 +9,36 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
+
+// A token's router scores must not depend on how many rows share its block, so
+// decode and draft verification route it to the same experts on every backend.
+func TestRouterLogitsRowStable(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.Scoped(func() {
+			const experts, width = 64, 2304
+			rng := rand.New(rand.NewPCG(5, 9))
+			normal := func(n int) []float32 {
+				values := make([]float32, n)
+				for i := range values {
+					values[i] = float32(rng.NormFloat64())
+				}
+				return values
+			}
+			e := routedExperts{Router: mlx.FromValues(normal(experts*width), experts, width)}
+			x := mlx.FromValues(normal(shortTargetRows*width), 1, shortTargetRows, width).AsType(mlx.DTypeBFloat16)
+			for _, rows := range []int{1, 3, shortTargetRows} {
+				block := x.Slice(mlx.Slice(), mlx.Slice(0, rows), mlx.Slice())
+				got := e.routerLogits(block)
+				for row := range rows {
+					want := e.routerLogits(x.Slice(mlx.Slice(), mlx.Slice(row, row+1), mlx.Slice()))
+					if !slices.Equal(got.Slice(mlx.Slice(row, row+1), mlx.Slice()).Floats(), want.Floats()) {
+						t.Fatalf("%d-row block: row %d scores differ from a one-row block", rows, row)
+					}
+				}
+			}
+		})
+	})
+}
 
 func TestNVFP4ExpertAppliesActivationAndWeightScales(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
@@ -22,7 +53,7 @@ func TestNVFP4ExpertAppliesActivationAndWeightScales(t *testing.T) {
 			}
 			input := mlx.FromValues(slices.Repeat([]float32{2}, width), 1, 1, 1, width).AsType(mlx.DTypeBFloat16)
 			selected := mlx.FromValues([]int32{1, 0}, 1, 2)
-			got := bank.project(input, selected, nil, false).AsType(mlx.DTypeFloat32).Floats()
+			got := bank.project(input, selected).AsType(mlx.DTypeFloat32).Floats()
 			want := append(slices.Repeat([]float32{96}, outputs), slices.Repeat([]float32{64}, outputs)...)
 			if !slices.Equal(got, want) {
 				t.Errorf("expert outputs = %v, want %v", got, want)
@@ -114,8 +145,35 @@ func TestGroupedNVFP4ExpertsPreserveRouting(t *testing.T) {
 			gains := mlx.FromValues(weights, rows, topK)
 			want := e.combine(x, ids, gains, false).AsType(mlx.DTypeFloat32).Floats()
 			got := e.combine(x, ids, gains, true).AsType(mlx.DTypeFloat32).Floats()
+			// The sorted products round to BF16 before the outer scale, which can
+			// move a value across an NVFP4 boundary. Misrouted rows differ wholesale.
+			var diff, scale float64
+			for i := range want {
+				diff += math.Abs(float64(got[i] - want[i]))
+				scale += math.Abs(float64(want[i]))
+			}
+			if diff > scale/100 {
+				t.Fatalf("grouping changed the routed expert result: mean difference %g of mean magnitude %g", diff/float64(len(want)), scale/float64(len(want)))
+			}
+		})
+	})
+}
+
+func TestMXFP8QuantizeMatchesGraph(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() {
+			t.Skip("requires Metal")
+		}
+		mlx.Scoped(func() {
+			values := make([]float32, 4*2304)
+			for i := range values {
+				values[i] = float32((i*7919)%2003-1001) * float32(math.Pow(2, float64(i%23-11))) / 97
+			}
+			x := mlx.FromValues(values, 4, 2304).AsType(mlx.DTypeBFloat16)
+			want := mxfp8ExpertInput(x).Floats()
+			got := mlx.MXFP8Quantize(x, mlx.DTypeFloat32).Floats()
 			if !slices.Equal(got, want) {
-				t.Fatal("grouping changed the routed expert result")
+				t.Fatal("MXFP8 kernel differs from the graph")
 			}
 		})
 	})

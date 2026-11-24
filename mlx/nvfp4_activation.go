@@ -5,15 +5,9 @@ import (
 	"sync"
 )
 
-// MLX derives its NVFP4 scale from the block maximum divided by 6. The 4-over-6
-// variant also tries a divisor of 4 and compares both reconstruction errors in one pass.
-var nvfp4Activation = &gpuKernel{
-	name:    "nvfp4_activation",
-	inputs:  []string{"x"},
-	outputs: []string{"inner", "amax"},
-	cuda:    nvfp4ActivationCUDA,
-	metal: gpuSource{
-		header: `
+// nvfp4RoundingMetal rounds nonnegative values to E4M3FN and signed values to
+// E2M1, each to nearest even.
+const nvfp4RoundingMetal = `
 #include <metal_stdlib>
 using namespace metal;
 
@@ -35,20 +29,122 @@ inline float round_e2m1(float x) {
     if (m > 5.0f) q = 6.0f;
     return x < 0.0f ? -q : q;
 }
-`,
+
+// Reconstructs 16 values of a row from E2M1 with an E4M3 block scale, using
+// the 4 or 6 range with the smaller L1 error. Ties select the 6 range.
+inline void nvfp4_4over6(thread const float* data, float block_max, float row_max, float max_product, thread float* out) {
+#pragma clang fp contract(off) reassociate(off)
+    float normalizer = min(max_product / row_max, FLT_MAX);
+    float decoder = 1.0f / normalizer;
+    float outer = row_max * (1.0f / max_product);
+    float scale_a = round_e4m3(min(block_max * (normalizer * (1.0f / 6.0f)), 448.0f));
+    float scale_b = round_e4m3(min(block_max * (normalizer * 0.25f), 448.0f));
+    float inv_a = min(1.0f / (scale_a * decoder), FLT_MAX);
+    float inv_b = min(1.0f / (scale_b * decoder), FLT_MAX);
+    float candidate_a[16], candidate_b[16];
+    float error_a = 0.0f, error_b = 0.0f;
+    for (uint i = 0; i < 16; ++i) {
+        candidate_a[i] = round_e2m1(data[i] * inv_a) * scale_a;
+        candidate_b[i] = round_e2m1(data[i] * inv_b) * scale_b;
+        error_a += abs(data[i] - candidate_a[i] * outer);
+        error_b += abs(data[i] - candidate_b[i] * outer);
+    }
+    for (uint i = 0; i < 16; ++i) out[i] = error_b < error_a ? candidate_b[i] : candidate_a[i];
+}
+`
+
+// nvfp4SpreadMetal is nvfp4_4over6 for a block spread over 16 / Per adjacent
+// lanes of a SIMD group, each holding Per consecutive values and the block
+// maximum. The errors are summed in value order, so the choice matches
+// nvfp4_4over6.
+const nvfp4SpreadMetal = `
+template <uint Per>
+inline void nvfp4_4over6_lanes(thread const float (&data)[Per], float block_max, float row_max, float max_product,
+                               uint lane, thread float (&out)[Per]) {
+#pragma clang fp contract(off) reassociate(off)
+    if constexpr (Per == 16) {
+        nvfp4_4over6(data, block_max, row_max, max_product, out);
+    } else {
+        float normalizer = min(max_product / row_max, FLT_MAX);
+        float decoder = 1.0f / normalizer;
+        float outer = row_max * (1.0f / max_product);
+        float scale_a = round_e4m3(min(block_max * (normalizer * (1.0f / 6.0f)), 448.0f));
+        float scale_b = round_e4m3(min(block_max * (normalizer * 0.25f), 448.0f));
+        float inv_a = min(1.0f / (scale_a * decoder), FLT_MAX);
+        float inv_b = min(1.0f / (scale_b * decoder), FLT_MAX);
+        float candidate_a[Per], candidate_b[Per], error_a[Per], error_b[Per];
+        for (uint i = 0; i < Per; ++i) {
+            candidate_a[i] = round_e2m1(data[i] * inv_a) * scale_a;
+            candidate_b[i] = round_e2m1(data[i] * inv_b) * scale_b;
+            error_a[i] = abs(data[i] - candidate_a[i] * outer);
+            error_b[i] = abs(data[i] - candidate_b[i] * outer);
+        }
+        const ushort first = ushort(lane & ~(16u / Per - 1u));
+        float total_a = 0.0f, total_b = 0.0f;
+        _Pragma("clang loop unroll(full)")
+        for (uint k = 0; k < 16; ++k) {
+            total_a += simd_shuffle(error_a[k % Per], ushort(first + k / Per));
+            total_b += simd_shuffle(error_b[k % Per], ushort(first + k / Per));
+        }
+        for (uint i = 0; i < Per; ++i) out[i] = total_b < total_a ? candidate_b[i] : candidate_a[i];
+    }
+}
+`
+
+// tuneNVFP4Quantize returns how many of a row's values each thread of a
+// row-per-threadgroup NVFP4 quantizer holds: 16 keeps a block in one thread,
+// fewer spread it over 16/per lanes.
+func tuneNVFP4Quantize(rows, width int, architecture string) int {
+	generation, size := appleGPU(architecture)
+	if generation < 15 {
+		// Before M3 the threadgroup limit follows a pipeline's registers, and
+		// 576 threads exceeded M2's 384.
+		return 16
+	}
+	if rows > 128 {
+		// Many rows already fill the GPU with a block per thread.
+		return 16
+	}
+	if generation < 17 && size != 'd' && rows > 32 {
+		// Smaller M3/M4 GPUs fill sooner: spreading 128 rows made M4 Pro
+		// forwards 0.6% slower, while M3 Ultra gained up to 128.
+		return 16
+	}
+	// A few rows leave most of the GPU idle; spread blocks over lanes, in at
+	// most the 576 threads the replays validate on M3 through M5.
+	per := 2
+	for per < 16 && (width/per+31)/32*32 > 576 {
+		per *= 2
+	}
+	return per
+}
+
+// MLX derives its NVFP4 scale from the block maximum divided by 6. The 4-over-6
+// variant also tries a divisor of 4 and compares both reconstruction errors in one pass.
+var nvfp4Activation = &gpuKernel{
+	name:    "nvfp4_activation",
+	inputs:  []string{"x"},
+	outputs: []string{"inner", "amax"},
+	cuda:    nvfp4ActivationCUDA,
+	metal: gpuSource{
+		header: nvfp4RoundingMetal + nvfp4SpreadMetal,
 		source: `
 #pragma clang fp contract(off) reassociate(off)
 uint row = threadgroup_position_in_grid.y;
 uint worker = thread_index_in_threadgroup;
 uint lane = thread_index_in_simdgroup;
 uint group = simdgroup_index_in_threadgroup;
-uint start = row * W + worker * 16;
-bool active = worker < W / 16;
-float data[16];
+// Each thread holds Per values; a block of 16 spans 16 / Per lanes.
+uint start = row * W + worker * Per;
+bool active = worker < W / Per;
+float data[Per];
 float block_max = 0.0f;
-for (uint i = 0; i < 16; ++i) {
+for (uint i = 0; i < Per; ++i) {
     data[i] = active ? float(x[start + i]) : 0.0f;
     block_max = max(block_max, abs(data[i]));
+}
+for (uint offset = 1; offset < 16 / Per; offset *= 2) {
+    block_max = max(block_max, simd_shuffle_xor(block_max, ushort(offset)));
 }
 
 threadgroup float partial[G / 32];
@@ -57,25 +153,10 @@ if (lane == 0) partial[group] = simd_amax;
 threadgroup_barrier(mem_flags::mem_threadgroup);
 float row_max = simd_max(lane < G / 32 ? partial[lane] : 0.0f);
 if (worker == 0) amax[row] = row_max;
-if (!active) return;
-
-float normalizer = min(float(MaxProduct) / row_max, FLT_MAX);
-float decoder = 1.0f / normalizer;
-float outer = row_max * (1.0f / float(MaxProduct));
-float scale_a = round_e4m3(min(block_max * (normalizer * (1.0f / 6.0f)), 448.0f));
-float scale_b = round_e4m3(min(block_max * (normalizer * 0.25f), 448.0f));
-float inv_a = min(1.0f / (scale_a * decoder), FLT_MAX);
-float inv_b = min(1.0f / (scale_b * decoder), FLT_MAX);
-float candidate_a[16], candidate_b[16];
-float error_a = 0.0f, error_b = 0.0f;
-for (uint i = 0; i < 16; ++i) {
-    candidate_a[i] = round_e2m1(data[i] * inv_a) * scale_a;
-    candidate_b[i] = round_e2m1(data[i] * inv_b) * scale_b;
-    error_a += abs(data[i] - candidate_a[i] * outer);
-    error_b += abs(data[i] - candidate_b[i] * outer);
-}
-for (uint i = 0; i < 16; ++i) {
-    inner[start + i] = error_b < error_a ? candidate_b[i] : candidate_a[i];
+float values[Per];
+nvfp4_4over6_lanes<Per>(data, block_max, row_max, float(MaxProduct), lane, values);
+if (active) {
+    for (uint i = 0; i < Per; ++i) inner[start + i] = values[i];
 }
 `,
 	},
@@ -112,7 +193,8 @@ func QuantizeNVFP4Activation4Over6(x *Array, maxProduct int) (values, maxima *Ar
 	return values, maxima.Reshape(shape...)
 }
 
-// One SIMD lane handles 16 channels, with up to 256 lanes per threadgroup.
+// One thread handles 16 channels, with up to 256 threads per threadgroup.
+// A short Metal launch may spread each block over several lanes instead.
 func fastNVFP4Activation(x *Array, maxProduct int) (values, maxima *Array) {
 	if x == nil || x.NumDims() == 0 || x.DType() != DTypeBFloat16 {
 		return nil, nil
@@ -125,7 +207,11 @@ func fastNVFP4Activation(x *Array, maxProduct int) (values, maxima *Array) {
 	if useCUDA && !nvfp4ActivationCUDAEnabled() {
 		return nil, nil
 	}
-	workers := (width/16 + 31) / 32 * 32
+	per := 16
+	if !useCUDA {
+		per = tuneNVFP4Quantize(size/width, width, kernelArchitecture())
+	}
+	workers := (width/per + 31) / 32 * 32
 	if useCUDA && size/width > math.MaxInt32/workers {
 		return nil, nil
 	}
@@ -145,6 +231,8 @@ func fastNVFP4Activation(x *Array, maxProduct int) (values, maxima *Array) {
 	if useCUDA {
 		launch.grid = [3]int{workers * (size / width), 1, 1}
 		apply = nvfp4Activation.applyCUDA
+	} else {
+		launch.ints = append(launch.ints, gpuIntArg{"Per", per})
 	}
 	output, ok := apply(launch)
 	if !ok {
@@ -236,7 +324,7 @@ var nvfp4ActivationCUDAEnabled = sync.OnceValue(func() bool {
 	if !CUDAIsAvailable() {
 		return false
 	}
-	_, arch := kernelDevice()
+	arch := kernelArchitecture()
 	return arch == "sm_120"
 })
 

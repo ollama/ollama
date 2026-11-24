@@ -26,7 +26,7 @@ type RotatingKVCache struct {
 	// index into the live keys/values buffer by slot rather than owning a copy
 	// (see rotatingSnapshot). A write that trims, linearizes, or overwrites the
 	// buffer copies them out (copyOutLazySnapshots) before destroying the slots
-	// they name.
+	// they name; ordered compaction instead moves those whose rows it keeps.
 	lazySnapshots []*rotatingSnapshot
 }
 
@@ -37,22 +37,36 @@ func NewRotatingKVCache(maxSize int) *RotatingKVCache {
 // NewOrderedWindowKVCache keeps the keys in sequence order for both single
 // queries and blocks, so changing query width does not reorder the attention
 // reduction over the window.
+//
+// Its buffer is chronological: slots [0, idx) hold positions
+// [offset-idx, offset), with spare capacity after them. Short writes append in
+// place and return a view of the window; the buffer is compacted only when
+// that capacity runs out.
 func NewOrderedWindowKVCache(maxSize int) *RotatingKVCache {
 	c := NewRotatingKVCache(maxSize)
 	c.ordered = true
 	return c
 }
 
+// orderedAppendRows is the longest write an ordered cache appends in place:
+// decode and draft verification blocks (Inkling verifies up to 8 positions).
+// Longer writes are prefill chunks, which keep a contiguous window.
+const orderedAppendRows = 8
+
 // Assumes B = 1; heterogeneous batches are not supported.
 func (c *RotatingKVCache) Update(b *batch.Batch, keys, values *mlx.Array) *nn.KVHistory {
 	start := c.offset
-	c.captureStartBoundary(start)
+	inPlace := c.ordered && keys.Dim(2) <= orderedAppendRows
+	c.captureStartBoundary(start, inPlace)
 
 	linearized := keys.Dim(2) > 1 || c.ordered
 	var newK, newV *mlx.Array
-	if linearized {
+	switch {
+	case inPlace:
+		newK, newV = c.appendOrdered(keys, values)
+	case linearized:
 		newK, newV = c.concat(keys, values)
-	} else {
+	default:
 		newK, newV = c.update(keys, values)
 	}
 
@@ -80,9 +94,10 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 		c.scope.Attach(c.keys, c.values)
 	} else {
 		if c.idx < c.keys.Dim(2) {
-			if c.offset <= c.maxSize {
-				// Not yet wrapped: slots [c.idx, Dim) are grow padding
-				// or stale post-rewind data, not live window content.
+			if c.offset <= c.maxSize || c.ordered {
+				// Not yet wrapped (an ordered buffer never wraps): slots
+				// [c.idx, Dim) are grow padding, spare capacity or stale
+				// post-rewind data, not live window content.
 				c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
 				c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
 			} else {
@@ -112,6 +127,62 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 	c.offset += keys.Dim(2)
 	c.idx = c.keys.Dim(2)
 	return c.keys, c.values
+}
+
+// appendOrdered writes a short block after an ordered buffer's live rows and
+// returns a view of the window concat would build: up to maxSize-1 earlier
+// keys followed by the block.
+func (c *RotatingKVCache) appendOrdered(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
+	L := keys.Dim(2)
+	if c.keys == nil || c.idx+L > c.keys.Dim(2) {
+		c.compactOrdered(keys, values, L)
+	}
+	// Rows past idx can remain after a rewind; copy out snapshots naming them.
+	for _, s := range slices.Clone(c.lazySnapshots) {
+		if s.sliceEnd > c.idx {
+			s.copyOut()
+		}
+	}
+	first := c.idx - min(c.idx, c.maxSize-1)
+	end := c.idx + L
+	c.keys.Set(c.keys.SliceUpdate(keys, mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, end), mlx.Slice()))
+	c.values.Set(c.values.SliceUpdate(values, mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, end), mlx.Slice()))
+	c.offset += L
+	c.idx = end
+	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(first, end), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(first, end), mlx.Slice())
+}
+
+// compactOrdered moves the newest full window to the front of a new buffer
+// with room for at least n more rows. Lazy snapshots of kept rows move with
+// them; others are copied out first.
+func (c *RotatingKVCache) compactOrdered(keys, values *mlx.Array, n int) {
+	keep := min(c.idx, c.maxSize)
+	drop := c.idx - keep
+	for _, s := range slices.Clone(c.lazySnapshots) {
+		if s.sliceStart < drop || s.sliceEnd > c.idx {
+			s.copyOut()
+		} else {
+			s.sliceStart -= drop
+			s.sliceEnd -= drop
+		}
+	}
+	B, H, spare := keys.Dim(0), keys.Dim(1), max(n, c.step)
+	newK := mlx.Zeros(keys.DType(), B, H, spare, keys.Dim(3))
+	newV := mlx.Zeros(values.DType(), B, H, spare, values.Dim(3))
+	if c.keys == nil {
+		c.keys, c.values = newK, newV
+		c.scope.Attach(c.keys, c.values)
+		return
+	}
+	if keep > 0 {
+		kept := mlx.Slice(drop, c.idx)
+		newK = c.keys.Slice(mlx.Slice(), mlx.Slice(), kept, mlx.Slice()).Concatenate(2, newK)
+		newV = c.values.Slice(mlx.Slice(), mlx.Slice(), kept, mlx.Slice()).Concatenate(2, newV)
+	}
+	c.keys.Set(newK)
+	c.values.Set(newV)
+	c.idx = keep
 }
 
 func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
@@ -166,8 +237,8 @@ func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 // View returns the current cache contents as a read-only KV history, used by an
 // assistant model that shares this cache. It sets L=1 so rotatingApplier treats
 // the buffer as ring-ordered (its stored layout); L=1 is a layout selector, not
-// a query length. A post-concat oversize buffer (K > maxSize) is already in
-// logical order, so View trims to the trailing maxSize tokens and resets ringIdx
+// a query length. A post-concat oversize buffer (K > maxSize), like an ordered
+// buffer holding spare history, is already in logical order, so View trims to the trailing maxSize tokens and resets ringIdx
 // to 0, collapsing the applier's gather to identity.
 func (c *RotatingKVCache) View(b *batch.Batch) *nn.KVHistory {
 	state := c.State()
@@ -201,6 +272,9 @@ func (c *RotatingKVCache) State() []*mlx.Array {
 		return nil
 	}
 	liveLen := min(c.offset, c.keys.Dim(2))
+	if c.ordered {
+		liveLen = c.idx
+	}
 	return []*mlx.Array{
 		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, liveLen), mlx.Slice()),
 		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, liveLen), mlx.Slice()),
@@ -232,12 +306,19 @@ func (c *RotatingKVCache) TakeSnapshots() []Snapshot      { return c.snapshots.t
 
 // captureStartBoundary captures a scheduled offset at the pre-write position via
 // the clone path (Snapshot), so the rollback point holds the full pre-write
-// window before concat/update reorders or drops it.
-func (c *RotatingKVCache) captureStartBoundary(start int) {
+// window before concat/update reorders or drops it. An in-place ordered append
+// keeps that window in its slots, so it is captured lazily and the append can
+// still write into the buffer.
+func (c *RotatingKVCache) captureStartBoundary(start int, inPlace bool) {
 	if len(c.snapshots.offsets) == 0 {
 		return
 	}
-	c.snapshots.captureReached(start, func(int) Snapshot { return c.Snapshot(0) })
+	c.snapshots.captureReached(start, func(int) Snapshot {
+		if inPlace {
+			return c.lazyRotatingSnapshot(start)
+		}
+		return c.Snapshot(0)
+	})
 }
 
 // captureLazySnapshots records a snapshot for each scheduled offset the write
@@ -270,7 +351,7 @@ func (c *RotatingKVCache) lazyRotatingSnapshot(o int) Snapshot {
 	if c.keys == nil {
 		return nil
 	}
-	bufBase := c.offset - c.keys.Dim(2)
+	bufBase := c.offset - c.idx
 	liveLen := min(o, c.maxSize)
 	sliceStart := o - liveLen - bufBase
 	sliceEnd := o - bufBase
@@ -387,9 +468,26 @@ func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
 		return nil
 	}
 
-	state := c.State()
-	k := state[0].Clone()
-	v := state[1].Clone()
+	state, idx := c.State(), c.idx
+	if c.ordered && idx > c.maxSize {
+		// Rows before the newest window are spare history; keep the window only.
+		window := mlx.Slice(idx-c.maxSize, idx)
+		state = []*mlx.Array{
+			state[0].Slice(mlx.Slice(), mlx.Slice(), window, mlx.Slice()),
+			state[1].Slice(mlx.Slice(), mlx.Slice(), window, mlx.Slice()),
+		}
+		idx = c.maxSize
+	}
+	k, v := state[0].Clone(), state[1].Clone()
+	if c.ordered {
+		// An ordered buffer keeps spare capacity past its window. A view would
+		// keep all of it alive while the snapshot counts only the window, so
+		// copy the window out.
+		copies := mlx.ScopedAsyncEval(func() []*mlx.Array {
+			return []*mlx.Array{mlx.Contiguous(state[0], false), mlx.Contiguous(state[1], false)}
+		})
+		k, v = copies[0], copies[1]
+	}
 	scope := mlx.NewScope()
 	scope.Attach(k, v)
 
@@ -399,7 +497,7 @@ func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
 		scope:      scope,
 		fromOffset: fromOffset,
 		toOffset:   c.offset,
-		idx:        c.idx,
+		idx:        idx,
 	}
 }
 
@@ -411,6 +509,16 @@ func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
 	if snapshot == nil {
 		if target >= c.offset {
 			return target == c.offset
+		}
+		if c.ordered {
+			// A chronological buffer can rewind while it still holds the
+			// full window that ends at target.
+			idx := c.idx - (c.offset - target)
+			if idx < min(target, c.maxSize) {
+				return false
+			}
+			c.offset, c.idx = target, idx
+			return true
 		}
 		// Live rewind is only safe before the buffer fills (offset <= maxSize);
 		// once wrapped, rewinding leaves an incomplete window, so a snapshot is
