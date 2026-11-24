@@ -186,25 +186,23 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 			Hidden:       features,
 			Layout:       d.layout,
 		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
-		candidates = d.selectBlock(hidden, current, rows, n)
+		candidates = d.selectBlock(hidden, current, n)
 		return candidates.Arrays()
 	})
 	return candidates
 }
 
 // selectBlock samples the proposal from a draft forward's block rows.
-func (d *dflashDraftSession) selectBlock(hidden, current *mlx.Array, rows, n int) *draftCandidates {
+func (d *dflashDraftSession) selectBlock(hidden, current *mlx.Array, n int) *draftCandidates {
 	spec := d.drafter.spec
 	r := spec.r
 
 	// Row i predicts the token at its own position; the anchor row is unused.
-	hidden = hidden.Slice(mlx.Slice(), mlx.Slice(1, rows+1), mlx.Slice())
+	// An adaptive selector consumes only the first n rows, so only they are
+	// projected onto the vocabulary.
+	hidden = hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice())
 	logits := spec.draft.Unembed(hidden)
 	if selector, ok := spec.draft.(model.BlockSelector); ok {
-		if n < rows {
-			hidden = hidden.Slice(mlx.Slice(), mlx.Slice(0, n), mlx.Slice())
-			logits = logits.Slice(mlx.Slice(), mlx.Slice(0, n), mlx.Slice())
-		}
 		tokens, ids, probs := selector.Select(hidden, logits, current, func(ids, scores *mlx.Array) (*mlx.Array, *mlx.Array) {
 			tokens, dist := r.Sampler.SampleCandidates(spec.slotID, ids, scores)
 			return tokens, dist.Probs

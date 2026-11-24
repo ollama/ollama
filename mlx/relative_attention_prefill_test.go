@@ -72,8 +72,12 @@ func TestRelativeAttentionPrefill(t *testing.T) {
 			RelativePositionAttention(q, nil, v, table, sink, 0, scale) != nil {
 			t.Fatal("unsupported input selected prefill")
 		}
+		// A verification-width block takes the split pass, not prefill.
 		q, k, v, table, sink = relativeAttentionInputs(8, 32, 24, 8, 128, 1024)
-		if RelativePositionAttention(q, k, v, table, sink, 0, scale) != nil {
+		kernel, parts := relativeSplit(8, 32)
+		got := RelativePositionAttention(q, k, v, table, sink, 0, scale)
+		want := relativeAttentionSplitMerge(kernel, parts, q, k, v, table, sink, 0, scale)
+		if got == nil || want == nil || requireClose("verification width", got, want, 0) != nil {
 			t.Fatal("verification width selected prefill")
 		}
 	})

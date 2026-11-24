@@ -23,6 +23,12 @@ func init() { model.RegisterDraft(draftArchitecture, newDraft) }
 // precision for bytes read per round. Zero keeps the published BF16 weights.
 const draftBits, draftVocabularyBits = 8, 4
 
+// draftProposalMinP restricts proposals to candidates within this fraction of
+// the draft's most likely token. A top-k/top-p target rarely keeps the rest, and
+// verification corrects with the restricted distribution, so outputs are
+// unchanged while more proposals survive.
+const draftProposalMinP = 0.1
+
 // draftGroupSize is MLX's default affine quantization group.
 const draftGroupSize = 64
 
@@ -200,7 +206,7 @@ func (d *draft) loadWeights(tensors map[string]*mlx.Array, bits, vocabularyBits 
 		}
 		d.Vocabulary = newDraftProjection(vocabularyBits, head.AsType(mlx.DTypeBFloat16))
 	}
-	d.correct = compiledCorrection(d.target.config.LogitCap)
+	d.correct = compiledCorrection(d.target.config.LogitCap, draftProposalMinP)
 	d.target.draftTaps = slices.Clone(c.Taps)
 	return nil
 }
@@ -466,13 +472,28 @@ func correctScores(base, folded, bias *mlx.Array, logitCap float32) *mlx.Array {
 	return softcap(corrected.AsType(mlx.DTypeFloat32), logitCap).AsType(corrected.DType())
 }
 
-// draftCorrections holds one compiled correction per logit cap. A compiled
-// function is never released, so building one per model load would leak.
-var draftCorrections sync.Map // math.Float32bits(logitCap) -> func(base, folded, bias *mlx.Array) *mlx.Array
+// restrictScores drops candidates whose temperature-1 probability is below
+// minP of the row's most likely one.
+func restrictScores(scores *mlx.Array, minP float32) *mlx.Array {
+	floor := mlx.AddScalar(scores.MaxAxis(-1, true).AsType(mlx.DTypeFloat32), float32(math.Log(float64(minP))))
+	dropped := mlx.FromValue(float32(math.Inf(-1))).AsType(scores.DType())
+	return mlx.Where(scores.AsType(mlx.DTypeFloat32).Less(floor), dropped, scores)
+}
 
-func compiledCorrection(logitCap float32) func(base, folded, bias *mlx.Array) *mlx.Array {
-	f, _ := draftCorrections.LoadOrStore(math.Float32bits(logitCap), mlx.Compile3("InklingDraftCorrection", func(base, folded, bias *mlx.Array) *mlx.Array {
-		return correctScores(base, folded, bias, logitCap)
+// draftCorrections holds one compiled correction per logit cap and min-p. A
+// compiled function is never released, so building one per model load would leak.
+var draftCorrections sync.Map // [2]uint32{Float32bits(logitCap), Float32bits(minP)} -> func(base, folded, bias *mlx.Array) *mlx.Array
+
+// compiledCorrection returns the corrected scores, restricted to minP of the
+// row's best candidate when minP is positive.
+func compiledCorrection(logitCap, minP float32) func(base, folded, bias *mlx.Array) *mlx.Array {
+	key := [2]uint32{math.Float32bits(logitCap), math.Float32bits(minP)}
+	f, _ := draftCorrections.LoadOrStore(key, mlx.Compile3("InklingDraftCorrection", func(base, folded, bias *mlx.Array) *mlx.Array {
+		scores := correctScores(base, folded, bias, logitCap)
+		if minP > 0 {
+			scores = restrictScores(scores, minP)
+		}
+		return scores
 	}))
 	return f.(func(base, folded, bias *mlx.Array) *mlx.Array)
 }

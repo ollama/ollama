@@ -78,18 +78,32 @@ func (s shortConv) forwardAdd(x, residual *mlx.Array, dtype mlx.DType, b *batch.
 
 // putConvStates stores a kernel's final conv state. A forward with snapshot
 // splits, such as draft verification, also stores the state after each split:
-// the trailing inputs of [state; x] through it. Short forwards keep them as
-// views of one small concat; longer ones copy them out, so a held snapshot
-// does not keep the whole forward's input alive.
+// the trailing inputs of [state; x] through it. A split at or past the state's
+// tail reads only x, so it stays a view. Earlier splits share one concat of
+// the prior state and the short x prefix they need, never the whole input.
+// Longer forwards copy them out, so a held snapshot does not keep the whole
+// forward's input alive.
 func putConvStates(recurrent cache.Recurrent, b *batch.Batch, history *nn.RecurrentHistory, x, next *mlx.Array) {
 	splits := recurrent.SnapshotSplits(x.Dim(1))
 	states := make([]*mlx.Array, 0, len(splits)+1)
 	if len(splits) > 0 {
 		prior := history.ConvState()
 		tail := prior.Dim(1)
-		full := mlx.Concatenate([]*mlx.Array{prior, x}, 1)
+		early := 0
 		for _, split := range splits {
-			state := full.Slice(mlx.Slice(), mlx.Slice(split, split+tail), mlx.Slice())
+			if split < tail {
+				early = max(early, split)
+			}
+		}
+		window := prior
+		if early > 0 {
+			window = mlx.Concatenate([]*mlx.Array{prior, x.Slice(mlx.Slice(), mlx.Slice(0, early), mlx.Slice())}, 1)
+		}
+		for _, split := range splits {
+			state := window.Slice(mlx.Slice(), mlx.Slice(split, split+tail), mlx.Slice())
+			if split >= tail {
+				state = x.Slice(mlx.Slice(), mlx.Slice(split-tail, split), mlx.Slice())
+			}
 			if x.Dim(1) > shortTargetRows {
 				state = mlx.Contiguous(state, false)
 			}
