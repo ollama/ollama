@@ -1230,35 +1230,19 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
-	t.Run("handles corrupt config gracefully", func(t *testing.T) {
+	t.Run("preserves corrupt config", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
-
-		if err := os.WriteFile(configPath, []byte("{invalid json}"), 0o644); err != nil {
+		original := "{invalid json}"
+		if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 			t.Fatal(err)
 		}
-
-		models := []string{"test-model"}
-		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
-			t.Fatalf("Edit() should not fail with corrupt config, got %v", err)
+		if err := pi.Edit(launchModelsFromNames([]string{"test-model"})); err == nil {
+			t.Fatal("expected invalid config error")
 		}
-
 		data, err := os.ReadFile(configPath)
-		if err != nil {
-			t.Fatalf("Failed to read config: %v", err)
-		}
-
-		var cfg map[string]any
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			t.Fatalf("Config should be valid after Edit, got parse error: %v", err)
-		}
-
-		providers := cfg["providers"].(map[string]any)
-		ollama := providers["ollama"].(map[string]any)
-		modelsArray := ollama["models"].([]any)
-
-		if len(modelsArray) != 1 {
-			t.Errorf("Expected 1 model, got %d", len(modelsArray))
+		if err != nil || string(data) != original {
+			t.Fatalf("invalid config changed: %s, %v", data, err)
 		}
 	})
 
@@ -1410,36 +1394,20 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
-	t.Run("handles corrupt settings.json gracefully", func(t *testing.T) {
+	t.Run("preserves corrupt settings.json", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
-
-		// Create corrupt settings
 		settingsPath := filepath.Join(configDir, "settings.json")
-		if err := os.WriteFile(settingsPath, []byte("{invalid"), 0o644); err != nil {
+		original := "{invalid"
+		if err := os.WriteFile(settingsPath, []byte(original), 0o644); err != nil {
 			t.Fatal(err)
 		}
-
-		models := []string{"test-model"}
-		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
-			t.Fatalf("Edit() should not fail with corrupt settings, got %v", err)
+		if err := pi.Edit(launchModelsFromNames([]string{"test-model"})); err == nil {
+			t.Fatal("expected invalid settings error")
 		}
-
 		data, err := os.ReadFile(settingsPath)
-		if err != nil {
-			t.Fatalf("Failed to read settings: %v", err)
-		}
-
-		var settings map[string]any
-		if err := json.Unmarshal(data, &settings); err != nil {
-			t.Fatalf("settings.json should be valid after Edit, got parse error: %v", err)
-		}
-
-		if settings["defaultProvider"] != "ollama" {
-			t.Errorf("defaultProvider = %v, want ollama", settings["defaultProvider"])
-		}
-		if settings["defaultModel"] != "test-model" {
-			t.Errorf("defaultModel = %v, want test-model", settings["defaultModel"])
+		if err != nil || string(data) != original {
+			t.Fatalf("invalid settings changed: %s, %v", data, err)
 		}
 	})
 }

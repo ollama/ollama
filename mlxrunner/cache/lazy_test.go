@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
@@ -343,5 +344,254 @@ func TestKVRestoreLiveLazySnapshotIsOffsetMove(t *testing.T) {
 			}
 		}
 		snap.Close()
+	})
+}
+
+func TestPeerRestoreKeepsDonorSnapshotLazy(t *testing.T) {
+	for _, heads := range []int{1, 2} {
+		for _, reuse := range []bool{false, true} {
+			mlxtest.RunSubtest(t, fmt.Sprintf("heads%d/reuse%t", heads, reuse), func(t *mlxtest.T) {
+				source, destination := NewKVCache(), NewKVCache()
+				defer source.Free()
+				defer destination.Free()
+				k, v := distinctKV(0, 8, heads, 3)
+				source.Update(nil, k, v)
+				mlx.Eval(source.State()...)
+				snap := source.lazySnapshot(0, 4)
+				defer snap.Close()
+				if reuse {
+					k, v = distinctKV(100, 8, heads, 3)
+					destination.Update(nil, k, v)
+					mlx.Eval(destination.State()...)
+					if !destination.Restore(nil, 0) {
+						t.Fatal("destination rewind failed")
+					}
+				}
+				if !destination.Restore(snap, 4) {
+					t.Fatal("peer restore failed")
+				}
+				if snap.Size() != 0 {
+					t.Fatalf("peer read allocated %d donor snapshot bytes", snap.Size())
+				}
+				// Overwrite and free the donor before evaluating the destination graph.
+				if !source.Restore(nil, 0) {
+					t.Fatal("donor rewind failed")
+				}
+				k, v = distinctKV(200, 8, heads, 3)
+				source.Update(nil, k, v)
+				mlx.Eval(source.State()...)
+				source.Free()
+				for field, a := range destination.State() {
+					got := mlx.Contiguous(a, false).Floats()
+					for i, value := range got {
+						want := float32((i / 3) % 4)
+						if field == 1 {
+							want = -want
+						}
+						if value != want {
+							t.Fatalf("state[%d][%d]=%v, want %v after donor overwrite", field, i, value, want)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPeerRestoreDoesNotRetainDonorAllocation(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const heads, dims, tokens = 2, 16, 4
+		mlx.DefaultStream().Synchronize()
+		baseline := settledActiveMemory()
+		destination := NewKVCache()
+		defer destination.Free()
+		mlx.Scoped(func() {
+			source := NewKVCache()
+			defer source.Free()
+			keys, values := distinctKV(0, 16384, heads, dims)
+			source.Update(nil, keys, values)
+			mlx.Eval(source.State()...)
+			snapshot := source.lazySnapshot(0, tokens)
+			defer snapshot.Close()
+			if !destination.Restore(snapshot, tokens) {
+				t.Fatal("peer restore failed")
+			}
+			mlx.Eval(destination.State()...)
+		})
+		mlx.DefaultStream().Synchronize()
+		// Measure before reading the arrays: materializing a view for an assertion
+		// must not accidentally detach the donor allocation and conceal retention.
+		owned := 2 * destination.step * heads * dims * 4 // One K/V reservation, not the donor's capacity.
+		if retained := settledActiveMemory() - baseline; retained > owned+64*1024 {
+			t.Fatalf("recipient owns %d bytes but retains %d after donor destruction", owned, retained)
+		}
+		for field, state := range destination.State() {
+			values := mlx.Contiguous(state, false).Floats()
+			if len(values) != heads*tokens*dims {
+				t.Fatalf("state[%d] contains %d values, want %d", field, len(values), heads*tokens*dims)
+			}
+			for i, value := range values {
+				want := float32((i / dims) % tokens)
+				if field == 1 {
+					want = -want
+				}
+				if value != want {
+					t.Fatalf("state[%d][%d]=%v, want %v", field, i, value, want)
+				}
+			}
+		}
+	})
+}
+
+func TestPendingCopyBytesIncludesLazyCopy(t *testing.T) {
+	for _, rotating := range []bool{false, true} {
+		name := "full"
+		if rotating {
+			name = "sliding"
+		}
+		t.Run(name, func(t *testing.T) {
+			mlxtest.Run(t, func(t *mlxtest.T) {
+				var c Cache = NewKVCache()
+				if rotating {
+					c = NewRotatingKVCache(16)
+				}
+				defer c.Free()
+				c.PrepareSnapshots([]int{8})
+				k, v := distinctKV(0, 8, 2, 4)
+				if rotating {
+					c.(*RotatingKVCache).Update(newKVBatch(0, 8), k, v)
+				} else {
+					c.(*KVCache).Update(newKVBatch(0, 8), k, v)
+				}
+				snapshot := c.TakeSnapshots()[0]
+				defer snapshot.Close()
+				before := snapshot.Size()
+				want := 2 * 8 * 2 * 4 * 4
+				if got := PendingCopyBytes(snapshot); got != want || before != 0 || snapshot.Size() != 0 {
+					t.Fatalf("lazy copy size=%d want=%d retained=%d", got, want, snapshot.Size())
+				}
+				c.Free()
+				if got := PendingCopyBytes(snapshot); got != 0 || snapshot.Size() != want {
+					t.Fatalf("materialized size=%d retained=%d want=%d", got, snapshot.Size(), want)
+				}
+			})
+		})
+	}
+}
+
+func TestPendingCopyBytesIncludesOneHeadBacking(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		c := NewKVCache()
+		defer c.Free()
+		k, v := distinctKV(0, 8, 1, 4)
+		c.Update(newKVBatch(0, 8), k, v)
+		snapshot := c.Snapshot(4)
+		defer snapshot.Close()
+		want := 2 * 256 * 4 * 4
+		if got := PendingCopyBytes(snapshot); got != want {
+			t.Fatalf("future one-head preservation=%d want backing-sized copy %d", got, want)
+		}
+	})
+}
+
+// Restoring an owned snapshot shares its buffers, but the first write must
+// preserve them. That live copy is separate from lazy snapshot preservation.
+func TestRotatingRestoreWriteCopiesOwnedSnapshot(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const tokens, heads, width = 64, 2, 8
+		source := NewRotatingKVCache(tokens)
+		defer source.Free()
+		mlx.Scoped(func() {
+			k, v := distinctKV(0, tokens, heads, width)
+			source.Update(newKVBatch(0, tokens), k, v)
+			mlx.Eval(source.State()...)
+		})
+		snapshot := source.Snapshot(0)
+		defer snapshot.Close()
+		source.Free()
+		restored := NewRotatingKVCache(tokens)
+		defer restored.Free()
+		if !restored.Restore(snapshot, tokens) {
+			t.Fatal("restore failed")
+		}
+		mlx.DefaultStream().Synchronize()
+		before := settledActiveMemory()
+		if PendingCopyBytes(snapshot) != 0 {
+			t.Fatal("owned snapshot has pending copy bytes")
+		}
+		mlx.Scoped(func() {
+			k, v := distinctKV(1000, 1, heads, width)
+			restored.Update(newKVBatch(tokens, 1), k, v)
+			mlx.Eval(restored.State()...)
+		})
+		if delta := settledActiveMemory() - before; delta < snapshot.Size() {
+			t.Fatalf("write retained %d extra bytes, want at least the %d-byte live copy", delta, snapshot.Size())
+		}
+		saved := snapshot.(*rotatingSnapshot)
+		for i, got := range saved.keys.Floats() {
+			if want := float32(i / width % tokens); got != want {
+				t.Fatalf("snapshot key[%d]=%v, want %v", i, got, want)
+			}
+		}
+	})
+}
+
+func TestKVCacheCopyBytesAfterRewind(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		c := NewKVCache()
+		defer c.Free()
+		mlx.Scoped(func() {
+			k, v := distinctKV(0, 256, 2, 4)
+			c.Update(newKVBatch(0, 256), k, v)
+			mlx.Eval(c.State()...)
+		})
+		snapshot := c.Snapshot(0).(*kvSnapshot)
+		defer snapshot.Close()
+		snapshot.copyOut()
+		if !c.Restore(nil, 8) {
+			t.Fatal("rewind failed")
+		}
+		var logical int
+		mlx.Scoped(func() {
+			for _, a := range c.State() {
+				logical += a.NumBytes()
+			}
+		})
+		want := 2 * 256 * 2 * 4 * 4
+		if got := CopyBytes(c); got != want || got <= logical {
+			t.Fatalf("copy allowance=%d, want retained capacity=%d (live prefix=%d)", got, want, logical)
+		}
+		before := settledActiveMemory()
+		mlx.Scoped(func() {
+			k, v := distinctKV(1000, 1, 2, 4)
+			c.Update(newKVBatch(8, 1), k, v)
+			mlx.Eval(c.State()...)
+		})
+		growth := settledActiveMemory() - before
+		if growth < want {
+			t.Fatalf("write grew by %d, want at least the %d-byte retained buffer", growth, want)
+		}
+		for i, got := range snapshot.keys.Floats() {
+			if want := float32(i / 4 % 256); got != want {
+				t.Fatalf("snapshot[%d]=%v want %v", i, got, want)
+			}
+		}
+	})
+}
+
+func TestRotatingCacheCopyBytesIncludesPadding(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		c := NewRotatingKVCache(1024)
+		defer c.Free()
+		mlx.Scoped(func() {
+			k, v := distinctKV(0, 1, 2, 4)
+			c.Update(newKVBatch(0, 1), k, v)
+			mlx.Eval(c.State()...)
+		})
+		// The first token allocates a 256-token buffer. A later shared write
+		// copies that capacity, even though State exposes only one token.
+		if got, want := CopyBytes(c), 2*256*2*4*4; got != want {
+			t.Fatalf("copy allowance=%d, want padded capacity=%d", got, want)
+		}
 	})
 }

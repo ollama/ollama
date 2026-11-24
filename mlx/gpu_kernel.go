@@ -24,8 +24,17 @@ type gpuKernel struct {
 	name    string
 	inputs  []string
 	outputs []string
-	metal   gpuSource
-	cuda    gpuSource
+	// metal compiles when first evaluated, past any fallback, so a kernel that
+	// can launch on macOS 14 or 15 must compile with that runtime's Metal 3
+	// compiler (no lambdas). Kernels that use Metal 4 tensor ops (the M5
+	// neural accelerators) gate on hasMetalTensorOps.
+	metal gpuSource
+	cuda  gpuSource
+
+	// strided Metal kernels index their inputs through <name>_shape and
+	// <name>_strides, so views are bound without a contiguous copy. CUDA
+	// kernels always receive row-contiguous inputs.
+	strided bool
 
 	// fallback computes the same outputs with graph ops when no GPU
 	// backend can run the launch.
@@ -165,8 +174,8 @@ func (k *gpuKernel) getMetal() (C.mlx_fast_metal_kernel, bool) {
 			outputs,
 			cSource,
 			cHeader,
-			// ensure_row_contiguous, so kernels can index inputs linearly.
-			C.bool(true),
+			// ensure_row_contiguous unless the kernel reads strides.
+			C.bool(!k.strided),
 			C.bool(false),
 		)
 		if err := mlxError(k.metalKernel); err != nil {

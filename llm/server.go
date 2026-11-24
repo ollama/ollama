@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/types/model"
 )
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
@@ -172,6 +173,8 @@ type MediaData struct {
 	Data []byte `json:"data"`
 	ID   int    `json:"id"`
 	Kind MediaKind
+	// TagOffsets are the byte offsets of this attachment's tags, in prompt order.
+	TagOffsets []int `json:"tag_offsets,omitempty"`
 }
 
 type Message struct {
@@ -216,6 +219,7 @@ type CompletionRequest struct {
 	// response begins with, which Format leaves free; none when the response
 	// starts in content.
 	ThinkingClose []string
+	FormatFrames  *model.StructuredOutputFrames // MLX framed structured output, when the parser supplies it
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool

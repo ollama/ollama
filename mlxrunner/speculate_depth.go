@@ -18,20 +18,20 @@ const depthProbeInterval = 4
 const depthProbeIntervalMax = 512
 
 // depthController drafts argmax_N EV(N) where EV(N) = committed(N) / cost(N), over
-// depths from 0 (plain decode) up to one past the frontier, or the drafter's limit
-// where that is shallower. The depth-0 floor lets it stop speculating when no draft
-// pays; the frontier ceiling keeps it from scoring a depth on the optimistic
-// inherited rate, so it climbs outward one position at a time as acceptance is
-// measured rather than leaping deep.
+// depths from plain decode up to one past the measured acceptance frontier,
+// bounded by the drafter's capacity. A probe can observe a complete block.
 //
-// It holds the depth-selection state learned across requests — the target forward's
-// per-depth cost curve, the drafts' per-position acceptance rates, the probe cadence,
-// and the depth scheduled for the next round — persisted on the speculation so a fresh
-// request starts at the proven-out depth instead of re-ramping from shallow.
+// Drafters carry the learned state across requests. Adaptive block selectors
+// also restart the probe schedule with a full block for each request.
 type depthController struct {
 	cost   *costModel
 	acc    *acceptanceModel
 	probed bool // the previous round drafted a probe
+	block  bool // sample a complete draft block when resuming from plain decode
+
+	// plainTokens is the number of plain-row tokens per drafting row in a
+	// mixed batch. Include them when comparing whole-batch throughput.
+	plainTokens float64
 
 	// drafterLimit is the deepest draft this model's drafter can produce, 0 when
 	// nothing bounds it. A depth the drafter never produces is never measured,
@@ -50,13 +50,37 @@ type depthController struct {
 }
 
 func newDepthController() *depthController {
-	return &depthController{cost: newCostModel(), acc: newAcceptanceModel(), probeInterval: depthProbeInterval}
+	return &depthController{cost: newCostModel(), acc: newAcceptanceModel(acceptanceMinSamples), probeInterval: depthProbeInterval}
+}
+
+// newBlockDepthController is the controller of a drafter whose block selector
+// adapts its depth: each request is a forBlock session sharing its costs and
+// pooled acceptance.
+func newBlockDepthController() *depthController {
+	c := newDepthController()
+	c.block = true
+	c.acc = newBlockAcceptanceModel()
+	return c
+}
+
+// forBlock starts a request's block session. Costs and acceptance carry across
+// requests, and the acceptance EWMA follows a new text within a few rounds. The
+// probe schedule restarts with a full block, which gives evidence for every
+// position in the new text.
+func (c *depthController) forBlock() *depthController {
+	return &depthController{
+		cost:          c.cost,
+		acc:           c.acc,
+		block:         true,
+		drafterLimit:  c.drafterLimit,
+		scheduled:     c.drafterLimit,
+		probeInterval: depthProbeInterval,
+	}
 }
 
 func (c *depthController) frontier() int { return c.acc.frontier() }
 
-// limit is the deepest depth the search considers: one past the frontier, held
-// to what the drafter can produce.
+// limit bounds the search at one beyond the measured acceptance frontier.
 func (c *depthController) limit() int {
 	limit := c.frontier() + 1
 	if c.drafterLimit > 0 {
@@ -65,28 +89,44 @@ func (c *depthController) limit() int {
 	return limit
 }
 
-// next returns the draft depth for the upcoming step: the EV-optimal depth (held
-// to the search limit), except periodically it probes one past the selection to
-// refresh the next position up. The probe stays within that limit. The cadence
-// doubles toward its cap while probes change nothing and resets on any selection
-// change, giving the new selection a full interval to settle. The chosen depth is
-// recorded in c.scheduled for the next request's open to consume.
-func (c *depthController) next() (depth int) {
+// next selects the best measured throughput and periodically probes a deeper
+// draft. A parked block selector can probe all positions with one draft forward.
+func (c *depthController) next() int {
+	return c.nextFor(c.limit(), c.expectedCommitted)
+}
+
+func (c *depthController) expectedCommitted(n int) float64 {
+	return c.acc.expectedCommitted(n) + c.plainTokens
+}
+
+// nextFor also serves a batch, where the expected output sums the contribution
+// of each conversation and the measured cost covers the whole forward.
+func (c *depthController) nextFor(limit int, expected func(int) float64) (depth int) {
 	defer func() { c.scheduled = depth }()
-	sel := c.selected()
+	sel := c.selected(limit, expected)
 	if sel != c.lastSelected {
 		c.probeInterval = depthProbeInterval
 		c.probeSince = 0
 		c.lastSelected = sel
 	} else if c.probed {
-		c.probeInterval = min(c.probeInterval*2, depthProbeIntervalMax)
+		maxInterval := depthProbeIntervalMax
+		if c.block {
+			// A transition from reasoning to predictable code can make a
+			// whole block profitable before the first position has been relearnt.
+			maxInterval = 2 * depthProbeInterval
+		}
+		c.probeInterval = min(c.probeInterval*2, maxInterval)
 	}
 	c.probed = false
 
 	c.probeSince++
 	if c.probeSince >= c.probeInterval {
 		c.probeSince = 0
-		if probe := min(sel+1, c.limit()); probe != sel {
+		probe := min(sel+1, limit)
+		if c.block && sel == 0 {
+			probe = c.drafterLimit
+		}
+		if probe != sel {
 			c.probed = true
 			return probe
 		}
@@ -97,7 +137,7 @@ func (c *depthController) next() (depth int) {
 	// at has no clean sample; draft the shallowest such depth to dwell there. Without
 	// this the controller stays at the one depth it can sit at without a transition
 	// (depth 0) and never learns that drafting pays on a deep-optimum model.
-	if seed := c.costSeedDepth(); seed >= 0 {
+	if seed := c.costSeedDepth(limit); seed >= 0 {
 		return seed
 	}
 	return sel
@@ -106,8 +146,7 @@ func (c *depthController) next() (depth int) {
 // costSeedDepth is the shallowest depth within the search limit with no clean
 // cost sample, or -1 if all are sampled; the bound keeps cost-seeding from
 // outrunning the acceptance frontier or the drafter.
-func (c *depthController) costSeedDepth() int {
-	limit := c.limit()
+func (c *depthController) costSeedDepth(limit int) int {
 	for n := 0; n <= limit; n++ {
 		if !c.cost.sampled(n) {
 			return n
@@ -120,14 +159,13 @@ func (c *depthController) costSeedDepth() int {
 // argmax within the search limit. The frontier bound keeps the inherited optimistic
 // rate from making ever-deeper depths look best; the depth-0 floor lets it stop
 // speculating. Returns 0 until the cost model can compare depths.
-func (c *depthController) selected() int {
+func (c *depthController) selected(limit int, expected func(int) float64) int {
 	if !c.cost.ready() {
 		return 0
 	}
-	limit := c.limit()
-	best, bestEV := 0, c.acc.expectedCommitted(0)/c.cost.cost(0)
+	best, bestEV := 0, expected(0)/c.cost.cost(0)
 	for n := 1; n <= limit; n++ {
-		if ev := c.acc.expectedCommitted(n) / c.cost.cost(n); ev > bestEV {
+		if ev := expected(n) / c.cost.cost(n); ev > bestEV {
 			best, bestEV = n, ev
 		}
 	}
@@ -230,17 +268,32 @@ const acceptanceEWMAAlpha = 0.1
 // the ramp, since each depth is re-measured as it is drafted.
 const acceptanceMinSamples = 10
 
-// acceptanceModel learns the per-position conditional acceptance rate — the chance
-// position i is accepted given every draft before it already was — as an EWMA, shared
-// across requests so a fresh request keeps the proven-out frontier. Drift is handled
-// by the EWMA forgetting, not by discarding the estimate.
+// acceptanceModel estimates the chance that position i is accepted given that
+// every preceding draft was accepted. Its EWMA follows changes in the text.
 type acceptanceModel struct {
-	rate []float64 // EWMA acceptance rate given the prefix survived; index i is position i
-	seen []int     // times position i was reached (warmup gate for rate)
+	minSamples int
+	rate       []float64 // EWMA acceptance rate given the prefix survived; index i is position i
+	seen       []int     // times position i was reached (warmup gate for rate)
+
+	// pooled shares one rate among the positions past the first. A block
+	// draft's later positions accept at similar rates, and pooling lets every
+	// reached position inform the ones beyond the current depth, which only
+	// probes reach. Their per-position rates still update but are not read.
+	pooled   bool
+	deep     float64
+	deepSeen int
 }
 
-func newAcceptanceModel() *acceptanceModel {
-	return &acceptanceModel{rate: []float64{0}, seen: []int{0}}
+func newAcceptanceModel(minSamples int) *acceptanceModel {
+	return &acceptanceModel{minSamples: minSamples, rate: []float64{0}, seen: []int{0}}
+}
+
+// newBlockAcceptanceModel trusts the first observation of each position, so a
+// full first probe covers the whole block, and pools the positions past the first.
+func newBlockAcceptanceModel() *acceptanceModel {
+	a := newAcceptanceModel(1)
+	a.pooled = true
+	return a
 }
 
 func (a *acceptanceModel) grow(i int) {
@@ -270,19 +323,31 @@ func (a *acceptanceModel) observe(drafted, accepted int) {
 			a.rate[i] += acceptanceEWMAAlpha * (outcome - a.rate[i])
 		}
 		a.seen[i]++
+		if a.pooled && i >= 2 {
+			if a.deepSeen == 0 {
+				a.deep = outcome
+			} else {
+				a.deep += acceptanceEWMAAlpha * (outcome - a.deep)
+			}
+			a.deepSeen++
+		}
 	}
 }
 
 // acceptance returns the rate position i is accepted given its prefix survived. An under-sampled
 // position inherits the deepest trusted rate rather than zero, so the controller
-// keeps exploring deeper instead of locking shallow on noise.
+// keeps exploring deeper instead of locking shallow on noise. A pooled model
+// answers positions past the first with their shared rate once it is trusted.
 func (a *acceptanceModel) acceptance(i int) float64 {
-	if i >= 1 && i < len(a.seen) && a.seen[i] >= acceptanceMinSamples {
+	if a.pooled && i >= 2 && a.deepSeen >= a.minSamples {
+		return a.deep
+	}
+	if i >= 1 && i < len(a.seen) && a.seen[i] >= a.minSamples {
 		return a.rate[i]
 	}
 	// Inherit the deepest trusted rate; fall back to optimistic 1 if none yet.
 	for j := i - 1; j >= 1; j-- {
-		if j < len(a.seen) && a.seen[j] >= acceptanceMinSamples {
+		if j < len(a.seen) && a.seen[j] >= a.minSamples {
 			return a.rate[j]
 		}
 	}
@@ -308,7 +373,7 @@ func (a *acceptanceModel) expectedCommitted(n int) float64 {
 func (a *acceptanceModel) frontier() int {
 	f := 0
 	for i := 1; i < len(a.seen); i++ {
-		if a.seen[i] >= acceptanceMinSamples {
+		if a.seen[i] >= a.minSamples {
 			f = i
 		} else {
 			break

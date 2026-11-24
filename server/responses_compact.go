@@ -146,7 +146,10 @@ func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.Response
 	writeResponsesCompactionError(c, http.StatusInternalServerError, "compaction_failed", "compaction failed; the selected model did not return a valid summary and the original conversation is unchanged")
 }
 
-var compactionContextLimitPattern = regexp.MustCompile(`^The prompt is too long: [0-9]+, model maximum context length: [0-9]+(?: \(ref: [^()]+\))?$`)
+var (
+	compactionContextLimitPattern      = regexp.MustCompile(`^The prompt is too long: [0-9]+, model maximum context length: [0-9]+(?: \(ref: [^()]+\))?$`)
+	localCompactionContextLimitPattern = regexp.MustCompile(`^request \([0-9]+ tokens\) exceeds the available context size \([0-9]+ tokens\), try increasing it$`)
+)
 
 func isCompactionContextLimit(response *responsesInferenceRecorder) bool {
 	if response.status != http.StatusBadRequest && response.status != http.StatusRequestEntityTooLarge {
@@ -159,7 +162,7 @@ func isCompactionContextLimit(response *responsesInferenceRecorder) bool {
 	if body.Error.Code != nil && *body.Error.Code == "context_length_exceeded" {
 		return true
 	}
-	return compactionContextLimitPattern.MatchString(body.Error.Message)
+	return compactionContextLimitPattern.MatchString(body.Error.Message) || localCompactionContextLimitPattern.MatchString(body.Error.Message)
 }
 
 // runResponsesCompactionInference uses the normal Responses stack without the

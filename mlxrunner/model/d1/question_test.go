@@ -137,3 +137,40 @@ func TestSetAttention(t *testing.T) {
 		}
 	})
 }
+
+func TestBatchSetAttentionKeepsQuestionSetsSeparate(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		layouts := []*row{
+			{group: []int32{-1, -1, 0, 1, 1}, stateLen: 2},
+			{group: []int32{-1, 0, 0}, stateLen: 1},
+		}
+		const length, dim = 5, 64
+		values := make([]float32, 2*length*dim)
+		for i := range values {
+			values[i] = float32(math.Sin(float64(i) * 0.17))
+		}
+		q := mlx.FromValues(values, 2, 1, length, dim)
+		k := mlx.MulScalar(q, float32(0.5))
+		v := mlx.AddScalar(q, float32(1))
+		b := &batch.Batch{SeqQueryLens: []int32{5, 3}, Layout: []any{layouts[0], layouts[1]}}
+		for _, sliding := range []bool{false, true} {
+			got := batchSetAttention(b, 2)(q, k, v, 0.125, sliding)
+			for i, layout := range layouts {
+				n := len(layout.group)
+				rowSlice := func(a *mlx.Array) *mlx.Array {
+					return a.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(0, n), mlx.Slice())
+				}
+				want := setAttention(layout, 2)(rowSlice(q), rowSlice(k), rowSlice(v), 0.125, sliding)
+				have, w := mlx.Contiguous(rowSlice(got), false).Floats(), mlx.Contiguous(want, false).Floats()
+				if len(have) == 0 || len(have) != len(w) {
+					t.Fatalf("sliding=%t row=%d value count=%d want %d", sliding, i, len(have), len(w))
+				}
+				for j := range w {
+					if delta := math.Abs(float64(have[j] - w[j])); math.IsNaN(delta) || delta > 1e-5 {
+						t.Fatalf("sliding=%t row=%d value=%d got=%g want=%g", sliding, i, j, have[j], w[j])
+					}
+				}
+			}
+		}
+	})
+}

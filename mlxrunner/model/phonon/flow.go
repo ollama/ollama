@@ -57,28 +57,33 @@ func loadTransformer(tensors map[string]*mlx.Array, prefix string, layers, heads
 }
 
 // forward runs x [1, L, D] at absolute position offset.
-func (t *Transformer) forward(x *mlx.Array, offset int, caches []cache.Attention) *mlx.Array {
-	L, D := int32(x.Dim(1)), int32(x.Dim(2))
-	// Attention uses the batch shape and positions for both text and audio frames.
+func (t *Transformer) forward(x *mlx.Array, offset int, caches []cache.Cache) *mlx.Array {
+	L := int32(x.Dim(1))
+	// Voice and codec prefills use the same computation as batched speech.
 	b := &batch.Batch{
 		InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, int(L)),
 		SeqOffsets:   []int32{int32(offset)},
 		SeqQueryLens: []int32{L},
 	}
+	return t.forwardBatch(x, b, cache.Layers(caches))
+}
+
+func (t *Transformer) forwardBatch(x *mlx.Array, b *batch.Batch, caches []cache.Layer) *mlx.Array {
+	B, L, D := int32(x.Dim(0)), int32(x.Dim(1)), int32(x.Dim(2))
 	H, hd := t.NumHeads, D/t.NumHeads
 	scale := float32(1 / math.Sqrt(float64(hd)))
-	pos := mlx.FromValues([]int32{int32(offset)}, 1)
+	pos := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	split := func(qkv *mlx.Array, i int32) *mlx.Array {
 		s := qkv.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(int(i*D), int((i+1)*D)))
-		return mlx.Transpose(mlx.Reshape(s, 1, L, H, hd), 0, 2, 1, 3)
+		return mlx.Transpose(mlx.Reshape(s, B, L, H, hd), 0, 2, 1, 3)
 	}
 	for i, l := range t.Layers {
 		qkv := l.InProj.Forward(l.Norm1.Forward(x))
 		q := mlx.RoPEWithBase(split(qkv, 0), int(hd), true, t.MaxPeriod, 1, pos)
 		k := mlx.RoPEWithBase(split(qkv, 1), int(hd), true, t.MaxPeriod, 1, pos)
-		history := caches[i].Update(b, k, split(qkv, 2))
+		history := caches[i].(cache.Attention).Update(b, k, split(qkv, 2))
 		a := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(history), nn.WithMask(nn.CausalMask()))
-		a = mlx.Reshape(mlx.Transpose(a, 0, 2, 1, 3), 1, L, D)
+		a = mlx.Reshape(mlx.Transpose(a, 0, 2, 1, 3), B, L, D)
 		x = residual(x, l.OutProj.Forward(a), l.Scale1)
 		h := l.Linear1.Forward(l.Norm2.Forward(x))
 		if t.GELU == "erf" {
@@ -176,7 +181,7 @@ func timeNorm(x, alpha *mlx.Array, norm string) *mlx.Array {
 	return mlx.Mul(mlx.Mul(x, alpha), mlx.RSqrt(mlx.AddScalar(variance, 1e-5)))
 }
 
-// sample returns the latent for state c [1, D] from noise [1, latent].
+// sample returns one latent per state c [B, D], using noise [B, latent].
 func (f *FlowHead) sample(c, noise *mlx.Array) *mlx.Array {
 	y := mlx.Add(f.CondEmbed.Forward(c), f.Time)
 	mod := f.Modulation.Forward(mlx.SiLU(y))

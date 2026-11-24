@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"math"
@@ -1054,4 +1055,96 @@ func TestThinkValueTransportTypes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestToolSchemaKeepsUnmodeledKeywords(t *testing.T) {
+	input := `{
+		"type": "function",
+		"function": {
+			"name": "concert_find_details",
+			"description": "Finds details of a concert event.",
+			"parameters": {
+				"type": "object",
+				"description": "Search filters.",
+				"properties": {
+					"artist": {"type": "string", "description": "Name of the artist performing."},
+					"year": {"type": "integer", "description": "Year of the concert.", "default": 2022, "minimum": 1900},
+					"id": {"type": "integer", "default": 9007199254740993},
+					"venue": {
+						"type": "object",
+						"properties": {"city": {"type": "string", "default": "Toronto"}},
+						"required": ["city"],
+						"additionalProperties": false
+					},
+					"when": {"anyOf": [{"type": "string", "format": "date"}, {"type": "null"}], "default": null}
+				},
+				"required": ["artist"],
+				"additionalProperties": false
+			}
+		}
+	}`
+
+	var tool Tool
+	require.NoError(t, json.Unmarshal([]byte(input), &tool))
+
+	params := tool.Function.Parameters
+	assert.Equal(t, map[string]any{"description": "Search filters.", "additionalProperties": false}, params.Extra)
+
+	year, ok := params.Properties.Get("year")
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{"default": json.Number("2022"), "minimum": json.Number("1900")}, year.Extra)
+
+	artist, ok := params.Properties.Get("artist")
+	require.True(t, ok)
+	assert.Nil(t, artist.Extra, "a property with only modeled keys has no Extra")
+
+	venue, _ := params.Properties.Get("venue")
+	city, _ := venue.Properties.Get("city")
+	assert.Equal(t, map[string]any{"default": "Toronto"}, city.Extra)
+
+	when, _ := params.Properties.Get("when")
+	assert.Equal(t, map[string]any{"default": nil}, when.Extra)
+	assert.Equal(t, map[string]any{"format": "date"}, when.AnyOf[0].Extra)
+
+	out, err := json.Marshal(tool)
+	require.NoError(t, err)
+	assert.JSONEq(t, input, string(out))
+	assert.Contains(t, string(out), `"default":9007199254740993`)
+}
+
+func TestToolPropertyExtraMarshalling(t *testing.T) {
+	t.Run("no extra keys marshals as before", func(t *testing.T) {
+		data, err := json.Marshal(ToolProperty{Type: PropertyType{"string"}, Description: "d"})
+		require.NoError(t, err)
+		assert.Equal(t, `{"type":"string","description":"d"}`, string(data))
+	})
+
+	t.Run("extra keys follow the modeled fields, sorted", func(t *testing.T) {
+		data, err := json.Marshal(ToolProperty{
+			Type:  PropertyType{"integer"},
+			Extra: map[string]any{"minimum": 1, "default": 5},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, `{"type":"integer","default":5,"minimum":1}`, string(data))
+	})
+
+	t.Run("extra keys alone", func(t *testing.T) {
+		data, err := json.Marshal(ToolProperty{Extra: map[string]any{"default": "x"}})
+		require.NoError(t, err)
+		assert.Equal(t, `{"default":"x"}`, string(data))
+	})
+
+	t.Run("caller's HTML escaping applies to modeled and extra keys", func(t *testing.T) {
+		p := ToolProperty{Description: "a < b", Extra: map[string]any{"default": "<x>&"}}
+
+		escaped, err := json.Marshal(p)
+		require.NoError(t, err)
+		assert.Equal(t, "{\"description\":\"a \\u003c b\",\"default\":\"\\u003cx\\u003e\\u0026\"}", string(escaped))
+
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		require.NoError(t, enc.Encode(p))
+		assert.Equal(t, `{"description":"a < b","default":"<x>&"}`+"\n", buf.String())
+	})
 }

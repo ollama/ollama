@@ -51,6 +51,11 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		rendererName, decisionModel = "strands", true
 	case "KevForDecision":
 		rendererName, decisionModel = "kev", true
+	// The staged architecture ID selects AutoTrust's decision runner for the
+	// publisher's Qwen3.5 checkpoint.
+	case "AutoTrustDecision":
+		rendererName, decisionModel = "autotrust-decision", true
+		decisionVision = cfg.VisionConfig != nil
 	case "LayaForDecision":
 		decisionModel = true
 	case "D1Model":
@@ -277,6 +282,8 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "ricursiveforcausallm" || s == "ricursive":
+		return "ripple", nil
 	case strings.Contains(s, "flint"):
 		return "flint", nil
 	case strings.HasPrefix(s, "lfm3"):
@@ -317,6 +324,8 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "ricursiveforcausallm" || s == "ricursive":
+		return "ripple", nil
 	case strings.Contains(s, "flint"):
 		return "flint", nil
 	case strings.HasPrefix(s, "lfm3"):

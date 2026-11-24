@@ -60,6 +60,13 @@ func (td *TensorData) Reader() io.Reader {
 	return td.reader
 }
 
+// Offset returns the tensor's byte offset in its backing file or byte reader.
+// It allows a caller mapping that same source to use the validated tensor range.
+func (td *TensorData) Offset() int64 {
+	_, offset, _ := td.reader.Outer()
+	return offset
+}
+
 // safetensorsHeader builds the JSON header for a minimal safetensors blob
 // containing a single tensor keyed by its name.
 func (td *TensorData) safetensorsHeader() []byte {

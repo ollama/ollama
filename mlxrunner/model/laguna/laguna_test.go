@@ -8,6 +8,7 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
@@ -262,7 +263,7 @@ func TestTinyLagunaLoadAndForward(t *testing.T) {
 			InputIDs:     tokens,
 			SeqOffsets:   []int32{0},
 			SeqQueryLens: []int32{int32(tokens.Dim(1))},
-		}, caches)
+		}, cache.Layers(caches))
 		mlx.Eval(hidden)
 		if got := hidden.Dims(); len(got) != 3 || got[0] != 1 || got[1] != 3 || got[2] != 32 {
 			t.Fatalf("hidden shape = %v, want [1 3 32]", got)
@@ -564,7 +565,7 @@ func TestSwitchMLPFusedGateUpMatchesSeparate(t *testing.T) {
 			DownWeight: makePatternExpertWeight(2, 3, 4, 0.013),
 		}
 		fused := &SwitchMLP{
-			GateUpWeight: fuseExpertStacks(separate.GateWeight, separate.UpWeight, 2),
+			GateUpWeight: model.FuseExpertStacks(separate.GateWeight, separate.UpWeight, 2),
 			DownWeight:   separate.DownWeight,
 		}
 
@@ -593,9 +594,9 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 		mlx.Eval(gateQ, gateScales, upQ, upScales)
 
 		mixed := &SwitchMLP{
-			GateUpWeightQ:          fuseExpertStacks(gateQ, upQ, 1),
-			GateUpScales:           fuseExpertStacks(gateScales, upScales, 1),
-			GateUpBiases:           fuseExpertStacks(gateBiases, upBiases, 1),
+			GateUpWeightQ:          model.FuseExpertStacks(gateQ, upQ, 1),
+			GateUpScales:           model.FuseExpertStacks(gateScales, upScales, 1),
+			GateUpBiases:           model.FuseExpertStacks(gateBiases, upBiases, 1),
 			GateUpBits:             8,
 			GateUpGroupSize:        32,
 			GateUpMode:             "mxfp8",
@@ -657,8 +658,8 @@ func TestSwitchMLPFusedGateUpGlobalScaleMatchesSeparate(t *testing.T) {
 		}
 
 		fused := &SwitchMLP{
-			GateUpWeightQ:     fuseExpertStacks(gateQ, upQ, 1),
-			GateUpScales:      fuseExpertStacks(gateScales, upScales, 1),
+			GateUpWeightQ:     model.FuseExpertStacks(gateQ, upQ, 1),
+			GateUpScales:      model.FuseExpertStacks(gateScales, upScales, 1),
 			GateUpGlobalScale: shared,
 			GateUpBits:        4, GateUpGroupSize: 16, GateUpMode: "nvfp4",
 			DownWeight: downWeight, DownWeightSourceLayout: true,

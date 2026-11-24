@@ -142,9 +142,10 @@ func runDecisionCases(t *testing.T, modelName string, corpus decisiontest.Corpus
 	}
 	var tally decisiontest.Tally
 	datasets := make(map[string]decisiontest.Tally)
+	distinct := make([]decisiontest.Response, min(4, len(corpus.Cases)))
 	t.Logf("decision regression cases=%d", len(corpus.Cases))
 	t.Run("corpus", func(t *testing.T) {
-		for _, c := range corpus.Cases {
+		for i, c := range corpus.Cases {
 			t.Run(c.ID, func(t *testing.T) {
 				req := c.Request
 				req.Model = modelName
@@ -165,6 +166,9 @@ func runDecisionCases(t *testing.T, modelName string, corpus decisiontest.Corpus
 				if err != nil {
 					t.Fatal(err)
 				}
+				if i < len(distinct) {
+					distinct[i] = result
+				}
 				if len(wrong) == 0 {
 					return
 				}
@@ -179,6 +183,21 @@ func runDecisionCases(t *testing.T, modelName string, corpus decisiontest.Corpus
 	if t.Failed() {
 		return
 	}
+	// Distinct inputs catch row mix-ups that repeating one warm input cannot.
+	t.Run("concurrent-distinct", func(t *testing.T) {
+		for i, c := range corpus.Cases[:len(distinct)] {
+			t.Run(c.ID, func(t *testing.T) {
+				t.Parallel()
+				got := score(t, c.Request)
+				if diff := cmp.Diff(distinct[i].Answers, got.Answers, cmpopts.EquateApprox(0, .01)); diff != "" {
+					t.Errorf("answers changed (-independent +concurrent): %s", diff)
+				}
+				if got.Usage.InputTokens != distinct[i].Usage.InputTokens {
+					t.Errorf("input tokens changed: %d -> %d", distinct[i].Usage.InputTokens, got.Usage.InputTokens)
+				}
+			})
+		}
+	})
 	input := corpus.Cases[0].Request
 	input.Questions = &decision.Questions{}
 	for _, c := range corpus.Cases {

@@ -411,6 +411,7 @@ func (r *Nemotron3NanoRenderer) renderToolPropertyExtraKeys(sb *strings.Builder,
 	if len(prop.Required) > 0 {
 		sb.WriteString("\n<required>" + r.pythonJSON(prop.Required) + "</required>")
 	}
+	r.renderExtraKeys(sb, prop.Extra)
 }
 
 func (r *Nemotron3NanoRenderer) renderToolParameterExtraKeys(sb *strings.Builder, params api.ToolFunctionParameters) {
@@ -420,6 +421,18 @@ func (r *Nemotron3NanoRenderer) renderToolParameterExtraKeys(sb *strings.Builder
 	if params.Items != nil {
 		sb.WriteString("\n<items>" + r.templateValue(params.Items) + "</items>")
 	}
+	r.renderExtraKeys(sb, params.Extra)
+}
+
+func (r *Nemotron3NanoRenderer) renderExtraKeys(sb *strings.Builder, extra map[string]any) {
+	keys := make([]string, 0, len(extra))
+	for key := range extra {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		sb.WriteString("\n<" + key + ">" + r.templateValue(extra[key]) + "</" + key + ">")
+	}
 }
 
 func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
@@ -428,6 +441,8 @@ func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
 		return "null"
 	case string:
 		return strconv.Quote(value)
+	case json.Number:
+		return value.String()
 	case bool:
 		if value {
 			return "true"
@@ -506,6 +521,14 @@ func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
 		}
 		if len(value.Required) > 0 {
 			parts = append(parts, `"required": `+r.pythonJSON(value.Required))
+		}
+		keys := make([]string, 0, len(value.Extra))
+		for key := range value.Extra {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			parts = append(parts, strconv.Quote(key)+": "+r.pythonJSON(value.Extra[key]))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	default:

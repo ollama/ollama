@@ -116,7 +116,7 @@
       "inherits": ["llama_cuda_v13_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13_arm64",
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "121",
+        "CMAKE_CUDA_ARCHITECTURES": "103;121",
         "GGML_CPU": "OFF",
         "CMAKE_CUDA_FLAGS": "-target-dir=arm64 -t 4",
         "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"
@@ -126,29 +126,6 @@
       "name": "llama_cuda_v13_user_arch",
       "inherits": ["llama_cuda_v13_base"],
       "binaryDir": "${sourceDir}/../../build/llama-server-cuda_v13"
-    },
-    {
-      "name": "llama_cuda_jetpack5_base",
-      "hidden": true,
-      "inherits": ["default"],
-      "cacheVariables": {
-        "GGML_CUDA": "ON",
-        "OLLAMA_RUNNER_DIR": "cuda_jetpack5",
-        "OLLAMA_GPU_BACKEND": "cuda"
-      }
-    },
-    {
-      "name": "llama_cuda_jetpack5",
-      "inherits": ["llama_cuda_jetpack5_base"],
-      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_jetpack5",
-      "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "72;87"
-      }
-    },
-    {
-      "name": "llama_cuda_jetpack5_user_arch",
-      "inherits": ["llama_cuda_jetpack5_base"],
-      "binaryDir": "${sourceDir}/../../build/llama-server-cuda_jetpack5"
     },
     {
       "name": "llama_cuda_jetpack6_base",
@@ -286,16 +263,6 @@
     {
       "name": "llama_cuda_v13_user_arch",
       "configurePreset": "llama_cuda_v13_user_arch",
-      "targets": ["ggml-cuda"]
-    },
-    {
-      "name": "llama_cuda_jetpack5",
-      "configurePreset": "llama_cuda_jetpack5",
-      "targets": ["ggml-cuda"]
-    },
-    {
-      "name": "llama_cuda_jetpack5_user_arch",
-      "configurePreset": "llama_cuda_jetpack5_user_arch",
       "targets": ["ggml-cuda"]
     },
     {

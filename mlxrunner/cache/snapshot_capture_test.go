@@ -10,11 +10,11 @@ import (
 
 // fillKV writes n single-token steps into c, one Update per token, so the
 // cache reaches offset n the way decode would.
-func fillKV(c Attention, n int) {
+func fillKV(c Cache, n int) {
 	for range n {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
+		c.(Attention).Update(newKVBatch(c.Offset(), k.Dim(2)), k, v)
 	}
 }
 

@@ -265,6 +265,62 @@ func TestShowInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("safetensors_bias_and_gamma_vectors", func(t *testing.T) {
+		bias := api.Tensor{Name: "proj.bias", Type: "BF16", Shape: []uint64{32}}
+		gamma := api.Tensor{Name: "vision.ls_1.gamma", Type: "BF16", Shape: []uint64{32}}
+		mixed := []api.Tensor{
+			{Name: "norm.weight", Type: "BF16", Shape: []uint64{32}},
+			bias,
+			{Name: "linear_attn.dt_bias", Type: "F32", Shape: []uint64{8}},
+			gamma,
+			{Name: "proj.weight", Type: "nvfp4", Shape: []uint64{32, 64}},
+			{Name: "experts.bias", Type: "F32", Shape: []uint64{4, 32}},
+			{Name: "experts.gamma", Type: "F32", Shape: []uint64{4, 32}},
+		}
+		for _, tt := range []struct {
+			name    string
+			format  string
+			tensors []api.Tensor
+			verbose bool
+			want    []string
+		}{
+			{"mixed", manifest.FormatSafetensors, mixed, true, []string{
+				"norm.weight BF16 [32]", "linear_attn.dt_bias F32 [8]",
+				"proj.weight nvfp4 [32 64]", "experts.bias F32 [4 32]", "experts.gamma F32 [4 32]",
+			}},
+			{"only filtered vectors", manifest.FormatSafetensors, []api.Tensor{bias, gamma}, true, nil},
+			{"GGUF", manifest.FormatGGUF, []api.Tensor{bias, gamma}, true, []string{"proj.bias BF16 [32]", "vision.ls_1.gamma BF16 [32]"}},
+			{"plain", manifest.FormatSafetensors, mixed, false, nil},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				var b bytes.Buffer
+				if err := showInfo(&api.ShowResponse{
+					Details:   api.ModelDetails{Format: tt.format},
+					ModelInfo: map[string]any{"general.architecture": "test"},
+					Tensors:   tt.tensors,
+				}, tt.verbose, &b); err != nil {
+					t.Fatal(err)
+				}
+				if hasMetadata := strings.Contains(b.String(), "\n  Metadata\n"); hasMetadata != tt.verbose {
+					t.Errorf("metadata section present = %t, want %t", hasMetadata, tt.verbose)
+				}
+				_, table, found := strings.Cut(b.String(), "\n  Tensors\n")
+				if found != (len(tt.want) > 0) {
+					t.Errorf("tensor section present = %t, want %t", found, len(tt.want) > 0)
+				}
+				var rows []string
+				for _, line := range strings.Split(table, "\n") {
+					if fields := strings.Fields(line); len(fields) > 0 {
+						rows = append(rows, strings.Join(fields, " "))
+					}
+				}
+				if diff := cmp.Diff(tt.want, rows); diff != "" {
+					t.Errorf("unexpected tensor rows (-want +got):\n%s", diff)
+				}
+			})
+		}
+	})
+
 	t.Run("parameters", func(t *testing.T) {
 		var b bytes.Buffer
 		if err := showInfo(&api.ShowResponse{

@@ -13,6 +13,10 @@
 
         $env:OLLAMA_VERSION="0.5.7"; irm https://ollama.com/install.ps1 | iex
 
+    Preview channel:
+
+        $env:OLLAMA_CHANNEL="preview"; irm "https://ollama.com/install.ps1?channel=preview" | iex
+
     Custom install directory:
 
         $env:OLLAMA_INSTALL_DIR="D:\Ollama"; irm https://ollama.com/install.ps1 | iex
@@ -23,7 +27,8 @@
 
     Environment variables:
 
-        OLLAMA_VERSION       Target version (default: latest stable)
+        OLLAMA_VERSION       Target version (overrides OLLAMA_CHANNEL)
+        OLLAMA_CHANNEL       Release channel: stable or preview (default: stable)
         OLLAMA_INSTALL_DIR   Custom install directory
         OLLAMA_UNINSTALL     Set to 1 to uninstall Ollama
         OLLAMA_DEBUG         Enable verbose output
@@ -33,6 +38,9 @@
 
 .EXAMPLE
     $env:OLLAMA_VERSION = "0.5.7"; irm https://ollama.com/install.ps1 | iex
+
+.EXAMPLE
+    $env:OLLAMA_CHANNEL = "preview"; irm "https://ollama.com/install.ps1?channel=preview" | iex
 
 .LINK
     https://ollama.com
@@ -46,6 +54,7 @@ $ProgressPreference = "SilentlyContinue"
 # --------------------------------------------------------------------------
 
 $Version      = if ($env:OLLAMA_VERSION) { $env:OLLAMA_VERSION } else { "" }
+$Channel      = if ($env:OLLAMA_CHANNEL) { $env:OLLAMA_CHANNEL } else { "stable" }
 $InstallDir   = if ($env:OLLAMA_INSTALL_DIR) { $env:OLLAMA_INSTALL_DIR } else { "" }
 $Uninstall    = $env:OLLAMA_UNINSTALL -eq "1"
 $DebugInstall = [bool]$env:OLLAMA_DEBUG
@@ -247,6 +256,10 @@ function Invoke-Install {
     # Determine installer URL
     if ($Version) {
         $installerUrl = "$DownloadBaseURL/OllamaSetup.exe?version=$Version"
+    } elseif ($Channel -eq "preview") {
+        $installerUrl = "$DownloadBaseURL/OllamaSetup.exe?channel=preview"
+    } elseif ($Channel -ne "stable") {
+        throw "Unsupported release channel: $Channel"
     } else {
         $installerUrl = "$DownloadBaseURL/OllamaSetup.exe"
     }

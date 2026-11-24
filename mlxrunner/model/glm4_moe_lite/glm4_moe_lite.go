@@ -98,7 +98,7 @@ type MLAAttention struct {
 }
 
 // Forward computes absorbed MLA attention output.
-func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (a *MLAAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QAProj.Forward(x)
 	q = a.QALayerNorm.Forward(q, cfg.RMSNormEps)
 	q = a.QBProj.Forward(q)
@@ -329,7 +329,7 @@ type DenseBlock struct {
 }
 
 // Forward applies the dense block
-func (blk *DenseBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (blk *DenseBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
@@ -346,7 +346,7 @@ type MoEBlock struct {
 }
 
 // Forward applies the MoE block
-func (blk *MoEBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (blk *MoEBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	r := blk.Attention.Forward(blk.InputLayerNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg)
 	h := mlx.Add(x, r)
 
@@ -356,7 +356,7 @@ func (blk *MoEBlock) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positi
 
 // Block interface for both dense and MoE blocks
 type Block interface {
-	Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array
+	Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array
 }
 
 // Model represents the complete GLM4-MoE-Lite model
@@ -379,20 +379,6 @@ func computeScale(cfg *Config) float32 {
 		scale *= s * s
 	}
 	return scale
-}
-
-// supportsGatherQMM returns true if the quantization mode has GatherQMM kernel support.
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
 }
 
 // ExpertWeight holds a single expert's weight with optional quantization components.
@@ -428,7 +414,7 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 		)
 
 		globalScale, _ := model.ReadGlobalScale(tensors, path+".weight", path)
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		if useQuantized && model.SupportsGatherQMM(mode, bits) {
 			return &ExpertWeight{
 				Weight: w, Scales: scales, Biases: qbiases,
 				GlobalScale: globalScale,
@@ -478,7 +464,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, base string, useQuanti
 		key, w, scales,
 	)
 	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if useQuantized && model.SupportsGatherQMM(mode, bits) {
 		return &StackedExpertWeights{
 			Weight: w, Scales: scales, Biases: qbiases,
 			GlobalScales: globalScale,
@@ -638,37 +624,12 @@ func newModel(root *model.Root) (model.Model, error) {
 	cfg.Scale = computeScale(&cfg)
 
 	// Set up quantization parameters from pre-scanned metadata
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
 	// Load tokenizer
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
-	}
-
-	tokConfig := &tokenizer.TokenizerConfig{
-		ConfigJSON: configData,
-	}
-
-	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = genConfigData
-	}
-
-	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = tokConfigData
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 
 	m := &Model{
@@ -686,14 +647,14 @@ func newModel(root *model.Root) (model.Model, error) {
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	cfg := m.Config
 	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
-	useQuantized := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantized := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantized && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantized = true
 				break
 			}
@@ -827,7 +788,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 // Forward computes the forward pass of the model
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -835,7 +796,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	h := m.EmbedTokens.Forward(b.InputIDs)
 
 	for i, layer := range m.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if caches != nil {
 			c = caches[i]
 		}

@@ -31,6 +31,7 @@ type serverModelMetadata struct {
 type LaunchModel struct {
 	Name            string
 	Remote          bool
+	RemoteModel     string
 	ToolCapable     bool
 	Capabilities    []modelpkg.Capability
 	Thinking        *api.ModelRecommendationThinking
@@ -175,6 +176,12 @@ func (i *modelInventory) Load(ctx context.Context) ([]LaunchModel, error) {
 	return i.load(ctx, false)
 }
 
+func (i *modelInventory) snapshot() []LaunchModel {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return cloneLaunchModels(i.models)
+}
+
 func (i *modelInventory) Refresh(ctx context.Context) ([]LaunchModel, error) {
 	return i.load(ctx, true)
 }
@@ -249,6 +256,7 @@ func launchModelFromListResponse(model api.ListModelResponse) LaunchModel {
 	return LaunchModel{
 		Name:            model.Name,
 		Remote:          model.RemoteModel != "",
+		RemoteModel:     model.RemoteModel,
 		ToolCapable:     slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
 		Capabilities:    append([]modelpkg.Capability(nil), model.Capabilities...),
 		ContextLength:   model.Details.ContextLength,

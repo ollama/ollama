@@ -1,10 +1,13 @@
 package mlxrunner
 
 import (
+	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
@@ -19,7 +22,7 @@ type textOnlyModel struct{}
 
 func (textOnlyModel) LoadWeights(map[string]*mlx.Array) error { return nil }
 func (textOnlyModel) NewCaches() []cache.Cache                { return nil }
-func (textOnlyModel) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (textOnlyModel) Forward(*batch.Batch, []cache.Layer) (*mlx.Array, *mlx.Array) {
 	return nil, nil
 }
 func (textOnlyModel) Unembed(x *mlx.Array) *mlx.Array { return x }
@@ -28,7 +31,7 @@ func (textOnlyModel) MaxContextLength() int           { return 0 }
 
 func TestPrepareRejectsMediaWithoutSupport(t *testing.T) {
 	r := &Runner{Model: textOnlyModel{}}
-	req := &Request{
+	req := &request{
 		CompletionRequest: CompletionRequest{
 			Prompt: "[img-0] what is this?",
 			Media:  []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte{1}}},
@@ -90,9 +93,85 @@ func mediaTestRunner(t *testing.T) *Runner {
 	}
 }
 
+func TestPrepareMediaTagTransport(t *testing.T) {
+	r := mediaTestRunner(t)
+	tok, err := tokenizer.LoadFromBytes([]byte(`{
+		"model":{"type":"BPE","vocab":{"a":0,"Ā":1,"[":2,"i":3,"m":4,"g":5,"-":6,"9":7,"]":8,"b":9},"merges":[]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Tokenizer = tok
+	attachment := []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}}
+	literal := "a\x00\x00[\x00img-9][img-9]"
+	literalIDs := []int32{0, 1, 1, 2, 1, 3, 4, 5, 6, 7, 8, 2, 3, 4, 5, 6, 7, 8}
+	rawPrefix := "a\x00\x00[\x00img-9]"
+	for _, tc := range []struct {
+		name string
+		req  CompletionRequest
+		want []int32
+	}{
+		{
+			name: "raw text",
+			req:  CompletionRequest{Prompt: literal},
+			want: literalIDs,
+		},
+		{
+			name: "raw with attachment",
+			req:  CompletionRequest{Prompt: rawPrefix + "[img-0]b", Media: attachment},
+			want: append(slices.Clone(literalIDs[:11]), 70, 500, 500, 71, 9),
+		},
+		{
+			name: "rendered with attachment",
+			req:  CompletionRequest{Prompt: literal + "[img-9]b", Media: []llm.MediaData{{ID: 9, Kind: llm.MediaKindImage, Data: []byte("img"), TagOffsets: []int{len(literal)}}}},
+			want: append(slices.Clone(literalIDs), 70, 500, 500, 71, 9),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &request{CompletionRequest: tc.req}
+			if err := r.Prepare(req); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(req.Tokens, tc.want) {
+				t.Errorf("got tokens %v, want %v", req.Tokens, tc.want)
+			}
+			if len(req.MediaItems) != len(tc.req.Media) {
+				t.Errorf("got %d media items, want %d", len(req.MediaItems), len(tc.req.Media))
+			}
+		})
+	}
+}
+
+func TestPreparePositionedMediaOrder(t *testing.T) {
+	r := mediaTestRunner(t)
+	const prefix = "0[img-0]"
+	const tag0, tag1 = "[img-0]", "[img-1]"
+	prompt := prefix + tag1 + tag0 + tag1
+	media := []llm.MediaData{
+		{ID: 0, Kind: llm.MediaKindImage, Data: []byte{1}, TagOffsets: []int{len(prefix + tag1)}},
+		{ID: 1, Kind: llm.MediaKindImage, Data: []byte{2, 3}, TagOffsets: []int{len(prefix), len(prefix + tag1 + tag0)}},
+	}
+	req := &request{CompletionRequest: CompletionRequest{Prompt: prompt, Media: media}}
+	if err := r.Prepare(req); err != nil {
+		t.Fatal(err)
+	}
+	var sizes []int
+	for _, item := range req.MediaItems {
+		sizes = append(sizes, item.item.Opaque.(int))
+	}
+	if !slices.Equal(sizes, []int{2, 1, 2}) {
+		t.Fatalf("media payload sizes in prompt order = %v, want [2 1 2]", sizes)
+	}
+
+	req.Media[0].TagOffsets[0]++
+	if err := r.Prepare(req); err == nil {
+		t.Fatal("accepted an offset pointing inside a tag")
+	}
+}
+
 func TestPrepareExpandsMediaTags(t *testing.T) {
 	r := mediaTestRunner(t)
-	req := &Request{
+	req := &request{
 		CompletionRequest: CompletionRequest{
 			Prompt: "01[img-0]23",
 			Media:  []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}},
@@ -157,7 +236,7 @@ func TestPrepareValidatesAuthoredItems(t *testing.T) {
 	for _, c := range cases {
 		r := mediaTestRunner(t)
 		r.Model = rawMediaModel{prepared: model.PreparedRequest{Tokens: []int32{0, 5, 5, 5, 1}, Items: c.items}}
-		err := r.Prepare(&Request{CompletionRequest: CompletionRequest{Prompt: "0[img-0]1", Media: media}})
+		err := r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "0[img-0]1", Media: media}})
 		if c.want == "" {
 			if err != nil {
 				t.Fatalf("%s: unexpected error %v", c.name, err)
@@ -174,13 +253,13 @@ func TestPrepareMediaErrors(t *testing.T) {
 	media := []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}}
 
 	r := mediaTestRunner(t)
-	err := r.Prepare(&Request{CompletionRequest: CompletionRequest{Prompt: "0[img-3]1", Media: media}})
+	err := r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "0[img-3]1", Media: media}})
 	if err == nil || !strings.Contains(err.Error(), "invalid image index: 3") {
 		t.Fatalf("missing-ID error = %v", err)
 	}
 
 	// Unreferenced media is ignored with a warning; the prompt still works.
-	req := &Request{CompletionRequest: CompletionRequest{Prompt: "01", Media: media}}
+	req := &request{CompletionRequest: CompletionRequest{Prompt: "01", Media: media}}
 	if err := r.Prepare(req); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +269,7 @@ func TestPrepareMediaErrors(t *testing.T) {
 
 	// Duplicate references are allowed; each occurrence is its own item with
 	// the same fold.
-	req = &Request{CompletionRequest: CompletionRequest{Prompt: "[img-0]0[img-0]", Media: media}}
+	req = &request{CompletionRequest: CompletionRequest{Prompt: "[img-0]0[img-0]", Media: media}}
 	if err := r.Prepare(req); err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +279,47 @@ func TestPrepareMediaErrors(t *testing.T) {
 
 	// A zero-length expansion cannot carry identity into the trie keys.
 	r.Model = stubMediaModel{}
-	err = r.Prepare(&Request{CompletionRequest: CompletionRequest{Prompt: "[img-0]", Media: media}})
+	err = r.Prepare(&request{CompletionRequest: CompletionRequest{Prompt: "[img-0]", Media: media}})
 	if err == nil || !strings.Contains(err.Error(), "no tokens") {
 		t.Fatalf("zero-expansion error = %v", err)
 	}
+}
+
+// driveTestDecoder starts at the post-prefill boundary so decoder fixtures use
+// the production scheduler for emission, cancellation and completion.
+func driveTestDecoder(ctx context.Context, r *Runner, request request, session *cacheSession, d decoder, promptEval time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	request.Ctx = ctx
+	if session.cache == nil {
+		// Decoder fixtures own their caches directly; prefix retention has
+		// separate lifecycle tests that supply a complete prefixCache.
+		session.cache = &prefixCache{}
+	}
+	req := &batchRequest{
+		request: request, session: session, decoder: d,
+		output: newGenerationOutput(r, request, session, promptEval),
+	}
+	if spec, ok := d.(*speculativeDecoder); ok {
+		req.spec = spec.s
+	}
+	slot := &batchSlot{request: req, cache: session.cache}
+	s := &batchScheduler{r: r, slots: []*batchSlot{slot}}
+	var err error
+	for slot.request != nil {
+		var progressed bool
+		mlx.Scoped(func() { progressed = s.step() })
+		for _, response := range req.responses {
+			if response.Error != nil {
+				err = *response.Error
+			}
+		}
+		if !progressed {
+			runtime.Gosched()
+		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
 }
