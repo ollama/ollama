@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -144,6 +145,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := openai.ToUsage(chatResponse)
 				finishChunk.Usage = &u
+				finishChunk.Timings = openai.ToTimings(chatResponse.Metrics)
 				finishChunk.Choices = []openai.ChunkChoice{}
 				d, err := json.Marshal(finishChunk)
 				if err != nil {
@@ -210,6 +212,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := openai.ToUsageGenerate(generateResponse)
 				c.Usage = &u
+				c.Timings = openai.ToTimings(generateResponse.Metrics)
 				c.Choices = []openai.CompleteChunkChoice{}
 				d, err := json.Marshal(c)
 				if err != nil {
@@ -443,7 +446,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 	}
 }
 
-func ChatMiddleware() gin.HandlerFunc {
+func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req openai.ChatCompletionRequest
 		err := c.ShouldBindJSON(&req)
@@ -459,7 +462,8 @@ func ChatMiddleware() gin.HandlerFunc {
 
 		var b bytes.Buffer
 
-		chatReq, err := openai.FromChatRequest(req)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := openai.FromChatRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
@@ -511,6 +515,19 @@ func (w *ResponsesWriter) writeEvent(eventType string, data any) error {
 }
 
 func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
+	if w.stream {
+		if message, ok := streamErrorMessage(data); ok {
+			w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+			for _, event := range w.converter.ResponseFailed(map[string]any{
+				"error": openai.ResponsesError{Code: "server_error", Message: message},
+			}) {
+				if err := w.writeEvent(event.Event, event.Data); err != nil {
+					return 0, err
+				}
+			}
+			return len(data), nil
+		}
+	}
 	var chatResponse api.ChatResponse
 	if err := json.Unmarshal(data, &chatResponse); err != nil {
 		return 0, err
@@ -536,8 +553,29 @@ func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
 	return len(data), json.NewEncoder(w.ResponseWriter).Encode(response)
 }
 
+// Once HTTP 200 is committed, native generation failures arrive in-band.
+// Presence of the error field matters even when its message is empty.
+func streamErrorMessage(data []byte) (string, bool) {
+	var envelope struct {
+		Error *string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Error == nil {
+		return "", false
+	}
+	return *envelope.Error, true
+}
+
 func (w *ResponsesWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
+	// Cloud /v1/responses replies bypass this native response writer.
+	if code == http.StatusUnauthorized {
+		var authorizationError api.AuthorizationError
+		if err := json.Unmarshal(data, &authorizationError); err != nil {
+			authorizationError.SigninURL = ""
+		}
+		w.ResponseWriter.Header().Set("Content-Type", "application/json")
+		return len(data), json.NewEncoder(w.ResponseWriter).Encode(openai.NewResponsesAuthenticationError(authorizationError.SigninURL))
+	}
 	if code != http.StatusOK {
 		return w.writeError(data)
 	}
@@ -577,6 +615,11 @@ type WebSearchResponsesWriter struct {
 	finalOutputStreamed bool
 }
 
+// SetThinking keeps web-search follow-ups aligned with the resolved chat request.
+func (w *WebSearchResponsesWriter) SetThinking(think *api.ThinkValue) {
+	w.chat.Think = think
+}
+
 func (w *WebSearchResponsesWriter) WriteHeader(code int) {
 	w.status = code
 }
@@ -601,6 +644,13 @@ func (w *WebSearchResponsesWriter) Write(data []byte) (int, error) {
 	}
 	if w.Status() != http.StatusOK {
 		return len(data), w.writeWebSearchError(decodeWebSearchResponseError(w.Status(), data), api.Metrics{})
+	}
+	if w.inner.stream {
+		if _, ok := streamErrorMessage(data); ok {
+			w.done = true
+			w.buffered = nil
+			return w.inner.writeResponse(data)
+		}
 	}
 
 	var response api.ChatResponse
@@ -705,6 +755,7 @@ func (w *WebSearchResponsesWriter) finishStream() error {
 	var toolCalls []api.ToolCall
 	for _, response := range w.buffered {
 		observed.PromptEvalCount = max(observed.PromptEvalCount, response.Metrics.PromptEvalCount)
+		observed.PromptEvalCachedCount = maxOptionalInts(observed.PromptEvalCachedCount, response.Metrics.PromptEvalCachedCount)
 		observed.EvalCount = max(observed.EvalCount, response.Metrics.EvalCount)
 		if response.Message.Content != "" {
 			contentBuilder.WriteString(response.Message.Content)
@@ -862,9 +913,16 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 		}
 		calls = append(calls, responseCall)
 
+		resultContent := formatResponsesWebSearchResults(searchResponse.Results)
+		if loop == maxWebSearchLoops {
+			tools = slices.DeleteFunc(tools, func(tool api.Tool) bool {
+				return tool.Function.Name == "web_search"
+			})
+			resultContent += "\nThe web search limit for this response has been reached. Continue using the available results and state any limitations."
+		}
 		messages = append(messages,
 			buildWebSearchAssistantMessage(current, currentCall),
-			api.Message{Role: "tool", ToolCallID: currentCall.ID, Content: formatResponsesWebSearchResults(searchResponse.Results)},
+			api.Message{Role: "tool", ToolCallID: currentCall.ID, Content: resultContent},
 		)
 		var followUp api.ChatResponse
 		var followUpOutputStreamed bool
@@ -877,6 +935,7 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 			return api.ChatResponse{}, calls, usage, err
 		}
 		usage.PromptEvalCount += followUp.Metrics.PromptEvalCount
+		usage.PromptEvalCachedCount = addOptionalInts(usage.PromptEvalCachedCount, followUp.Metrics.PromptEvalCachedCount)
 		usage.EvalCount += followUp.Metrics.EvalCount
 
 		next, hasWebSearch, mixed := findWebSearchToolCall(followUp.Message.ToolCalls)
@@ -1023,6 +1082,7 @@ func (w *WebSearchResponsesWriter) writeWebSearchResponse(final api.ChatResponse
 		response.Usage.InputTokens = usage.PromptEvalCount
 		response.Usage.OutputTokens = usage.EvalCount
 		response.Usage.TotalTokens = usage.PromptEvalCount + usage.EvalCount
+		response.Usage.InputTokensDetails.CachedTokens = optionalIntValue(usage.PromptEvalCachedCount)
 	}
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
 	w.done = true
@@ -1096,42 +1156,50 @@ func (w *WebSearchResponsesWriter) writeWebSearchError(err error, usage api.Metr
 	message := err.Error()
 	status := http.StatusBadGateway
 	errorCode := "api_error"
+	signinURL := ""
 	var authorizationError api.AuthorizationError
 	var statusError api.StatusError
 	switch {
 	case errors.As(err, &authorizationError):
 		status = authorizationError.StatusCode
 		errorCode = "authentication_error"
-		if authorizationError.SigninURL != "" {
-			message += "; sign in at " + authorizationError.SigninURL
-		}
+		message = openai.ResponsesSignInMessage
+		signinURL = authorizationError.SigninURL
 	case errors.As(err, &statusError):
 		status = statusError.StatusCode
 		if status == http.StatusTooManyRequests {
 			errorCode = "rate_limit_exceeded"
+		} else if status == http.StatusUnauthorized {
+			errorCode = "authentication_error"
+			message = openai.ResponsesSignInMessage
 		}
 	}
 	if !w.inner.stream {
 		w.ResponseWriter.Header().Set("Content-Type", "application/json")
 		w.ResponseWriter.WriteHeader(status)
 		w.done = true
+		if errorCode == "authentication_error" {
+			return json.NewEncoder(w.ResponseWriter).Encode(openai.NewResponsesAuthenticationError(signinURL))
+		}
 		return json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(status, message))
 	}
 	w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 	response := map[string]any{
-		"id": w.inner.responseID, "object": "response", "status": "failed", "model": w.req.Model,
-		"output": []any{}, "error": map[string]any{"code": errorCode, "message": message},
-		"usage": map[string]any{"input_tokens": usage.PromptEvalCount, "output_tokens": usage.EvalCount, "total_tokens": usage.PromptEvalCount + usage.EvalCount},
+		"error": map[string]any{"code": errorCode, "message": message},
+		"usage": map[string]any{
+			"input_tokens":         usage.PromptEvalCount,
+			"output_tokens":        usage.EvalCount,
+			"total_tokens":         usage.PromptEvalCount + usage.EvalCount,
+			"input_tokens_details": map[string]any{"cached_tokens": optionalIntValue(usage.PromptEvalCachedCount)},
+		},
 	}
-	initialEvents := w.inner.converter.Process(api.ChatResponse{})
-	for _, event := range initialEvents {
+	if signinURL != "" {
+		response["signin_url"] = signinURL
+	}
+	for _, event := range w.inner.converter.ResponseFailed(response) {
 		if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
 			return err
 		}
-	}
-	event := w.inner.converter.ResponseFailed(response)
-	if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
-		return err
 	}
 	w.done = true
 	return nil
@@ -1151,7 +1219,7 @@ func decodeWebSearchResponseError(status int, data []byte) error {
 	return api.StatusError{StatusCode: status, ErrorMessage: response.Error}
 }
 
-func ResponsesMiddleware() gin.HandlerFunc {
+func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestCtx := c.Request.Context()
 		if c.GetHeader("Content-Encoding") == "zstd" {
@@ -1171,10 +1239,17 @@ func ResponsesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		chatReq, err := openai.FromResponsesRequest(req)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := openai.FromResponsesRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
+		}
+
+		// Clients can retain reasoning effort when switching to a non-thinking
+		// model. Ignore that effort, but preserve explicit Ollama think overrides.
+		if req.Think == nil {
+			c.Set("relax_thinking", true)
 		}
 
 		// Check if client requested streaming (defaults to false)
@@ -1226,116 +1301,6 @@ func ResponsesMiddleware() gin.HandlerFunc {
 		} else {
 			c.Writer = w
 		}
-		c.Next()
-	}
-}
-
-// TranscriptionWriter collects streamed chat responses and outputs a transcription response.
-type TranscriptionWriter struct {
-	BaseWriter
-	responseFormat string
-	text           strings.Builder
-}
-
-func (w *TranscriptionWriter) Write(data []byte) (int, error) {
-	code := w.ResponseWriter.Status()
-	if code != http.StatusOK {
-		return w.writeError(data)
-	}
-
-	var chatResponse api.ChatResponse
-	if err := json.Unmarshal(data, &chatResponse); err != nil {
-		return 0, err
-	}
-
-	w.text.WriteString(chatResponse.Message.Content)
-
-	if chatResponse.Done {
-		text := strings.TrimSpace(w.text.String())
-
-		if w.responseFormat == "text" {
-			w.ResponseWriter.Header().Set("Content-Type", "text/plain")
-			_, err := w.ResponseWriter.Write([]byte(text))
-			if err != nil {
-				return 0, err
-			}
-			return len(data), nil
-		}
-
-		w.ResponseWriter.Header().Set("Content-Type", "application/json")
-		resp := openai.TranscriptionResponse{Text: text}
-		if err := json.NewEncoder(w.ResponseWriter).Encode(resp); err != nil {
-			return 0, err
-		}
-	}
-
-	return len(data), nil
-}
-
-// TranscriptionMiddleware handles /v1/audio/transcriptions requests.
-// It accepts multipart/form-data with an audio file and converts it to a chat request.
-func TranscriptionMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Parse multipart form (limit 25MB).
-		if err := c.Request.ParseMultipartForm(25 << 20); err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "failed to parse multipart form: "+err.Error()))
-			return
-		}
-
-		model := c.Request.FormValue("model")
-		if model == "" {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "model is required"))
-			return
-		}
-
-		file, _, err := c.Request.FormFile("file")
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "file is required: "+err.Error()))
-			return
-		}
-		defer file.Close()
-
-		audioData, err := io.ReadAll(file)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, "failed to read audio file"))
-			return
-		}
-
-		if len(audioData) == 0 {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "audio file is empty"))
-			return
-		}
-
-		req := openai.TranscriptionRequest{
-			Model:          model,
-			AudioData:      audioData,
-			ResponseFormat: c.Request.FormValue("response_format"),
-			Language:       c.Request.FormValue("language"),
-			Prompt:         c.Request.FormValue("prompt"),
-		}
-
-		chatReq, err := openai.FromTranscriptionRequest(req)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
-			return
-		}
-
-		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, err.Error()))
-			return
-		}
-
-		c.Request.Body = io.NopCloser(&b)
-		c.Request.ContentLength = int64(b.Len())
-		c.Request.Header.Set("Content-Type", "application/json")
-
-		w := &TranscriptionWriter{
-			BaseWriter:     BaseWriter{ResponseWriter: c.Writer},
-			responseFormat: req.ResponseFormat,
-		}
-
-		c.Writer = w
 		c.Next()
 	}
 }

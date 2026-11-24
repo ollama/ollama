@@ -78,7 +78,7 @@ func init() {
 func loadOSVersion() {
 	UserAgentOS = "Windows"
 	verInfo := OSVERSIONINFOEXW{}
-	verInfo.dwOSVersionInfoSize = (uint32)(unsafe.Sizeof(verInfo))
+	verInfo.dwOSVersionInfoSize = uint32(unsafe.Sizeof(verInfo))
 	ntdll, err := windows.LoadDLL("ntdll.dll")
 	if err != nil {
 		slog.Warn("unable to find ntdll", "error", err)
@@ -394,13 +394,13 @@ func IsProcRunning(procName string) []uint32 {
 		defer windows.CloseHandle(hProcess)
 		var module windows.Handle
 		var cbNeeded uint32
-		cb := (uint32)(unsafe.Sizeof(module))
+		cb := uint32(unsafe.Sizeof(module))
 		if err := windows.EnumProcessModules(hProcess, &module, cb, &cbNeeded); err != nil {
 			continue
 		}
 		var sz uint32 = 1024 * 8
 		moduleName := make([]uint16, sz)
-		cb = uint32(len(moduleName)) * (uint32)(unsafe.Sizeof(uint16(0)))
+		cb = uint32(len(moduleName)) * uint32(unsafe.Sizeof(uint16(0)))
 		if err := windows.GetModuleBaseName(hProcess, module, &moduleName[0], cb); err != nil && err != syscall.ERROR_INSUFFICIENT_BUFFER {
 			continue
 		}

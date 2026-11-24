@@ -40,6 +40,13 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *Qwen3VLParser) ThinkingClose() []string {
+	if p.state == CollectingThinkingContent {
+		return []string{thinkingCloseTag}
+	}
+	return nil
+}
+
 func (p *Qwen3VLParser) PreservedTokens() []string {
 	return []string{
 		thinkingCloseTag,

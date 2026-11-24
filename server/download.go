@@ -25,6 +25,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/transfer"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -239,21 +240,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			newOpts := new(registryOptions)
 			*newOpts = *opts
 
-			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-				if len(via) > 10 {
-					return errMaxRedirectsExceeded
-				}
-
-				// if the hostname is the same, allow the redirect
-				if req.URL.Hostname() == requestURL.Hostname() {
-					return nil
-				}
-
-				// stop at the first redirect that is not
-				// the same hostname as the original
-				// request.
-				return http.ErrUseLastResponse
-			}
+			newOpts.CheckRedirect = downloadDiscoveryRedirect(requestURL)
 
 			resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, nil, nil, newOpts)
 			if err != nil {
@@ -264,15 +251,28 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				continue
 			}
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusOK {
+			switch resp.StatusCode {
+			case http.StatusOK, http.StatusMovedPermanently, http.StatusFound,
+				http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			default:
 				return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 			}
-			return resp.Location()
+			loc, err := resp.Location()
+			if err != nil {
+				return nil, err
+			}
+			if err := transfer.ValidateRedirectTarget(ctx, loc, requestURL.String(), opts.Insecure); err != nil {
+				return nil, err
+			}
+			return loc, nil
 		}
 	}()
 	if err != nil {
 		return err
 	}
+
+	client := transfer.NewRedirectClient(requestURL.String(), opts.Insecure)
+	defer client.CloseIdleConnections()
 
 	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numDownloadParts)
@@ -286,7 +286,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			var err error
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
-				err = b.downloadChunk(inner, directURL, w, part)
+				err = b.downloadChunk(inner, client, directURL, w, part)
 				switch {
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
@@ -330,7 +330,41 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	return nil
 }
 
-func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
+// downloadDiscoveryRedirect follows only redirects within the original
+// registry origin. A new scheme, host, or port must first pass the redirect
+// target policy before the blob downloader makes another request.
+func downloadDiscoveryRedirect(base *url.URL) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) > 10 {
+			return errMaxRedirectsExceeded
+		}
+		if err := transfer.ValidateRedirectScheme(req.URL, base.String()); err != nil {
+			return err
+		}
+		if sameRegistryOrigin(req.URL, base) {
+			return nil
+		}
+		return http.ErrUseLastResponse
+	}
+}
+
+func sameRegistryOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil || a.Scheme != b.Scheme || !strings.EqualFold(a.Hostname(), b.Hostname()) {
+		return false
+	}
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		if u.Scheme == "https" {
+			return "443"
+		}
+		return "80"
+	}
+	return port(a) == port(b)
+}
+
+func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
 	g, ctx := errgroup.WithContext(ctx)
 	attemptStarted := time.Now()
 	transferDone := make(chan struct{})
@@ -342,7 +376,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 			return err
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return err
 		}
@@ -438,7 +472,7 @@ func (b *blobDownload) acquire() {
 }
 
 func (b *blobDownload) release() {
-	if b.references.Add(-1) == 0 {
+	if b.references.Add(-1) == 0 && b.CancelFunc != nil {
 		b.CancelFunc()
 	}
 }
@@ -475,7 +509,7 @@ type downloadOpts struct {
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	if opts.digest == "" {
-		return false, fmt.Errorf(("%s: %s"), opts.n.DisplayNamespaceModel(), "digest is empty")
+		return false, fmt.Errorf("%s: %s", opts.n.DisplayNamespaceModel(), "digest is empty")
 	}
 
 	fp, err := manifest.BlobsPath(opts.digest)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/user"
@@ -23,6 +24,7 @@ import (
 	"golang.org/x/text/transform"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 var ErrModelNotFound = errors.New("no Modelfile or safetensors files found")
@@ -65,52 +67,50 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	for _, c := range f.Commands {
 		switch c.Name {
 		case "model":
-			path, err := expandPath(c.Args, relativeDir)
+			paths, err := expandPaths(c.Args, relativeDir)
 			if err != nil {
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
+			digestMap, err := fileDigestMapForPaths(paths)
 			if errors.Is(err, os.ErrNotExist) {
 				req.From = c.Args
 				continue
 			} else if err != nil {
 				return nil, err
 			}
-			if err := rejectMatchingLocalPath("DRAFT", path, draftPaths); err != nil {
-				return nil, err
+			for _, path := range paths {
+				if err := rejectMatchingLocalPath("DRAFT", path, draftPaths); err != nil {
+					return nil, err
+				}
 			}
-			modelPaths = append(modelPaths, path)
+			modelPaths = append(modelPaths, paths...)
 
 			if req.Files == nil {
-				req.Files = digestMap
-			} else {
-				for k, v := range digestMap {
-					req.Files[k] = v
-				}
+				req.Files = make(map[string]string)
 			}
+			maps.Copy(req.Files, digestMap)
 		case "draft":
-			path, err := expandPath(c.Args, relativeDir)
+			paths, err := expandPaths(c.Args, relativeDir)
 			if err != nil {
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
+			digestMap, err := fileDigestMapForPaths(paths)
 			if err != nil {
 				return nil, err
 			}
-			if err := rejectMatchingLocalPath("DRAFT", path, modelPaths); err != nil {
-				return nil, err
+			for _, path := range paths {
+				if err := rejectMatchingLocalPath("DRAFT", path, modelPaths); err != nil {
+					return nil, err
+				}
 			}
-			draftPaths = append(draftPaths, path)
+			draftPaths = append(draftPaths, paths...)
 
 			if req.DraftFiles == nil {
-				req.DraftFiles = digestMap
-			} else {
-				for k, v := range digestMap {
-					req.DraftFiles[k] = v
-				}
+				req.DraftFiles = make(map[string]string)
 			}
+			maps.Copy(req.DraftFiles, digestMap)
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
@@ -133,6 +133,11 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			req.Renderer = c.Args
 		case "parser":
 			req.Parser = c.Args
+		case "capability":
+			if !model.Capability(c.Args).IsValid() {
+				return nil, fmt.Errorf("unknown capability: %q", c.Args)
+			}
+			req.Capabilities = append(req.Capabilities, c.Args)
 		case "requires":
 			// golang.org/x/mod/semver requires "v" prefix
 			requires := c.Args
@@ -180,6 +185,34 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	}
 
 	return req, nil
+}
+
+func expandPaths(path, relativeDir string) ([]string, error) {
+	path, err := expandPath(path, relativeDir)
+	if err != nil {
+		return nil, err
+	}
+
+	matches, err := filepath.Glob(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return []string{path}, nil
+	}
+	return matches, nil
+}
+
+func fileDigestMapForPaths(paths []string) (map[string]string, error) {
+	files := make(map[string]string)
+	for _, path := range paths {
+		digests, err := fileDigestMap(path)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(files, digests)
+	}
+	return files, nil
 }
 
 func rejectMatchingLocalPath(name, path string, existing []string) error {
@@ -410,7 +443,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "draft":
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "draft", "capability":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -436,7 +469,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"draft\", \"renderer\", \"parser\", \"parameter\", \"message\", or \"requires\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"draft\", \"renderer\", \"parser\", \"parameter\", \"message\", \"requires\", or \"capability\"")
 )
 
 type ParserError struct {
@@ -696,7 +729,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "draft", "renderer", "parser", "parameter", "message", "requires":
+	case "from", "license", "template", "system", "adapter", "draft", "renderer", "parser", "parameter", "message", "requires", "capability":
 		return true
 	default:
 		return false

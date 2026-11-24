@@ -19,7 +19,13 @@ type lazy[T any] struct {
 
 func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 	it := lazy[T]{}
-	if err := binary.Read(f.reader, binary.LittleEndian, &it.count); err != nil {
+	if f.Version == 1 {
+		var count uint32
+		if err := binary.Read(f.reader, f.byteOrder, &count); err != nil {
+			return nil, err
+		}
+		it.count = uint64(count)
+	} else if err := binary.Read(f.reader, f.byteOrder, &it.count); err != nil {
 		return nil, err
 	}
 	if it.count > uint64(maxInt()) {
@@ -52,35 +58,29 @@ func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 	return &it, nil
 }
 
-func (g *lazy[T]) Values() iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for _, v := range g.All() {
-			if !yield(v) {
-				break
-			}
-		}
-	}
-}
-
 func (g *lazy[T]) All() iter.Seq2[int, T] {
 	return func(yield func(int, T) bool) {
 		for i := range g.count {
 			n := int(i)
 			if n < len(g.values) {
 				if !yield(n, g.values[n]) {
-					break
+					return
 				}
 			} else {
 				t, ok := g.next()
 				if !ok {
-					break
+					return
 				}
 
 				if !yield(n, t) {
-					break
+					return
 				}
 			}
 		}
+
+		// Resume once after the final yielded item so the producer can run its
+		// completion callback and publish any state derived from the section.
+		g.rest()
 	}
 }
 

@@ -22,7 +22,35 @@ const (
 	deepSeekHarnessProvider        = "ollama"
 	deepSeekHarnessAPIKeyEnv       = "OLLAMA_LAUNCH_DSH_API_KEY"
 	deepSeekHarnessWebSettings     = "web-search-deepseek"
+
+	deepSeekHarnessCompactionHeadroom   = 65_536
+	deepSeekHarnessMaxTokensContextFrac = 8
 )
+
+// deepSeekHarnessMaxTokens bounds the maxTokens dsh is told about so that its
+// automatic context compaction keeps working. dsh (0.2.x) reserves maxTokens
+// plus a 64k headroom out of the context window before it will compact, and
+// disables compaction entirely when that reservation reaches the window. Our
+// cloud limits often report an output limit equal to the full context window,
+// which would leave dsh running without compaction until the context is simply
+// full. The compaction threshold is also the window minus that reservation, so
+// a large maxTokens makes compaction fire early: half of a 262k window as
+// maxTokens would compact at 64k. Capping maxTokens to an eighth of the window
+// keeps compaction at roughly seven eighths, and when even that leaves under
+// two headrooms of room the value is omitted so dsh falls back to its default.
+func deepSeekHarnessMaxTokens(contextLength, maxOutputTokens int) int {
+	if maxOutputTokens <= 0 {
+		return 0
+	}
+	if contextLength <= 0 {
+		return maxOutputTokens
+	}
+	maxTokens := min(maxOutputTokens, contextLength/deepSeekHarnessMaxTokensContextFrac)
+	if contextLength-maxTokens < 2*deepSeekHarnessCompactionHeadroom {
+		return 0
+	}
+	return maxTokens
+}
 
 var (
 	deepSeekHarnessLookPath = exec.LookPath
@@ -43,16 +71,12 @@ func (d *DeepSeekHarness) Run(_ string, _ []LaunchModel, args []string) error {
 		return err
 	}
 
-	bin, err := deepSeekHarnessLookPath("dsh")
-	if err != nil {
-		return fmt.Errorf("dsh is not installed: %w", err)
-	}
 	patchPath, err := deepSeekHarnessPatchPath()
 	if err != nil {
 		return err
 	}
 
-	cmd, err := deepSeekHarnessExecutableCommand(bin, deepSeekHarnessLaunchArgs(patchPath, args))
+	cmd, err := deepSeekHarnessLaunchCommand(deepSeekHarnessLaunchArgs(patchPath, args))
 	if err != nil {
 		return err
 	}
@@ -119,7 +143,10 @@ func ensureDeepSeekHarnessInstalled() (string, error) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install deepseek harness: %w", err)
+		if _, npxErr := deepSeekHarnessLookPath("npx"); npxErr != nil {
+			return "", fmt.Errorf("failed to install deepseek harness: %w", err)
+		}
+		return "", nil
 	}
 
 	path, err := deepSeekHarnessLookPath("dsh")
@@ -136,6 +163,21 @@ func deepSeekHarnessExecutableCommand(bin string, args []string) (*exec.Cmd, err
 
 func deepSeekHarnessNpmCommand(bin string, args []string) (*exec.Cmd, error) {
 	return deepSeekHarnessNodeShimCommand(bin, []string{"node_modules", "npm", "bin", "npm-cli.js"}, args)
+}
+
+func deepSeekHarnessLaunchCommand(args []string) (*exec.Cmd, error) {
+	bin, dshErr := deepSeekHarnessLookPath("dsh")
+	if dshErr == nil {
+		return deepSeekHarnessExecutableCommand(bin, args)
+	}
+
+	npx, err := deepSeekHarnessLookPath("npx")
+	if err != nil {
+		return nil, fmt.Errorf("dsh is not installed: %w", dshErr)
+	}
+	return deepSeekHarnessNodeShimCommand(npx,
+		[]string{"node_modules", "npm", "bin", "npx-cli.js"},
+		append([]string{"--yes", deepSeekHarnessNpmPackage}, args...))
 }
 
 // Windows npm binaries are .cmd shims, which cannot be passed safely to
@@ -378,8 +420,8 @@ func deepSeekHarnessModelConfigs(primary string, models []LaunchModel) []any {
 		if item.ContextLength > 0 {
 			entry["contextWindow"] = item.ContextLength
 		}
-		if item.MaxOutputTokens > 0 {
-			entry["maxTokens"] = item.MaxOutputTokens
+		if maxTokens := deepSeekHarnessMaxTokens(item.ContextLength, item.MaxOutputTokens); maxTokens > 0 {
+			entry["maxTokens"] = maxTokens
 		}
 		configs = append(configs, entry)
 	}

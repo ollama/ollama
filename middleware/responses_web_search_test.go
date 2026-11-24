@@ -3,8 +3,11 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -49,11 +52,11 @@ func TestWebSearchResponsesWriterNonStreaming(t *testing.T) {
 			if strings.Contains(messages[1].Content, "Cite") || !strings.Contains(messages[1].Content, "URL: https://ollama.com/news") {
 				t.Fatalf("unexpected search result content: %q", messages[1].Content)
 			}
-			return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "Read [Ollama](https://ollama.com/news)."}, Metrics: api.Metrics{PromptEvalCount: 7, EvalCount: 3}}, nil
+			return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", Content: "Read [Ollama](https://ollama.com/news)."}, Metrics: api.Metrics{PromptEvalCount: 7, PromptEvalCachedCount: testIntPtr(3), EvalCount: 3}}, nil
 		},
 	}
 
-	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "ollama news"})}}}}, Metrics: api.Metrics{PromptEvalCount: 5, EvalCount: 2}}
+	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "ollama news"})}}}}, Metrics: api.Metrics{PromptEvalCount: 5, PromptEvalCachedCount: testIntPtr(2), EvalCount: 2}}
 	data, err := json.Marshal(initial)
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +80,9 @@ func TestWebSearchResponsesWriterNonStreaming(t *testing.T) {
 	}
 	if response.Usage == nil || response.Usage.InputTokens != 12 || response.Usage.OutputTokens != 5 {
 		t.Fatalf("usage = %#v", response.Usage)
+	}
+	if response.Usage.InputTokensDetails.CachedTokens != 5 {
+		t.Fatalf("cached input tokens = %d, want 5", response.Usage.InputTokensDetails.CachedTokens)
 	}
 	if len(response.Output[1].Content[0].Annotations) != 0 {
 		t.Fatalf("annotations = %#v, want none", response.Output[1].Content[0].Annotations)
@@ -127,9 +133,7 @@ func TestWebSearchResponsesWriterNonStreamingAuthorizationError(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "https://ollama.com/signin") {
-		t.Fatalf("missing sign-in URL: %s", body)
-	}
+	assertResponsesAuthenticationError(t, recorder.Body.String(), false, "https://ollama.com/signin")
 }
 
 func TestWebSearchResponsesWriterStreamingAuthorizationError(t *testing.T) {
@@ -149,10 +153,7 @@ func TestWebSearchResponsesWriterStreamingAuthorizationError(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	body := recorder.Body.String()
-	if !strings.Contains(body, "response.failed") || !strings.Contains(body, "https://ollama.com/signin") {
-		t.Fatalf("missing streaming authorization error: %s", body)
-	}
+	assertResponsesAuthenticationError(t, recorder.Body.String(), true, "https://ollama.com/signin")
 }
 
 func TestWebSearchResponsesWriterStreamingRateLimitError(t *testing.T) {
@@ -241,6 +242,9 @@ func TestWebSearchResponsesWriterPreservesFollowUpErrors(t *testing.T) {
 			}
 			if recorder.Code != test.status || !strings.Contains(recorder.Body.String(), test.wantInBody) {
 				t.Fatalf("response status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if test.status == http.StatusUnauthorized {
+				assertResponsesAuthenticationError(t, recorder.Body.String(), false, test.wantInBody)
 			}
 		})
 	}
@@ -587,6 +591,83 @@ func TestWebSearchResponsesWriterStreamsFollowUpBeforeSecondSearch(t *testing.T)
 	}
 }
 
+func TestResponsesMiddlewareWebSearchReasoningBeforeClientTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name        string
+		afterSearch bool
+	}{
+		{name: "search available but unused"},
+		{name: "client tools after search", afterSearch: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks := []api.ChatResponse{
+				{Message: api.Message{Thinking: "Check both cities."}},
+				{Message: api.Message{ToolCalls: []api.ToolCall{
+					{ID: "call_paris", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+					{ID: "call_london", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
+				}}},
+				{Done: true},
+			}
+			router := gin.New()
+			router.POST("/v1/responses", ResponsesMiddleware(), func(c *gin.Context) {
+				writer := c.Writer.(*WebSearchResponsesWriter)
+				writer.search = func(context.Context, string) (*api.WebSearchResponse, error) {
+					return &api.WebSearchResponse{}, nil
+				}
+				writer.followUpStream = func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+					for _, chunk := range chunks {
+						if err := yield(chunk); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+				initial := chunks
+				if tt.afterSearch {
+					initial = []api.ChatResponse{{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{
+						{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}},
+					}}}}
+				}
+				for _, chunk := range initial {
+					if err := json.NewEncoder(c.Writer).Encode(chunk); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
+				"model":"test-model", "stream":true, "input":"Check the weather in both cities.",
+				"tools":[{"type":"web_search"},{"type":"function","name":"get_weather","parameters":{"type":"object"}}]
+			}`))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var gotTypes []string
+			for _, block := range strings.Split(recorder.Body.String(), "\n\n") {
+				if !strings.HasPrefix(block, "event: response.output_item.done\n") {
+					continue
+				}
+				_, data, _ := strings.Cut(block, "\ndata: ")
+				var event map[string]any
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
+					t.Fatal(err)
+				}
+				gotTypes = append(gotTypes, event["item"].(map[string]any)["type"].(string))
+			}
+			wantTypes := []string{"reasoning", "function_call", "function_call"}
+			if tt.afterSearch {
+				wantTypes = append([]string{"web_search_call"}, wantTypes...)
+			}
+			if !reflect.DeepEqual(gotTypes, wantTypes) {
+				t.Errorf("completed item order = %v, want %v", gotTypes, wantTypes)
+			}
+		})
+	}
+}
+
 func TestWebSearchResponsesWriterStreamingMixedFollowUpDoesNotLatchText(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -681,38 +762,191 @@ func TestWebSearchResponsesWriterStreamingSplitInitialToolsDoNotLatchFinalText(t
 	}
 }
 
-func TestWebSearchResponsesWriterStreamingLoopExhaustionFails(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	stream := true
-	request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
-	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
-	searches := 0
-	writer := &WebSearchResponsesWriter{
-		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
-		chat: &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
-		search: func(context.Context, string) (*api.WebSearchResponse, error) {
-			searches++
-			return &api.WebSearchResponse{}, nil
-		},
-		followUpStream: func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
-			call := api.ToolCall{ID: "call_next", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "again"})}}
-			if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{call}}}); err != nil {
-				return err
+func TestWebSearchResponsesWriterFinalizesAtSearchLimit(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		stream     bool
+		clientTool bool
+	}{
+		{name: "non-streaming"},
+		{name: "streaming", stream: true},
+		{name: "non-streaming client tool", clientTool: true},
+		{name: "streaming client tool", stream: true, clientTool: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			request := openai.ResponsesRequest{Model: "test-model", Stream: &test.stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+			chat := &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}}
+			if test.clientTool {
+				chat.Tools = append(chat.Tools, api.Tool{Type: "function", Function: api.ToolFunction{Name: "get_weather"}})
 			}
-			return yield(api.ChatResponse{Done: true})
-		},
+			originalTools := append(api.Tools(nil), chat.Tools...)
+			inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: test.stream, responseID: "resp_test", itemID: "msg_test", request: request}
+			searches, followUps := 0, 0
+			searchCall := api.ToolCall{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}}
+			writer := &WebSearchResponsesWriter{
+				BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request, chat: chat,
+				search: func(context.Context, string) (*api.WebSearchResponse, error) {
+					searches++
+					return &api.WebSearchResponse{Results: []api.WebSearchResult{{Title: "Forecast", URL: "https://example.com/weather", Content: "Rain expected."}}}, nil
+				},
+			}
+			followUp := func(_ context.Context, messages []api.Message, tools api.Tools) (api.ChatResponse, error) {
+				followUps++
+				if len(messages) != searches*2 {
+					t.Fatalf("follow-up messages = %d, want %d", len(messages), searches*2)
+				}
+				for i := 1; i < len(messages); i += 2 {
+					if messages[i].Role != "tool" || messages[i].ToolCallID != searchCall.ID || !strings.Contains(messages[i].Content, "Rain expected.") {
+						t.Fatalf("search result %d lost: %#v", i, messages[i])
+					}
+				}
+				response := api.ChatResponse{Done: true, Message: api.Message{Role: "assistant"}, Metrics: api.Metrics{PromptEvalCount: 5, PromptEvalCachedCount: testIntPtr(2), EvalCount: 3}}
+				if searches < 10 {
+					if !reflect.DeepEqual(tools, originalTools) {
+						t.Fatalf("tools removed before search limit: %#v", tools)
+					}
+					response.Message.ToolCalls = []api.ToolCall{searchCall}
+					return response, nil
+				}
+				if len(tools) != len(originalTools)-1 {
+					t.Fatalf("final follow-up tools = %#v, want only client tools", tools)
+				}
+				if !strings.Contains(messages[len(messages)-1].Content, "web search limit") {
+					t.Fatalf("final search result does not explain the limit: %#v", messages[len(messages)-1])
+				}
+				if test.clientTool {
+					if !reflect.DeepEqual(tools[0], originalTools[1]) {
+						t.Fatalf("client tool changed: %#v", tools)
+					}
+					response.Message.ToolCalls = []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "SF"})}}}
+				} else {
+					response.Message.Content = "Rain expected, based on the available results."
+				}
+				return response, nil
+			}
+			writer.followUpChat = followUp
+			writer.followUpStream = func(ctx context.Context, messages []api.Message, tools api.Tools, yield func(api.ChatResponse) error) error {
+				response, err := followUp(ctx, messages, tools)
+				if err != nil {
+					return err
+				}
+				if err := yield(api.ChatResponse{Message: response.Message}); err != nil {
+					return err
+				}
+				return yield(api.ChatResponse{Done: true, Metrics: response.Metrics})
+			}
+			initial := api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{searchCall}}, Metrics: api.Metrics{PromptEvalCount: 5, PromptEvalCachedCount: testIntPtr(2), EvalCount: 3}}
+			data, _ := json.Marshal(initial)
+			if _, err := writer.Write(data); err != nil {
+				t.Fatal(err)
+			}
+			if searches != 10 || followUps != 10 {
+				t.Fatalf("searches=%d follow-ups=%d, want 10 each", searches, followUps)
+			}
+			if !reflect.DeepEqual(chat.Tools, originalTools) {
+				t.Fatalf("original request tools mutated: %#v", chat.Tools)
+			}
+			body := recorder.Body.String()
+			var response openai.ResponsesResponse
+			if test.stream {
+				if strings.Count(body, "event: response.completed\n") != 1 || strings.Contains(body, "event: response.failed") {
+					t.Fatalf("unexpected terminal event: %s", body)
+				}
+				for _, block := range strings.Split(body, "\n\n") {
+					if data, ok := strings.CutPrefix(block, "event: response.completed\ndata: "); ok {
+						var event struct {
+							Response openai.ResponsesResponse `json:"response"`
+						}
+						if err := json.Unmarshal([]byte(data), &event); err != nil {
+							t.Fatal(err)
+						}
+						response = event.Response
+					}
+				}
+			} else if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != http.StatusOK || response.Status != "completed" || len(response.Output) != 11 {
+				t.Fatalf("unexpected final response: %s", body)
+			}
+			for _, item := range response.Output[:10] {
+				if item.Type != "web_search_call" || item.Status != "completed" {
+					t.Fatalf("search output lost: %#v", item)
+				}
+			}
+			final := response.Output[10]
+			if test.clientTool {
+				if final.Type != "function_call" || final.Name != "get_weather" || final.CallID != "call_weather" {
+					t.Fatalf("client tool output lost: %#v", final)
+				}
+			} else if final.Type != "message" || len(final.Content) != 1 || final.Content[0].Text != "Rain expected, based on the available results." {
+				t.Fatalf("final answer lost: %#v", final)
+			}
+			if response.Usage == nil || response.Usage.InputTokens != 55 || response.Usage.OutputTokens != 33 || response.Usage.InputTokensDetails.CachedTokens != 22 {
+				t.Fatalf("usage = %#v, want all eleven model responses", response.Usage)
+			}
+		})
 	}
+}
 
-	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "first"})}}}}}
-	data, _ := json.Marshal(initial)
-	if _, err := writer.Write(data); err != nil {
-		t.Fatal(err)
-	}
-	body := recorder.Body.String()
-	if searches != maxWebSearchLoops || !strings.Contains(body, "response.failed") || !strings.Contains(body, "exceeded the maximum") || strings.Contains(body, "response.completed") {
-		t.Fatalf("loop exhaustion was not a terminal failure: searches=%d body=%s", searches, body)
+func TestWebSearchResponsesWriterFinalizationFailure(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, test := range []struct {
+			name    string
+			err     error
+			status  int
+			message string
+		}{
+			{name: "model requests another search", status: http.StatusBadGateway, message: "web_search exceeded the maximum of 10 calls"},
+			{name: "model request fails", err: api.StatusError{StatusCode: http.StatusServiceUnavailable, ErrorMessage: "model unavailable"}, status: http.StatusServiceUnavailable, message: "model unavailable"},
+		} {
+			t.Run(fmt.Sprintf("%s/stream=%t", test.name, stream), func(t *testing.T) {
+				gin.SetMode(gin.TestMode)
+				recorder := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(recorder)
+				request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+				inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: stream, responseID: "resp_test", itemID: "msg_test", request: request}
+				searches, followUps := 0, 0
+				call := api.ToolCall{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "again"})}}
+				writer := &WebSearchResponsesWriter{
+					BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+					chat: &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+					search: func(context.Context, string) (*api.WebSearchResponse, error) {
+						searches++
+						return &api.WebSearchResponse{}, nil
+					},
+					followUpChat: func(context.Context, []api.Message, api.Tools) (api.ChatResponse, error) {
+						followUps++
+						if followUps == 10 && test.err != nil {
+							return api.ChatResponse{}, test.err
+						}
+						return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{call}}}, nil
+					},
+				}
+				initial := api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{call}}}
+				data, _ := json.Marshal(initial)
+				if _, err := writer.Write(data); err != nil {
+					t.Fatal(err)
+				}
+				if searches != 10 || followUps != 10 {
+					t.Fatalf("searches=%d follow-ups=%d, want 10 each", searches, followUps)
+				}
+				body := recorder.Body.String()
+				if !strings.Contains(body, test.message) {
+					t.Fatalf("finalization error lost: %s", body)
+				}
+				if stream {
+					if recorder.Code != http.StatusOK || strings.Count(body, "event: response.failed\n") != 1 || strings.Contains(body, "event: response.completed") {
+						t.Fatalf("expected a terminal failure: %s", body)
+					}
+				} else if recorder.Code != test.status {
+					t.Fatalf("status=%d, want %d: %s", recorder.Code, test.status, body)
+				}
+			})
+		}
 	}
 }
 
@@ -901,3 +1135,60 @@ func completedResponseOutput(t *testing.T, body string) []map[string]any {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestWebSearchResponsesStreamFailure(t *testing.T) {
+	for _, failSearch := range []bool{true, false} {
+		name := "follow-up generation"
+		if failSearch {
+			name = "search execution"
+		}
+		t.Run(name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			stream := true
+			request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+			inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+			writer := &WebSearchResponsesWriter{
+				BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+				chat: &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+				search: func(context.Context, string) (*api.WebSearchResponse, error) {
+					if failSearch {
+						return nil, errors.New("search failed")
+					}
+					return &api.WebSearchResponse{}, nil
+				},
+				followUpStream: func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+					if err := yield(api.ChatResponse{Message: api.Message{Content: "partial answer"}}); err != nil {
+						return err
+					}
+					return errors.New("generation failed")
+				},
+			}
+			data, err := json.Marshal(api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := writer.Write(data); err != nil {
+				t.Fatal(err)
+			}
+			message := "generation failed"
+			wantTypes := []string{"web_search_call", "message"}
+			if failSearch {
+				message = "search failed"
+				wantTypes = []string{"web_search_call"}
+			}
+			response := assertFailedResponsesStream(t, recorder.Body.String(), "api_error", message, wantTypes)
+			wantStatus := "completed"
+			if failSearch {
+				wantStatus = "failed"
+			}
+			if response.Output[0].Status != wantStatus {
+				t.Fatalf("search status=%q, want %q", response.Output[0].Status, wantStatus)
+			}
+			if !failSearch && (response.Output[1].Status != "incomplete" || response.Output[1].Content[0].Text != "partial answer") {
+				t.Fatalf("follow-up content lost: %#v", response.Output)
+			}
+		})
+	}
+}

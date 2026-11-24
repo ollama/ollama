@@ -2,11 +2,14 @@
 
 package integration
 
+import "testing"
+
 var (
 	releaseUnicodeInputModel    = integrationModel{Name: "deepseek-coder-v2:16b-lite-instruct-q2_K", MinVRAMGB: 12}
 	releaseUnicodeOutputModel   = "gemma2:2b"
 	releaseNumPredictModel      = "llama3.2:1b"
 	releaseParallelHistoryModel = integrationModel{Name: "gpt-oss:20b", MinVRAMGB: 16}
+	releaseParallelMLXModels    = []string{"gemma4:e2b-nvfp4", "qwen3.5:2b-nvfp4"}
 	releaseChatModels           = []integrationModel{
 		{Name: "gemma4", MinVRAMGB: 8},
 		{Name: "gemma4:12b", MinVRAMGB: 16},
@@ -53,6 +56,7 @@ var (
 		"gemma4",
 		"gpt-oss:20b",
 		"qwen3.6:27b",
+		"qwen3.8:27b",
 	}
 	releaseAudioModels = []string{
 		"nemotron3:33b",
@@ -63,15 +67,23 @@ var (
 
 const releaseSplitBatchVisionModel = "qwen3.5:2b"
 
+func TestStructuredOutput(t *testing.T) {
+	runIntegrationGroup(t, "structured-output")
+}
+
 func init() {
 	// Fixed release regression cases
 	registerIntegrationCases(
 		integrationTestCase("api-generate", smol, runAPIGenerate),
 		integrationTestCase("api-chat", smol, runAPIChat),
+		integrationModelTestCase("system-one-vision", defaultTestModel("clef-flash:9b"), runAPISystemOneVision),
+		integrationModelTestCase("system-one-audio", defaultTestModel("d1-omni-2b:latest"), runAPISystemOneAudio),
 		integrationTestCase("api-list-models", "", runAPIListModels),
 		integrationTestCase("api-show-model", "llama3.2", runAPIShowModel),
 		integrationTestCase("generate-logprobs", smol, runAPIGenerateLogprobs),
 		integrationTestCase("chat-logprobs", smol, runAPIChatLogprobs),
+		// Keep the public tag so manifest lists select the platform's model.
+		integrationModelTestCase("system-one", defaultTestModel("nimble:latest"), runAPISystemOne),
 
 		integrationTestCase("blue-sky", smol, runBlueSky),
 		integrationModelTestCase("unicode-input", releaseUnicodeInputModel.Name, runUnicode),
@@ -107,17 +119,19 @@ func init() {
 		integrationTestCase("generate-history", smol, runGenerateWithHistory),
 		integrationModelTestCase("parallel-chat-history", defaultTestModel(releaseParallelHistoryModel.Name), runParallelChatWithHistory),
 		integrationTestCase("chat-history", smol, runChatWithHistory),
-		integrationTestCase("concurrent-chat", smol, runConcurrentChat),
+		integrationModelTestCase("concurrent-chat", smol, runConcurrentChat),
+		integrationModelTestCase("concurrent-embed", defaultTestModel("embeddinggemma-2:270m-nvfp4-text"), runConcurrentEmbed),
+		integrationModelTestCase("concurrent-speech", defaultTestModel("phonon:40m-en"), runConcurrentSpeech),
 		integrationTestCase("scheduler-multimodel", "", runMultiModelStress),
 		integrationTestCase("scheduler-max-queue", smol, runMaxQueue),
 
 		integrationTestCase("thinking-enabled", smol, runThinkingEnabled),
 		integrationTestCase("thinking-suppressed", smol, runThinkingSuppressed),
-
-		integrationTestCase("create-safetensors", "", runCreateSafetensorsLLM),
-		integrationTestCase("create-gguf", "", runCreateGGUF),
-		integrationTestCase("quantization", "qwen2.5:0.5b-instruct-fp16", runQuantization),
 	)
+	registerStructuredOutputCases()
+	registerModelIntegrationCases("concurrent-chat", testModels(releaseParallelMLXModels), runConcurrentChat)
+	registerModelIntegrationCases("parallel-chat-history", testModels(releaseParallelMLXModels), runParallelChatWithHistory)
+	registerModelIntegrationCases("mlx-batching", testModels(releaseParallelMLXModels), runMLXBatching)
 
 	// Model-parametric cases
 	registerModelMinVRAM([]integrationModel{releaseUnicodeInputModel, releaseParallelHistoryModel})
@@ -126,6 +140,7 @@ func init() {
 	registerEmbeddingCases(testModels(releaseEmbedModels))
 	registerVisionTextCases(testModels(releaseVisionTextModels))
 	registerToolCases(testModels(releaseToolsModels))
+	registerToolRouteCases(testModels(releaseToolsModels))
 	registerToolStressCases(testModels(releaseToolsModels))
 	registerVisionOCRDocumentCases(testModels(releaseVisionModels))
 	registerAudioTranscriptionCases(testModels(releaseAudioModels))

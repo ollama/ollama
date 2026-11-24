@@ -136,7 +136,7 @@ func containsEmoji(s string) bool {
 	return false
 }
 
-// Send multiple generate requests with prior context and ensure the response is coherant and expected
+// Send multiple generate requests with prior context and ensure the response is coherent and expected
 func runParallelGenerateWithHistory(t *testing.T, modelName string) {
 	if testModel != "" {
 		// The Generate API's Context field (token array continuation) is not
@@ -194,7 +194,7 @@ func runParallelGenerateWithHistory(t *testing.T, modelName string) {
 	wg.Wait()
 }
 
-// Send generate requests with prior context and ensure the response is coherant and expected
+// Send generate requests with prior context and ensure the response is coherent and expected
 func runGenerateWithHistory(t *testing.T) {
 	if testModel != "" {
 		// The Generate API's Context field (token array continuation) is not
@@ -234,7 +234,7 @@ func runGenerateWithHistory(t *testing.T) {
 	}
 }
 
-// Send multiple chat requests with prior context and ensure the response is coherant and expected
+// Send multiple chat requests with prior context and ensure the response is coherent and expected
 func runParallelChatWithHistory(t *testing.T, modelName string) {
 	req, resp := ChatRequests()
 	numParallel := 2
@@ -249,8 +249,8 @@ func runParallelChatWithHistory(t *testing.T, modelName string) {
 	streamTimeout := 20 * time.Second
 	prepareParallelHistoryModel(ctx, t, client, modelName)
 
-	// Get the server running (if applicable) warm the model up with a single initial empty request
-	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: modelName, KeepAlive: &api.Duration{Duration: 10 * time.Second}})
+	options := map[string]any{"num_predict": 256, "num_ctx": 4096}
+	preloadConcurrentModel(ctx, t, client, api.GenerateRequest{Model: modelName, Options: options})
 	gpuPercent := getGPUPercent(ctx, t, client, modelName)
 	if gpuPercent < 80 && gpuPercent > 50 {
 		slog.Warn("Low GPU percentage - increasing timeouts", "percent", gpuPercent)
@@ -269,6 +269,8 @@ func runParallelChatWithHistory(t *testing.T, modelName string) {
 			defer wg.Done()
 			k := i % len(req)
 			req[k].Model = modelName
+			req[k].Think = &api.ThinkValue{Value: false}
+			req[k].Options = options
 			for j := 0; j < iterLimit; j++ {
 				if time.Now().Sub(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
@@ -299,7 +301,7 @@ func prepareParallelHistoryModel(ctx context.Context, t *testing.T, client *api.
 	skipIfModelTooLargeForSweepVRAM(ctx, t, client, modelName)
 }
 
-// Send generate requests with prior context and ensure the response is coherant and expected
+// Send generate requests with prior context and ensure the response is coherent and expected
 func runChatWithHistory(t *testing.T) {
 	req := api.ChatRequest{
 		Model:     smol,

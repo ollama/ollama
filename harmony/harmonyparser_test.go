@@ -340,7 +340,7 @@ func TestHarmonyParserStreaming(t *testing.T) {
 			},
 		},
 		{
-			desc: "message with channel and recipient (receipient before channel)",
+			desc: "message with channel and recipient (recipient before channel)",
 			steps: []step{
 				{
 					input: "<|start|>assistant to=functions.calc<|channel|>commentary<|message|>",

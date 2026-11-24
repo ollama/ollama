@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Nemotron3NanoRenderer struct {
 	// v35 renders the Nemotron 3.5 prompt layout.
-	v35 bool
+	v35         bool
+	imageLabels bool
 }
 
 func (r *Nemotron3NanoRenderer) LeadingBOS() string {
@@ -276,9 +278,40 @@ func (r *Nemotron3NanoRenderer) renderMessageContent(message api.Message, imageO
 	if len(message.Images) == 0 {
 		return content
 	}
+	if r.imageLabels {
+		return nemotronSuperImageContent(content, len(message.Images), imageOffset)
+	}
 
 	content, _ = renderContentWithImageTags(content, len(message.Images), imageOffset)
 	return content
+}
+
+// The Super template numbers multiple images within each message. Explicit
+// <image> placeholders suppress automatic labels and retain their positions.
+func nemotronSuperImageContent(content string, count, offset int) string {
+	if strings.Contains(content, "<image>") {
+		for i := range count {
+			content = strings.Replace(content, "<image>", fmt.Sprintf("[img-%d]", offset+i), 1)
+		}
+		return content
+	}
+	var prefix strings.Builder
+	for i := range count {
+		tag := fmt.Sprintf("[img-%d]", offset+i)
+		label := ""
+		if count > 1 {
+			label = fmt.Sprintf("<image %d>", i+1)
+		}
+		switch {
+		case strings.Contains(content, tag):
+			content = strings.Replace(content, tag, label+tag, 1)
+		case strings.Contains(content, "[img]"):
+			content = strings.Replace(content, "[img]", label+tag, 1)
+		default:
+			prefix.WriteString(label + tag)
+		}
+	}
+	return prefix.String() + content
 }
 
 func nemotron3NanoRenderContent(content any) string {
@@ -378,6 +411,7 @@ func (r *Nemotron3NanoRenderer) renderToolPropertyExtraKeys(sb *strings.Builder,
 	if len(prop.Required) > 0 {
 		sb.WriteString("\n<required>" + r.pythonJSON(prop.Required) + "</required>")
 	}
+	r.renderExtraKeys(sb, prop.Extra)
 }
 
 func (r *Nemotron3NanoRenderer) renderToolParameterExtraKeys(sb *strings.Builder, params api.ToolFunctionParameters) {
@@ -387,6 +421,18 @@ func (r *Nemotron3NanoRenderer) renderToolParameterExtraKeys(sb *strings.Builder
 	if params.Items != nil {
 		sb.WriteString("\n<items>" + r.templateValue(params.Items) + "</items>")
 	}
+	r.renderExtraKeys(sb, params.Extra)
+}
+
+func (r *Nemotron3NanoRenderer) renderExtraKeys(sb *strings.Builder, extra map[string]any) {
+	keys := make([]string, 0, len(extra))
+	for key := range extra {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		sb.WriteString("\n<" + key + ">" + r.templateValue(extra[key]) + "</" + key + ">")
+	}
 }
 
 func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
@@ -395,6 +441,8 @@ func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
 		return "null"
 	case string:
 		return strconv.Quote(value)
+	case json.Number:
+		return value.String()
 	case bool:
 		if value {
 			return "true"
@@ -474,6 +522,14 @@ func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
 		if len(value.Required) > 0 {
 			parts = append(parts, `"required": `+r.pythonJSON(value.Required))
 		}
+		keys := make([]string, 0, len(value.Extra))
+		for key := range value.Extra {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			parts = append(parts, strconv.Quote(key)+": "+r.pythonJSON(value.Extra[key]))
+		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	default:
 		b, err := json.Marshal(value)
@@ -486,4 +542,12 @@ func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
 		}
 		return r.pythonJSON(generic)
 	}
+}
+
+func (r *Nemotron3NanoRenderer) Thinking() *model.Thinking {
+	values := []any{false, true}
+	if r.v35 {
+		values = append(values, "medium")
+	}
+	return &model.Thinking{Values: values, Default: true}
 }

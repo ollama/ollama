@@ -1,0 +1,36 @@
+diff --git a/mlx/c/cuda.cpp b/mlx/c/cuda.cpp
+index 71c07f5..e06159c 100644
+--- a/mlx/c/cuda.cpp
++++ b/mlx/c/cuda.cpp
+@@ -8,6 +8,16 @@
+ #include "mlx/c/error.h"
+ #include "mlx/c/private/mlx.h"
+-
++
++extern "C" int mlx_cuda_get_arch_list(mlx_vector_string* res) {
++  try {
++    mlx_vector_string_set_(*res, mlx::core::cu::get_arch_list());
++  } catch (std::exception& e) {
++    mlx_error(e.what());
++    return 1;
++  }
++  return 0;
++}
++
+ extern "C" int mlx_cuda_is_available(bool* res) {
+   try {
+     *res = mlx::core::cu::is_available();
+diff --git a/mlx/c/cuda.h b/mlx/c/cuda.h
+index 4734f8c..8becab8 100644
+--- a/mlx/c/cuda.h
++++ b/mlx/c/cuda.h
+@@ -28,6 +28,7 @@ extern "C" {
+  */
+ /**@{*/
+-
++
++int mlx_cuda_get_arch_list(mlx_vector_string* res);
+ int mlx_cuda_is_available(bool* res);
+-
++
+ /**@}*/

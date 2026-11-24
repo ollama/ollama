@@ -1,0 +1,32 @@
+diff --git a/mlx/c/fast.cpp b/mlx/c/fast.cpp
+index 2054aeb..16d63b1 100644
+--- a/mlx/c/fast.cpp
++++ b/mlx/c/fast.cpp
+@@ -657,6 +657,7 @@ extern "C" int mlx_fast_scaled_dot_product_attention(
+     const mlx_array keys,
+     const mlx_array values,
+     float scale,
++    int window_size,
+     const char* mask_mode,
+     const mlx_array mask_arr /* may be null */,
+     const mlx_array sinks /* may be null */,
+@@ -670,6 +671,7 @@ extern "C" int mlx_fast_scaled_dot_product_attention(
+             mlx_array_get_(keys),
+             mlx_array_get_(values),
+             scale,
++            window_size,
+             std::string(mask_mode),
+             (mask_arr.ctx ? std::make_optional(mlx_array_get_(mask_arr))
+                           : std::nullopt),
+diff --git a/mlx/c/fast.h b/mlx/c/fast.h
+index e4445f7..0e59262 100644
+--- a/mlx/c/fast.h
++++ b/mlx/c/fast.h
+@@ -208,6 +208,7 @@ int mlx_fast_scaled_dot_product_attention(
+     const mlx_array keys,
+     const mlx_array values,
+     float scale,
++    int window_size,
+     const char* mask_mode,
+     const mlx_array mask_arr /* may be null */,
+     const mlx_array sinks /* may be null */,

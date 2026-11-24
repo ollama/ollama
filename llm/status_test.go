@@ -36,6 +36,11 @@ func TestStatusWriterCapturesErrorLine(t *testing.T) {
 				"\tgolang.org/x/sync@v0.17.0/errgroup/errgroup.go:93 +0x50\n",
 			want: "panic: mlx: Failed to compile kernel: nvrtc: error: invalid value for --gpu-architecture (-arch)",
 		},
+		{
+			name: "graph reserve failure",
+			log:  "ggml_backend_sched_alloc_splits: failed to reserve graph buffers\n",
+			want: "ggml_backend_sched_alloc_splits: failed to reserve graph buffers",
+		},
 	}
 
 	for _, tt := range tests {
@@ -75,6 +80,9 @@ func TestIsOutOfMemoryMessage(t *testing.T) {
 		{"cudaMalloc failed: out of memory", true},
 		{"error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)", true},
 		{"failed to allocate context", true},
+		{"ggml_backend_sched_alloc_splits: failed to reserve graph buffers", true},
+		{"failed to reserve graph for quantization check", true},
+		{"failed to reserve table", false},
 		{"model loaded successfully", false},
 	}
 

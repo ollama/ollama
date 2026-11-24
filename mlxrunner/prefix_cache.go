@@ -1,0 +1,1026 @@
+// prefix_cache.go manages cache state shared across conversations using a
+// compressed prefix trie. Each trie node stores a token sequence (edge) and
+// optional per-layer snapshots that can be paged in/out of the live MLX cache
+// arrays.
+//
+// Invariants:
+//   - Only one path through the trie is "active" (backed by live MLX arrays)
+//     at a time. Switching paths pages in the new path from its snapshots.
+//   - Sliceable (KV, hidden-output) snapshots cover their node's edge. Restoring
+//     a prefix requires continuous history from the root for these caches.
+//   - Whole-state (recurrent, rotating) layers: what a node holds is the
+//     state at its end offset. A node may hold none.
+//   - Whole-state is captured only while the live caches sit at that offset
+//     (prefill captures, the page-out at close) and is never rebuilt later. A
+//     node split out of an existing edge afterward therefore holds none.
+//   - A request resumes at the deepest node at or below its match that holds
+//     whole-state. begin schedules a capture at the match, so any node a
+//     request resumes at holds whole-state afterward.
+//   - All cache layers must stay at the same token offset.
+//   - Draft caches are settled whenever the trie captures, pages out, or
+//     rewinds: no entry is still waiting on the next token.
+//   - A non-causal media item's tokens are evaluated in one batch: no node
+//     boundary or resume point lies strictly inside them.
+//   - Sibling edges must not share a common token prefix (compressed trie
+//     invariant).
+//   - Generation re-evaluates at least one token to seed decoding. Scoring
+//     retains hidden outputs and may restore the complete prompt.
+
+package mlxrunner
+
+import (
+	"cmp"
+	"fmt"
+	"log/slog"
+	"slices"
+	"time"
+
+	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlxrunner/cache"
+)
+
+const prefillSnapshotInterval = 8192
+
+const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
+
+type prefixCache struct {
+	root          *trieNode   // root of the prefix trie
+	activePath    []*trieNode // current root→leaf path with live MLX arrays
+	caches        []cache.Cache
+	limitBytes    int64 // zero uses the default snapshot budget
+	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
+
+	// draftLookahead is how far the draft caches' entries reference past
+	// their own slot; trie keys pack each token with its look-ahead (see key).
+	draftLookahead int
+	alignPrefill   bool
+}
+
+// pendingSnapshot is a snapshot scheduled to be taken during prefill.
+type pendingSnapshot struct {
+	offset int
+	user   bool
+}
+
+// cacheSession manages caches for one generation or scoring run.
+// Generation appends generated tokens to outputs; both paths defer close
+// to save the evaluated state.
+type cacheSession struct {
+	cache     *prefixCache
+	inputs    []int32
+	effInputs []uint32 // inputs' key alphabet, media folds applied
+	items     []mediaItem
+	outputs   []int32
+	prefill   prefillPlan
+
+	caches    []cache.Cache
+	remaining []int32
+
+	// pendingSnapshots lists offsets where snapshots should be captured
+	// during prefill, sorted by offset. Entries are scheduled on the caches
+	// before prefill and drained when the captures are attached.
+	pendingSnapshots []pendingSnapshot
+}
+
+// newPrefixCache manages the given cache slots for the model's life.
+func newPrefixCache(caches []cache.Cache) *prefixCache {
+	return &prefixCache{caches: caches}
+}
+
+func (c *prefixCache) ensureRoot() {
+	if c.root == nil {
+		c.root = &trieNode{
+			lastUsed: time.Now(),
+		}
+		c.activePath = []*trieNode{c.root}
+	}
+}
+
+// begin prepares caches for a new request. It finds the nearest
+// matching cache or creates new caches if none match. Peers belong to the same
+// runner and request kind, with identical cache layouts and draft lookahead.
+func (c *prefixCache) begin(inputs []int32, items []mediaItem, peers ...*prefixCache) *cacheSession {
+	return c.beginAt(inputs, items, max(0, len(inputs)-1), peers...)
+}
+
+// Scoring retains backbone outputs, so an exact hit needs no decode seed.
+func (c *prefixCache) beginScore(inputs []int32, items []mediaItem, peers ...*prefixCache) *cacheSession {
+	return c.beginAt(inputs, items, len(inputs), peers...)
+}
+
+func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int, peers ...*prefixCache) *cacheSession {
+	c.ensureRoot()
+
+	effInputs := effectiveKeyTokens(inputs, items)
+	plan := c.prefillPlan(len(inputs), items)
+	keys := plan.tag(c.key(effInputs))
+	matchPath, matched := findBestMatch(c.root, keys)
+	originalMatched := matched
+
+	// Generation leaves a decode seed; scoring can reuse the full row.
+	reuse := min(matched, maxReuse)
+	// A match ending inside a non-causal media item resumes before it.
+	if item := insideAtomicItem(items, reuse); item != nil {
+		reuse = item.pos
+	}
+	if reuse = plan.restoreOffset(reuse); reuse < matched {
+		matchPath, matched = findBestMatch(c.root, keys[:reuse])
+	}
+
+	// Switch to the matched path, paging in/out as needed.
+	c.switchToPath(matchPath, matched)
+
+	// switchToPath aligns caches to a common offset
+	prefix := c.minCacheOffset()
+	if plan.restoreOffset(prefix) != prefix {
+		// A partial restore can stop at a split edge inside a batch.
+		c.switchToPath([]*trieNode{c.root}, 0)
+		prefix = 0
+	}
+	var source *prefixCache
+	var shared []*trieNode
+	for _, peer := range peers {
+		path, end := peer.sharedPrefix(keys, min(maxReuse, len(keys)), items, plan)
+		if end > prefix {
+			source, shared, prefix = peer, path, end
+		}
+	}
+	if source != nil {
+		c.rewind(0)
+		c.restoreSnapshots(shared, prefix, 0)
+		prefix = c.alignCaches()
+		if plan.restoreOffset(prefix) != prefix {
+			c.freeAll()
+			prefix = 0
+		}
+		// The destination owns its trie and mutable state. Never install the
+		// source's nodes or snapshots in a second store.
+		c.activePath = []*trieNode{c.root}
+		if prefix > 0 {
+			c.pageOut(c.advancePath(c.root, keys[:prefix], prefix))
+			shared[len(shared)-1].lastUsed = time.Now()
+		}
+		// Cross-cache restores may materialize the source's lazy snapshots.
+		// Trim only after all borrowed snapshots have been consumed.
+		source.enforceEvictionPolicy()
+		originalMatched = max(originalMatched, prefix)
+	}
+	remaining := inputs[prefix:]
+
+	session := &cacheSession{
+		cache:     c,
+		inputs:    inputs,
+		effInputs: effInputs,
+		items:     items,
+		prefill:   plan,
+		caches:    c.caches,
+		remaining: remaining,
+	}
+
+	// Schedule a snapshot at the branch point during prefill so future
+	// requests diverging here can restore instead of re-evaluating.
+	if prefix < matched {
+		session.pendingSnapshots = append(session.pendingSnapshots, pendingSnapshot{offset: matched, user: false})
+	}
+
+	msg := "cache hit"
+	if prefix == 0 {
+		msg = "cache miss"
+	}
+	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
+
+	return session
+}
+
+// insideAtomicItem returns the non-causal media item that offset lies strictly
+// inside, or nil.
+func insideAtomicItem(items []mediaItem, offset int) *mediaItem {
+	for i := range items {
+		item := &items[i]
+		if item.atomic() && item.pos < offset && offset < item.pos+item.length {
+			return item
+		}
+	}
+	return nil
+}
+
+// effectiveKeyTokens returns the per-position key alphabet: the token ID
+// outside media expansions, the item's fold value across each expansion's
+// whole range.
+func effectiveKeyTokens(tokens []int32, items []mediaItem) []uint32 {
+	eff := make([]uint32, len(tokens))
+	for i, t := range tokens {
+		eff[i] = uint32(t)
+	}
+	for _, item := range items {
+		for i := item.pos; i < item.pos+item.length; i++ {
+			eff[i] = item.fold
+		}
+	}
+	return eff
+}
+
+func (c *prefixCache) prefillPlan(length int, items []mediaItem) prefillPlan {
+	if !c.alignPrefill {
+		return nil
+	}
+	if c.draftLookahead != 0 {
+		panic("prefill alignment requires a draft without look-ahead")
+	}
+	return planPrefill(length, items)
+}
+
+// tag encodes each prefill batch width in the first key of that batch. The
+// upper 32 bits are available when caches have no draft look-ahead. Decode
+// keys stay untagged, so they cannot match the start of a prefill batch.
+func (p prefillPlan) tag(keys []trieKey) []trieKey {
+	start := 0
+	for _, end := range p {
+		keys[start] |= trieKey(end-start) << 32
+		start = end
+	}
+	return keys
+}
+
+// key packs (token i, token i+1) per restorable offset: draft caches
+// pair each slot with the next token, so matching k keys verifies k+1
+// tokens and every match is a valid restore point.
+func (c *prefixCache) key(tokens []uint32) []trieKey {
+	keys := make([]trieKey, max(len(tokens)-c.draftLookahead, 0))
+	switch c.draftLookahead {
+	case 0:
+		for i, t := range tokens {
+			keys[i] = trieKey(t)
+		}
+	case 1:
+		for i := range keys {
+			keys[i] = trieKey(tokens[i])<<32 | trieKey(tokens[i+1])
+		}
+	default:
+		panic(fmt.Sprintf("prefixCache: unsupported draft look-ahead %d", c.draftLookahead))
+	}
+	return keys
+}
+
+// storedKeys keys the session's evaluated stream: the prompt's effective
+// tokens plus generated tokens, which are never media.
+func (s *cacheSession) storedKeys() []trieKey {
+	eff := s.effInputs
+	if len(s.outputs) > 0 {
+		eff = make([]uint32, 0, len(s.effInputs)+len(s.outputs))
+		eff = append(eff, s.effInputs...)
+		for _, t := range s.outputs {
+			eff = append(eff, uint32(t))
+		}
+	}
+	return s.prefill.tag(s.cache.key(eff))
+}
+
+// switchToPath transitions from the current active path to a new path,
+// rewinding the caches and paging in the new path's snapshots.
+func (c *prefixCache) switchToPath(newPath []*trieNode, matched int) {
+	defer c.enforceEvictionPolicy()
+
+	// Find common ancestor index.
+	commonLen := 0
+	for commonLen < len(c.activePath) && commonLen < len(newPath) {
+		if c.activePath[commonLen] != newPath[commonLen] {
+			break
+		}
+		commonLen++
+	}
+
+	ancestorOffset := 0
+	if commonLen > 0 {
+		ancestorOffset = c.activePath[commonLen-1].endOffset
+	}
+
+	// Rewind each cache to the target offset or free it. When matched
+	// falls within the ancestor's range (same-path case), we rewind
+	// directly to the match point. Otherwise we rewind to the ancestor
+	// and let page-in bring us forward to matched.
+	rewindTarget := min(ancestorOffset, matched)
+	c.rewind(rewindTarget)
+	pageInCount := c.restoreSnapshots(newPath, matched, ancestorOffset)
+	c.activePath = newPath
+	minOff := c.alignCaches()
+
+	// If the live offset falls inside the last node, split it so the reused
+	// head stays on the active path and only the unused tail can be evicted.
+	for i := len(c.activePath) - 1; i >= 0; i-- {
+		node := c.activePath[i]
+		if i > 0 && node.startOffset() >= minOff {
+			continue
+		}
+		if node.endOffset > minOff {
+			node = splitNode(node, minOff-node.startOffset(), c.caches, &c.pagedOutBytes)
+		}
+		c.activePath = append(c.activePath[:i], node)
+		break
+	}
+
+	// Update last-used time on only the final used node. For recurrent
+	// caches we don't need the intermediate snapshots and for KV caches
+	// we can reslice the data out of merged edges.
+	if len(c.activePath) > 0 {
+		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
+	}
+
+	if pageInCount > 0 {
+		slog.Debug("switching cache path", "page_in", pageInCount)
+	}
+}
+
+// sharedPrefix returns complete saved edges that another slot can restore.
+// Live state and partial edges are not borrowed: recurrent and wrapped sliding
+// caches can only resume at a saved boundary. Missing edges break KV continuity.
+func (c *prefixCache) sharedPrefix(keys []trieKey, maxReuse int, items []mediaItem, plan prefillPlan) ([]*trieNode, int) {
+	path, matched := findBestMatch(c.root, keys[:maxReuse])
+	end, count := 0, 1
+	for i := 1; i < len(path); i++ {
+		node := path[i]
+		if node.endOffset > matched || !hasAllSnapshots(node, c.caches) {
+			break
+		}
+		if plan.restoreOffset(node.endOffset) == node.endOffset && insideAtomicItem(items, node.endOffset) == nil {
+			end, count = node.endOffset, i+1
+		}
+	}
+	if end == 0 {
+		return nil, 0
+	}
+	return path[:count], end
+}
+
+func (c *prefixCache) rewind(offset int) {
+	for _, kv := range c.caches {
+		if kv != nil && !kv.Restore(nil, offset) {
+			kv.Free()
+		}
+	}
+}
+
+func (c *prefixCache) restoreSnapshots(path []*trieNode, matched, ancestorOffset int) int {
+	count := 0
+	for _, node := range path {
+		if !node.hasSnapshots() {
+			continue
+		}
+		nodeTarget := min(node.endOffset, matched)
+		for j, kv := range c.caches {
+			if kv == nil {
+				continue
+			}
+			if j >= len(node.snapshots) || node.snapshots[j] == nil {
+				continue
+			}
+			if kv.Offset() >= nodeTarget {
+				continue
+			}
+			if !kv.Restore(node.snapshots[j], nodeTarget) {
+				// Restore failed — stop page-in and let alignment
+				// bring all caches to a consistent offset.
+				return count
+			}
+		}
+		if node.endOffset > ancestorOffset {
+			count++
+			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
+		}
+	}
+	return count
+}
+
+func (c *prefixCache) alignCaches() int {
+	offset := c.minCacheOffset()
+	for _, kv := range c.caches {
+		if kv != nil && kv.Offset() != offset && !kv.Restore(nil, offset) {
+			slog.Warn("failed to restore cache, freeing all caches", "offset", offset)
+			c.freeAll()
+			return 0
+		}
+	}
+	return offset
+}
+
+// schedulePrefillSnapshots schedules every cache to capture snapshots as the
+// forward pass crosses the given absolute token offsets, so a single full-size
+// prefill records interior states without the caller breaking the batch.
+// Recurrent caches split their internal recurrence at these boundaries. A
+// passed offset names a token prefix; the capture lands at the deepest
+// state that prefix alone determines (offset - draftLookahead), which is where
+// a prompt sharing exactly that prefix restores. An offset inside a non-causal
+// media item's tokens moves past them. The offsets are merged with
+// any snapshots begin already scheduled (e.g. a branch point), with coinciding
+// offsets upgraded to user so compaction keeps them.
+//
+// Offsets at or before the current cache position, or past the end of the
+// prompt, are dropped: callers only request offsets ahead of the prefill base,
+// so this is a defensive guard.
+func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
+	c := s.cache
+	base := c.minCacheOffset()
+	for _, offset := range offsets {
+		offset = prefillSnapshotOffset(s.items, offset, c.draftLookahead)
+		if offset <= base || offset > len(s.inputs) {
+			continue
+		}
+		// Deduplicate: if this offset already exists, upgrade to user.
+		found := false
+		for i := range s.pendingSnapshots {
+			if s.pendingSnapshots[i].offset == offset {
+				s.pendingSnapshots[i].user = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, user: true})
+		}
+	}
+	slices.SortFunc(s.pendingSnapshots, func(a, b pendingSnapshot) int {
+		return a.offset - b.offset
+	})
+
+	if len(s.pendingSnapshots) == 0 {
+		return
+	}
+
+	prepared := make([]int, len(s.pendingSnapshots))
+	for i, p := range s.pendingSnapshots {
+		prepared[i] = p.offset
+	}
+	for _, kv := range c.caches {
+		if kv != nil {
+			kv.PrepareSnapshots(prepared)
+		}
+	}
+}
+
+func prefillSnapshotOffset(items []mediaItem, offset, lookahead int) int {
+	offset -= lookahead
+	if item := insideAtomicItem(items, offset); item != nil {
+		return item.pos + item.length
+	}
+	return offset
+}
+
+// attachPrefillSnapshots collects the snapshots captured during prefill and
+// attaches them to the trie, materializing a node at each requested offset.
+// Pending offsets are ascending and were scheduled in the same order, so the
+// snapshots each cache returns line up with them. The trie frontier is
+// advanced to each offset in turn, so its node edges [prev, offset) match the
+// edge-local ranges the caches captured.
+func (s *cacheSession) attachPrefillSnapshots() {
+	if len(s.pendingSnapshots) == 0 {
+		return
+	}
+
+	c := s.cache
+	pending := s.pendingSnapshots
+	s.pendingSnapshots = nil
+
+	// Drain each cache's captures (one per pending offset, in order) into
+	// per-offset rows.
+	rows := make([][]cache.Snapshot, len(pending))
+	for i := range rows {
+		rows[i] = make([]cache.Snapshot, len(c.caches))
+	}
+	for j, kv := range c.caches {
+		if kv == nil {
+			continue
+		}
+		taken := kv.TakeSnapshots()
+		for i := range pending {
+			if i < len(taken) {
+				rows[i][j] = taken[i]
+			}
+		}
+	}
+
+	// Only attach offsets reached by a completed write. Generation prefill
+	// leaves a decode seed, scoring may evaluate the full prompt, and either
+	// path can stop early on cancellation.
+	reached := c.minCacheOffset()
+	stored := s.storedKeys()
+	for i, p := range pending {
+		if p.offset > reached {
+			// Never crossed by a write, so the row is nil; close any entry
+			// defensively in case a cache captured one anyway.
+			for _, snap := range rows[i] {
+				if snap != nil {
+					snap.Close()
+				}
+			}
+			continue
+		}
+		frontier := c.activePath[len(c.activePath)-1]
+		if frontier.endOffset < p.offset {
+			edgeTokens := stored[frontier.endOffset:p.offset]
+			frontier = c.advancePath(frontier, edgeTokens, p.offset)
+		}
+		if p.user {
+			frontier.user = true
+		}
+		s.attachCapturedSnapshots(frontier, rows[i])
+		c.compactPath()
+	}
+	c.enforceEvictionPolicy()
+}
+
+// attachCapturedSnapshots stores pre-captured snapshots on a trie node. Unlike
+// taking a fresh Snapshot from the live cache, this works for an interior node
+// whose offset the live cache has already advanced past: the snapshots come
+// from the capture scheduled earlier, not from the cache's current state. The
+// node takes ownership of the snapshots (TakeSnapshots already transferred it).
+// Each capture is clipped to the node's edge, and a layer that already has a
+// snapshot keeps it.
+func (s *cacheSession) attachCapturedSnapshots(node *trieNode, snaps []cache.Snapshot) {
+	c := s.cache
+	next := make([]cache.Snapshot, len(c.caches))
+	copy(next, node.snapshots)
+	for i, kv := range c.caches {
+		if kv == nil || i >= len(snaps) || snaps[i] == nil {
+			continue
+		}
+		if next[i] != nil {
+			snaps[i].Close()
+			continue
+		}
+		head, tail := kv.Split(snaps[i], node.startOffset())
+		if head != nil {
+			head.Close()
+		}
+		next[i] = tail
+	}
+	for i, old := range node.swapSnapshots(next, &c.pagedOutBytes) {
+		if old != nil && old != next[i] {
+			old.Close()
+		}
+	}
+	node.lastUsed = time.Now()
+	slog.Debug("created snapshot", "offset", node.endOffset)
+}
+
+// advancePath advances the active path from the current frontier by matching
+// tokens against existing trie children, splitting partial matches, and
+// appending any remaining tokens as a new child node. Returns the new frontier.
+func (c *prefixCache) advancePath(frontier *trieNode, tokens []trieKey, endOffset int) *trieNode {
+	// Check if existing children already cover some or all of tokens.
+	// tokens may span multiple trie nodes when extending a previous run's
+	// leaf and this snapshot now overlaps that same range.
+	matchPath, matched := findBestMatch(frontier, tokens)
+	// matchPath[0] is frontier itself; the rest are newly traversed nodes.
+	remaining := tokens[matched:]
+
+	// Check for a partial match within the last node's edge — if so, split it.
+	if len(matchPath) > 1 {
+		lastNode := matchPath[len(matchPath)-1]
+		matchedInEdge := frontier.endOffset + matched - lastNode.startOffset()
+		if matchedInEdge > 0 && matchedInEdge < len(lastNode.tokens) {
+			matchPath[len(matchPath)-1] = splitNode(lastNode, matchedInEdge, c.caches, &c.pagedOutBytes)
+		}
+	}
+
+	// Append traversed nodes (excluding frontier) to the active path.
+	c.activePath = append(c.activePath, matchPath[1:]...)
+	dest := matchPath[len(matchPath)-1]
+
+	if len(remaining) > 0 {
+		dest = dest.appendChild(remaining, endOffset)
+		c.activePath = append(c.activePath, dest)
+	}
+	return dest
+}
+
+// compactPath absorbs the active path's last node into its parent when the
+// parent is a non-user node with no other children, keeping consecutive
+// non-user segments compressed into one node.
+func (c *prefixCache) compactPath() {
+	n := len(c.activePath)
+	if n < 2 {
+		return
+	}
+	parent := c.activePath[n-2]
+	if parent == c.root || parent.user || len(parent.children) != 1 {
+		return
+	}
+	mergeWithChild(parent, c.caches, &c.pagedOutBytes)
+	c.activePath = c.activePath[:n-1]
+}
+
+// pageOut captures the snapshots a node is missing from the live caches, which
+// rest exactly at its end.
+func (c *prefixCache) pageOut(node *trieNode) {
+	if hasAllSnapshots(node, c.caches) {
+		return
+	}
+	snaps := make([]cache.Snapshot, len(c.caches))
+	copy(snaps, node.snapshots)
+	for i, kv := range c.caches {
+		if kv == nil || snaps[i] != nil {
+			continue
+		}
+		snaps[i] = kv.Snapshot(node.startOffset())
+	}
+	node.swapSnapshots(snaps, &c.pagedOutBytes)
+	logutil.Trace(fmt.Sprintf("page out: [%d, %d)", node.startOffset(), node.endOffset))
+	c.enforceEvictionPolicy()
+}
+
+// freeAll releases all cache layers.
+func (c *prefixCache) freeAll() {
+	for _, kv := range c.caches {
+		if kv != nil {
+			kv.Free()
+		}
+	}
+}
+
+func (c *prefixCache) close() {
+	if c == nil {
+		return
+	}
+	nodes := []*trieNode{c.root}
+	for len(nodes) > 0 {
+		n := nodes[len(nodes)-1]
+		nodes = nodes[:len(nodes)-1]
+		if n != nil {
+			nodes = append(nodes, n.children...)
+			n.setSnapshots(nil, nil)
+		}
+	}
+	c.freeAll()
+	c.root, c.activePath, c.pagedOutBytes = nil, nil, 0
+}
+
+func (c *prefixCache) minCacheOffset() int {
+	offset := 0
+	found := false
+	for _, kv := range c.caches {
+		if kv == nil {
+			continue
+		}
+		if off := kv.Offset(); !found || off < offset {
+			offset = off
+			found = true
+		}
+	}
+	return offset
+}
+
+// close saves the token state if the forward pass ran.
+func (s *cacheSession) close() {
+	// A cancelled prefill never reaches the success-path attach; attaching
+	// here keeps its crossed captures for the retry and drains the schedule
+	// PrepareSnapshots would otherwise overwrite, leaking them.
+	s.attachPrefillSnapshots()
+
+	// A speculative rollback may leave the selected recurrent state as a view
+	// of the whole per-token capture buffer. Copy only states that still need
+	// detaching at request close, after decoding has settled and before the
+	// trie can retain a snapshot of them. Evaluate as one batch while the
+	// source handles remain in scope.
+	mlx.Scoped(func() {
+		type prepared struct {
+			cache *cache.RecurrentCache
+			state *mlx.Array
+		}
+		var copies []prepared
+		var arrays []*mlx.Array
+		for _, kv := range s.caches {
+			if recurrent, ok := kv.(*cache.RecurrentCache); ok {
+				if state := recurrent.PrepareCompaction(); state != nil {
+					copies = append(copies, prepared{recurrent, state})
+					arrays = append(arrays, state)
+				}
+			}
+		}
+		if len(arrays) > 0 {
+			mlx.Eval(arrays...)
+			for _, copy := range copies {
+				copy.cache.CommitCompaction(copy.state)
+			}
+		}
+	})
+
+	offset := s.cache.minCacheOffset()
+	if offset <= 0 {
+		return
+	}
+
+	arrays := make([]*mlx.Array, 0, 2*len(s.caches))
+	for _, kv := range s.caches {
+		if kv == nil {
+			continue
+		}
+		arrays = append(arrays, kv.State()...)
+	}
+
+	// Ensure that if we have run the forward pass and set the metadata
+	// that we also actually have the data.
+	mlx.AsyncEval(arrays...)
+
+	// The caches never advance past the stored keys; anything more
+	// means positions desynced.
+	c := s.cache
+	stored := s.storedKeys()
+	if offset > len(stored) {
+		panic(fmt.Sprintf("cache: offset %d exceeds %d stored keys", offset, len(stored)))
+	}
+
+	// Advance the trie frontier with any newly generated tokens and page
+	// the new segment out. Merging after the page-out combines covered
+	// snapshots.
+	if len(c.activePath) > 0 {
+		frontier := c.activePath[len(c.activePath)-1]
+		if offset > frontier.endOffset {
+			newTokens := stored[frontier.endOffset:offset]
+			c.pageOut(c.advancePath(frontier, newTokens, offset))
+			c.compactPath()
+		}
+		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
+	}
+}
+
+// reclaimColdHistory responds to observed pressure with released owned storage.
+// Removing only a lazy snapshot's possible future copy does not repay pressure.
+func reclaimColdHistory(caches, idle []*prefixCache, bytes int64, preferred map[*trieNode]int) int64 {
+	before := mlx.ActiveMemory()
+	changed := false
+	for int64(before-mlx.ActiveMemory()) < bytes {
+		owner, node, frontier := oldestColdHistory(caches, idle, preferred)
+		// Compression feedback yields checkpoints, but only the physical
+		// headroom target may discard an idle slot's final restore point.
+		// Do not skip that frontier to evict a better incoming match instead.
+		if node == nil || frontier {
+			break
+		}
+		owner.evictNode(node)
+		changed = true
+	}
+	if changed {
+		mlx.ClearCache()
+	}
+	return int64(before - mlx.ActiveMemory())
+}
+
+func pendingHistoryBytes(caches []*prefixCache) int64 {
+	var bytes int64
+	for _, c := range caches {
+		walkNodes(c.root, func(n *trieNode) bool {
+			for _, snap := range n.snapshots {
+				if snap != nil {
+					bytes += int64(cache.PendingCopyBytes(snap))
+				}
+			}
+			return true
+		})
+	}
+	return bytes
+}
+
+// oldestColdHistory selects the oldest eligible checkpoint or inactive leaf.
+// Checkpoint merges must preserve the child's state without allocating. Only
+// after candidates with the same match length are exhausted may an idle slot
+// give up its frontier.
+// Prefer shorter incoming-prefix matches, then older history, without pinning
+// any idle state against pressure.
+func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) (*prefixCache, *trieNode, bool) {
+	var owner *prefixCache
+	var oldest *trieNode
+	for _, c := range caches {
+		walkNodes(c.root, func(n *trieNode) bool {
+			if n.parent == nil || len(n.children) > 1 || len(c.activePath) == 0 || n == c.activePath[len(c.activePath)-1] {
+				return true
+			}
+			if len(n.children) == 1 {
+				child := n.children[0]
+				for i, layer := range c.caches {
+					var parentSnap, childSnap cache.Snapshot
+					if i < len(n.snapshots) {
+						parentSnap = n.snapshots[i]
+					}
+					if i < len(child.snapshots) {
+						childSnap = child.snapshots[i]
+					}
+					if !cache.CanMergeWithoutCopy(layer, parentSnap, childSnap) {
+						return true
+					}
+				}
+			}
+			if oldest == nil || cmp.Or(cmp.Compare(preferred[n], preferred[oldest]), n.lastUsed.Compare(oldest.lastUsed), cmp.Compare(oldest.endOffset, n.endOffset), cmp.Compare(oldest.snapshotBytes(), n.snapshotBytes())) < 0 {
+				owner, oldest = c, n
+			}
+			return true
+		})
+	}
+	// Keep frontiers ahead of ordinary checkpoints at the same match length.
+	// A shorter matching idle history may yield before a better incoming match.
+	idleSelected := false
+	for _, c := range idle {
+		if len(c.activePath) < 2 {
+			continue
+		}
+		n := c.activePath[len(c.activePath)-1]
+		if len(n.children) != 0 {
+			continue
+		}
+		if oldest != nil {
+			if preferred[n] > preferred[oldest] {
+				continue
+			}
+			if preferred[n] == preferred[oldest] && (!idleSelected || !n.lastUsed.Before(oldest.lastUsed)) {
+				continue
+			}
+		}
+		owner, oldest, idleSelected = c, n, true
+	}
+	return owner, oldest, idleSelected
+}
+
+func evictColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) bool {
+	owner, oldest, _ := oldestColdHistory(caches, idle, preferred)
+	if oldest == nil {
+		return false
+	}
+	if len(oldest.children) == 0 {
+		if i := slices.Index(owner.activePath, oldest); i >= 0 {
+			owner.activePath = owner.activePath[:i]
+		}
+	}
+	owner.evictNode(oldest)
+	if len(owner.root.children) == 0 && slices.Contains(idle, owner) {
+		owner.freeAll()
+	}
+	return true
+}
+
+// liveBytes includes unused attention capacity which a write may copy.
+func (c *prefixCache) liveBytes() int {
+	var bytes int
+	mlx.Scoped(func() {
+		for _, kv := range c.caches {
+			bytes += cache.CopyBytes(kv)
+		}
+	})
+	return bytes
+}
+
+// enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
+func (c *prefixCache) enforceEvictionPolicy() {
+	limit := c.limitBytes
+	if limit == 0 {
+		limit = maxPagedOutBytes
+	}
+	if c.pagedOutBytes <= limit {
+		return
+	}
+
+	for c.pagedOutBytes > limit {
+		// Evicting the frontier's parent merges the frontier into it, so
+		// resolve the frontier again after every eviction.
+		frontier := c.activePath[len(c.activePath)-1]
+		var best *trieNode
+		walkNodes(c.root, func(n *trieNode) bool {
+			if n == c.root || n == frontier || len(n.children) > 1 {
+				return true
+			}
+			// Evict: oldest, then deepest, then largest.
+			if best == nil || cmp.Or(
+				n.lastUsed.Compare(best.lastUsed),
+				cmp.Compare(best.endOffset, n.endOffset),
+				cmp.Compare(best.snapshotBytes(), n.snapshotBytes()),
+			) < 0 {
+				best = n
+			}
+			return true
+		})
+		if best == nil {
+			break
+		}
+		c.evictNode(best)
+	}
+}
+
+// evictNode evicts a single node from the trie, freeing its snapshot memory.
+func (c *prefixCache) evictNode(node *trieNode) {
+	if len(node.children) == 0 {
+		// Leaf: remove entirely.
+		slog.Debug("evicting leaf", "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
+		removeNode(node, &c.pagedOutBytes)
+	} else if len(node.children) == 1 {
+		// Interior node with one child: merge with child.
+		before := c.pagedOutBytes
+		tokens := len(node.tokens)
+		child := node.children[0]
+		mergeWithChild(node, c.caches, &c.pagedOutBytes)
+		if i := slices.Index(c.activePath, child); i >= 0 {
+			c.activePath = slices.Delete(c.activePath, i, i+1)
+		}
+		slog.Debug("evicting interior node", "offset", node.startOffset(), "tokens", tokens, "freed", mlx.PrettyBytes(int(before-c.pagedOutBytes)))
+	} else {
+		panic("evictNode called on multi-child branch point")
+	}
+}
+
+func (c *prefixCache) dumpTree() {
+	// Summary stats
+	var cacheBytes int
+	mlx.Scoped(func() {
+		for _, kv := range c.caches {
+			if kv == nil {
+				continue
+			}
+			for _, a := range kv.State() {
+				if a != nil {
+					cacheBytes += a.NumBytes()
+				}
+			}
+		}
+	})
+
+	// Build active path set for marking.
+	active := make(map[*trieNode]bool, len(c.activePath))
+	for _, n := range c.activePath {
+		active[n] = true
+	}
+
+	var nodeCount, snapshotCount int
+	var pagedBytes int64
+	var lines []string
+	var dump func(n *trieNode, prefix string, isLast bool)
+	dump = func(n *trieNode, prefix string, isLast bool) {
+		if n == nil {
+			return
+		}
+		nodeCount++
+
+		// Build connector
+		var connector string
+		if n.parent == nil {
+			connector = ""
+		} else if isLast {
+			connector = prefix + "`-- "
+		} else {
+			connector = prefix + "|-- "
+		}
+
+		// Node label
+		nodeBytes := n.snapshotBytes()
+		pagedBytes += nodeBytes
+
+		label := fmt.Sprintf("[%d,%d) %dt", n.startOffset(), n.endOffset, len(n.tokens))
+		if nodeBytes > 0 {
+			label += " " + mlx.PrettyBytes(int(nodeBytes)).String()
+		}
+		if !n.lastUsed.IsZero() {
+			label += fmt.Sprintf(" %s ago", time.Since(n.lastUsed).Truncate(time.Millisecond))
+		}
+		var flags []string
+		if n.user {
+			flags = append(flags, "user")
+		}
+		if hasAllSnapshots(n, c.caches) {
+			snapshotCount++
+			flags = append(flags, "snap")
+		}
+		if active[n] {
+			flags = append(flags, "active")
+		}
+		if len(flags) > 0 {
+			label += " (" + flags[0]
+			for _, f := range flags[1:] {
+				label += ", " + f
+			}
+			label += ")"
+		}
+		lines = append(lines, connector+label)
+
+		// Recurse children
+		childPrefix := prefix
+		if n.parent != nil {
+			if isLast {
+				childPrefix += "    "
+			} else {
+				childPrefix += "|   "
+			}
+		}
+		for i, child := range n.children {
+			dump(child, childPrefix, i == len(n.children)-1)
+		}
+	}
+	dump(c.root, "", true)
+
+	offset := c.minCacheOffset()
+	logutil.Trace(fmt.Sprintf("prefix cache active_tokens: %d, active_size: %s, paged_out: %s, trie: nodes=%d, snapshots=%d",
+		offset, mlx.PrettyBytes(cacheBytes), mlx.PrettyBytes(int(pagedBytes)), nodeCount, snapshotCount))
+	for i, l := range lines {
+		if i == 0 {
+			logutil.Trace("cache trie: " + l)
+		} else {
+			logutil.Trace("  " + l)
+		}
+	}
+}

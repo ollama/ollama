@@ -57,7 +57,7 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude mixed case", "Claude", true, "Claude Code"},
 		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
 		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
-		{"codex", "codex", true, "Codex"},
+		{"codex", "codex", true, "Codex CLI"},
 		{"chatgpt", "chatgpt", true, "ChatGPT"},
 		{"codex app legacy alias", "codex-app", true, "ChatGPT"},
 		{"codex app desktop alias", "codex-desktop", true, "ChatGPT"},
@@ -70,8 +70,8 @@ func TestIntegrationLookup(t *testing.T) {
 		{"dsh", "dsh", true, "DeepSeek Harness"},
 		{"deepseek harness alias", "deepseek-harness", true, "DeepSeek Harness"},
 		{"opencode", "opencode", true, "OpenCode"},
-		{"omp", "omp", true, "OMP"},
-		{"pool", "pool", true, "Pool"},
+		{"omp", "omp", true, "Oh My Pi"},
+		{"pool", "pool", true, "Poolside"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
 	}
@@ -131,7 +131,7 @@ func TestChatGPTMigratesLegacyCodexAppLaunchConfig(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "vscode", "kimi", "muse":
+		case "claude-desktop", "vscode", "kimi", "muse":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}
@@ -1064,7 +1064,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_AutoPullPolicyPullsWithoutPrompt(t *
 	}
 }
 
-func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *testing.T) {
+func TestShowOrPullWithPolicy_CloudModelUnavailable_FailsEarlyForAllPolicies(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatal("confirm prompt should not be called for explicit cloud models")
@@ -1072,41 +1072,51 @@ func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *tes
 	}
 	defer func() { DefaultConfirmPrompt = oldHook }()
 
-	for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelAutoPull, missingModelFail} {
-		t.Run(fmt.Sprintf("policy=%d", policy), func(t *testing.T) {
-			var pullCalled bool
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case "/api/show":
-					w.WriteHeader(http.StatusNotFound)
-					fmt.Fprintf(w, `{"error":"model not found"}`)
-				case "/api/status":
-					w.WriteHeader(http.StatusNotFound)
-					fmt.Fprintf(w, `{"error":"not found"}`)
-				case "/api/pull":
-					pullCalled = true
-					w.WriteHeader(http.StatusOK)
-					fmt.Fprintf(w, `{"status":"success"}`)
-				default:
-					w.WriteHeader(http.StatusNotFound)
+	for _, status := range []struct {
+		name string
+		code int
+		body string
+		want string
+	}{
+		{"missing", http.StatusNotFound, `{"error":"model not found"}`, `model "glm-5.1:cloud" not found`},
+		{"retired", http.StatusGone, `{"error":"model was retired; try replacement:cloud"}`, "model was retired; try replacement:cloud"},
+	} {
+		for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelAutoPull, missingModelFail} {
+			t.Run(fmt.Sprintf("%s/policy=%d", status.name, policy), func(t *testing.T) {
+				var pullCalled bool
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/show":
+						w.WriteHeader(status.code)
+						fmt.Fprint(w, status.body)
+					case "/api/status":
+						w.WriteHeader(http.StatusNotFound)
+						fmt.Fprintf(w, `{"error":"not found"}`)
+					case "/api/pull":
+						pullCalled = true
+						w.WriteHeader(http.StatusOK)
+						fmt.Fprintf(w, `{"status":"success"}`)
+					default:
+						w.WriteHeader(http.StatusNotFound)
+					}
+				}))
+				defer srv.Close()
+
+				u, _ := url.Parse(srv.URL)
+				client := api.NewClient(u, srv.Client())
+
+				err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true)
+				if err == nil {
+					t.Fatalf("expected cloud model unavailable error for policy %d", policy)
 				}
-			}))
-			defer srv.Close()
-
-			u, _ := url.Parse(srv.URL)
-			client := api.NewClient(u, srv.Client())
-
-			err := showOrPullWithPolicy(context.Background(), client, "glm-5.1:cloud", policy, true)
-			if err == nil {
-				t.Fatalf("expected cloud model not-found error for policy %d", policy)
-			}
-			if !strings.Contains(err.Error(), `model "glm-5.1:cloud" not found`) {
-				t.Fatalf("expected not-found error for policy %d, got %v", policy, err)
-			}
-			if pullCalled {
-				t.Fatalf("expected pull not to be called for cloud model with policy %d", policy)
-			}
-		})
+				if !strings.Contains(err.Error(), status.want) {
+					t.Fatalf("expected unavailable error containing %q for policy %d, got %v", status.want, policy, err)
+				}
+				if pullCalled {
+					t.Fatalf("expected pull not to be called for cloud model with policy %d", policy)
+				}
+			})
+		}
 	}
 }
 
@@ -1537,7 +1547,7 @@ func TestApplyAccountStateToSelectionItems_BadgesOnlyWhenActionRequired(t *testi
 	if freeUser[0].AvailabilityBadge != "" {
 		t.Fatalf("signed-in account model should not be badged, got %q", freeUser[0].AvailabilityBadge)
 	}
-	if freeUser[1].AvailabilityBadge != "Upgrade required" {
+	if freeUser[1].AvailabilityBadge != "Use usage credits or upgrade your plan" {
 		t.Fatalf("subscription cloud free-plan badge = %q", freeUser[1].AvailabilityBadge)
 	}
 	if freeUser[4].AvailabilityBadge != "" {
@@ -1924,7 +1934,7 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
 		if codexAppSupported() != nil {
-			wantPrefix = []string{"claude", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+			wantPrefix = slices.DeleteFunc(wantPrefix, func(name string) bool { return name == "chatgpt" })
 		}
 		if len(got) < len(wantPrefix) {
 			t.Fatalf("expected at least %d integrations, got %v", len(wantPrefix), got)
@@ -2009,11 +2019,19 @@ func TestListIntegrationInfos_HidesPoolsideOnWindows(t *testing.T) {
 	}
 }
 
-func TestListIntegrationInfos_HidesClaudeDesktop(t *testing.T) {
-	for _, info := range ListIntegrationInfos() {
-		if info.Name == "claude-desktop" {
-			t.Fatal("expected hidden claude-desktop to be absent")
-		}
+func TestListIntegrationInfos_HidesClaudeDesktopOnUnsupportedPlatform(t *testing.T) {
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			previous := claudeDesktopGOOS
+			claudeDesktopGOOS = goos
+			t.Cleanup(func() { claudeDesktopGOOS = previous })
+
+			for _, info := range ListIntegrationInfos() {
+				if info.Name == "claude-desktop" {
+					t.Fatal("expected claude-desktop to be absent on unsupported platforms")
+				}
+			}
+		})
 	}
 }
 
