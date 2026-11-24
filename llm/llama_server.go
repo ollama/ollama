@@ -269,6 +269,57 @@ func newLlamaServerMediaMarker() string {
 	return fmt.Sprintf("<__ollama_media_%d_%d__>", time.Now().UnixNano(), rand.Int63())
 }
 
+// embeddingMultimodalPrompt builds the multimodal prompt for an embedding
+// request.
+//
+// The media markers are positional: llama-server replaces each occurrence of
+// the marker with the next image in multimodal_data, so the number of markers
+// has to match the number of images. Appending them all to the end of the
+// prompt satisfies that count, but it puts every image after the text, which
+// is the wrong order for a model whose renderer interleaves the images with
+// the text.
+//
+// The Embedding endpoint takes its media as bare blobs, with no id to match
+// against, so the ordering it can honour is the order the images were given
+// in. A prompt that names the images — the "[img-N]" placeholders the chat
+// path uses — is honoured when it is there, and the markers are prepended
+// when it is not.
+func (s *llamaServerRunner) embeddingMultimodalPrompt(input string, media [][]byte) (llamaServerMultimodalPrompt, error) {
+	marker := s.llamaServerMediaMarker()
+
+	// The "[img-N]" placeholder for the image at position i. The chat path
+	// numbers its images by the id it was given, which for a request built in
+	// order is the position, so the two agree on the common case.
+	placeholders := make([]string, len(media))
+	for i := range media {
+		placeholders[i] = fmt.Sprintf("[img-%d]", i)
+	}
+
+	promptStr := input
+	for _, placeholder := range placeholders {
+		promptStr = strings.Replace(promptStr, placeholder, marker, 1)
+	}
+
+	// Any image the prompt did not name still needs its marker, and the count
+	// has to line up with the number of images, or llama-server rejects the
+	// request.
+	missing := len(media) - strings.Count(promptStr, marker)
+	if missing > 0 {
+		promptStr = strings.Repeat(marker, missing) + promptStr
+	}
+
+	multimodal := llamaServerMultimodalPrompt{PromptString: promptStr}
+	for _, m := range media {
+		data, err := llamaServerMediaBytes(m)
+		if err != nil {
+			return llamaServerMultimodalPrompt{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+		}
+		multimodal.MultimodalData = append(multimodal.MultimodalData, base64.StdEncoding.EncodeToString(data))
+	}
+
+	return multimodal, nil
+}
+
 func (s *llamaServerRunner) completionPrompt(prompt, leadingBOS string) string {
 	if s.tokenizerAddsBOS() {
 		if leadingBOS != "" && strings.HasPrefix(prompt, leadingBOS) {
@@ -2564,13 +2615,9 @@ func (s *llamaServerRunner) Embedding(ctx context.Context, input string, media [
 		if len(s.launch.projectors) == 0 {
 			return nil, 0, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "model does not support media embeddings"}
 		}
-		multimodal := llamaServerMultimodalPrompt{PromptString: input + strings.Repeat(s.llamaServerMediaMarker(), len(media))}
-		for _, m := range media {
-			data, err := llamaServerMediaBytes(m)
-			if err != nil {
-				return nil, 0, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
-			}
-			multimodal.MultimodalData = append(multimodal.MultimodalData, base64.StdEncoding.EncodeToString(data))
+		multimodal, err := s.embeddingMultimodalPrompt(input, media)
+		if err != nil {
+			return nil, 0, err
 		}
 		prompt = multimodal
 	}
