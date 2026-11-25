@@ -49,15 +49,9 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 			Merges       json.RawMessage  `json:"merges"` // Can be []string or [][]string (BPE only)
 		} `json:"model"`
 		PreTokenizer json.RawMessage `json:"pre_tokenizer"`
-		Normalizer   struct {
-			Type    string `json:"type"`
-			Pattern struct {
-				String *string `json:"String"`
-			} `json:"pattern"`
-			Content string `json:"content"`
-		} `json:"normalizer"`
-		Decoder     json.RawMessage `json:"decoder"`
-		AddedTokens []struct {
+		Normalizer   normalizerJSON  `json:"normalizer"`
+		Decoder      json.RawMessage `json:"decoder"`
+		AddedTokens  []struct {
 			ID         int32  `json:"id"`
 			Content    string `json:"content"`
 			Special    bool   `json:"special"`
@@ -151,8 +145,7 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		t.typ = TokenizerBPE
 	}
 
-	t.normalizeNFC = raw.Normalizer.Type == "NFC"
-	t.normalizeSpaces = raw.Normalizer.Type == "Replace" && raw.Normalizer.Pattern.String != nil && *raw.Normalizer.Pattern.String == " " && raw.Normalizer.Content == "▁"
+	t.loadNormalizer(raw.Normalizer)
 	t.ignoreMerges = raw.Model.IgnoreMerges
 	var pre struct {
 		Type string `json:"type"`
@@ -354,6 +347,35 @@ func loadSpecialTokenConfigFromBytes(t *Tokenizer, config *TokenizerConfig) {
 		specialTokensMapJSON: config.SpecialTokensMapJSON,
 		configJSON:           config.ConfigJSON,
 	})
+}
+
+type normalizerJSON struct {
+	Type    string `json:"type"`
+	Prepend string `json:"prepend"`
+	Pattern struct {
+		String *string `json:"String"`
+	} `json:"pattern"`
+	Content     string           `json:"content"`
+	Normalizers []normalizerJSON `json:"normalizers"`
+}
+
+// loadNormalizer enables the supported normalizers, including those nested in
+// a Sequence. Llama 2 style tokenizers use Sequence[Prepend("▁"), Replace(" ", "▁")].
+func (t *Tokenizer) loadNormalizer(n normalizerJSON) {
+	switch n.Type {
+	case "Sequence":
+		for _, step := range n.Normalizers {
+			t.loadNormalizer(step)
+		}
+	case "NFC":
+		t.normalizeNFC = true
+	case "Prepend":
+		t.normalizePrepend = n.Prepend
+	case "Replace":
+		if n.Pattern.String != nil && *n.Pattern.String == " " && n.Content == "▁" {
+			t.normalizeSpaces = true
+		}
+	}
 }
 
 // detectSentencePiece checks if the decoder uses SentencePiece-style (▁ for spaces)

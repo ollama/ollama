@@ -246,6 +246,44 @@ func TestAddedTokenNormalization(t *testing.T) {
 				{name: "literal token", input: "▁a", want: []int32{3}},
 			},
 		},
+		{
+			// Llama 2, TinyLlama and CodeLlama use this normalizer sequence.
+			name: "sequence_prepend_replace",
+			tokenizer: `{
+  "added_tokens": [
+    {"id": 0, "content": "<unk>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true},
+    {"id": 1, "content": "<s>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true},
+    {"id": 2, "content": "</s>", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true},
+    {"id": 9, "content": "[x]", "single_word": false, "lstrip": false, "rstrip": false, "normalized": true, "special": false}
+  ],
+  "normalizer": {"type": "Sequence", "normalizers": [
+    {"type": "Prepend", "prepend": "▁"},
+    {"type": "Replace", "pattern": {"String": " "}, "content": "▁"}
+  ]},
+  "pre_tokenizer": null,
+  "decoder": {"type": "Sequence", "decoders": [
+    {"type": "Replace", "pattern": {"String": "▁"}, "content": " "},
+    {"type": "ByteFallback"}, {"type": "Fuse"}, {"type": "Strip", "content": " ", "start": 1, "stop": 0}
+  ]},
+  "model": {
+    "type": "BPE", "unk_token": "<unk>", "fuse_unk": true, "byte_fallback": true,
+    "vocab": {"<unk>": 0, "<s>": 1, "</s>": 2, "▁": 3, "a": 4, "b": 5, "▁a": 6, "▁b": 7, "▁▁": 8, "[x]": 9},
+    "merges": ["▁ a", "▁ b", "▁ ▁"]
+  }
+}`,
+			cases: []normalizationCase{
+				{name: "empty", input: "", want: []int32{}},
+				{name: "word", input: "a", want: []int32{6}},
+				{name: "words", input: "a b", want: []int32{6, 7}},
+				{name: "leading space", input: " a", want: []int32{3, 6}},
+				{name: "leading spaces", input: "  a", want: []int32{8, 6}},
+				{name: "after special token", input: "<s>a", want: []int32{1, 6}},
+				{name: "around special token", input: "a<s>b", want: []int32{6, 1, 7}},
+				{name: "before special token", input: "a</s>", want: []int32{6, 2}},
+				{name: "normalized added token", input: "[x]", want: []int32{9}},
+				{name: "normalized added token after word", input: "a [x]", want: []int32{6, 9}},
+			},
+		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			tok, err := LoadFromBytes([]byte(fixture.tokenizer))

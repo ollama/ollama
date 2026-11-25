@@ -40,6 +40,7 @@ type Tokenizer struct {
 	normalizedTokenMatcher addedTokenMatcher
 	typ                    TokenizerType // Algorithm type
 	normalizeNFC           bool
+	normalizePrepend       string
 	normalizeSpaces        bool
 	ignoreMerges           bool
 	metaspace              *metaspace
