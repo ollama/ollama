@@ -90,7 +90,8 @@ func tailAfter(history, values *mlx.Array, count, width int) *mlx.Array {
 		stop[i] = int32(dim)
 	}
 	start[1] = int32(joined.Dim(1) - width)
-	return mlx.SliceStartStop(joined, start, stop)
+	// Keep the tail from retaining the full chunk's backing storage.
+	return mlx.Contiguous(mlx.SliceStartStop(joined, start, stop), false)
 }
 
 func (c *engramCache) put(b *batch.Batch, inputIDs, convInput *mlx.Array) {
