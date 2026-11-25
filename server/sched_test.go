@@ -2403,3 +2403,186 @@ func TestLoadRequiredFullFailureClosesRunner(t *testing.T) {
 	require.Nil(t, s.activeLoading)
 	require.Empty(t, scenario.req.errCh)
 }
+
+// A num_gpu above the layer count is clamped for the launch only. The runner
+// must keep the requested options, or every later request with the same
+// Modelfile options looks changed and reloads the runner.
+func TestSchedLoadClampsNumGPUWithoutChangingRunnerOptions(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+
+	b := newScenarioRequest(t, ctx, "clamp", 10, &api.Duration{Duration: time.Second}, map[ml.DeviceID]uint64{})
+	defer b.ctxDone()
+	b.req.opts.NumGPU = 99
+
+	var launched api.Options
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		launched = opts
+		return b.newServer(systemInfo, gpus, model, f, adapters, projectors, opts, numParallel, llm.LlamaServerConfig{})
+	}
+
+	s.load(b.req, ml.SystemInfo{}, []ml.DeviceInfo{}, false)
+
+	var runner *runnerRef
+	select {
+	case err := <-b.req.errCh:
+		t.Fatalf("load failed: %v", err)
+	case runner = <-b.req.successCh:
+	}
+
+	// block_count 1 => at most 2 offloadable layers (blocks + output).
+	require.Equal(t, 2, launched.NumGPU)
+	require.Equal(t, 99, runner.Options.NumGPU)
+
+	next := &LlmRequest{model: b.req.model, opts: api.DefaultOptions()}
+	next.opts.NumGPU = 99
+	require.Empty(t, runner.reloadReason(ctx, next))
+}
+
+// When a load on one GPU needs room, the runner on the other GPU must not be
+// chosen even if it is idle and would otherwise be evicted first.
+func TestFindRunnerToUnloadOnTargetGPUs(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	gpu0 := ml.DeviceID{ID: "0", Library: "CUDA"}
+	gpu1 := ml.DeviceID{ID: "1", Library: "CUDA"}
+
+	busyOnGPU0 := &runnerRef{refCount: 1, sessionDuration: 2 * time.Hour, numParallel: 1, gpus: []ml.DeviceID{gpu0}}
+	idleOnGPU1 := &runnerRef{sessionDuration: time.Hour, numParallel: 1, gpus: []ml.DeviceID{gpu1}}
+
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	s.loaded["qwen"] = busyOnGPU0
+	s.loaded["gemma"] = idleOnGPU1
+	s.loadedMu.Unlock()
+
+	require.Equal(t, busyOnGPU0, s.findRunnerToUnloadOn([]ml.DeviceInfo{{DeviceID: gpu0}}))
+	require.Equal(t, idleOnGPU1, s.findRunnerToUnloadOn([]ml.DeviceInfo{{DeviceID: gpu1}}))
+
+	// No target, or a target no runner is on: fall back to every runner.
+	require.Equal(t, idleOnGPU1, s.findRunnerToUnloadOn(nil))
+	require.Equal(t, idleOnGPU1, s.findRunnerToUnload())
+	require.Equal(t, idleOnGPU1, s.findRunnerToUnloadOn([]ml.DeviceInfo{{DeviceID: ml.DeviceID{ID: "2", Library: "CUDA"}}}))
+}
+
+// The scheduler's prediction must include the KV cache for the requested
+// context and scale with the parallel sequence count.
+func TestPredictLlamaServerVRAMUsesContextAndParallel(t *testing.T) {
+	modelPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(131072),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*gguftest.Tensor{
+		{Name: "blk.0.attn.weight", Type: gguf.TensorTypeF32, Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Type: gguf.TensorTypeF32, Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+	f, err := llm.LoadModel(modelPath, 1024)
+	require.NoError(t, err)
+
+	req := &LlmRequest{model: &Model{ModelPath: modelPath}, opts: api.DefaultOptions()}
+	req.opts.NumCtx = 8192
+
+	small := predictLlamaServerVRAM(req, f, req.opts, nil, 1).Total()
+	parallel := predictLlamaServerVRAM(req, f, req.opts, nil, 2).Total()
+	req.opts.NumCtx = 16384
+	bigger := predictLlamaServerVRAM(req, f, req.opts, nil, 1).Total()
+
+	require.Greater(t, parallel, small)
+	require.Greater(t, bigger, small)
+}
+
+// A model predicted at 21.9 GiB (qwen3.8-fixed, which includes llama.cpp's
+// fit target) must be placed on one 24 GiB card with 23.4 GiB free, not split
+// across both because of an extra 80% margin.
+func TestSelectLlamaServerPlacementSingleGPUWithoutExtraMargin(t *testing.T) {
+	gpu := func(id string) ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: id, Library: "CUDA"}}
+		g.TotalMemory = 24 * format.GibiByte
+		g.FreeMemory = 23*format.GibiByte + 400*format.MebiByte
+		return g
+	}
+	gpus := []ml.DeviceInfo{gpu("0"), gpu("1")}
+	opts := api.DefaultOptions()
+	opts.NumGPU = 66
+
+	selected, launch := selectLlamaServerPlacement(ml.SystemInfo{}, gpus, 21*format.GibiByte+900*format.MebiByte, opts)
+	require.Len(t, selected, 1)
+	require.NotNil(t, launch.MainGPU)
+
+	// Larger than any one card: fall back to the multi-GPU group.
+	selected, _ = selectLlamaServerPlacement(ml.SystemInfo{}, gpus, 24*format.GibiByte, opts)
+	require.Len(t, selected, 2)
+}
+
+// With an automatic context, a model that needs more than one GPU at the
+// VRAM-tier default (chosen from all GPUs combined) gets a smaller context that
+// fits one GPU instead of being split. An explicit num_ctx is left alone.
+func TestFitAutoNumCtxToSingleGPU(t *testing.T) {
+	t.Setenv("OLLAMA_SCHED_SPREAD", "")
+	modelPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(131072),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*gguftest.Tensor{
+		{Name: "blk.0.attn.weight", Type: gguf.TensorTypeF32, Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Type: gguf.TensorTypeF32, Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+	f, err := llm.LoadModel(modelPath, 1024)
+	require.NoError(t, err)
+
+	newReq := func(numCtx int, auto bool) *LlmRequest {
+		req := &LlmRequest{model: &Model{ModelPath: modelPath}, opts: api.DefaultOptions(), numCtxAuto: auto}
+		req.opts.NumCtx = numCtx
+		return req
+	}
+	gpu := func(id string) ml.DeviceInfo {
+		return ml.DeviceInfo{DeviceID: ml.DeviceID{ID: id, Library: "CUDA"}}
+	}
+	gpus := []ml.DeviceInfo{gpu("0"), gpu("1")}
+	predictAt := func(numCtx int) uint64 {
+		return predictLlamaServerVRAM(newReq(numCtx, true), f, api.DefaultOptions(), gpus, 1).Total()
+	}
+	full, half, quarter := predictAt(262144), predictAt(65536), predictAt(32768)
+	require.Greater(t, half, quarter)
+
+	// Each GPU holds more than the 32k prediction but less than 64k.
+	for i := range gpus {
+		gpus[i].FreeMemory = (half + quarter) / 2
+		gpus[i].TotalMemory = gpus[i].FreeMemory + format.GibiByte
+	}
+	s := &Scheduler{loaded: map[string]*runnerRef{}}
+
+	req := newReq(262144, true)
+	p, ok := s.fitAutoNumCtxToSingleGPU(req, f, ml.SystemInfo{}, gpus, 1, full)
+	require.True(t, ok)
+	require.Equal(t, 32768, req.opts.NumCtx)
+	require.Equal(t, quarter, p)
+	selected, _ := selectLlamaServerPlacement(ml.SystemInfo{}, gpus, p, req.opts)
+	require.Len(t, selected, 1)
+
+	explicit := newReq(262144, false)
+	_, ok = s.fitAutoNumCtxToSingleGPU(explicit, f, ml.SystemInfo{}, gpus, 1, full)
+	require.False(t, ok)
+	require.Equal(t, 262144, explicit.opts.NumCtx)
+
+	t.Setenv("OLLAMA_SCHED_SPREAD", "1")
+	spread := newReq(262144, true)
+	_, ok = s.fitAutoNumCtxToSingleGPU(spread, f, ml.SystemInfo{}, gpus, 1, full)
+	require.False(t, ok)
+	require.Equal(t, 262144, spread.opts.NumCtx)
+}
