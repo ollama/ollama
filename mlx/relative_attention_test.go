@@ -226,6 +226,33 @@ func TestRelativeAttentionCUDAFallback(t *testing.T) {
 	})
 }
 
+// GPUs without the split kernels, such as Intel or virtual Macs, report no
+// partitions. Every decode and verification route then declines, short and
+// long histories alike, so callers keep the stock graph.
+func TestRelativeAttentionDeclinesWithoutSplitKernels(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !MetalIsAvailable() {
+			t.Skip("requires Metal")
+		}
+		parts := relativeAttentionParts
+		t.Cleanup(func() { relativeAttentionParts = parts })
+		relativeAttentionParts = func() int { return 0 }
+		const scale = 0.125
+		for _, tc := range []struct{ queries, keys, window int }{{1, 32, 0}, {8, 32, 0}, {4, 1500, 1024}, {8, 3000, 0}} {
+			Scoped(func() {
+				q, k, v, table, sink := relativeAttentionInputs(tc.queries, tc.keys, 24, 8, 128, 1024)
+				if RelativePositionAttention(q, k, v, table, sink, tc.window, scale) != nil {
+					t.Fatalf("%d queries over %d keys ran without the split kernels", tc.queries, tc.keys)
+				}
+				gate := Zeros(DTypeBFloat16, 1, tc.queries, 24*128)
+				if RelativePositionAttentionGated([]*Array{q}, []*Array{k}, []*Array{v}, []*Array{table}, []*Array{sink}, gate, tc.window, scale) != nil {
+					t.Fatalf("gated %d queries over %d keys ran without the split kernels", tc.queries, tc.keys)
+				}
+			})
+		}
+	})
+}
+
 func TestRelativeAttentionOrderedViews(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
 		if relativeAttentionParts() == 0 {
