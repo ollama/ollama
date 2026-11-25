@@ -63,12 +63,13 @@ const (
 )
 
 // requireStockAttention compares a split result with stockRelativeAttention,
-// which runs MLX's single-query vector SDPA per query. Ultra and Pro/Max GPUs
-// split that SDPA into relativeAttentionParts() partitions, so the per-key
-// kernel at that count must match bit for bit; anything else within tol.
-func requireStockAttention(label string, got, want *Array, kernel *gpuKernel, parts int, tol float64) error {
+// which runs MLX's single-query vector SDPA per query. From 1024 visible keys,
+// Ultra and Pro/Max GPUs split that SDPA into relativeAttentionParts()
+// partitions, so the per-key kernel at that count must match bit for bit;
+// anything else, including shorter histories MLX reads in one pass, within tol.
+func requireStockAttention(label string, got, want *Array, kernel *gpuKernel, parts, visible int, tol float64) error {
 	_, size := appleGPU(kernelArchitecture())
-	if kernel == relativeAttentionPart && parts == relativeAttentionParts() && (size == 'd' || size == 's') {
+	if kernel == relativeAttentionPart && parts == relativeAttentionParts() && visible >= 1024 && (size == 'd' || size == 's') {
 		tol = 0
 	}
 	return requireClose(label, Contiguous(got, false), Contiguous(want, false), tol)
@@ -77,7 +78,9 @@ func requireStockAttention(label string, got, want *Array, kernel *gpuKernel, pa
 // Draft verification must score each query exactly as single-token decode does
 // at its position, so which drafts are accepted cannot depend on the block
 // width. Cover blocks that straddle a history length where the split changes,
-// long blocks past it, and a local window.
+// long blocks past it, and a local window. Windows under 1,024 keys take the
+// stock graph for both decode and verification, so the cases use Inkling's
+// 1,024-key local window or none.
 func TestRelativeAttentionBlockMatchesDecode(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
 		if relativeAttentionParts() == 0 {
@@ -99,6 +102,10 @@ func TestRelativeAttentionBlockMatchesDecode(t *testing.T) {
 			{8, 1100, 1024, false},
 			{4, 3000, 1024, true},
 			{8, 3000, 1024, true},
+			{4, 300, 0, false},
+			{8, 1020, 0, false},
+			{8, 1027, 0, false},
+			{8, 1500, 1024, false},
 		} {
 			Scoped(func() {
 				q, k, v, table, sink := relativeAttentionInputs(tc.queries, tc.keys, 24, 8, 128, 1024)
@@ -154,7 +161,7 @@ func TestRelativeAttentionLongHistories(t *testing.T) {
 					want := stockRelativeAttention(q, k.AsType(DTypeFloat32), v.AsType(DTypeFloat32), table, sink, 0, scale)
 					kernel, parts := relativeSplit(queries, keys)
 					label := fmt.Sprintf("%d queries over %d keys (%s, %d parts)", queries, keys, kernel.name, parts)
-					if err := requireStockAttention(label, got, want, kernel, parts, relativeAttentionFP32Tol); err != nil {
+					if err := requireStockAttention(label, got, want, kernel, parts, keys, relativeAttentionFP32Tol); err != nil {
 						t.Fatal(err)
 					}
 				})
@@ -174,8 +181,13 @@ func TestRelativeAttentionSplitKernels(t *testing.T) {
 		kernels := map[string]*gpuKernel{
 			"per-key": relativeAttentionPart, "block": relativeAttentionBlockPart, "shared": relativeAttentionSharedPart,
 		}
-		for _, tc := range []struct{ keys, window int }{{1100, 1024}, {1031, 0}, {5003, 0}} {
+		// Short histories leave partitions empty, down to one visible key for
+		// the first query of a block.
+		for _, tc := range []struct{ keys, window int }{{8, 0}, {37, 0}, {300, 1024}, {1023, 0}, {1100, 1024}, {1031, 0}, {5003, 0}} {
 			for _, queries := range []int{1, 2, 3, 4, 8} {
+				if queries > tc.keys {
+					continue
+				}
 				Scoped(func() {
 					q, k, v, table, sink := relativeAttentionInputs(queries, tc.keys, 24, 8, 128, 1024)
 					q = q.AsType(DTypeFloat32)
@@ -187,7 +199,7 @@ func TestRelativeAttentionSplitKernels(t *testing.T) {
 							if got == nil {
 								t.Fatalf("%s: declined", label)
 							}
-							if err := requireStockAttention(label, got, want, kernel, parts, relativeAttentionFP32Tol); err != nil {
+							if err := requireStockAttention(label, got, want, kernel, parts, relativeAttentionVisible(k, tc.window), relativeAttentionFP32Tol); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -214,6 +226,33 @@ func TestRelativeAttentionCUDAFallback(t *testing.T) {
 	})
 }
 
+// GPUs without the split kernels, such as Intel or virtual Macs, report no
+// partitions. Every decode and verification route then declines, short and
+// long histories alike, so callers keep the stock graph.
+func TestRelativeAttentionDeclinesWithoutSplitKernels(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !MetalIsAvailable() {
+			t.Skip("requires Metal")
+		}
+		parts := relativeAttentionParts
+		t.Cleanup(func() { relativeAttentionParts = parts })
+		relativeAttentionParts = func() int { return 0 }
+		const scale = 0.125
+		for _, tc := range []struct{ queries, keys, window int }{{1, 32, 0}, {8, 32, 0}, {4, 1500, 1024}, {8, 3000, 0}} {
+			Scoped(func() {
+				q, k, v, table, sink := relativeAttentionInputs(tc.queries, tc.keys, 24, 8, 128, 1024)
+				if RelativePositionAttention(q, k, v, table, sink, tc.window, scale) != nil {
+					t.Fatalf("%d queries over %d keys ran without the split kernels", tc.queries, tc.keys)
+				}
+				gate := Zeros(DTypeBFloat16, 1, tc.queries, 24*128)
+				if RelativePositionAttentionGated([]*Array{q}, []*Array{k}, []*Array{v}, []*Array{table}, []*Array{sink}, gate, tc.window, scale) != nil {
+					t.Fatalf("gated %d queries over %d keys ran without the split kernels", tc.queries, tc.keys)
+				}
+			})
+		}
+	})
+}
+
 func TestRelativeAttentionOrderedViews(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
 		if relativeAttentionParts() == 0 {
@@ -229,7 +268,7 @@ func TestRelativeAttentionOrderedViews(t *testing.T) {
 					t.Fatal("eligible route declined")
 				}
 				want := stockRelativeAttention(q, k, v, table, sink, window, scale)
-				if err := requireStockAttention(fmt.Sprintf("width %d window %d", width, window), got, want, kernel, parts, relativeAttentionBF16Tol); err != nil {
+				if err := requireStockAttention(fmt.Sprintf("width %d window %d", width, window), got, want, kernel, parts, relativeAttentionVisible(k, window), relativeAttentionBF16Tol); err != nil {
 					t.Fatal(err)
 				}
 				query := q.AsType(DTypeFloat32)
@@ -238,7 +277,7 @@ func TestRelativeAttentionOrderedViews(t *testing.T) {
 					t.Fatal("FP32 query requires an FP32 result")
 				}
 				want = stockRelativeAttention(query, k.AsType(DTypeFloat32), v.AsType(DTypeFloat32), table, sink, window, scale)
-				if err := requireStockAttention("FP32 per-query attention", got, want, kernel, parts, relativeAttentionFP32Tol); err != nil {
+				if err := requireStockAttention("FP32 per-query attention", got, want, kernel, parts, relativeAttentionVisible(k, window), relativeAttentionFP32Tol); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -248,9 +287,17 @@ func TestRelativeAttentionOrderedViews(t *testing.T) {
 			if RelativePositionAttention(q, k, v, table, sink, 32, scale) != nil {
 				t.Fatal("unexpected dispatch with short local window")
 			}
+			// A history shorter than MLX's two-pass threshold is still served,
+			// through the same cache-window views.
 			short := func(x *Array) *Array { return x.Slice(Slice(), Slice(), Slice(0, 1023), Slice()) }
-			if RelativePositionAttention(q, short(k), short(v), table, sink, 0, scale) != nil {
-				t.Fatal("unexpected dispatch under split threshold")
+			got := RelativePositionAttention(q, short(k), short(v), table, sink, 0, scale)
+			if got == nil {
+				t.Fatal("short history declined")
+			}
+			kernel, parts := relativeSplit(width, 1023)
+			want := stockRelativeAttention(q, short(k), short(v), table, sink, 0, scale)
+			if err := requireStockAttention(fmt.Sprintf("width %d short history", width), got, want, kernel, parts, 1023, relativeAttentionBF16Tol); err != nil {
+				t.Fatal(err)
 			}
 			if width == 1 {
 				// Verify that a rejected launch returns control to the model's
@@ -340,7 +387,7 @@ func TestRelativeAttentionReadsStridedInputs(t *testing.T) {
 				if got == nil {
 					t.Fatalf("%s kernel declined token-major keys", name)
 				}
-				if err := requireStockAttention(name+" kernel, token-major keys", got, want, kernel, parts, relativeAttentionFP32Tol); err != nil {
+				if err := requireStockAttention(name+" kernel, token-major keys", got, want, kernel, parts, 1031, relativeAttentionFP32Tol); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -348,7 +395,7 @@ func TestRelativeAttentionReadsStridedInputs(t *testing.T) {
 			if got == nil {
 				t.Fatal("eligible shape declined")
 			}
-			if err := requireStockAttention("token-major keys", got, want, nil, 0, relativeAttentionFP32Tol); err != nil {
+			if err := requireStockAttention("token-major keys", got, want, nil, 0, 1031, relativeAttentionFP32Tol); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -367,10 +414,10 @@ func TestRelativeAttentionGatedMatchesSeparateGate(t *testing.T) {
 		const heads, kvHeads, width = 24, 8, 128
 		scale := float32(1 / math.Sqrt(width))
 		pattern, covered := uint16(0), 0
-		// The second pair of histories straddles a partition-count change on
+		// The last pair of histories straddles a partition-count change on
 		// devices whose split follows the history length; each request must
 		// still match its own separate merge.
-		for _, lengths := range [][2]int{{1031, 1098}, {3000, 5000}} {
+		for _, lengths := range [][2]int{{37, 300}, {1031, 1098}, {3000, 5000}} {
 			for _, window := range []int{1024, 0} {
 				for _, requests := range []int{1, 2} {
 					for _, queries := range []int{1, 3, 4, 8} {
@@ -432,7 +479,6 @@ func TestRelativeAttentionGatedMatchesSeparateGate(t *testing.T) {
 			{"FP32 gate", one(q), one(k), one(v), one(table), one(sink), gate.AsType(DTypeFloat32)},
 			{"narrow gate", one(q), one(k), one(v), one(table), one(sink), gate.Slice(Slice(), Slice(), Slice(0, heads*width-128))},
 			{"three requests", []*Array{q, q, q}, []*Array{k, k, k}, []*Array{v, v, v}, []*Array{table, table, table}, []*Array{sink, sink, sink}, Zeros(DTypeBFloat16, 3, 4, heads*width)},
-			{"short history", one(q), one(k.Slice(Slice(), Slice(), Slice(0, 1026), Slice())), one(v.Slice(Slice(), Slice(), Slice(0, 1026), Slice())), one(table), one(sink), gate},
 		} {
 			if RelativePositionAttentionGated(tc.q, tc.k, tc.v, tc.table, tc.sink, tc.gate, 0, scale) != nil {
 				t.Fatalf("%s unexpectedly launched", tc.name)
@@ -461,7 +507,7 @@ func TestRelativeAttentionHeadGroups(t *testing.T) {
 				want := stockRelativeAttention(q, k, v, table, sink, tc.window, scale)
 				kernel, parts := relativeSplit(tc.queries, relativeAttentionVisible(k, tc.window))
 				label := fmt.Sprintf("heads %d/%d, queries %d, distances %d, window %d", tc.heads, tc.kvHeads, tc.queries, tc.distances, tc.window)
-				if err := requireStockAttention(label, got, want, kernel, parts, relativeAttentionBF16Tol); err != nil {
+				if err := requireStockAttention(label, got, want, kernel, parts, relativeAttentionVisible(k, tc.window), relativeAttentionBF16Tol); err != nil {
 					t.Fatal(err)
 				}
 			})

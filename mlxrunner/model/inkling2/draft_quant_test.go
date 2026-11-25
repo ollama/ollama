@@ -199,7 +199,7 @@ func TestDraftCompiledStepsMatchEager(t *testing.T) {
 				same(fmt.Sprintf("latent %d", step), got[1], wantLatent)
 				state = wantNext
 			}
-			correct := compiledCorrection(30)
+			correct := compiledCorrection(30, 0)
 			for _, scale := range []float64{4, 40} {
 				base := draftTestValues(rng, scale, 1, 4096)
 				folded := draftTestValues(rng, scale/4, 1, 4096)
@@ -333,6 +333,11 @@ func TestDraftQuantizedHeadTracksBF16(t *testing.T) {
 					})
 				mlx.Eval(rows, scores)
 				return rows, scores
+			}
+			// Compare whole score rows; the proposal restriction masks a tail that
+			// differs between the heads.
+			for _, d := range []*draft{quantized, reference} {
+				d.correct = compiledCorrection(d.target.config.LogitCap, 0)
 			}
 			gotHidden, gotScores := proposal(quantized)
 			wantHidden, wantScores := proposal(reference)

@@ -103,14 +103,22 @@ func (a selfAttention) temperature(b *batch.Batch, rows, tokens int) *mlx.Array 
 }
 
 // gatedShortAttention is relativeSDPA followed by compiledAttentionGate for
-// independent requests' unpadded blocks of up to shortTargetRows queries, in
-// one launch that merges every request's partial sums and applies the gate.
-// A single request's history is rectangular (no Rows), so it keeps the
-// separate gate. It returns nil wherever a row would take another attention
-// route.
+// unpadded blocks of up to shortTargetRows queries, in one launch that merges
+// every request's partial sums and applies the gate. It returns nil wherever a
+// row would take another attention route.
 func gatedShortAttention(b *batch.Batch, q, table, sink, gate *mlx.Array, history *nn.KVHistory, window int, scale float32) *mlx.Array {
-	if history == nil || history.Rows() == nil || q.Dim(2) > shortTargetRows {
+	if history == nil || q.Dim(2) > shortTargetRows {
 		return nil
+	}
+	if history.Rows() == nil {
+		// A rectangular single-request history can use the same fused merge;
+		// padded blocks keep the separate route's trimming behavior.
+		if len(b.SeqQueryLens) != 1 || b.SeqQueryLens[0] != int32(q.Dim(2)) {
+			return nil
+		}
+		return mlx.RelativePositionAttentionGated(
+			[]*mlx.Array{q.AsType(mlx.DTypeFloat32)}, []*mlx.Array{history.K()}, []*mlx.Array{history.V()},
+			[]*mlx.Array{table}, []*mlx.Array{sink}, gate, window, scale)
 	}
 	queries, rows := q.Dim(2), history.Rows()
 	n := len(rows)
@@ -265,8 +273,8 @@ func relativeCachedSDPA(b *batch.Batch, q, table, sink *mlx.Array, history *nn.K
 
 	// Short blocks share their projections and cache write. Give each query
 	// the same ordered window, kernel and extent it sees in single-token decode:
-	// a block that starts under the split kernels' history threshold can end
-	// past it.
+	// the stock kernels choose their reduction by history length, and a block
+	// can straddle a change.
 	output := make([]*mlx.Array, queries)
 	for i := range queries {
 		row := &batch.Batch{

@@ -396,7 +396,7 @@ func TestBlockSelectorVocabularyOrderWithTopKTarget(t *testing.T) {
 			0, 0, 0, 0,
 			0, 0, 0, 2,
 		}, 1, 3, 4)
-		q := session.selectBlock(logits, mlx.FromValues([]int32{0}, 1), 2, 2).dist
+		q := session.selectBlock(logits, mlx.FromValues([]int32{0}, 1), 2).dist
 		if q.IDs != nil || !slices.Equal(q.Probs.Dims(), []int{2, 4}) {
 			t.Fatalf("proposal IDs %v, shape %v, want dense [2 4]", q.IDs, q.Probs.Dims())
 		}
@@ -437,19 +437,19 @@ func TestBlockProposalIgnoresPaddedHidden(t *testing.T) {
 		defer session.close()
 		hidden := oneHotLogits([]int32{1, 2, 3, 4, 5})
 		current := mlx.FromValues([]int32{1}, 1)
-		if got := session.selectBlock(hidden, current, 2, 2).tokens.Ints(); !slices.Equal(got, []int32{2, 3}) {
+		if got := session.selectBlock(hidden, current, 2).tokens.Ints(); !slices.Equal(got, []int32{2, 3}) {
 			t.Fatalf("padded block proposed %v, want [2 3]", got)
 		}
 		selector := &observeProposalRows{selectedBlockDraft: &selectedBlockDraft{draft}}
 		r.spec.draft = selector
-		got := session.selectBlock(hidden, current, 2, 2)
+		got := session.selectBlock(hidden, current, 2)
 		if got.tokens.Dim(1) != 2 || selector.unembed != 2 {
 			t.Fatalf("padded selector projected %d rows and proposed %d, want 2 each", selector.unembed, got.tokens.Dim(1))
 		}
 	})
 }
 
-func TestProposalPrefixAfterFullVocabularyProjection(t *testing.T) {
+func TestProposalProjectsOnlyConsumedRows(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		for _, adaptive := range []bool{false, true} {
 			for n := range 8 {
@@ -474,8 +474,8 @@ func TestProposalPrefixAfterFullVocabularyProjection(t *testing.T) {
 						return
 					}
 					mlx.Eval(got.Arrays()...)
-					if len(fake.calls) != 1 || len(fake.calls[0].block) != rows+1 || observer.unembed != rows {
-						t.Fatalf("adaptive=%v, %d proposals: draft calls %v, projected %d rows, want %d", adaptive, n, fake.calls, observer.unembed, rows)
+					if len(fake.calls) != 1 || len(fake.calls[0].block) != rows+1 || observer.unembed != n {
+						t.Fatalf("adaptive=%v, %d proposals: draft calls %v, projected %d rows, want %d", adaptive, n, fake.calls, observer.unembed, n)
 					}
 					if observer.hidden != n || observer.logits != n || !slices.Equal(got.tokens.Dims(), []int{1, n}) || got.dist.Probs.Dim(0) != n || got.dist.IDs.Dim(0) != n {
 						t.Fatalf("%d proposals: selector rows %d/%d, tokens %v, probabilities %v, IDs %v", n, observer.hidden, observer.logits, got.tokens.Dims(), got.dist.Probs.Dims(), got.dist.IDs.Dims())
