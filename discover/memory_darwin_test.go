@@ -64,3 +64,16 @@ func TestSwapOutPressureIsReportedOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestSwapOutPressureHasPerMonitorBaselines(t *testing.T) {
+	a, b := &MemoryMonitor{}, &MemoryMonitor{}
+	if a.observePressure(100, 200) != 0 || b.observePressure(100, 250) != 0 {
+		t.Fatal("existing swap-outs must not be treated as new pressure")
+	}
+	if got := a.observePressure(100, 270); got != 70 {
+		t.Fatalf("first monitor reported %d bytes, want 70", got)
+	}
+	if got := b.observePressure(100, 270); got != 20 {
+		t.Fatalf("second monitor reported %d bytes, want 20", got)
+	}
+}
