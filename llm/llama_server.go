@@ -273,17 +273,21 @@ func newLlamaServerMediaMarker() string {
 // request.
 //
 // The media markers are positional: llama-server replaces each occurrence of
-// the marker with the next image in multimodal_data, so the number of markers
-// has to match the number of images. Appending them all to the end of the
-// prompt satisfies that count, but it puts every image after the text, which
+// the marker with the next entry in multimodal_data. So the data has to be in
+// the order the markers appear in the prompt, and the number of markers has
+// to match the number of images. Appending all the markers to the end of the
+// prompt satisfies the count, but it puts every image after the text, which
 // is the wrong order for a model whose renderer interleaves the images with
 // the text.
 //
 // The Embedding endpoint takes its media as bare blobs, with no id to match
-// against, so the ordering it can honour is the order the images were given
-// in. A prompt that names the images — the "[img-N]" placeholders the chat
-// path uses — is honoured when it is there, and the markers are prepended
-// when it is not.
+// against, so a prompt that names the images — the "[img-N]" placeholders the
+// chat path uses — is what says which image goes where. The image named by
+// the i-th placeholder is the image at position i.
+//
+// The data is built in marker order: the images the prompt did not name come
+// first, since their markers are prepended, and then each named image in the
+// order its placeholder appears in the prompt.
 func (s *llamaServerRunner) embeddingMultimodalPrompt(input string, media [][]byte) (llamaServerMultimodalPrompt, error) {
 	marker := s.llamaServerMediaMarker()
 
@@ -295,22 +299,56 @@ func (s *llamaServerRunner) embeddingMultimodalPrompt(input string, media [][]by
 		placeholders[i] = fmt.Sprintf("[img-%d]", i)
 	}
 
+	// Which image each placeholder names, in the order the placeholders
+	// appear in the prompt. The prompt is scanned for the placeholders rather
+	// than the placeholders being looked up one by one, because the order
+	// they appear in is what decides the order the images are sent in.
+	var order []int
+	named := make([]bool, len(media))
 	promptStr := input
-	for _, placeholder := range placeholders {
-		promptStr = strings.Replace(promptStr, placeholder, marker, 1)
+	for {
+		// The placeholder that comes first in the prompt that is still there.
+		next := -1
+		at := len(promptStr)
+		for i, placeholder := range placeholders {
+			if named[i] {
+				continue
+			}
+			idx := strings.Index(promptStr, placeholder)
+			if idx < 0 {
+				continue
+			}
+			if idx < at {
+				at = idx
+				next = i
+			}
+		}
+		if next < 0 {
+			break
+		}
+
+		promptStr = promptStr[:at] + marker + promptStr[at+len(placeholders[next]):]
+		order = append(order, next)
+		named[next] = true
 	}
 
 	// Any image the prompt did not name still needs its marker, and the count
 	// has to line up with the number of images, or llama-server rejects the
-	// request.
-	missing := len(media) - strings.Count(promptStr, marker)
-	if missing > 0 {
-		promptStr = strings.Repeat(marker, missing) + promptStr
+	// request. Those markers go first, so those images come first.
+	var unnamed []int
+	for i := range media {
+		if !named[i] {
+			unnamed = append(unnamed, i)
+		}
+	}
+	if len(unnamed) > 0 {
+		promptStr = strings.Repeat(marker, len(unnamed)) + promptStr
+		order = append(unnamed, order...)
 	}
 
 	multimodal := llamaServerMultimodalPrompt{PromptString: promptStr}
-	for _, m := range media {
-		data, err := llamaServerMediaBytes(m)
+	for _, i := range order {
+		data, err := llamaServerMediaBytes(media[i])
 		if err != nil {
 			return llamaServerMultimodalPrompt{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 		}
