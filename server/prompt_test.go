@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +21,86 @@ func testConfigWithRenderer(renderer string) model.ConfigV2 {
 
 func testConfigWithRendererAndType(renderer, modelType string) model.ConfigV2 {
 	return model.ConfigV2{Renderer: renderer, ModelType: modelType}
+}
+
+func TestImageTaggedMessagesManyImages(t *testing.T) {
+	const count = 256
+	for _, slots := range []int{0, 128, 300} {
+		t.Run(fmt.Sprint(slots), func(t *testing.T) {
+			content := "start" + strings.Repeat(" [img]", slots) + " end"
+			prompt := content
+			var prefix strings.Builder
+			for i := range count {
+				tag := fmt.Sprintf("[img-%d]", i)
+				if strings.Contains(prompt, "[img]") {
+					prompt = strings.Replace(prompt, "[img]", tag, 1)
+				} else {
+					prefix.WriteString(tag)
+				}
+			}
+			messages := []api.Message{{Content: content, Images: make([]api.ImageData, count)}}
+			got, media, err := imageTaggedMessages(&Model{}, messages, 0, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got[0].Content != prefix.String()+prompt || len(media) != count {
+				t.Fatalf("unexpected prompt or media count: got %d media", len(media))
+			}
+			for i := range media {
+				if media[i].ID != i {
+					t.Fatalf("media[%d].ID = %d", i, media[i].ID)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkImageTaggedMessages(b *testing.B) {
+	for _, count := range []int{16, 128, 512} {
+		for _, placed := range []bool{false, true} {
+			name := "prefix"
+			if placed {
+				name = "placeholders"
+			}
+			b.Run(fmt.Sprintf("%s/%d", name, count), func(b *testing.B) {
+				content := "text"
+				var want strings.Builder
+				if placed {
+					content = "start" + strings.Repeat(" [img]", count) + " end"
+					want.WriteString("start")
+				}
+				for i := range count {
+					if placed {
+						want.WriteByte(' ')
+					}
+					fmt.Fprintf(&want, "[img-%d]", i)
+				}
+				if placed {
+					want.WriteString(" end")
+				} else {
+					want.WriteString(content)
+				}
+				msgs := []api.Message{{Content: content, Images: make([]api.ImageData, count)}}
+				m := &Model{}
+				got, media, err := imageTaggedMessages(m, msgs, 0, false)
+				if err != nil || len(media) != count || got[0].Content != want.String() {
+					b.Fatalf("incorrect fixture output: %v", err)
+				}
+				for i, item := range media {
+					if item.ID != i {
+						b.Fatalf("media ID %d: got %d", i, item.ID)
+					}
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					if _, _, err := imageTaggedMessages(m, msgs, 0, false); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestChatPrompt(t *testing.T) {
