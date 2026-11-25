@@ -2586,3 +2586,32 @@ func TestFitAutoNumCtxToSingleGPU(t *testing.T) {
 	require.False(t, ok)
 	require.Equal(t, 262144, spread.opts.NumCtx)
 }
+
+// A stale free-memory snapshot (discovery refresh timed out after the last
+// runners were unloaded) shows both GPUs nearly full. With nothing loaded the
+// model must still go to one GPU instead of being spread across both.
+func TestSingleGPUAfterEvictionStaleSnapshot(t *testing.T) {
+	gpu := func(id string, free uint64) ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{ID: id, Library: "CUDA"}}
+		g.TotalMemory = 24 * format.GibiByte
+		g.FreeMemory = free
+		return g
+	}
+	stale := []ml.DeviceInfo{gpu("0", 1300*format.MebiByte), gpu("1", 1000*format.MebiByte)}
+	predicted := uint64(20 * format.GibiByte)
+
+	s := &Scheduler{loaded: map[string]*runnerRef{}}
+	g, _, ok := s.singleGPUAfterEviction(stale, predicted)
+	require.True(t, ok, "empty scheduler must not trust a full snapshot")
+	require.Equal(t, "0", g.ID)
+
+	// Too large for any one card even when empty: no single-GPU placement.
+	_, _, ok = s.singleGPUAfterEviction(stale, 24*format.GibiByte)
+	require.False(t, ok)
+
+	// With a runner resident on GPU 1, its VRAM counts as reclaimable there only.
+	s.loaded["m"] = &runnerRef{llama: &mockLlm{}, gpus: []ml.DeviceID{stale[1].DeviceID}, vramSize: 21 * format.GibiByte}
+	g, _, ok = s.singleGPUAfterEviction(stale, predicted)
+	require.True(t, ok)
+	require.Equal(t, "1", g.ID)
+}

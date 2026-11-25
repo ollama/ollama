@@ -605,28 +605,18 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 
 			// PR5: Evict instead of splitting a model that fits one GPU.
-			// If the placement spans more than one GPU and other models are loaded,
-			// check if a single GPU would fit after evicting its resident models.
-			if len(loadGpus) > 1 && len(s.loaded) > 0 && launchOpts.MainGPU == nil && launchOpts.NumGPU == 0 && !envconfig.SchedSpread() {
-				for _, g := range gpus {
-					// Effective memory: free + total loaded VRAM (all could be evicted)
-					effective := g.FreeMemory
-					for _, r := range s.loaded {
-						if r == nil || r.llama == nil {
-							continue
-						}
-						_, vram := r.llama.MemorySize()
-						effective += vram
-					}
-					if effective >= predicted {
-						slog.Info("evicting instead of splitting: model fits on single GPU after eviction",
-							"gpu", g.ID, "effective", format.HumanBytes2(effective), "predicted", format.HumanBytes2(predicted))
-						mainGPU := 0
-						launchOpts.MainGPU = &mainGPU
-						launchOpts.NumGPU = 0 // auto
-						loadGpus = []ml.DeviceInfo{g}
-						break
-					}
+			// If the placement spans more than one GPU, check if a single GPU
+			// would fit after evicting its resident models. This also covers a
+			// pinned full offload (num_gpu >= layer count, e.g. a manifest's 99
+			// clamped above), which must never be spread just because the
+			// free-memory snapshot looked full.
+			if len(loadGpus) > 1 && launchOpts.MainGPU == nil && launchOpts.NumGPU != 0 &&
+				!explicitPartialGPUOffload(launchOpts, f) && !envconfig.SchedSpread() {
+				if g, effective, ok := s.singleGPUAfterEviction(gpus, predicted); ok {
+					slog.Info("evicting instead of splitting: model fits on single GPU after eviction",
+						"gpu", g.ID, "effective", format.HumanBytes2(effective), "predicted", format.HumanBytes2(predicted),
+						"loaded_runners", len(s.loaded))
+					loadGpus, launchOpts = singleLlamaServerGPUPlacement(g, launchOpts)
 				}
 			}
 			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
@@ -2144,4 +2134,57 @@ func (s *Scheduler) loadedModels() []loadedModel {
 		models = append(models, lm)
 	}
 	return models
+}
+
+// singleGPUAfterEviction returns the discrete GPU with the most memory that
+// could be made available for one model: its free memory plus the VRAM of the
+// loaded runners placed on it (all of which can be evicted first).
+//
+// With no runners loaded, Ollama itself holds no VRAM, so a free-memory
+// snapshot showing the GPUs full is stale: the discovery refresh timed out
+// ("unable to refresh free memory, using old values") and kept the values
+// from before the last runners were unloaded. Trusting it spread models that
+// fit one GPU across all of them, so in that case the device's total usable
+// memory is used instead. llama-server's own fit check still sees the real
+// free memory at load time.
+//
+// Callers must hold s.loadedMu.
+func (s *Scheduler) singleGPUAfterEviction(gpus []ml.DeviceInfo, predicted uint64) (best ml.DeviceInfo, bestEffective uint64, ok bool) {
+	if predicted == 0 {
+		return ml.DeviceInfo{}, 0, false
+	}
+	runners := 0
+	for _, r := range s.loaded {
+		if r != nil && r.llama != nil {
+			runners++
+		}
+	}
+	for _, g := range gpus {
+		if g.Integrated {
+			continue
+		}
+		effective := g.FreeMemory
+		if runners == 0 {
+			if reserve := g.MinimumMemory() + envconfig.GpuOverhead(); g.TotalMemory > reserve && g.TotalMemory-reserve > effective {
+				effective = g.TotalMemory - reserve
+			}
+		} else {
+			for _, r := range s.loaded {
+				if r == nil || r.llama == nil || len(r.gpus) == 0 {
+					continue
+				}
+				for _, id := range r.gpus {
+					if id == g.DeviceID {
+						// A split runner frees roughly its share on each GPU.
+						effective += r.vramSize / uint64(len(r.gpus))
+						break
+					}
+				}
+			}
+		}
+		if effective >= predicted && (!ok || effective > bestEffective) {
+			best, bestEffective, ok = g, effective, true
+		}
+	}
+	return best, bestEffective, ok
 }
