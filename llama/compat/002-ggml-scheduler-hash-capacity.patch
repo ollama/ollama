@@ -1,0 +1,94 @@
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 8e17564..635b873 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -2336,8 +2336,8 @@ ggml_backend_sched_t ggml_backend_sched_new(
+     sched->n_copies = parallel ? GGML_SCHED_MAX_COPIES : 1;
+
+     // initialize hash table
+-    // FIXME: needs to be size*2 to account for leafs (do it in graph_split instead)
+-    sched->hash_set    = ggml_hash_set_new(graph_size);
++    // Both nodes and leaves can each occupy up to graph_size entries.
++    sched->hash_set    = ggml_hash_set_new(graph_size * 2);
+     sched->hv_tensor_backend_ids   = (int *) malloc(sched->hash_set.size * sizeof(sched->hv_tensor_backend_ids[0]));
+     sched->hv_tensor_copies        = (ggml_tensor **) malloc(sched->hash_set.size * sched->n_backends * sched->n_copies * sizeof(struct ggml_tensor *));
+     sched->hv_tensor_requires_copy = (bool *) malloc(sched->hash_set.size * sizeof(sched->hv_tensor_requires_copy[0]));
+diff --git a/tests/test-backend-sched.cpp b/tests/test-backend-sched.cpp
+index 8afdcc7..cbe59f1 100644
+--- a/tests/test-backend-sched.cpp
++++ b/tests/test-backend-sched.cpp
+@@ -945,6 +945,58 @@ static bool initialize_backends(std::vector<ggml_backend_ptr> & backends) {
+ }
+
+
++static test_result test_graph_nodes_and_leaves() {
++    constexpr size_t graph_size = 16;
++    ggml_backend_ptr cpu(ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr));
++    if (!cpu) {
++        return fail("failed to initialize CPU backend");
++    }
++
++    ggml_backend_t backends[] = { cpu.get() };
++    ggml_backend_sched_ptr sched(ggml_backend_sched_new(backends, nullptr, 1, graph_size, false, false));
++    ggml_init_params params = {
++        /*.mem_size   =*/ 2*graph_size*ggml_tensor_overhead() + ggml_graph_overhead_custom(graph_size, false),
++        /*.mem_buffer =*/ nullptr,
++        /*.no_alloc   =*/ true,
++    };
++    ggml_context_ptr ctx(ggml_init(params));
++    ggml_cgraph * graph = ggml_new_graph_custom(ctx.get(), graph_size, false);
++    std::vector<ggml_tensor *> inputs;
++    ggml_tensor * out = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 1);
++    inputs.push_back(out);
++    for (size_t i = 1; i < graph_size; ++i) {
++        ggml_tensor * input = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, 1);
++        inputs.push_back(input);
++        out = ggml_add(ctx.get(), out, input);
++    }
++    ggml_build_forward_expand(graph, out);
++
++    ggml_backend_sched_split_graph(sched.get(), graph);
++    ggml_backend_sched_reset(sched.get());
++    size_t sizes[1] = {};
++    ggml_backend_sched_reserve_size(sched.get(), graph, sizes);
++    ggml_backend_sched_reset(sched.get());
++    if (sizes[0] == 0 || !ggml_backend_sched_reserve(sched.get(), graph)) {
++        return fail("failed to reserve graph");
++    }
++    if (!ggml_backend_sched_alloc_graph(sched.get(), graph)) {
++        return fail("failed to allocate graph");
++    }
++    const float one = 1.0f;
++    for (ggml_tensor * input : inputs) {
++        ggml_backend_tensor_set(input, &one, 0, sizeof(one));
++    }
++    if (ggml_backend_sched_graph_compute(sched.get(), graph) != GGML_STATUS_SUCCESS) {
++        return fail("failed to compute graph");
++    }
++    float result = 0.0f;
++    ggml_backend_tensor_get(out, &result, 0, sizeof(result));
++    if (result != float(graph_size)) {
++        return fail("incorrect graph result: %f", result);
++    }
++    return TEST_OK;
++}
++
+ int main(int argc, char ** argv) {
+     for (int i = 1; i < argc; i++) {
+         if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+@@ -961,11 +1013,13 @@ int main(int argc, char ** argv) {
+
+     ggml_backend_load_all();
+
++    case_begin("test_graph_nodes_and_leaves");
++    case_end(test_graph_nodes_and_leaves());
++
+     std::vector<ggml_backend_ptr> backends;
+
+-    // nothing to test with synchronous CPU backend only
+     if (!initialize_backends(backends)) {
+-        return 0;
++        return n_ok + n_skip == n_test ? 0 : 1;
+     }
+
+     // the tests only borrow the backends, the ownership stays with this vector

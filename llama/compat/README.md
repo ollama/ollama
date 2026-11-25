@@ -27,13 +27,17 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/mtmd-model.cpp`
   (the file upstream refactored and renamed from `tools/mtmd/clip.cpp`, first
   seen at b12257, upstream #31865).
+- `002-ggml-scheduler-hash-capacity.patch` - carries a scheduler fix and
+  regression test for graphs whose nodes and leaves exceed the scheduler's
+  node-only hash capacity. Remove this patch when the pinned upstream contains
+  an equivalent fix.
 - `compat.cmake` - CMake glue that invokes the shared
   `cmake/apply-git-patches.cmake` idempotent applier (used by
   `llama/server/CMakeLists.txt`) for every `*.patch` under
   this directory by numeric filename order.
 
 The compatibility source files stay in this directory and are linked into the
-fetched llama.cpp targets. The patch file only adds call sites.
+fetched llama.cpp targets.
 
 ## Load-Time Hooks
 
