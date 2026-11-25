@@ -34,6 +34,14 @@ func TestClientFromEnvironment(t *testing.T) {
 		"scheme, hostname, and port": {value: "https://example.com:1234", expect: "https://example.com:1234"},
 		"trailing slash":             {value: "example.com/", expect: "http://example.com:11434"},
 		"trailing slash port":        {value: "example.com:1234/", expect: "http://example.com:1234"},
+		"ipv4 wildcard":              {value: "0.0.0.0", expect: "http://127.0.0.1:11434"},
+		"ipv4 wildcard and port":     {value: "0.0.0.0:1234", expect: "http://127.0.0.1:1234"},
+		"ipv6 wildcard":              {value: "[::]", expect: "http://[::1]:11434"},
+		"ipv6 wildcard and port":     {value: "[::]:1234", expect: "http://[::1]:1234"},
+		"wildcard URL with path":     {value: "https://0.0.0.0:1234/ollama", expect: "https://127.0.0.1:1234/ollama"},
+		"ipv4 loopback and port":     {value: "127.0.0.1:1234", expect: "http://127.0.0.1:1234"},
+		"ipv6 loopback and port":     {value: "[::1]:1234", expect: "http://[::1]:1234"},
+		"remote ipv6 and port":       {value: "[2001:db8::42]:1234", expect: "http://[2001:db8::42]:1234"},
 	}
 
 	for k, v := range testCases {
