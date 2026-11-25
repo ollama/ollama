@@ -37,7 +37,7 @@ func (r *LFM3Renderer) Thinking() *model.Thinking {
 
 func (r *LFM3Renderer) imageContent(message api.Message, firstImage int, separator string) string {
 	content := message.Content
-	if r.useImgTags && strings.Contains(content, "[img-") {
+	if r.useImgTags && indexedImageTagPresent(content, len(message.Images), firstImage) {
 		// The server has already placed indexed image tags in this message.
 		return content
 	}

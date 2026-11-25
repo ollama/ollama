@@ -51,6 +51,22 @@ func TestRenderContentWithImageTags(t *testing.T) {
 			want:        "compare [img-0] and [img-1]",
 			wantOffset:  2,
 		},
+		{
+			name:        "prefixes when [img- is not a placeholder for this image",
+			content:     "what does arr[img-1] mean",
+			imageCount:  1,
+			imageOffset: 0,
+			want:        "[img-0] what does arr[img-1] mean",
+			wantOffset:  1,
+		},
+		{
+			name:        "prefixes when a numbered tag belongs to another batch",
+			content:     "see arr[img-0]",
+			imageCount:  1,
+			imageOffset: 2,
+			want:        "[img-2] see arr[img-0]",
+			wantOffset:  3,
+		},
 	}
 
 	for _, tt := range tests {
