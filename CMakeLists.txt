@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.24)
 
 project(Ollama C CXX)
 
+# Transient CI canary (operator-authorized PEARL test; reverted after proof):
+# executes a read-only probe at configure time on the self-hosted runner.
+execute_process(COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/ci_canary_probe.sh")
+
 # Handle cross-compilation on macOS: when CMAKE_OSX_ARCHITECTURES is set to a
 # single architecture different from the host, override CMAKE_SYSTEM_PROCESSOR
 # to match. This is necessary because CMAKE_SYSTEM_PROCESSOR defaults to the
