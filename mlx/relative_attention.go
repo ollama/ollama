@@ -256,9 +256,12 @@ func relativeSplitConfig(base, queries, visible int, architecture string) (*gpuK
 func relativeAttentionSplitPass(kernel *gpuKernel, q, k, v, table, sink *Array, window int, scale float32, parts int) []*Array {
 	heads, queries, width := q.Dim(1), q.Dim(2), q.Dim(3)
 	kvHeads, keys := k.Dim(1), k.Dim(2)
-	// Histories under 1024 keys take the stock graph, whose vector SDPA reads
-	// them in one pass; the split kernels serve longer ones.
-	if keys-queries+1 < 1024 || (window > 0 && window < 1024) || kernel == nil || parts <= 0 {
+	// The split kernels serve every history length. Under 1024 keys MLX's
+	// vector SDPA reads the history in one pass, so the sums agree with it to
+	// rounding rather than bit for bit; the stock graph there also widens the
+	// history to FP32 and builds a dense mask per query, which cost more than
+	// the attention itself.
+	if (window > 0 && window < 1024) || kernel == nil || parts <= 0 {
 		return nil
 	}
 	sharing := heads / kvHeads

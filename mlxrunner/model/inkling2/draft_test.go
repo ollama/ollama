@@ -1,6 +1,7 @@
 package inkling2
 
 import (
+	"math"
 	"slices"
 	"testing"
 
@@ -110,7 +111,7 @@ func TestDraftRoundsCorrectedScoresToBF16(t *testing.T) {
 				Recurrent:  nn.NewLinear(mlx.Zeros(bf16, 3, 4), nil),
 				Folded:     newDraftProjection(0, mlx.Zeros(bf16, 2, 1)),
 				FoldedBias: mlx.FromValues([]float32{0, 1.0 / 256}, 2).AsType(bf16),
-				correct:    compiledCorrection(30),
+				correct:    compiledCorrection(30, 0),
 			}
 			hidden := mlx.Zeros(bf16, 1, 1, 2)
 			base := mlx.FromValues([]float32{2, 2}, 1, 1, 2).AsType(bf16)
@@ -131,6 +132,31 @@ func TestDraftRoundsCorrectedScoresToBF16(t *testing.T) {
 			}
 			if got := tokens.Ints(); !slices.Equal(got, []int32{0}) {
 				t.Errorf("greedy token = %v, want [0]", got)
+			}
+		})
+	})
+}
+
+func TestDraftRestrictsProposalCandidates(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.Scoped(func() {
+			const bf16 = mlx.DTypeBFloat16
+			d := &draft{
+				config:     draftConfig{Width: 1, StateWidth: 1},
+				Previous:   nn.NewEmbedding(mlx.Zeros(bf16, 3, 1)),
+				Recurrent:  nn.NewLinear(mlx.Zeros(bf16, 3, 4), nil),
+				Folded:     newDraftProjection(0, mlx.Zeros(bf16, 3, 1)),
+				FoldedBias: mlx.Zeros(bf16, 3),
+				correct:    compiledCorrection(30, 0.1),
+			}
+			// ln 0.1 = -2.30: token 1 sits 1 below the best and stays, token 2 sits 3 below and drops.
+			base := mlx.FromValues([]float32{2, 1, -1}, 1, 1, 3).AsType(bf16)
+			_, _, scores := d.Select(mlx.Zeros(bf16, 1, 1, 2), base, mlx.FromValues([]int32{0}, 1), func(_, scores *mlx.Array) (*mlx.Array, *mlx.Array) {
+				return scores.Argmax(-1, false).AsType(mlx.DTypeInt32), scores.AsType(mlx.DTypeFloat32)
+			})
+			got := scores.Floats()
+			if got[0] != 2 || got[1] != 1 || !math.IsInf(float64(got[2]), -1) {
+				t.Errorf("restricted scores = %v, want [2 1 -Inf]", got)
 			}
 		})
 	})
