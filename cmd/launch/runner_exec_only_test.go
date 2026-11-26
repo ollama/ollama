@@ -22,14 +22,6 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			},
 		},
 		{
-			name:   "opencode",
-			binary: "opencode",
-			runner: &OpenCode{},
-			checkPath: func(home string) string {
-				return filepath.Join(home, ".local", "state", "opencode", "model.json")
-			},
-		},
-		{
 			name:   "cline",
 			binary: "cline",
 			runner: &Cline{},
@@ -79,11 +71,6 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 
 			home := t.TempDir()
 			setTestHome(t, home)
-			if tt.name == "opencode" {
-				previous := openCodeLoadedContextLength
-				openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
-				t.Cleanup(func() { openCodeLoadedContextLength = previous })
-			}
 
 			binDir := t.TempDir()
 			writeFakeBinary(t, binDir, tt.binary)

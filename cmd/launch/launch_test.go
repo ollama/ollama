@@ -125,7 +125,6 @@ func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 	}{
 		{"local custom CLI model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", false, []any{false, true, "medium"}},
 		{"local custom desktop model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "chatgpt", false, []any{false, true, "medium"}},
-		{"local custom OpenCode model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "opencode", false, []any{false, true, "medium"}},
 		{"show overrides recommendation", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", true, []any{false, true, "medium"}},
 		{"invalid metadata preserves recommendation", `{"thinking":{"values":[false,true],"default":"missing"}}`, "codex", true, []any{false, true}},
 		{"missing metadata preserves recommendation", `{}`, "codex", true, []any{false, true}},
@@ -1839,6 +1838,9 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	if err := config.SaveIntegration("opencode", []string{"glm-5:cloud", "sample-model"}); err != nil {
 		t.Fatalf("failed to save opencode config: %v", err)
 	}
+	if err := config.SaveIntegration("cline", []string{"glm-5:cloud", "sample-model"}); err != nil {
+		t.Fatalf("failed to save cline config: %v", err)
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1872,11 +1874,14 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	if state.Integrations["claude"].ModelUsable {
 		t.Fatal("expected claude cloud config to be unusable when cloud is disabled")
 	}
-	if !state.Integrations["opencode"].ModelUsable {
+	if !state.Integrations["cline"].ModelUsable {
 		t.Fatal("expected editor config with a remaining local model to stay usable")
 	}
-	if state.Integrations["opencode"].CurrentModel != "sample-model" {
-		t.Fatalf("expected editor current model to fall back to remaining local model, got %q", state.Integrations["opencode"].CurrentModel)
+	if state.Integrations["cline"].CurrentModel != "sample-model" {
+		t.Fatalf("expected editor current model to fall back to remaining local model, got %q", state.Integrations["cline"].CurrentModel)
+	}
+	if openCode := state.Integrations["opencode"]; !openCode.Selectable || openCode.Changeable || openCode.CurrentModel != "" {
+		t.Fatalf("expected the OpenCode menu item to defer model selection to OpenCode, got %+v", openCode)
 	}
 }
 

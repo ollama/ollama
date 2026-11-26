@@ -381,15 +381,8 @@ Examples:
 				ExtraArgs:     passArgs,
 				Policy:        &policy,
 			}
-			if canonical == "opencode" && interactive && canLaunchOpenCodePlugin(req) &&
-				(!cmd.Flags().Changed("model") || len(passArgs) > 0 || (modelFlag != "" && !yesFlag)) {
-				if handled, err := launchOpenCodeWithPlugin(cmd.Context(), req, false); handled || err != nil {
-					return err
-				}
-			}
-
 			piOverride := canonical == "pi" && piHasModelArgs(passArgs)
-			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
+			if canonical != "opencode" && modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
 						if canonical == "pi" {
@@ -406,7 +399,7 @@ Examples:
 			if forceConfigure && !configFlag && req.ModelOverride == "" {
 				if _, runner, err := LookupIntegration(name); err == nil {
 					switch runner.(type) {
-					case ManagedAutodiscoveryIntegration, *Pi:
+					case ManagedAutodiscoveryIntegration, *Pi, *OpenCode:
 						forceConfigure = false
 					}
 				}
@@ -502,6 +495,9 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	policy := launchIntegrationPolicy(req)
 	if req.Restore {
 		return restoreIntegration(name, runner, req)
+	}
+	if openCode, ok := runner.(*OpenCode); ok {
+		return openCode.launch(ctx, req, policy)
 	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
 		if _, ok := runner.(ManagedAutodiscoveryIntegration); !ok {
@@ -627,21 +623,19 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 	}
 	var currentModel string
 	var usable bool
-	if autodiscovery, ok := integration.spec.Runner.(ManagedAutodiscoveryIntegration); ok {
-		currentModel, usable, err = c.launcherManagedAutodiscoveryState(ctx, info.Name, autodiscovery)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
-	} else if managed, ok := integration.spec.Runner.(ManagedSingleModel); ok {
-		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, managed)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
-	} else {
+	changeable := integration.installed || integration.autoInstallable
+	switch runner := integration.spec.Runner.(type) {
+	case *OpenCode:
+		changeable = false // Model selection lives in OpenCode.
+	case ManagedAutodiscoveryIntegration:
+		currentModel, usable, err = c.launcherManagedAutodiscoveryState(ctx, info.Name, runner)
+	case ManagedSingleModel:
+		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, runner)
+	default:
 		currentModel, usable, err = c.launcherModelState(ctx, info.Name, integration.editor)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
+	}
+	if err != nil {
+		return LauncherIntegrationState{}, err
 	}
 
 	return LauncherIntegrationState{
@@ -651,7 +645,7 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 		Installed:       integration.installed,
 		AutoInstallable: integration.autoInstallable,
 		Selectable:      integration.installed || integration.autoInstallable,
-		Changeable:      integration.installed || integration.autoInstallable,
+		Changeable:      changeable,
 		CurrentModel:    currentModel,
 		ModelUsable:     usable,
 		InstallHint:     integration.installHint,
@@ -821,13 +815,6 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		return nil
 	}
 
-	if name == "opencode" && isInteractiveSession() && !needsConfigure &&
-		req.ModelOverride != "" && len(req.ExtraArgs) == 0 && canLaunchOpenCodePlugin(req) {
-		if handled, err := launchOpenCodeWithPlugin(ctx, req, true); handled || err != nil {
-			return err
-		}
-	}
-
 	var launchModels []LaunchModel
 	liveConfigMatches := slices.Equal(editor.Models(), models)
 	if needsConfigure || req.ModelOverride != "" || !savedMatchesModels(saved, models) || !liveConfigMatches {
@@ -839,9 +826,6 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		launchModels = c.resolveRunModels(ctx, name, models)
 	}
 
-	if name == "opencode" && len(req.ExtraArgs) == 0 {
-		launchModels = openCodeRuntimeModels(launchModels, c.recommendations(ctx))
-	}
 	return launchAfterConfiguration(name, runner, models[0], launchModels, req)
 }
 
@@ -1583,7 +1567,7 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 			resolved[i].Thinking = thinking.Clone()
 		}
 	}
-	if !slices.Contains([]string{"codex", "opencode", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
+	if !slices.Contains([]string{"codex", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
 		return resolved
 	}
 	showCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

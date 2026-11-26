@@ -6,102 +6,116 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
 
-func TestLaunchCmdOpenCodeRequiresServer(t *testing.T) {
+func TestLaunchCmdOpenCode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell fake executable")
 	}
 	setTestHome(t, t.TempDir())
-	withInteractiveSession(t, true)
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
 	t.Setenv("OLLAMA_HOST", "")
 	t.Setenv(openCodeStartupEnv, "")
+	t.Setenv("OPENCODE_CONFIG_CONTENT", "")
 	executable := `#!/bin/sh
+printf '%s\n' "$*" >> "$OLLAMA_OPENCODE_TEST_CALLS"
 if [ "$1" = "--version" ]; then
   printf '%s\n' "$OLLAMA_OPENCODE_TEST_VERSION"
   exit 0
 fi
 if [ "$1" = "plugin" ]; then
   [ "$2" = "list" ] || exit 1
-  printf '%s\n' 'ID                  VERSION  SOURCE' 'ollama.integration  0.1.0    test-installed-plugin'
+  printf '%s\n' 'ollama.integration  0.1.1  test-installed-plugin'
   exit 0
 fi
+[ -z "$OPENCODE_CONFIG_CONTENT" ] || exit 3
 printf '%s' "$OLLAMA_OPENCODE_STARTUP" > "$OLLAMA_OPENCODE_TEST_OUTPUT"
+printf '%s\n' "$@" > "$OLLAMA_OPENCODE_TEST_OUTPUT.args"
 `
 	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte(executable), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	offline := errors.New("Ollama is offline")
 	for _, tc := range []struct {
-		name, version, payload string
-		args                   []string
-		heartbeatErr           error
+		name, version, payload, wantArgs, wantErr string
+		args                                      []string
+		heartbeatErr                              error
+		setupOnly, headless                       bool
 	}{
-		{name: "plain", version: "2.4.1"},
-		{name: "selected model", version: "2.4.1", args: []string{"--model", "example-model"}, payload: `{"model":"example-model:latest"}`},
-		{name: "selected cloud model", version: "2.4.1", args: []string{"--model", "example-model:cloud"}, payload: `{"model":"example-model:cloud","checkModelAccess":true}`},
-		{name: "offline", version: "2.4.1", heartbeatErr: offline},
-		{name: "selected model offline", version: "2.4.1", args: []string{"--model", "example-model"}, heartbeatErr: offline},
+		{name: "plain"},
+		{name: "selected model", args: []string{"--model", "example-model"}, payload: `{"model":"example-model:latest"}`},
+		{name: "selected cloud model", args: []string{"--model", "example-model:cloud"}, payload: `{"model":"example-model:cloud","checkModelAccess":true}`},
+		{name: "auto approve", args: []string{"--yes", "--model", "example-model"}, payload: `{"model":"example-model:latest","autoApprove":true}`},
+		{name: "resume", args: []string{"--", "--continue"}, wantArgs: "--continue"},
+		{name: "headless with model", args: []string{"--yes", "--model", "example-model", "--", "run", "hello"}, wantArgs: "run\n--model\nollama/example-model:latest\nhello", headless: true},
+		{name: "configure only", args: []string{"--config"}, setupOnly: true},
+		{name: "configure with model", args: []string{"--config", "--model", "example-model"}, wantErr: "--config installs"},
+		{name: "older version", version: "1.4.1", wantErr: "requires OpenCode 2.4.1"},
+		{name: "offline", heartbeatErr: offline},
+		{name: "selected model offline", args: []string{"--model", "example-model"}, heartbeatErr: offline},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			output := filepath.Join(t.TempDir(), "startup")
+			withInteractiveSession(t, !tc.headless)
+			dir := t.TempDir()
+			output := filepath.Join(dir, "startup")
+			calls := filepath.Join(dir, "calls")
 			t.Setenv("OLLAMA_OPENCODE_TEST_OUTPUT", output)
-			t.Setenv("OLLAMA_OPENCODE_TEST_VERSION", tc.version)
+			t.Setenv("OLLAMA_OPENCODE_TEST_CALLS", calls)
+			version := tc.version
+			if version == "" {
+				version = "2.4.1"
+			}
+			t.Setenv("OLLAMA_OPENCODE_TEST_VERSION", version)
 			checked := false
 			cmd := LaunchCmd(func(*cobra.Command, []string) error {
 				checked = true
 				return tc.heartbeatErr
 			}, nil)
 			cmd.SetArgs(append([]string{"opencode"}, tc.args...))
-			if err := cmd.Execute(); !checked || !errors.Is(err, tc.heartbeatErr) {
-				t.Fatalf("checked server = %v, launch error = %v, want %v", checked, err, tc.heartbeatErr)
+			err := cmd.Execute()
+			if !checked {
+				t.Fatal("launcher skipped the Ollama server check")
+			}
+			if tc.heartbeatErr != nil {
+				if !errors.Is(err, tc.heartbeatErr) {
+					t.Fatalf("launch error = %v, want %v", err, tc.heartbeatErr)
+				}
+				if _, err := os.Stat(calls); !os.IsNotExist(err) {
+					t.Fatalf("launcher invoked OpenCode after the server check failed: %v", err)
+				}
+				return
+			}
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("launch error = %v, want %q", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatal(err)
 			}
 			payload, err := os.ReadFile(output)
-			if tc.heartbeatErr != nil {
+			if tc.setupOnly || tc.wantErr != "" {
 				if !os.IsNotExist(err) {
-					t.Fatalf("OpenCode started while Ollama was unavailable: %v", err)
+					t.Fatalf("OpenCode started unexpectedly: %v", err)
 				}
-			} else if err != nil || string(payload) != tc.payload {
+				if tc.setupOnly {
+					if data, err := os.ReadFile(calls); err != nil || !strings.Contains(string(data), "plugin list") {
+						t.Fatalf("setup did not check for the OpenCode plugin: %q, %v", data, err)
+					}
+				}
+				return
+			}
+			if err != nil || string(payload) != tc.payload {
 				t.Fatalf("OpenCode startup payload = %q, %v, want %q", payload, err, tc.payload)
 			}
+			if args, err := os.ReadFile(output + ".args"); err != nil || strings.TrimSpace(string(args)) != tc.wantArgs {
+				t.Fatalf("OpenCode arguments = %q, %v, want %q", args, err, tc.wantArgs)
+			}
 		})
-	}
-}
-
-func TestOpenCodePluginLaunch(t *testing.T) {
-	t.Setenv("OLLAMA_HOST", "")
-	for _, req := range []IntegrationLaunchRequest{
-		{},
-		{ModelOverride: "qwen3.8:27b"},
-		{ExtraArgs: []string{"--continue"}},
-		{ExtraArgs: []string{"-c"}},
-		{ExtraArgs: []string{"--session", "ses_123"}},
-		{ExtraArgs: []string{"-s", "ses_123"}},
-		{ExtraArgs: []string{"--session=ses_123"}},
-	} {
-		if !canLaunchOpenCodePlugin(req) {
-			t.Errorf("request should use the plugin: %+v", req)
-		}
-	}
-	for _, req := range []IntegrationLaunchRequest{
-		{ExtraArgs: []string{"run", "test"}},
-		{ExtraArgs: []string{"--session"}},
-		{ForceConfigure: true},
-		{ConfigureOnly: true},
-		{Restore: true},
-	} {
-		if canLaunchOpenCodePlugin(req) {
-			t.Errorf("request should keep the existing launcher path: %+v", req)
-		}
-	}
-	t.Setenv("OLLAMA_HOST", "http://localhost:18181")
-	if canLaunchOpenCodePlugin(IntegrationLaunchRequest{}) {
-		t.Fatal("explicit Ollama host should keep the existing launcher path")
 	}
 }
 
