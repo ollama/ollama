@@ -257,15 +257,15 @@ func main() {
 
 // runInitialUI decides what to show once the platform UI is ready: a URL
 // scheme request wins, a hidden launch shows nothing, and an interactive
-// launch opens Settings so people can see that Ollama is running.
-func runInitialUI(startHidden bool, urlSchemeRequest string, startHiddenFn func(), handleURLFn func(string), showSettingsFn func(settingsPane)) {
+// launch opens the app so people can see that Ollama is running.
+func runInitialUI(startHidden bool, urlSchemeRequest string, startHiddenFn func(), handleURLFn func(string), showAppFn func()) {
 	switch {
 	case urlSchemeRequest != "":
 		handleURLFn(urlSchemeRequest)
 	case startHidden:
 		startHiddenFn()
 	default:
-		showSettingsFn(settingsPaneDefault)
+		showAppFn()
 	}
 }
 
@@ -371,9 +371,7 @@ func parseURLScheme(urlSchemeRequest string) (action string, err error) {
 
 // handleURLSchemeInCurrentInstance processes URL scheme requests in the current instance
 func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
-	err := dispatchURLSchemeRequest(urlSchemeRequest, handleConnectURLScheme, func() {
-		showSettings(settingsPaneDefault)
-	}, func() {
+	err := dispatchURLSchemeRequest(urlSchemeRequest, handleConnectURLScheme, showApp, func() {
 		showSettings(settingsPaneApps)
 	})
 	if err != nil {

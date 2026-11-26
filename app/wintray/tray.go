@@ -45,6 +45,7 @@ type TrayCallbacks interface {
 }
 
 type AppCallbacks interface {
+	ShowApp()
 	ShowSettings()
 	Quit()
 	DoUpdate()

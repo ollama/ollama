@@ -17,6 +17,7 @@ var (
 	iidIMicaBackdropFactory         = guid("774379ce-74bd-59d4-849d-d99c4184d838")
 	iidISystemBackdrop              = guid("5aeed5c4-37ac-5852-b73f-1b76ebc3205f")
 	iidIOverlappedPresenter3        = guid("55d26138-4c38-57e7-a0c1-d467b774db8c")
+	iidIAppWindowTitleBar3          = guid("07146e74-0410-5597-aba7-1af276d2ae07")
 	iidIUIElement                   = guid("c3c01020-320c-5cf6-9d24-d396bbfa4d8b")
 	iidIFrameworkElement            = guid("fe08f13d-dc6a-5495-ad44-c2d8d21863b0")
 	iidIControl                     = guid("857d6e8a-d45a-5c69-a99c-bf6a5c54fb38")
@@ -245,6 +246,28 @@ func (w *Window) SetMinimumSize(width, height int) error {
 		}
 	}
 	return nil
+}
+
+// UseLightTitleBar draws the title bar buttons for a light window, whatever
+// the system theme. Use it with content that is always light.
+func (w *Window) UseLightTitleBar() error {
+	appWindow, err := w.appWindow()
+	if err != nil {
+		return err
+	}
+	defer appWindow.release()
+	titleBar, err := appWindow.getObject(16) // get_TitleBar
+	if err != nil {
+		return err
+	}
+	defer titleBar.release()
+	titleBar3, err := titleBar.queryInterface(&iidIAppWindowTitleBar3)
+	if err != nil {
+		return err
+	}
+	defer titleBar3.release()
+	const titleBarThemeLight = 2
+	return titleBar3.putInt32(7, titleBarThemeLight) // put_PreferredTheme
 }
 
 // SetIcon shows the .ico file at path in the title bar and taskbar.

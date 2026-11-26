@@ -1,4 +1,5 @@
 #import "app_darwin.h"
+#import "onboarding_darwin.h"
 #import "resources_darwin.h"
 #import "settings_window_darwin.h"
 #import "../../updater/updater_darwin.h"
@@ -12,6 +13,7 @@
 @property(strong, nonatomic) NSMenuItem *restartMenuItem;
 @property(strong, nonatomic) NSMenuItem *updateSeparatorItem;
 @property(strong, nonatomic, nullable) OLSettingsWindowController *settingsWindowController;
+@property(strong, nonatomic, nullable) OLOnboardingWindowController *onboardingWindowController;
 @property(assign, nonatomic) BOOL quitInProgress;
 @property(assign, nonatomic) BOOL systemTerminationReplyPending;
 @property(strong, nonatomic, nullable) NSApplication *systemTerminationApplication;
@@ -201,7 +203,7 @@
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)hasVisibleWindows {
     (void)sender;
     (void)hasVisibleWindows;
-    [self showSettingsPane:nil];
+    ShowApp();
     return NO;
 }
 
@@ -222,7 +224,7 @@
                    name:NSWindowWillCloseNotification
                  object:self.settingsWindowController.window];
     }
-    // Show Ollama in the Dock and app switcher while Settings is open.
+    // Show Ollama in the Dock and app switcher while its windows are open.
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [NSApp unhide:nil];
     [self.settingsWindowController showPane:pane];
@@ -231,7 +233,39 @@
 
 - (void)settingsWindowWillClose:(NSNotification *)notification {
     (void)notification;
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    if (!self.onboardingWindowController.window.visible) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    }
+}
+
+#pragma mark - Onboarding
+
+- (void)showOnboarding {
+    if (self.onboardingWindowController == nil) {
+        self.onboardingWindowController = [[OLOnboardingWindowController alloc] init];
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self
+               selector:@selector(onboardingWindowWillClose:)
+                   name:NSWindowWillCloseNotification
+                 object:self.onboardingWindowController.window];
+    }
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [NSApp unhide:nil];
+    [self.onboardingWindowController showWindow:nil];
+    [NSApp activate];
+}
+
+- (void)onboardingWindowWillClose:(NSNotification *)notification {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:NSWindowWillCloseNotification
+                                                  object:notification.object];
+    if (!self.settingsWindowController.window.visible) {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    }
+    // Onboarding starts over if people open it again before finishing.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.onboardingWindowController = nil;
+    });
 }
 
 - (void)showUpdateAvailable {
@@ -431,6 +465,12 @@ void showSettings(const char *pane) {
     NSString *identifier = pane != NULL ? @(pane) : @"";
     dispatch_async(dispatch_get_main_queue(), ^{
         [appDelegate showSettingsPane:identifier.length > 0 ? identifier : nil];
+    });
+}
+
+void showOnboarding(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [appDelegate showOnboarding];
     });
 }
 

@@ -79,8 +79,13 @@ type appCallbacks struct {
 
 var app = &appCallbacks{}
 
-// ShowSettings is called when people open Ollama while it is running, or
-// choose Settings from the notification area.
+// ShowApp is called when people open Ollama while it is running.
+func (*appCallbacks) ShowApp() {
+	showApp()
+}
+
+// ShowSettings is called when people choose Settings from the notification
+// area.
 func (*appCallbacks) ShowSettings() {
 	showSettings(settingsPaneDefault)
 }
@@ -168,7 +173,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool, urlSchemeReq
 			}
 		}
 	}
-	runInitialUI(startHidden, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, showSettings)
+	runInitialUI(startHidden, urlSchemeRequest, startHiddenTasks, handleURLSchemeInCurrentInstance, showApp)
 
 	if !hasCompletedFirstRun {
 		// Only create the login shortcut on first start

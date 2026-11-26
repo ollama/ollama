@@ -68,6 +68,14 @@ typedef void (^OLAccountCompletion)(OLAccount *account, NSString *_Nullable erro
 - (void)loadAccountRefreshing:(BOOL)refresh completion:(OLAccountCompletion)completion;
 - (void)signInURL:(void (^)(NSURL *_Nullable url, NSString *_Nullable error))completion;
 - (void)signOut:(OLAccountCompletion)completion;
+
+// onboardingSignInURLForSignUp: returns the page that connects this device
+// to an account, starting with a new account when signUp is set.
+- (void)onboardingSignInURLForSignUp:(BOOL)signUp
+                          completion:(void (^)(NSURL *_Nullable url, NSString *_Nullable error))completion;
+// completeOnboarding: records that people finished onboarding, which the
+// CLI reads too.
+- (void)completeOnboarding:(void (^)(NSString *_Nullable error))completion;
 @end
 
 NS_ASSUME_NONNULL_END

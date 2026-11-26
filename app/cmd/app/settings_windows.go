@@ -57,7 +57,7 @@ func showSettings(settingsPane) {
 	go func() {
 		if err := winui.Start(settingsResourcesXAML); err != nil {
 			slog.Error("failed to start the settings window", "error", err)
-			showSettingsUnavailable(err)
+			showWindowUnavailable(err)
 			return
 		}
 		winui.Post(func() {
@@ -90,20 +90,20 @@ func closeSettings() {
 	winui.Stop()
 }
 
-// showSettingsUnavailable explains why the settings window can't open.
-func showSettingsUnavailable(err error) {
-	const title = "Ollama Settings"
+// showWindowUnavailable explains why the app's windows can't open.
+func showWindowUnavailable(err error) {
+	const title = "Ollama"
 	switch {
 	case errors.Is(err, winui.ErrRuntimeMissing):
-		if messageBox(title, "Ollama Settings needs the Windows App Runtime 1.8.\n\nDownload it now?",
+		if messageBox(title, "Ollama needs the Windows App Runtime 1.8 to open its windows.\n\nDownload it now?",
 			windows.MB_YESNO|windows.MB_ICONINFORMATION) == idYes {
 			openInBrowser(winui.RuntimeDownloadURL)
 		}
 	case errors.Is(err, winui.ErrUnsupported):
-		messageBox(title, "Ollama Settings needs Windows 10 version 1809 or later. Ollama keeps running in the notification area.",
+		messageBox(title, "Ollama’s windows need Windows 10 version 1809 or later. Ollama keeps running in the notification area.",
 			windows.MB_OK|windows.MB_ICONINFORMATION)
 	default:
-		messageBox(title, "Ollama couldn’t open Settings: "+err.Error(), windows.MB_OK|windows.MB_ICONERROR)
+		messageBox(title, "Ollama couldn’t open its window: "+err.Error(), windows.MB_OK|windows.MB_ICONERROR)
 	}
 }
 
@@ -245,7 +245,7 @@ func (w *settingsWindow) reload() {
 	w.loadLoginItem()
 	if w.account == nil {
 		// Show the last known account right away while checking ollama.com.
-		run(w, func(context.Context) (accountState, error) {
+		run(w.ctx, func(context.Context) (accountState, error) {
 			return settings.CachedAccount(), nil
 		}, func(account accountState, _ error) {
 			if w.account == nil {
@@ -279,9 +279,8 @@ func (w *settingsWindow) closed() {
 }
 
 // run calls work on another goroutine and then done on the UI thread,
-// unless the window has closed by then.
-func run[T any](w *settingsWindow, work func(context.Context) (T, error), done func(T, error)) {
-	ctx := w.ctx
+// unless ctx, a window's, ends by then.
+func run[T any](ctx context.Context, work func(context.Context) (T, error), done func(T, error)) {
 	go func() {
 		workCtx, cancel := context.WithTimeout(ctx, settingsTimeout)
 		v, err := work(workCtx)
@@ -294,9 +293,9 @@ func run[T any](w *settingsWindow, work func(context.Context) (T, error), done f
 	}()
 }
 
-// after calls fn on the UI thread after d, unless the window has closed.
-func (w *settingsWindow) after(d time.Duration, fn func()) {
-	ctx := w.ctx
+// after calls fn on the UI thread after d, unless ctx, a window's, ends
+// by then.
+func after(ctx context.Context, d time.Duration, fn func()) {
 	time.AfterFunc(d, func() {
 		winui.Post(func() {
 			if ctx.Err() == nil {
@@ -314,7 +313,7 @@ func (w *settingsWindow) showError(title string, err error) {
 // Settings
 
 func (w *settingsWindow) loadSettings() {
-	run(w, func(ctx context.Context) (settingsState, error) {
+	run(w.ctx, func(ctx context.Context) (settingsState, error) {
 		return settings.State(ctx)
 	}, func(state settingsState, err error) {
 		if err != nil {
@@ -394,7 +393,7 @@ func (w *settingsWindow) checkContextLengthLater() {
 		return
 	}
 	w.contextLengthChecks++
-	w.after(contextLengthCheckInterval, w.loadSettings)
+	after(w.ctx, contextLengthCheckInterval, w.loadSettings)
 }
 
 // apply makes a change on another goroutine with control disabled, then
@@ -403,7 +402,7 @@ func (w *settingsWindow) apply(control, failure string, change func() error) {
 	w.el(control).SetEnabled(false)
 	// Changes that restart the server pick a new automatic context length.
 	w.contextLengthChecks = 0
-	run(w, func(ctx context.Context) (*settingsState, error) {
+	run(w.ctx, func(ctx context.Context) (*settingsState, error) {
 		err := change()
 		state, stateErr := settings.State(ctx)
 		if stateErr != nil {
@@ -452,7 +451,7 @@ func (w *settingsWindow) restartToUpdate() {
 // Startup
 
 func (w *settingsWindow) loadLoginItem() {
-	run(w, func(context.Context) (loginItemStatus, error) {
+	run(w.ctx, func(context.Context) (loginItemStatus, error) {
 		return getLoginItemStatus(), nil
 	}, func(status loginItemStatus, _ error) {
 		w.showLoginItem(status)
@@ -481,7 +480,7 @@ func (w *settingsWindow) toggleStartup() {
 	toggle := w.el("StartupToggle")
 	on := toggle.IsOn()
 	toggle.SetEnabled(false)
-	run(w, func(context.Context) (loginItemStatus, error) {
+	run(w.ctx, func(context.Context) (loginItemStatus, error) {
 		err := setLoginItemEnabled(on)
 		return getLoginItemStatus(), err
 	}, func(status loginItemStatus, err error) {
@@ -561,7 +560,7 @@ func (w *settingsWindow) exportChats() {
 	}
 	w.el("ExportButton").SetEnabled(false)
 	w.el("ExportProgress").SetActive(true)
-	run(w, func(context.Context) (chatExport, error) {
+	run(w.ctx, func(context.Context) (chatExport, error) {
 		// Each export goes in a new folder of Markdown files.
 		target := availablePath(filepath.Join(dir, "Ollama Chats"))
 		count, err := settings.ExportChats(target)
@@ -601,7 +600,7 @@ func (w *settingsWindow) refreshAccount() {
 		return
 	}
 	w.refreshingAccount = true
-	run(w, func(ctx context.Context) (accountState, error) {
+	run(w.ctx, func(ctx context.Context) (accountState, error) {
 		return settings.Account(ctx)
 	}, func(account accountState, err error) {
 		w.refreshingAccount = false
@@ -667,7 +666,7 @@ func (w *settingsWindow) showAccount(account *accountState) {
 }
 
 func (w *settingsWindow) signIn() {
-	run(w, func(context.Context) (string, error) {
+	run(w.ctx, func(context.Context) (string, error) {
 		return settings.SignInURL()
 	}, func(signInURL string, err error) {
 		if err != nil {
@@ -683,7 +682,7 @@ func (w *settingsWindow) signIn() {
 
 // pollSignIn checks for the account people sign in to with their browser.
 func (w *settingsWindow) pollSignIn(started time.Time) {
-	w.after(signInPollInterval, func() {
+	after(w.ctx, signInPollInterval, func() {
 		if w.signInStarted != started {
 			return
 		}
@@ -707,7 +706,7 @@ func (w *settingsWindow) stopWaitingForSignIn() {
 func (w *settingsWindow) signOut() {
 	w.el("SignOutFlyout").HideFlyout()
 	w.el("SignOutButton").SetEnabled(false)
-	run(w, func(ctx context.Context) (accountState, error) {
+	run(w.ctx, func(ctx context.Context) (accountState, error) {
 		if err := settings.SignOut(ctx); err != nil {
 			return settings.CachedAccount(), err
 		}
@@ -734,7 +733,7 @@ func settingsPage(icon string) (string, error) {
 		ContextLengths []contextLengthItem
 	}{}
 	if icon != "" {
-		data.Icon = html.EscapeString((&url.URL{Scheme: "file", Path: "/" + filepath.ToSlash(icon)}).String())
+		data.Icon = xamlFileURL(icon)
 	}
 	for _, length := range contextLengths {
 		if length == 0 {
@@ -748,6 +747,11 @@ func settingsPage(icon string) (string, error) {
 		return "", err
 	}
 	return page.String(), nil
+}
+
+// xamlFileURL returns the file URL of path, escaped for a XAML attribute.
+func xamlFileURL(path string) string {
+	return html.EscapeString((&url.URL{Scheme: "file", Path: "/" + filepath.ToSlash(path)}).String())
 }
 
 // settingsIconPath returns the app icon file, which the installer puts next

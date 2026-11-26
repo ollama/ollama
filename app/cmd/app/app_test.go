@@ -53,30 +53,30 @@ func TestDispatchURLSchemeRequest(t *testing.T) {
 
 func TestRunInitialUI(t *testing.T) {
 	tests := []struct {
-		name         string
-		startHidden  bool
-		request      string
-		wantHidden   bool
-		wantURL      string
-		wantSettings bool
+		name        string
+		startHidden bool
+		request     string
+		wantHidden  bool
+		wantURL     string
+		wantShown   bool
 	}{
-		{name: "interactive launch opens settings", wantSettings: true},
+		{name: "interactive launch opens the app", wantShown: true},
 		{name: "hidden launch shows nothing", startHidden: true, wantHidden: true},
 		{name: "URL request wins over a hidden launch", startHidden: true, request: "ollama://apps", wantURL: "ollama://apps"},
-		{name: "URL request wins over settings", request: "ollama://", wantURL: "ollama://"},
+		{name: "URL request wins over opening the app", request: "ollama://", wantURL: "ollama://"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			hidden := false
 			handled := ""
-			settingsPanes := []settingsPane{}
+			shown := 0
 			runInitialUI(
 				tt.startHidden,
 				tt.request,
 				func() { hidden = true },
 				func(request string) { handled = request },
-				func(pane settingsPane) { settingsPanes = append(settingsPanes, pane) },
+				func() { shown++ },
 			)
 			if hidden != tt.wantHidden {
 				t.Errorf("hidden startup = %v, want %v", hidden, tt.wantHidden)
@@ -84,8 +84,8 @@ func TestRunInitialUI(t *testing.T) {
 			if handled != tt.wantURL {
 				t.Errorf("handled URL = %q, want %q", handled, tt.wantURL)
 			}
-			if got := len(settingsPanes) == 1 && settingsPanes[0] == settingsPaneDefault; got != tt.wantSettings {
-				t.Errorf("settings shown = %v, want %v", settingsPanes, tt.wantSettings)
+			if got := shown == 1; got != tt.wantShown {
+				t.Errorf("app shown %d times, want shown = %v", shown, tt.wantShown)
 			}
 		})
 	}

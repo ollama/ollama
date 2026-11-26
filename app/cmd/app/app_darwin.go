@@ -135,13 +135,13 @@ func StartUpdate() {
 	// not reached if upgrade works, the new app will kill this process
 }
 
-// launchHidden is set when this launch asked to start without showing
-// Settings, such as at login or from the command line.
+// launchHidden is set when this launch asked to start without showing a
+// window, such as at login or from the command line.
 var launchHidden bool
 
 //export appDidFinishLaunching
 func appDidFinishLaunching(hidden C.bool) {
-	runInitialUI(launchHidden || bool(hidden), "", startHiddenTasks, handleURLSchemeInCurrentInstance, showSettings)
+	runInitialUI(launchHidden || bool(hidden), "", startHiddenTasks, handleURLSchemeInCurrentInstance, showApp)
 }
 
 //export handleURLScheme

@@ -222,4 +222,21 @@ static NSString *_Nullable OLError(NSDictionary *result) {
        }];
 }
 
+- (void)onboardingSignInURLForSignUp:(BOOL)signUp
+                          completion:(void (^)(NSURL *_Nullable url, NSString *_Nullable error))completion {
+    [self onQueue:self.accountQueue
+             call:^char * { return OnboardingSignInURL(signUp); }
+       completion:^(NSDictionary *result) {
+           completion(OLURL(result[@"url"]), OLError(result));
+       }];
+}
+
+- (void)completeOnboarding:(void (^)(NSString *_Nullable error))completion {
+    [self onQueue:self.settingsQueue
+             call:^char * { return OnboardingComplete(); }
+       completion:^(NSDictionary *result) {
+           completion(OLError(result));
+       }];
+}
+
 @end

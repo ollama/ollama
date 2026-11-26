@@ -149,7 +149,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			}
 		}
 	case uint32(FOCUS_WINDOW_MSG_ID):
-		t.app.ShowSettings()
+		t.app.ShowApp()
 		lResult = 1 // Return non-zero to indicate success
 	default:
 		// Calls the default window procedure to provide default processing for any window messages that an application does not process.
