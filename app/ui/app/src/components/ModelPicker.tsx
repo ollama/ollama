@@ -11,7 +11,6 @@ import { useSelectedModel } from "@/hooks/useSelectedModel";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQueryClient } from "@tanstack/react-query";
 import { getModelUpstreamInfo } from "@/api";
-import { ArrowDownTrayIcon } from "@heroicons/react/24/outline";
 
 const stalenessCheckCache = new Map<string, number>();
 
@@ -332,10 +331,14 @@ export const ModelList = forwardRef(function ModelList(
                 )}
                 {model.digest === undefined &&
                   (cloudDisabled || !model.isCloud()) && (
-                    <ArrowDownTrayIcon
-                      className="h-4 w-4 text-neutral-500 dark:text-neutral-400"
-                      strokeWidth={1.75}
-                    />
+                    <span
+                      className="shrink-0 text-xs text-neutral-500 dark:text-neutral-400"
+                      title={
+                        model.isCloud() ? undefined : "Downloads on first use"
+                      }
+                    >
+                      Not downloaded
+                    </span>
                   )}
               </button>
             </div>
