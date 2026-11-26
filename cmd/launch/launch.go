@@ -337,7 +337,8 @@ Examples:
 			return checkServerHeartbeat(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			policy := defaultLaunchPolicy(isInteractiveSession(), yesFlag)
+			interactive := isInteractiveSession()
+			policy := defaultLaunchPolicy(interactive, yesFlag)
 			// reset when done to make sure state doesn't leak between launches
 			restoreConfirmPolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
 			defer restoreConfirmPolicy()
@@ -372,6 +373,21 @@ Examples:
 			}
 
 			canonical, _, _ := LookupIntegration(name)
+			req := IntegrationLaunchRequest{
+				Name:          name,
+				ModelOverride: modelFlag,
+				ConfigureOnly: configFlag,
+				Restore:       restoreFlag,
+				ExtraArgs:     passArgs,
+				Policy:        &policy,
+			}
+			if canonical == "opencode" && interactive && canLaunchOpenCodePlugin(req) &&
+				(!cmd.Flags().Changed("model") || len(passArgs) > 0 || (modelFlag != "" && !yesFlag)) {
+				if handled, err := launchOpenCodeWithPlugin(cmd.Context(), req, false); handled || err != nil {
+					return err
+				}
+			}
+
 			piOverride := canonical == "pi" && piHasModelArgs(passArgs)
 			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
@@ -380,14 +396,14 @@ Examples:
 							return fmt.Errorf("cloud is disabled; enable cloud to use %s", modelFlag)
 						}
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
-						modelFlag = ""
+						req.ModelOverride = ""
 					}
 				}
 			}
 
-			headlessYes := yesFlag && !isInteractiveSession()
-			forceConfigure := configFlag || (modelFlag == "" && !headlessYes)
-			if forceConfigure && !configFlag && modelFlag == "" {
+			headlessYes := yesFlag && !interactive
+			forceConfigure := configFlag || (req.ModelOverride == "" && !headlessYes)
+			if forceConfigure && !configFlag && req.ModelOverride == "" {
 				if _, runner, err := LookupIntegration(name); err == nil {
 					switch runner.(type) {
 					case ManagedAutodiscoveryIntegration, *Pi:
@@ -395,15 +411,8 @@ Examples:
 					}
 				}
 			}
-			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{
-				Name:           name,
-				ModelOverride:  modelFlag,
-				ForceConfigure: forceConfigure,
-				ConfigureOnly:  configFlag,
-				Restore:        restoreFlag,
-				ExtraArgs:      passArgs,
-				Policy:         &policy,
-			})
+			req.ForceConfigure = forceConfigure
+			err := LaunchIntegration(cmd.Context(), req)
 			if errors.Is(err, ErrCancelled) {
 				return nil
 			}
@@ -810,6 +819,13 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 
 	if len(models) == 0 {
 		return nil
+	}
+
+	if name == "opencode" && isInteractiveSession() && !needsConfigure &&
+		req.ModelOverride != "" && len(req.ExtraArgs) == 0 && canLaunchOpenCodePlugin(req) {
+		if handled, err := launchOpenCodeWithPlugin(ctx, req, true); handled || err != nil {
+			return err
+		}
 	}
 
 	var launchModels []LaunchModel

@@ -692,7 +692,7 @@ exit 0
 		if err != nil {
 			t.Fatalf("failed to read install log: %v", err)
 		}
-		if !strings.Contains(string(logData), "install -g opencode-ai@latest") {
+		if !strings.Contains(string(logData), "install -g @opencode/cli@2") {
 			t.Fatalf("expected npm install command in log, got:\n%s", string(logData))
 		}
 	})
@@ -734,19 +734,19 @@ func TestOpenCodeInstallerCommand(t *testing.T) {
 			name:      "linux",
 			goos:      "linux",
 			wantBin:   "bash",
-			wantParts: []string{"-c", "set -o pipefail", "https://opencode.ai/install"},
+			wantParts: []string{"-c", "set -o pipefail", "https://opencode.ai/v2/install"},
 		},
 		{
 			name:      "darwin",
 			goos:      "darwin",
 			wantBin:   "bash",
-			wantParts: []string{"-c", "set -o pipefail", "https://opencode.ai/install"},
+			wantParts: []string{"-c", "set -o pipefail", "https://opencode.ai/v2/install"},
 		},
 		{
 			name:      "windows",
 			goos:      "windows",
 			wantBin:   "npm",
-			wantParts: []string{"install", "-g", "opencode-ai@latest"},
+			wantParts: []string{"install", "-g", "@opencode/cli@2"},
 		},
 		{
 			name:    "unsupported",

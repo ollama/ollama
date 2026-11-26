@@ -21,7 +21,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
+const openCodeInstallScript = "curl -fsSL https://opencode.ai/v2/install | bash"
 
 const openCodeDefaultMaxOutputTokens = 32_000
 
@@ -84,11 +84,15 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 			args = []string{"--model", "ollama/" + model}
 		}
 	}
-	cmd := exec.Command(opencodePath, args...)
+	return runOpenCode(opencodePath, args, content)
+}
+
+func runOpenCode(path string, args []string, content string, extraEnv ...string) error {
+	cmd := exec.Command(path, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), extraEnv...)
 	if content != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
@@ -403,7 +407,7 @@ func checkOpenCodeInstallerDependencies() error {
 func openCodeInstallerCommand(goos string) (string, []string, error) {
 	switch goos {
 	case "windows":
-		return "npm", []string{"install", "-g", "opencode-ai@latest"}, nil
+		return "npm", []string{"install", "-g", "@opencode/cli@2"}, nil
 	case "darwin", "linux":
 		return "bash", []string{"-c", "set -o pipefail; " + openCodeInstallScript}, nil
 	default:
