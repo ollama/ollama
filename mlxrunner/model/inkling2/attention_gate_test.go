@@ -3,6 +3,7 @@ package inkling2
 import (
 	"math"
 	"math/rand/v2"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
@@ -125,8 +126,8 @@ func TestGatedShortAttentionMatchesStockGate(t *testing.T) {
 	})
 }
 
-// A single request, a padded row, a block past shortTargetRows or a history
-// the kernel does not serve keeps the separate attention route.
+// A padded row, a block past shortTargetRows or a history the kernel does not
+// serve keeps the separate attention route.
 func TestGatedShortAttentionDeclines(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		if !mlx.MetalIsAvailable() {
@@ -147,10 +148,11 @@ func TestGatedShortAttentionDeclines(t *testing.T) {
 			launch         bool
 		}{
 			{"two requests", []int{1100, 1137}, 4, 4, 1024, false, true},
-			{"single request", []int{1100}, 4, 4, 1024, false, false},
+			{"single request", []int{1100}, 4, 4, 1024, false, true},
+			{"single padded request", []int{1100}, 4, 3, 1024, false, false},
 			{"padded rows", []int{1100, 1137}, 4, 3, 1024, false, false},
 			{"long block", []int{1100, 1137}, shortTargetRows + 1, shortTargetRows + 1, 1024, false, false},
-			{"short history", []int{500, 537}, 4, 4, 0, false, false},
+			{"short history", []int{500, 537}, 4, 4, 0, false, true},
 			{"no cache", []int{1100, 1137}, 4, 4, 1024, true, false},
 		} {
 			mlx.Scoped(func() {
@@ -241,6 +243,56 @@ func TestRelativeSDPABlockMatchesDecodeAcrossThreshold(t *testing.T) {
 					single.Free()
 				}
 			})
+		}
+	})
+}
+
+// A rectangular single-request history uses the fused merge and gate too:
+// its BF16 output matches relativeSDPA followed by the graph gate exactly.
+func TestGatedShortAttentionSingleRequestMatchesStockGate(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !relativeAttentionQualified() {
+			t.Skip("requires a qualified relative-attention Metal device")
+		}
+		const heads, width, distances = gateTestHeads, gateTestWidth, 1024
+		rng := rand.New(rand.NewPCG(7, 23))
+		normal := func(scale float64, dtype mlx.DType, shape ...int) *mlx.Array {
+			n := 1
+			for _, d := range shape {
+				n *= d
+			}
+			data := make([]float32, n)
+			for i := range data {
+				data[i] = float32(rng.NormFloat64() * scale)
+			}
+			return mlx.FromValues(data, shape...).AsType(dtype)
+		}
+		bf16 := mlx.DTypeBFloat16
+		kv := func(shape ...int) *mlx.Array { return normal(1, bf16, shape...) }
+		scale := float32(1 / math.Sqrt(width))
+		for _, window := range []int{1024, 0} {
+			for _, queries := range []int{1, 3, 4, 8} {
+				mlx.Scoped(func() {
+					b, history, caches := gatedTestHistory([]int{1100}, queries, int32(queries), window, kv)
+					defer closeCaches(caches)
+					q := normal(0.3, mlx.DTypeFloat32, 1, heads, queries, width)
+					table := normal(1, bf16, 1, heads, queries, distances)
+					sink := normal(1, bf16, 1, heads, queries, 1)
+					projection := normal(4, bf16, 1, queries, 3*heads*width)
+					gate := columns(projection, heads*width, 2*heads*width)
+					got := gatedShortAttention(b, q, table, sink, gate, history, window, scale)
+					if got == nil {
+						t.Fatalf("window %d, %d queries: fused gate declined", window, queries)
+					}
+					attended := relativeSDPA(b, q, nil, nil, table, sink, history, window, scale)
+					want := gateAttention(attended.Transpose(0, 2, 1, 3).Reshape(1, queries, heads*width), gate, bf16)
+					gotBits := mlx.Contiguous(got.View(mlx.DTypeUint16).AsType(mlx.DTypeInt32), false).Ints()
+					wantBits := mlx.Contiguous(want.View(mlx.DTypeUint16).AsType(mlx.DTypeInt32), false).Ints()
+					if !slices.Equal(gotBits, wantBits) {
+						t.Fatalf("window %d, %d queries: fused gate differs from graph", window, queries)
+					}
+				})
+			}
 		}
 	})
 }
