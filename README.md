@@ -226,6 +226,7 @@ console.log(response.message.content);
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
 - [oxi](https://github.com/maziluiosif/oxi) - Native Rust desktop coding agent with editor, Git panel and terminal
+- [Mercury CLI](https://github.com/Whq02/MercuryCLI) - Terminal coding agent with a debugger and syntax-tree rewrites
 
 ### Libraries & SDKs
 
@@ -299,7 +300,6 @@ console.log(response.message.content);
 - [tenere](https://github.com/pythops/tenere) - TUI for LLMs
 - [ParLlama](https://github.com/paulrobello/parllama) - TUI for Ollama
 - [llm-ollama](https://github.com/taketwo/llm-ollama) - Plugin for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/)
-- [Mercury CLI](https://github.com/Whq02/MercuryCLI) - Coding agent for the terminal that runs on local Ollama models
 - [ShellOracle](https://github.com/djcopley/ShellOracle) - Shell command suggestions
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
