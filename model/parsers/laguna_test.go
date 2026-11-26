@@ -204,6 +204,97 @@ func TestLagunaParserNormalizesCommonToolAliases(t *testing.T) {
 	}
 }
 
+func TestLagunaParserPreservesToolDelimitersInsideArguments(t *testing.T) {
+	tests := []struct {
+		name   string
+		chunks []string
+		want   string
+	}{
+		{
+			name:   "XML opener",
+			chunks: []string{"<tool_call>get_weather\n<arg_key>location</arg_key><arg_value>Paris <tool_call> Texas</arg_value></tool_call>"},
+			want:   "Paris <tool_call> Texas",
+		},
+		{
+			name: "streamed XML delimiters",
+			chunks: []string{
+				"<tool_call>get_weather\n<arg_key>location</arg_key><arg_value>Paris <tool_",
+				"call> and </tool_call>",
+				" Texas</arg_value></tool_",
+				"call>",
+			},
+			want: "Paris <tool_call> and </tool_call> Texas",
+		},
+		{
+			name: "streamed JSON delimiters",
+			chunks: []string{
+				`<tool_call>{"name":"get_weather","arguments":{"location":"Paris <tool_call> and </tool_call>`,
+				` Texas"}}</tool_call>`,
+			},
+			want: "Paris <tool_call> and </tool_call> Texas",
+		},
+		{
+			name: "complete XML argument without outer close",
+			chunks: []string{
+				"<tool_call>get_weather<arg_key>location</arg_key><arg_value>Paris </tool_call>",
+				" Texas</arg_value>",
+				"",
+			},
+			want: "Paris </tool_call> Texas",
+		},
+		{
+			name: "complete JSON argument without outer close",
+			chunks: []string{
+				`<tool_call>{"name":"get_weather","arguments":{"location":"Paris </tool_call>`,
+				` Texas"}}`,
+				"",
+			},
+			want: "Paris </tool_call> Texas",
+		},
+		{
+			name:   "JSON after name",
+			chunks: []string{`<tool_call>get_weather {"location":"Paris <tool_call> Texas"}</tool_call>`},
+			want:   "Paris <tool_call> Texas",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := ParserForName("laguna")
+			parser.Init(lagunaTestTools(), nil, nil)
+			content, thinking, calls := lagunaParseChunks(t, parser, tt.chunks...)
+			if content != "" || thinking != "" || len(calls) != 1 {
+				t.Fatalf("content=%q thinking=%q calls=%d, want exactly one tool call", content, thinking, len(calls))
+			}
+			if calls[0].Function.Name != "get_weather" {
+				t.Fatalf("name=%q, want get_weather", calls[0].Function.Name)
+			}
+			if got, _ := calls[0].Function.Arguments.Get("location"); got != tt.want {
+				t.Fatalf("location=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLagunaParserPreservesContentAfterUnclosedToolArgument(t *testing.T) {
+	parser := ParserForName("laguna")
+	parser.Init(lagunaTestTools(), nil, nil)
+
+	content, thinking, calls := lagunaParseChunks(t, parser,
+		"<tool_call>get_weather<arg_key>location</arg_key><arg_value>Paris</arg_value>",
+		"<arg_key>days</arg_key><arg_value>2</tool_call>\nNext",
+		"",
+	)
+	if content != "Next" || thinking != "" || len(calls) != 1 {
+		t.Fatalf("content=%q thinking=%q calls=%d, want Next and one tool call", content, thinking, len(calls))
+	}
+	if got, _ := calls[0].Function.Arguments.Get("location"); got != "Paris" {
+		t.Fatalf("location=%q, want Paris", got)
+	}
+	if _, ok := calls[0].Function.Arguments.Get("days"); ok {
+		t.Fatal("unfinished days argument was emitted")
+	}
+}
+
 func TestLagunaParserIgnoresDuplicatedNestedToolCall(t *testing.T) {
 	props := api.NewToolPropertiesMap()
 	props.Set("name", api.ToolProperty{Type: api.PropertyType{"string"}})
