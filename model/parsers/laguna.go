@@ -427,12 +427,51 @@ func cleanLagunaToolCallRaw(raw string) string {
 	if idx := strings.Index(raw, lagunaToolCallCloseTag); idx != -1 {
 		raw = strings.TrimSpace(raw[:idx])
 	}
-	if idx := strings.Index(raw, lagunaToolCallOpenTag); idx != -1 {
-		before := strings.TrimSpace(raw[:idx])
+	// A "<tool_call>" opener inside an <arg_value> block is part of the
+	// argument's value, not the start of a new call. The call boundary is
+	// the first opener that lies outside every <arg_value>…</arg_value>
+	// span: a model may also open a second call before closing the first,
+	// and that second opener (outside any arg payload) still ends the raw
+	// body here.
+	nestedIdx := -1
+	inValue := false
+	for i := 0; i < len(raw); {
+		if inValue {
+			if close := strings.Index(raw[i:], lagunaArgValueCloseTag); close != -1 {
+				i += close + len(lagunaArgValueCloseTag)
+				inValue = false
+			} else {
+				break
+			}
+			continue
+		}
+		openers := []string{lagunaToolCallOpenTag, lagunaArgValueOpenTag}
+		best := -1
+		bestTag := ""
+		for _, tag := range openers {
+			if idx := strings.Index(raw[i:], tag); idx != -1 && (best == -1 || idx < best) {
+				best = idx
+				bestTag = tag
+			}
+		}
+		if best == -1 {
+			break
+		}
+		if bestTag == lagunaToolCallOpenTag {
+			nestedIdx = i + best
+			break
+		}
+		// <arg_value> opened: skip to its own closing tag, but stop if the
+		// payload itself ends the call without one (no closer at all).
+		i += best + len(lagunaArgValueOpenTag)
+		inValue = true
+	}
+	if nestedIdx != -1 {
+		before := strings.TrimSpace(raw[:nestedIdx])
 		if before != "" {
 			return before
 		}
-		raw = strings.TrimSpace(raw[idx+len(lagunaToolCallOpenTag):])
+		raw = strings.TrimSpace(raw[nestedIdx+len(lagunaToolCallOpenTag):])
 	}
 	return raw
 }
@@ -496,6 +535,45 @@ func (p *LagunaParser) consumeTool(done bool) (bool, api.ToolCall, error) {
 
 var lagunaArgRE = regexp.MustCompile(`(?s)<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg_value>`)
 
+// lagunaNestedArgValueRE matches one arg_key/arg_value pair whose value may
+// itself contain "<tool_call>" openers, so a nested opener inside a value
+// does not end the tool call early. Values with a nested opener are returned
+// as raw strings via lagunaArgValue.
+const lagunaArgValue = "\x00lagunaRawArgValue"
+
+// lagunaSplitArgs finds each <arg_key>…</arg_key> <arg_value>…</arg_value>
+// pair, scanning for the value's own closing tag instead of relying on a
+// non-greedy regex that would stop at a nested "<tool_call>" opener.
+func lagunaSplitArgs(s string) [][2]string {
+	var pairs [][2]string
+	for {
+		keyStart := strings.Index(s, "<arg_key>")
+		if keyStart < 0 {
+			return pairs
+		}
+		keyRest := s[keyStart+len("<arg_key>"):]
+		keyEnd := strings.Index(keyRest, "</arg_key>")
+		if keyEnd < 0 {
+			return pairs
+		}
+		key := keyRest[:keyEnd]
+		afterKey := keyRest[keyEnd+len("</arg_key>"):]
+
+		valueStart := strings.Index(afterKey, "<arg_value>")
+		if valueStart < 0 {
+			return pairs
+		}
+		afterValueOpen := afterKey[valueStart+len("<arg_value>"):]
+		valueEnd := strings.Index(afterValueOpen, "</arg_value>")
+		if valueEnd < 0 {
+			return pairs
+		}
+		value := afterValueOpen[:valueEnd]
+		pairs = append(pairs, [2]string{key, value})
+		s = afterValueOpen[valueEnd+len("</arg_value>"):]
+	}
+}
+
 func parseLagunaToolCall(raw string, tools []api.Tool) (api.ToolCall, error) {
 	raw = cleanLagunaToolCallRaw(raw)
 	if strings.HasPrefix(raw, "{") {
@@ -555,9 +633,9 @@ func parseLagunaToolCall(raw string, tools []api.Tool) (api.ToolCall, error) {
 		}
 		return call, nil
 	}
-	for _, match := range lagunaArgRE.FindAllStringSubmatch(argsText, -1) {
-		key := strings.TrimSpace(match[1])
-		value := match[2]
+	for _, pair := range lagunaSplitArgs(argsText) {
+		key := strings.TrimSpace(pair[0])
+		value := pair[1]
 		var paramType api.PropertyType
 		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
 			if prop, ok := matchedTool.Function.Parameters.Properties.Get(key); ok {
