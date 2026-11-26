@@ -429,6 +429,7 @@ type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolic
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Qwen3_5Model":                          newPplxImportTransform,
 	"KevForDecision":                        newQwen35DecisionImportTransform,
+	"AutoTrustDecision":                     newQwen35DecisionImportTransform,
 	"StrandsDeciderForDecision":             newQwen35DecisionImportTransform,
 	"ClefForDecision":                       newQwen35DecisionImportTransform,
 	"Qwen3_5ForCausalLM":                    newQwen35ImportTransform,

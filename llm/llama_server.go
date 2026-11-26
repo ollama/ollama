@@ -308,7 +308,8 @@ func (s *llamaServerRunner) tokenizerAddsBOS() bool {
 
 func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req CompletionRequest) (any, error) {
 	prompt := s.completionPrompt(req.Prompt, req.LeadingBOS)
-	if !req.Truncate || len(req.Media) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx {
+	noShift := s.requestDisablesShift(req.Shift)
+	if !noShift && (!req.Truncate || len(req.Media) > 0 || s.options.NumCtx <= 1 || len(prompt) < s.options.NumCtx) {
 		return prompt, nil
 	}
 
@@ -317,12 +318,17 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return nil, err
 	}
 
+	if noShift {
+		req.Options.NumPredict, err = noShiftNumPredict(req.Options.NumPredict, s.options.NumCtx, len(tokens))
+		return tokens, err
+	}
+
 	fullPromptLimit := s.options.NumCtx - 1
 	if len(tokens) <= fullPromptLimit {
 		return prompt, nil
 	}
 
-	if !s.launch.config.ContextShift {
+	if !s.launch.config.ContextShift || !req.Shift {
 		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: promptTooLongMessage}
 	}
 
@@ -343,6 +349,27 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 
 	slog.Warn("truncating input prompt", "limit", limit, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
 	return truncated, nil
+}
+
+// requestDisablesShift reports whether a shift:false request must be enforced
+// here because the runner was launched with context shift. llama-server
+// disables context shift whenever a projector is loaded, so those runners
+// (and the media prompts only they accept) never need it.
+func (s *llamaServerRunner) requestDisablesShift(shift bool) bool {
+	return s.launch.config.ContextShift && len(s.launch.projectors) == 0 && !shift && s.options.NumCtx > 1
+}
+
+// noShiftNumPredict caps numPredict so generation stops when the context is
+// full, before llama-server would shift.
+func noShiftNumPredict(numPredict, numCtx, promptTokens int) (int, error) {
+	remaining := numCtx - promptTokens
+	if remaining <= 0 {
+		return 0, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: promptTooLongMessage}
+	}
+	if numPredict < 0 || numPredict > remaining {
+		return remaining, nil
+	}
+	return numPredict, nil
 }
 
 func contextShiftPromptLimit(numCtx, numKeep int) int {
@@ -661,13 +688,35 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 	}
 }
 
-// appendLoadModeArgs selects llama-server's single model loading mode. Direct I/O
-// skips the page cache on load for integrated CUDA/ROCm GPUs, which share system
-// memory with the CPU and would otherwise double-buffer weights.
+// appendLoadModeArgs selects llama-server's single model loading mode. Integrated
+// GPUs share memory with the CPU: Linux CUDA/ROCm use direct I/O to skip the page
+// cache, Windows CUDA/ROCm skip the pinned host buffer, and Vulkan uses mmap
+// because non-mmap loads place CPU-resident tensors in a host buffer drawn from
+// the same device budget as the weights.
 func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
 	for _, g := range gpus {
-		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
-			return append(params, "--load-mode", "dio")
+		if !g.Integrated {
+			continue
+		}
+		if strings.EqualFold(g.Library, "Vulkan") {
+			return append(params, "--load-mode", "mmap")
+		}
+		if strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm") {
+			if runtime.GOOS == "linux" {
+				return append(params, "--load-mode", "dio")
+			}
+			// On Windows an iGPU's device buffers and pinned host buffers
+			// (cudaMallocHost/hipHostMalloc) both come out of the same WDDM
+			// shared-memory budget (about half of system RAM). llama-server
+			// disables mmap for iGPUs and places CPU-side weights in pinned
+			// host memory, which --fit does not count, so a partially
+			// offloaded model overflows the budget and the KV cache or
+			// compute buffer allocation fails ("unable to allocate ROCm0
+			// buffer"). Keep CPU-side weights in ordinary pageable memory.
+			if runtime.GOOS == "windows" {
+				params = append(params, "--no-host")
+			}
+			break
 		}
 	}
 
@@ -2060,6 +2109,21 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		return fmt.Errorf("unexpected server status: %s", status)
 	}
 
+	if s.requestDisablesShift(req.Shift) {
+		prompt, err := s.ApplyChatTemplate(ctx, req)
+		if err != nil {
+			return err
+		}
+		tokens, err := s.tokenize(ctx, prompt, true)
+		if err != nil {
+			return err
+		}
+		req.Options.NumPredict, err = noShiftNumPredict(req.Options.NumPredict, s.options.NumCtx, len(tokens))
+		if err != nil {
+			return err
+		}
+	}
+
 	lsReq, err := s.llamaServerChatRequest(req, true)
 	if err != nil {
 		return err
@@ -2881,6 +2945,9 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	CUDA_Host compute buffer size =   268.05 MiB
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
+//	llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)
+//	init_rotation:         CUDA0 rotation buffer size =    23.04 MiB
+//	main: CUDA0 h_nextn buffer size =    32.00 MiB  (b12257: emitted as h_nextn_dev_alloc: MTL0 ... = 16.01 MiB)
 type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
@@ -2906,7 +2973,7 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
-var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(layer input|rotation|h_nextn|model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)

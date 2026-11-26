@@ -523,9 +523,12 @@ func ropePositions(b *batch.Batch, L int32) []int32 {
 // ropePositions' per-row [3][L] blocks.
 func mropeCosSin(cfg *Config, positions []int32, L int32) (cos, sin *mlx.Array) {
 	half := int(cfg.RopeDim) / 2
-	invFreq := make([]float32, half)
-	for i := range invFreq {
-		invFreq[i] = float32(1 / math.Pow(float64(cfg.RopeTheta), float64(2*i)/float64(cfg.RopeDim)))
+	invFreq := cfg.RopeInvFreqs
+	if invFreq == nil {
+		invFreq = make([]float32, half)
+		for i := range invFreq {
+			invFreq[i] = float32(1 / math.Pow(float64(cfg.RopeTheta), float64(2*i)/float64(cfg.RopeDim)))
+		}
 	}
 
 	// Interleave: start from T, then overwrite H at 1,4,7,... and W at
@@ -551,7 +554,12 @@ func mropeCosSin(cfg *Config, positions []int32, L int32) (cos, sin *mlx.Array) 
 		}
 	}
 	e := mlx.FromValues(emb, B, 1, int(L), int(cfg.RopeDim))
-	return mlx.Cos(e), mlx.Sin(e)
+	cos, sin = mlx.Cos(e), mlx.Sin(e)
+	if cfg.RopeScale != nil {
+		cos = mlx.MulScalar(cos, *cfg.RopeScale)
+		sin = mlx.MulScalar(sin, *cfg.RopeScale)
+	}
+	return cos, sin
 }
 
 // applyMRoPE rotates the leading RopeDim dims with the chunk's tables,

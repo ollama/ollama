@@ -103,6 +103,23 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 		wantCaps        []string
 	}{
 		{
+			name:         "ripple architecture",
+			config:       `{"architectures":["RicursiveForCausalLM"],"model_type":"ricursive"}`,
+			chatTemplate: `{% for message in messages %}{{ message.content }}{% endfor %}`,
+			wantParser:   "ripple",
+			wantRenderer: "ripple",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:         "ripple model type",
+			config:       `{"model_type":"ricursive"}`,
+			chatTemplate: `<think>{{ reasoning_content }}</think>{{ content }}`,
+			standalone:   true,
+			wantParser:   "ripple",
+			wantRenderer: "ripple",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
 			name:         "qwen3",
 			config:       `{"architectures":["Qwen3ForCausalLM"]}`,
 			wantParser:   "qwen3",

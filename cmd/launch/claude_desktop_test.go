@@ -16,17 +16,24 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/internal/proxy"
 )
 
 func withClaudeDesktopPlatform(t *testing.T, goos string) {
 	t.Helper()
 	oldGOOS := claudeDesktopGOOS
 	oldProbe := claudeDesktopProbeGateway
+	oldCatalog := claudeDesktopFetchCatalog
 	claudeDesktopGOOS = goos
 	claudeDesktopProbeGateway = func(context.Context, string) error { return nil }
+	// Most tests exercise profile plumbing, not the gateway catalog.
+	claudeDesktopFetchCatalog = func(context.Context, *http.Client, string, string) ([]proxy.ClaudeDesktopCatalogModel, error) {
+		return nil, errors.New("no gateway in tests")
+	}
 	t.Cleanup(func() {
 		claudeDesktopGOOS = oldGOOS
 		claudeDesktopProbeGateway = oldProbe
+		claudeDesktopFetchCatalog = oldCatalog
 	})
 }
 
@@ -1611,5 +1618,55 @@ func TestClaudeDesktopRunRejectsExtraArgs(t *testing.T) {
 	err := (&ClaudeDesktop{}).Run("qwen3.5", nil, []string{"--foo"})
 	if err == nil || !strings.Contains(err.Error(), "does not accept extra arguments") {
 		t.Fatalf("Run error = %v, want extra args rejection", err)
+	}
+}
+
+func TestClaudeDesktopConfigureAutodiscoveryPinsGatewayLabels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withClaudeDesktopPlatform(t, "darwin")
+	t.Setenv("OLLAMA_API_KEY", "test-api-key")
+
+	claudeDesktopFetchCatalog = func(context.Context, *http.Client, string, string) ([]proxy.ClaudeDesktopCatalogModel, error) {
+		return []proxy.ClaudeDesktopCatalogModel{
+			{ID: "claude-fable-5", DisplayName: "glm-5.2:cloud", AnthropicFamilyTier: "fable", IsFamilyDefault: true},
+			{ID: "claude-opus-5", DisplayName: "kimi-k3:cloud", AnthropicFamilyTier: "opus"},
+		}, nil
+	}
+
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+	}
+
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	entries, ok := profile["inferenceModels"].([]any)
+	if !ok || len(entries) != 2 {
+		t.Fatalf("inferenceModels = %v, want two pinned routes", profile["inferenceModels"])
+	}
+	first, _ := entries[0].(map[string]any)
+	if first["name"] != "claude-fable-5" || first["labelOverride"] != "glm-5.2:cloud" {
+		t.Fatalf("pinned route = %v, want the gateway model name on claude-fable-5", first)
+	}
+	if first["anthropicFamilyTier"] != "fable" || first["isFamilyDefault"] != true {
+		t.Fatalf("pinned tier metadata = %v", first)
+	}
+	second, _ := entries[1].(map[string]any)
+	if _, ok := second["isFamilyDefault"]; ok {
+		t.Fatalf("non-default route should omit isFamilyDefault: %v", second)
+	}
+
+	if err := restoreClaudeDesktopProfile(); err != nil {
+		t.Fatalf("restore returned error: %v", err)
+	}
+	restored := claudeDesktopReadJSON(t, paths.profile)
+	if _, ok := restored["inferenceModels"]; ok {
+		t.Fatalf("restore should drop the pinned list, got %v", restored["inferenceModels"])
 	}
 }

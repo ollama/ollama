@@ -2619,6 +2619,79 @@ func TestFromResponsesRequest_MaxOutputTokens(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_Truncation(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name      string
+		reqJSON   string
+		wantTrunc *bool
+		wantErr   bool
+	}{
+		{
+			name: "default is disabled",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello"
+			}`,
+			wantTrunc: boolPtr(false),
+		},
+		{
+			name: "explicitly disabled",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello",
+				"truncation": "disabled"
+			}`,
+			wantTrunc: boolPtr(false),
+		},
+		{
+			name: "explicitly auto",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello",
+				"truncation": "auto"
+			}`,
+			wantTrunc: boolPtr(true),
+		},
+		{
+			name: "unknown truncation strategy",
+			reqJSON: `{
+				"model": "gpt-oss:20b",
+				"input": "hello",
+				"truncation": "invalid_strategy"
+			}`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ResponsesRequest
+			if err := json.Unmarshal([]byte(tt.reqJSON), &req); err != nil {
+				t.Fatalf("failed to unmarshal request: %v", err)
+			}
+
+			chatReq, err := FromResponsesRequest(req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if chatReq.Truncate == nil {
+				t.Fatal("expected Truncate to be set, got nil")
+			}
+			if *chatReq.Truncate != *tt.wantTrunc {
+				t.Errorf("Truncate = %v, want %v", *chatReq.Truncate, *tt.wantTrunc)
+			}
+		})
+	}
+}
+
 func TestFromResponsesRequest_TextFormatJsonSchema(t *testing.T) {
 	reqJSON := `{
 		"model": "gpt-oss:20b",

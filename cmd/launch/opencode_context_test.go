@@ -513,6 +513,8 @@ printf '%s\n' "$OPENCODE_CONFIG_CONTENT" "$@" > "$OPENCODE_LAUNCH_TEST_OUTPUT"
 		args                                     []string
 	}{
 		{"v1", "1.18.35", "0", "", []string{"--model", "ollama/selected:latest"}},
+		{"v1 before native controls", "1.19.2", "0", "", []string{"--model", "ollama/selected:latest"}},
+		{"v1 native controls", "1.19.3", "0", "", []string{"--model", "ollama/selected:latest"}},
 		{"v1 branded", "opencode v1.19.4", "0", "", []string{"--model", "ollama/selected:latest"}},
 		{"v2", "2.1.4", "0", "", []string{"--standalone"}},
 		{"v2 branded", "opencode v2.1.4", "0", "", []string{"--standalone"}},
@@ -536,7 +538,15 @@ printf '%s\n' "$OPENCODE_CONFIG_CONTENT" "$@" > "$OPENCODE_LAUNCH_TEST_OUTPUT"
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := strings.Join(append([]string{content}, tt.args...), "\n") + "\n"
+			version := "v" + strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(tt.version), "opencode "), "v")
+			if tt.versionExit != "0" {
+				version = ""
+			}
+			versionContent, err := openCodeConfigForVersion(content, version, models)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.Join(append([]string{versionContent}, tt.args...), "\n") + "\n"
 			if string(got) != want {
 				t.Fatalf("child environment and arguments = %q, want %q", got, want)
 			}

@@ -248,6 +248,7 @@ int (*mlx_detail_compile_erase_)(const mlx_compile_cache cache, uintptr_t fun_id
 int (*mlx_disable_compile_)(void) = NULL;
 int (*mlx_enable_compile_)(void) = NULL;
 int (*mlx_set_compile_mode_)(mlx_compile_mode mode) = NULL;
+int (*mlx_cuda_get_arch_list_)(mlx_vector_string* res) = NULL;
 int (*mlx_cuda_is_available_)(bool* res) = NULL;
 mlx_device (*mlx_device_new_)(void) = NULL;
 mlx_device (*mlx_device_new_type_)(mlx_device_type type, int index) = NULL;
@@ -332,8 +333,16 @@ int (*mlx_distributed_init_)(
     mlx_distributed_group* res,
     bool strict,
     const char* bk /* may be null */) = NULL;
-int (*mlx_distributed_group_rank_)(mlx_distributed_group group) = NULL;
-int (*mlx_distributed_group_size_)(mlx_distributed_group group) = NULL;
+int (*mlx_distributed_init_with_all_gather_)(
+    mlx_distributed_group* res,
+    bool strict,
+    const char* bk,
+    mlx_distributed_all_gather_fn all_gather,
+    void* payload,
+    void (*dtor)(void*)) = NULL;
+int (*mlx_distributed_clear_backends_)(void) = NULL;
+int (*mlx_distributed_group_get_rank_)(int* res, mlx_distributed_group group) = NULL;
+int (*mlx_distributed_group_get_size_)(int* res, mlx_distributed_group group) = NULL;
 int (*mlx_distributed_group_split_)(
     mlx_distributed_group* res,
     mlx_distributed_group group,
@@ -2714,6 +2723,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_disable_compile);
     CHECK_LOAD(handle, mlx_enable_compile);
     CHECK_LOAD(handle, mlx_set_compile_mode);
+    CHECK_LOAD(handle, mlx_cuda_get_arch_list);
     CHECK_LOAD(handle, mlx_cuda_is_available);
     CHECK_LOAD(handle, mlx_device_new);
     CHECK_LOAD(handle, mlx_device_new_type);
@@ -2746,8 +2756,10 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_distributed_group_new);
     CHECK_LOAD(handle, mlx_distributed_group_free);
     CHECK_LOAD(handle, mlx_distributed_init);
-    CHECK_LOAD(handle, mlx_distributed_group_rank);
-    CHECK_LOAD(handle, mlx_distributed_group_size);
+    CHECK_LOAD(handle, mlx_distributed_init_with_all_gather);
+    CHECK_LOAD(handle, mlx_distributed_clear_backends);
+    CHECK_LOAD(handle, mlx_distributed_group_get_rank);
+    CHECK_LOAD(handle, mlx_distributed_group_get_size);
     CHECK_LOAD(handle, mlx_distributed_group_split);
     CHECK_LOAD(handle, mlx_distributed_is_available);
     CHECK_LOAD(handle, mlx_set_error_handler);

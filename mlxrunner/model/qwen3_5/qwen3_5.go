@@ -33,11 +33,8 @@ var (
 
 // RopeParameters carries optional rope metadata embedded under rope_parameters.
 type RopeParameters struct {
-	Type                string  `json:"type"`
-	RopeType            string  `json:"rope_type"`
-	RopeTheta           float32 `json:"rope_theta"`
-	PartialRotaryFactor float32 `json:"partial_rotary_factor"`
-	MropeSection        []int32 `json:"mrope_section"`
+	nn.RopeParameters
+	MropeSection []int32 `json:"mrope_section"`
 }
 
 // Config holds Qwen 3.5 text config (top-level or nested text_config).
@@ -75,7 +72,7 @@ type Config struct {
 
 	RopeTheta           float32         `json:"rope_theta"`
 	PartialRotaryFactor float32         `json:"partial_rotary_factor"`
-	RopeScaling         map[string]any  `json:"rope_scaling"`
+	RopeScaling         *RopeParameters `json:"rope_scaling"`
 	RopeParameters      *RopeParameters `json:"rope_parameters"`
 
 	MropeSection []int32 `json:"-"`
@@ -89,8 +86,11 @@ type Config struct {
 	NoncausalFullAttention bool                              `json:"-"`
 
 	// Computed fields.
-	Scale   float32 `json:"-"`
-	RopeDim int32   `json:"-"`
+	Scale        float32    `json:"-"`
+	RopeDim      int32      `json:"-"`
+	RopeFreqs    *mlx.Array `json:"-"`
+	RopeInvFreqs []float32  `json:"-"`
+	RopeScale    *float32   `json:"-"`
 }
 
 // Model is the Qwen 3.5 model.
@@ -277,12 +277,16 @@ func parseConfig(configData []byte) (Config, error) {
 		return Config{}, fmt.Errorf("linear_num_value_heads (%d) must be divisible by linear_num_key_heads (%d)", cfg.LinearNumValueHeads, cfg.LinearNumKeyHeads)
 	}
 
-	if cfg.RopeParameters != nil {
-		if cfg.RopeParameters.RopeTheta > 0 {
-			cfg.RopeTheta = cfg.RopeParameters.RopeTheta
+	rope := cfg.RopeParameters
+	if rope == nil {
+		rope = cfg.RopeScaling
+	}
+	if rope != nil {
+		if rope.RopeTheta > 0 {
+			cfg.RopeTheta = rope.RopeTheta
 		}
-		if cfg.RopeParameters.PartialRotaryFactor > 0 {
-			cfg.PartialRotaryFactor = cfg.RopeParameters.PartialRotaryFactor
+		if rope.PartialRotaryFactor > 0 {
+			cfg.PartialRotaryFactor = rope.PartialRotaryFactor
 		}
 	}
 	if cfg.RopeTheta == 0 {
@@ -303,8 +307,25 @@ func parseConfig(configData []byte) (Config, error) {
 	}
 	cfg.RopeDim = ropeDim
 	cfg.MropeSection = []int32{11, 11, 10}
-	if cfg.RopeParameters != nil && len(cfg.RopeParameters.MropeSection) == 3 {
-		cfg.MropeSection = cfg.RopeParameters.MropeSection
+	if rope != nil && len(rope.MropeSection) == 3 {
+		cfg.MropeSection = rope.MropeSection
+	}
+	if rope != nil && rope.TypeName() == "yarn" {
+		params := rope.RopeParameters
+		if params.OriginalMaxPositionEmbeddings <= 0 {
+			params.OriginalMaxPositionEmbeddings = cfg.MaxPositionEmbeddings
+		}
+		var scale float32
+		cfg.RopeFreqs, scale = nn.BuildYarnRopeFreqs(int(cfg.RopeDim), cfg.RopeTheta, &params)
+		cfg.RopeScale = &scale
+		cfg.MaxPositionEmbeddings = max(cfg.MaxPositionEmbeddings, int32(float64(params.Factor)*float64(params.OriginalMaxPositionEmbeddings)))
+		if cfg.RopeFreqs != nil {
+			freqs := cfg.RopeFreqs.Floats()
+			cfg.RopeInvFreqs = make([]float32, len(freqs))
+			for i, freq := range freqs {
+				cfg.RopeInvFreqs[i] = 1 / freq
+			}
+		}
 	}
 
 	if cfg.FullAttentionInterval <= 0 {
@@ -408,32 +429,11 @@ func NewModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
-	}
-
-	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
-	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = genConfigData
-	}
-	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = tokConfigData
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
+		return nil, err
 	}
 
 	mm, err := parseMultimodalConfig(configData)
@@ -456,62 +456,8 @@ func NewModel(root *model.Root) (model.Model, error) {
 	return m, nil
 }
 
-func tensorAny(tensors map[string]*mlx.Array, keys ...string) (*mlx.Array, string) {
-	for _, k := range keys {
-		if v := tensors[k]; v != nil {
-			return v, k
-		}
-	}
-	return nil, ""
-}
-
 func tensorByBase(tensors map[string]*mlx.Array, base string) (*mlx.Array, string) {
-	return tensorAny(tensors, base+".weight", base)
-}
-
-func supportsGatherQMM(mode string, bits int) bool {
-	switch mode {
-	case "affine":
-		return bits == 4 || bits == 8
-	case "mxfp8":
-		return bits == 8
-	case "nvfp4", "mxfp4":
-		return bits == 4
-	default:
-		return false
-	}
-}
-
-func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
-	for _, k := range keys {
-		if k == "" {
-			continue
-		}
-		if t := tensors[k]; t != nil {
-			delete(tensors, k)
-		}
-	}
-}
-
-func stackAndClone(parts []*mlx.Array) *mlx.Array {
-	if len(parts) == 0 {
-		return nil
-	}
-	return mlx.Stack(parts, 0).Clone()
-}
-
-func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || w.NumDims() != 3 {
-		return w
-	}
-	return mlx.Transpose(w, 0, 2, 1).Clone()
-}
-
-func fuseExpertStacks(a, b *mlx.Array, axis int) *mlx.Array {
-	if a == nil || b == nil {
-		return nil
-	}
-	return mlx.Concatenate([]*mlx.Array{a, b}, axis).Clone()
+	return model.TensorAny(tensors, base+".weight", base)
 }
 
 // fuseGateUpProjections joins gate and up stacks along the output dimension,
@@ -529,15 +475,15 @@ func fuseGateUpProjections(gate, up *stackedExpertWeights) *stackedExpertWeights
 		gate.Bits == up.Bits && gate.GroupSize == up.GroupSize && gate.Mode == up.Mode &&
 		(gate.Biases == nil) == (up.Biases == nil) {
 		fused := &stackedExpertWeights{
-			Weight:       fuseExpertStacks(gate.Weight, up.Weight, 1),
-			Scales:       fuseExpertStacks(gate.Scales, up.Scales, 1),
+			Weight:       model.FuseExpertStacks(gate.Weight, up.Weight, 1),
+			Scales:       model.FuseExpertStacks(gate.Scales, up.Scales, 1),
 			GlobalScales: gate.GlobalScales,
 			Bits:         gate.Bits,
 			GroupSize:    gate.GroupSize,
 			Mode:         gate.Mode,
 		}
 		if gate.Biases != nil {
-			fused.Biases = fuseExpertStacks(gate.Biases, up.Biases, 1)
+			fused.Biases = model.FuseExpertStacks(gate.Biases, up.Biases, 1)
 		}
 		return fused
 	}
@@ -576,7 +522,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			scales,
 		)
 		globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		if useQuantized && model.SupportsGatherQMM(mode, bits) {
 			return &stackedExpertWeights{
 				Weight:       w,
 				Scales:       scales,
@@ -660,7 +606,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 		}
 		globalScale, globalScaleKeys := model.ReadGlobalScale(tensors, key, base+".weight", base)
 		consumedKeys = append(consumedKeys, globalScaleKeys...)
-		keepQuantized := useQuantized && supportsGatherQMM(m, b)
+		keepQuantized := useQuantized && model.SupportsGatherQMM(m, b)
 		if e == 0 {
 			quantized = keepQuantized
 		} else if quantized != keepQuantized ||
@@ -699,24 +645,24 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 		return nil
 	}
 
-	out := &stackedExpertWeights{Weight: stackAndClone(weights), Bits: bits, GroupSize: groupSize, Mode: mode}
+	out := &stackedExpertWeights{Weight: model.StackAndClone(weights), Bits: bits, GroupSize: groupSize, Mode: mode}
 	if len(scales) == len(weights) {
-		out.Scales = stackAndClone(scales)
+		out.Scales = model.StackAndClone(scales)
 	}
 	if quantized && len(biases) == len(weights) {
-		out.Biases = stackAndClone(biases)
+		out.Biases = model.StackAndClone(biases)
 	}
 	if len(globalScales) == len(weights) {
-		out.GlobalScales = mlx.Reshape(stackAndClone(globalScales), int32(len(weights)))
+		out.GlobalScales = mlx.Reshape(model.StackAndClone(globalScales), int32(len(weights)))
 	}
-	freeTensorKeys(tensors, consumedKeys...)
+	model.FreeTensorKeys(tensors, consumedKeys...)
 	return out
 }
 
 // combinedGateUpProjection loads the packed mlp.experts.gate_up_proj stack;
 // nil when the checkpoint ships gate/up separately.
 func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix string) *stackedExpertWeights {
-	gateUp, key := tensorAny(
+	gateUp, key := model.TensorAny(
 		tensors,
 		layerPrefix+".mlp.experts.gate_up_proj.weight",
 		layerPrefix+".mlp.experts.gate_up_proj",
@@ -744,7 +690,7 @@ func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQua
 		scales,
 	)
 	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, gateUp.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	if useQuantized && model.SupportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:       gateUp,
 			Scales:       scales,
@@ -827,7 +773,7 @@ func loadSwitchMLP(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool
 			switchMLP.GateUpGroupSize = gateUpW.GroupSize
 			switchMLP.GateUpMode = gateUpW.Mode
 		} else {
-			switchMLP.GateUpWeight = transposeExpertWeightForGatherMM(gateUpW.Weight)
+			switchMLP.GateUpWeight = model.TransposeExpertWeightForGatherMM(gateUpW.Weight)
 		}
 	} else {
 		if gateW.Scales != nil {
@@ -839,7 +785,7 @@ func loadSwitchMLP(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool
 			switchMLP.GateGroupSize = gateW.GroupSize
 			switchMLP.GateMode = gateW.Mode
 		} else {
-			switchMLP.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
+			switchMLP.GateWeight = model.TransposeExpertWeightForGatherMM(gateW.Weight)
 		}
 		if upW.Scales != nil {
 			switchMLP.UpWeightQ = upW.Weight
@@ -850,7 +796,7 @@ func loadSwitchMLP(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool
 			switchMLP.UpGroupSize = upW.GroupSize
 			switchMLP.UpMode = upW.Mode
 		} else {
-			switchMLP.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
+			switchMLP.UpWeight = model.TransposeExpertWeightForGatherMM(upW.Weight)
 		}
 	}
 	if downW.Scales != nil {
@@ -862,7 +808,7 @@ func loadSwitchMLP(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool
 		switchMLP.DownGroupSize = downW.GroupSize
 		switchMLP.DownMode = downW.Mode
 	} else {
-		switchMLP.DownWeight = transposeExpertWeightForGatherMM(downW.Weight)
+		switchMLP.DownWeight = model.TransposeExpertWeightForGatherMM(downW.Weight)
 	}
 	return switchMLP, nil
 }
@@ -935,14 +881,14 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
-	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	useQuantizedExperts := model.SupportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantizedExperts && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
 			if tq == nil {
 				continue
 			}
 			_, bits, mode := model.QuantizationParams(tq.QuantType)
-			if supportsGatherQMM(mode, bits) {
+			if model.SupportsGatherQMM(mode, bits) {
 				useQuantizedExperts = true
 				break
 			}
@@ -1002,15 +948,15 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 		if convWeight == nil {
 			convWeight = sanitizeConvWeight(tensors[layerPrefix+".linear_attn.conv1d"])
 		}
-		lin.NormWeight, _ = tensorAny(tensors,
+		lin.NormWeight, _ = model.TensorAny(tensors,
 			layerPrefix+".linear_attn.norm.weight",
 			layerPrefix+".linear_attn.norm",
 		)
-		lin.DtBias, _ = tensorAny(tensors,
+		lin.DtBias, _ = model.TensorAny(tensors,
 			layerPrefix+".linear_attn.dt_bias",
 			layerPrefix+".linear_attn.dt_proj",
 		)
-		lin.ALog, _ = tensorAny(tensors,
+		lin.ALog, _ = model.TensorAny(tensors,
 			layerPrefix+".linear_attn.A_log",
 			layerPrefix+".linear_attn.a_log",
 		)
@@ -1118,7 +1064,7 @@ func (m *Model) loadMTPHead(linears model.LinearFactory, tensors map[string]*mlx
 	return nil
 }
 
-func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
+func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
 	qg := a.QProj.Forward(x)
 	qg = mlx.Reshape(qg, B, L, cfg.NumAttentionHeads, cfg.HeadDim*2)
 	q := mlx.SliceStartStop(qg, []int32{0, 0, 0, 0}, []int32{B, L, cfg.NumAttentionHeads, cfg.HeadDim})
@@ -1141,8 +1087,12 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 		q = applyMRoPE(q, mropeCos, mropeSin, cfg.RopeDim)
 		k = applyMRoPE(k, mropeCos, mropeSin, cfg.RopeDim)
 	} else {
-		q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
-		k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions)
+		q = mlx.RoPEWithFreqs(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+		k = mlx.RoPEWithFreqs(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+		if cfg.RopeScale != nil {
+			q = nn.ScaleRotaryPart(q, int(cfg.RopeDim), *cfg.RopeScale)
+			k = nn.ScaleRotaryPart(k, int(cfg.RopeDim), *cfg.RopeScale)
+		}
 	}
 
 	var kv nn.SDPAOption
@@ -1164,7 +1114,7 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 	return out
 }
 
-func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, L int32, cfg *Config) *mlx.Array {
 	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
 	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
 	qkvDim := 2*keyDim + valueDim
@@ -1175,13 +1125,13 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	z := mlx.SliceStartStop(mixedQKVZ, []int32{0, 0, qkvDim}, []int32{B, L, qkvDim + valueDim})
 	z = mlx.Reshape(z, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
 	convTail := cfg.LinearConvKernelDim - 1
-	var rc *cache.RecurrentCache
+	var rc cache.Recurrent
 	opts := make([]nn.RecurrentOption, 0, 3)
 	opts = append(opts, nn.WithConvSiLU())
 	if cfg.PreciseGatedDeltaDecay {
 		opts = append(opts, nn.WithPreciseGatedDeltaDecay())
 	}
-	if typed, ok := c.(*cache.RecurrentCache); ok {
+	if typed, ok := c.(cache.Recurrent); ok {
 		rc = typed
 		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))
 		// When the cache has scheduled per-token snapshots, segment the
@@ -1308,7 +1258,7 @@ func (m *SparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	return mlx.Reshape(y, B, L, cfg.HiddenSize)
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config, mropeCos, mropeSin *mlx.Array) *mlx.Array {
 	var r *mlx.Array
 	normed := l.InputNorm.Forward(x, cfg.RMSNormEps)
 	if l.IsLinear {
@@ -1321,7 +1271,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(h, r)
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -1340,7 +1290,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 
 	var features []*mlx.Array
 	for i, layer := range m.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
@@ -1388,7 +1338,7 @@ func (m *Model) SelfDraft() model.DraftModel {
 
 // Forward runs one MTP step; the head's hidden also serves as the aux
 // hidden seeding the next step.
-func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))

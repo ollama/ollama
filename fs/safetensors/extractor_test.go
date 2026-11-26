@@ -306,6 +306,13 @@ func TestGetTensor(t *testing.T) {
 	if len(rawData) != 16 {
 		t.Errorf("raw data length = %d, want 16", len(rawData))
 	}
+	fileData, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fileData[td.Offset() : td.Offset()+td.Size]; !bytes.Equal(got, data) {
+		t.Errorf("tensor range at offset %d = %v, want %v", td.Offset(), got, data)
+	}
 }
 
 func TestGetTensor_NotFound(t *testing.T) {

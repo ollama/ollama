@@ -507,7 +507,9 @@ func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
 
 // ToListCompletion converts an api.ListResponse to ListCompletion
 func ToListCompletion(r api.ListResponse) ListCompletion {
-	var data []Model
+	// Keep Data non-nil so an empty model list is encoded as [] rather than
+	// null, which strongly-typed OpenAI clients cannot decode.
+	data := make([]Model, 0, len(r.Models))
 	for _, m := range r.Models {
 		id := m.Model
 		if id == "" {

@@ -11,14 +11,13 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/model/audio"
 )
 
 // speechHandler streams 24 kHz 16-bit PCM as the model generates it.
 func (r *Runner) speechHandler(w http.ResponseWriter, req *http.Request) {
-	speaker, ok := r.Model.(model.SpeechModel)
+	_, ok := r.Model.(model.SpeechModel)
 	if !ok {
 		http.Error(w, "this model does not support speech", http.StatusNotImplemented)
 		return
@@ -47,13 +46,15 @@ func (r *Runner) speechHandler(w http.ResponseWriter, req *http.Request) {
 	// The writer must not outlive the handler, even if generation panics.
 	defer func() { queue.close(); <-written }()
 
-	err := r.mlxThread.Do(ctx, func() error {
-		defer mlx.ClearCache()
-		return speaker.Speak(ctx, input, func(samples []float32) error {
-			queue.push(pcm16(samples))
-			return nil
-		})
-	})
+	speech := &speechRequest{ctx: ctx, input: input, queue: queue, done: make(chan error, 1)}
+	var err error
+	select {
+	case <-ctx.Done():
+		err = ctx.Err()
+	case r.Requests <- speech:
+		// The worker must release request state before the handler exits.
+		err = <-speech.done
+	}
 	queue.close()
 	<-written
 	if err == nil {
@@ -154,4 +155,82 @@ func pcm16(samples []float32) []byte {
 		binary.LittleEndian.PutUint16(b[2*i:], uint16(audio.PCM16(s)))
 	}
 	return b
+}
+
+func (s *batchScheduler) admitSpeech(request *speechRequest) {
+	s.keepScratch = false
+	if err := request.ctx.Err(); err != nil {
+		request.reject(err)
+		return
+	}
+	state, err := s.r.Model.(model.SpeechModel).NewSpeech(request.ctx, request.input)
+	if err != nil {
+		request.done <- err
+		return
+	}
+	request.state = state
+	for i, slot := range s.slots {
+		if slot != nil && slot.busy() {
+			continue
+		}
+		if slot == nil {
+			slot = &batchSlot{id: i}
+			s.slots[i] = slot
+		}
+		slot.speech = request
+		return
+	}
+	panic("scheduler admitted speech without a free slot")
+}
+
+func (s *batchScheduler) finishSpeech(slot *batchSlot, err error) {
+	request := slot.speech
+	request.state.Close()
+	slot.speech = nil
+	request.done <- err
+}
+
+// decodeSpeech calls one model batch operation, not one request loop per slot.
+func (s *batchScheduler) decodeSpeech() bool {
+	var slots []*batchSlot
+	var states []model.SpeechState
+	progressed := false
+	for _, slot := range s.slots {
+		if slot == nil || slot.speech == nil {
+			continue
+		}
+		if err := slot.speech.ctx.Err(); err != nil {
+			s.finishSpeech(slot, err)
+			progressed = true
+			continue
+		}
+		slots, states = append(slots, slot), append(states, slot.speech.state)
+	}
+	if len(slots) == 0 {
+		return progressed
+	}
+	outputs, err := s.r.Model.(model.SpeechModel).DecodeSpeech(states)
+	if err != nil {
+		for _, slot := range slots {
+			s.finishSpeech(slot, err)
+		}
+		return true
+	}
+	if len(outputs) != len(slots) {
+		panic("speech output rows do not match requests")
+	}
+	for i, slot := range slots {
+		out := outputs[i]
+		if err := slot.speech.ctx.Err(); err != nil {
+			s.finishSpeech(slot, err)
+			continue
+		}
+		if len(out.Samples) > 0 {
+			slot.speech.queue.push(pcm16(out.Samples))
+		}
+		if out.Done || out.Err != nil {
+			s.finishSpeech(slot, out.Err)
+		}
+	}
+	return true
 }

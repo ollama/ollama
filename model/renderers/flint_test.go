@@ -175,3 +175,20 @@ func TestFlintRendererDecodedToolArguments(t *testing.T) {
 		t.Errorf("decoded tool arguments = %q, want %q", got, want)
 	}
 }
+
+func TestFlintRendererSchemaKeywords(t *testing.T) {
+	var tool api.Tool
+	if err := json.Unmarshal([]byte(`{"type":"function","function":{"name":"score","parameters":{"type":"object","properties":{"n":{"type":"integer","default":2022}},"additionalProperties":false}}}`), &tool); err != nil {
+		t.Fatal(err)
+	}
+	tool.Function.Parameters.Defs = map[string]any{"max": float64(1)}
+
+	got, err := (&FlintRenderer{}).Render([]api.Message{{Role: "user", Content: "Score"}}, []api.Tool{tool}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"name": "score", "parameters": {"type": "object", "$defs": {"max": 1.0}, "properties": {"n": {"type": "integer", "default": 2022}}, "additionalProperties": false}}`
+	if !strings.Contains(got, want) {
+		t.Fatalf("got:\n%s\nwant substring:\n%s", got, want)
+	}
+}

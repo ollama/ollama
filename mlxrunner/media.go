@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 
 	"github.com/ollama/ollama/llm"
@@ -46,9 +47,8 @@ func foldValue(data []byte, dims []int) uint32 {
 // use, released when the expansion is fully evaluated. A nil
 // *requestMedia is a text-only request; every method is nil-safe.
 type requestMedia struct {
-	model    model.MediaModel
-	items    []mediaItem
-	inputLen int
+	model model.MediaModel
+	items []mediaItem
 
 	// manifest is the request-scoped batch view of items; Features is
 	// toggled in place so every batch shares the same slice.
@@ -61,17 +61,18 @@ type requestMedia struct {
 	layout []any
 }
 
-func (r *Runner) openMedia(request Request) *requestMedia {
-	if len(request.MediaItems) == 0 {
+func (r *Runner) openMedia(request request) *requestMedia {
+	if len(request.MediaItems) == 0 && request.Layout == nil {
 		return nil
 	}
 	m := &requestMedia{
-		model:    r.Model.(model.MediaModel),
 		items:    request.MediaItems,
-		inputLen: len(request.Tokens),
 		manifest: make([]batch.MediaItem, len(request.MediaItems)),
 		features: make([]*mlx.Array, len(request.MediaItems)),
 		scope:    mlx.NewScope(),
+	}
+	if len(request.MediaItems) > 0 {
+		m.model = r.Model.(model.MediaModel)
 	}
 	if request.Layout != nil {
 		m.layout = []any{request.Layout}
@@ -94,14 +95,18 @@ func (item *mediaItem) atomic() bool { return !item.item.Causal }
 
 // extendChunk keeps a chunk from ending strictly inside an atomic
 // expansion: cut before one starting inside the chunk, else grow to its
-// end, clipped one short of the prompt to preserve the decode seed.
-func (m *requestMedia) extendChunk(pos, n int) int {
+// end, clipped to the caller's prefill boundary.
+func (m *requestMedia) extendChunk(pos, n, limit int) int {
 	if m == nil {
 		return n
 	}
+	return extendMediaChunk(m.items, pos, n, limit)
+}
+
+func extendMediaChunk(items []mediaItem, pos, n, limit int) int {
 	end := pos + n
-	for i := range m.items {
-		item := &m.items[i]
+	for i := range items {
+		item := &items[i]
 		if !item.atomic() {
 			continue
 		}
@@ -109,7 +114,7 @@ func (m *requestMedia) extendChunk(pos, n int) int {
 			if item.pos > pos {
 				return item.pos - pos
 			}
-			return min(item.pos+item.length, m.inputLen-1) - pos
+			return min(item.pos+item.length, limit) - pos
 		}
 	}
 	return n
@@ -175,35 +180,40 @@ func (m *requestMedia) close() {
 // them in a single PrepareMedia call, and validates the authored items
 // before keying cache identity on them.
 func (r *Runner) expandMedia(mm model.MediaModel, prompt string, media []llm.MediaData) (*model.PreparedRequest, []mediaItem, error) {
-	matches := imgTagPattern.FindAllStringSubmatch(prompt, -1)
-	parts := imgTagPattern.Split(prompt, -1)
-
-	referenced := make([]bool, len(media))
+	// A renderer can identify the genuine attachments even when text contains
+	// identical tags. Raw prompts use every indexed tag as before.
+	positioned := slices.ContainsFunc(media, func(m llm.MediaData) bool { return len(m.TagOffsets) > 0 })
+	references := make([]int, len(media))
 	var segments []model.Segment
-	for i, part := range parts {
-		segments = append(segments, model.Segment{Tokens: r.Tokenizer.Encode(part, i == 0 && r.Tokenizer.AddBOS())})
-		if i >= len(matches) {
-			continue
-		}
-
-		id, _ := strconv.Atoi(matches[i][1])
-		idx := -1
-		for j := range media {
-			if media[j].ID == id {
-				idx = j
-				break
+	start := 0
+	for _, match := range imgTagPattern.FindAllStringSubmatchIndex(prompt, -1) {
+		id, _ := strconv.Atoi(prompt[match[2]:match[3]])
+		idx := slices.IndexFunc(media, func(m llm.MediaData) bool { return m.ID == id })
+		if positioned {
+			if idx < 0 {
+				continue
 			}
-		}
-		if idx < 0 {
+			if _, ok := slices.BinarySearch(media[idx].TagOffsets, match[0]); !ok {
+				continue
+			}
+		} else if idx < 0 {
 			return nil, nil, fmt.Errorf("invalid image index: %d", id)
 		}
-		referenced[idx] = true
-		segments = append(segments, model.Segment{Kind: string(media[idx].Kind), Data: media[idx].Data})
-	}
 
-	for j := range media {
-		if !referenced[j] {
-			slog.Warn("media not referenced by prompt", "id", media[j].ID)
+		tokens := r.Tokenizer.Encode(prompt[start:match[0]], len(segments) == 0 && r.Tokenizer.AddBOS())
+		segments = append(segments, model.Segment{Tokens: tokens}, model.Segment{Kind: string(media[idx].Kind), Data: media[idx].Data})
+		references[idx]++
+		start = match[1]
+	}
+	tokens := r.Tokenizer.Encode(prompt[start:], len(segments) == 0 && r.Tokenizer.AddBOS())
+	segments = append(segments, model.Segment{Tokens: tokens})
+
+	for j, m := range media {
+		if positioned && references[j] != len(m.TagOffsets) {
+			return nil, nil, fmt.Errorf("invalid prompt offsets for image %d", m.ID)
+		}
+		if references[j] == 0 {
+			slog.Warn("media not referenced by prompt", "id", m.ID)
 		}
 	}
 

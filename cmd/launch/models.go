@@ -263,8 +263,13 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 				return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 			}
 			var statusErr api.StatusError
-			if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
-				return fmt.Errorf("model %q not found", model)
+			if errors.As(err, &statusErr) {
+				switch statusErr.StatusCode {
+				case http.StatusNotFound:
+					return fmt.Errorf("model %q not found", model)
+				case http.StatusGone:
+					return err
+				}
 			}
 			return nil
 		}

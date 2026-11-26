@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -389,5 +390,36 @@ func TestQwen3ToolDefinitionTypes(t *testing.T) {
 				t.Errorf("formatToolDefinitionType() = %v, want %v", got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestQwen3CoderRendererSchemaKeywords(t *testing.T) {
+	var tool api.Tool
+	if err := json.Unmarshal([]byte(`{
+		"type": "function",
+		"function": {
+			"name": "f",
+			"parameters": {
+				"type": "object",
+				"properties": {
+					"n": {"type": "integer", "minimum": 1, "maximum": 1000000, "default": 9007199254740993, "enum": [1, 2]},
+					"s": {"type": "string", "default": null, "examples": ["<a&b>"]}
+				},
+				"required": ["n"],
+				"description": "top",
+				"additionalProperties": false
+			}
+		}
+	}`), &tool); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "<parameter>\n<name>n</name>\n<type>integer</type>\n<enum>[1,2]</enum>\n<default>9007199254740993</default>\n<maximum>1000000</maximum>\n<minimum>1</minimum>\n</parameter>\n<parameter>\n<name>s</name>\n<type>string</type>\n<default>None</default>\n<examples>[\"<a&b>\"]</examples>\n</parameter>\n<required>[\"n\"]</required>\n<additionalProperties>False</additionalProperties>\n<description>top</description>\n</parameters>"
+	rendered, err := (&Qwen3CoderRenderer{}).Render([]api.Message{{Role: "user", Content: "hi"}}, []api.Tool{tool}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, want) {
+		t.Fatalf("rendered tool block mismatch, got:\n%s", rendered)
 	}
 }

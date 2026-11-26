@@ -1,6 +1,10 @@
 ---
-title: FAQ
+title: Local FAQ
+sidebarTitle: Local FAQ
+description: Frequently asked questions about installing, configuring, and running Ollama locally.
 ---
+
+For questions about accounts, API keys, privacy, and cloud models, see the [Cloud FAQ](/cloud/faq).
 
 ## How can I upgrade Ollama?
 
@@ -11,6 +15,27 @@ On Linux, re-run the install script:
 ```shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
+
+## How do I install a pre-release?
+
+Use the preview channel to install the latest pre-release. If no pre-release is available, the latest stable version is installed.
+
+On macOS or Linux:
+
+```shell
+curl -fsSL 'https://ollama.com/install.sh?channel=preview' | OLLAMA_CHANNEL=preview sh
+```
+
+On Windows, run in PowerShell:
+
+```powershell
+$env:OLLAMA_CHANNEL = "preview"; irm "https://ollama.com/install.ps1?channel=preview" | iex
+```
+
+You can also download the installers directly:
+
+- [macOS](https://ollama.com/download/Ollama.dmg?channel=preview)
+- [Windows](https://ollama.com/download/OllamaSetup.exe?channel=preview)
 
 ## How can I view the logs?
 
@@ -319,7 +344,13 @@ The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endp
 
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
-If too many requests are sent to the server, it will respond with a 503 error indicating the server is overloaded. You can adjust how many requests may be queued by setting `OLLAMA_MAX_QUEUE`.
+If too many requests are sent to the local Ollama server, it responds with a `503` overloaded error. Set `OLLAMA_MAX_QUEUE` before starting the server to change the maximum number of queued requests:
+
+```shell
+OLLAMA_MAX_QUEUE=1024 ollama serve
+```
+
+See [How do I configure Ollama server?](#how-do-i-configure-ollama-server) for operating-system-specific instructions for setting environment variables.
 
 ## How does Ollama handle concurrent requests?
 
@@ -332,7 +363,7 @@ Parallel request processing for a given model results in increasing the context 
 The following server settings may be used to adjust how Ollama handles concurrent requests on most platforms:
 
 - `OLLAMA_MAX_LOADED_MODELS` - The maximum number of models that can be loaded concurrently provided they fit in available memory. The default is 3 \* the number of GPUs or 3 for CPU inference.
-- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time, default 1.  Required RAM will scale by `OLLAMA_NUM_PARALLEL` * `OLLAMA_CONTEXT_LENGTH`.
+- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time. When unset or zero, MLX on Metal chooses a conservative default based on available memory and the model's cache requirements; other backends default to 1. Set an explicit value to override this choice. More parallel requests require more memory.
 - `OLLAMA_MAX_QUEUE` - The maximum number of requests Ollama will queue when busy before rejecting additional requests. The default is 512
 
 Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting. Once ROCm v6.2 is available, Windows Radeon will follow the defaults above. You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPU's VRAM.

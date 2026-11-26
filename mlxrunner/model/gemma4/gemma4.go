@@ -183,15 +183,6 @@ func sliceAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
 	return mlx.SliceStartStop(a, beg, end)
 }
 
-// transposeForGatherMM transposes stacked expert weights from [experts, out, in]
-// to [experts, in, out] for use with GatherMM (which computes a @ b[group]).
-func transposeForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || w.NumDims() != 3 {
-		return w
-	}
-	return mlx.Transpose(w, 0, 2, 1).Clone()
-}
-
 // collectExpertProjection collects per-expert tensors, stacks them, and
 // optionally keeps quantized weight/scale/bias for GatherQMM.
 // prefix: e.g. "model.language_model.layers.0.moe.experts"
@@ -330,8 +321,8 @@ func (m *Model) loadFusedExperts(moe *MoEBlock, tensors map[string]*mlx.Array, g
 	downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
 	if gateUpScales == nil || downScales == nil {
 		// Dense: keep gate_up fused and transpose for GatherMM.
-		moe.GateUpWeight = transposeForGatherMM(gateUp)
-		moe.DownWeight = transposeForGatherMM(down)
+		moe.GateUpWeight = model.TransposeExpertWeightForGatherMM(gateUp)
+		moe.DownWeight = model.TransposeExpertWeightForGatherMM(down)
 		return
 	}
 
@@ -727,34 +718,15 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, fmt.Errorf("unsupported use_bidirectional_attention %q", b)
 	}
 
-	if qt := root.QuantType(); qt != "" {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
-		if gs := root.GroupSize(); gs > 0 {
-			cfg.QuantGroupSize = gs
-		}
-	} else {
-		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
-	}
-	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant = root.Quantization()
 
-	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	tok, err := root.LoadTokenizer(configData)
 	if err != nil {
-		return nil, fmt.Errorf("load tokenizer config: %w", err)
+		return nil, err
 	}
-
-	tokConfig := &tokenizer.TokenizerConfig{ConfigJSON: configData}
 	var suppressTokens []int32
 	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
-		tokConfig.GenerationConfigJSON = genConfigData
 		suppressTokens = parseSuppressTokens(genConfigData)
-	}
-	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
-		tokConfig.TokenizerConfigJSON = tokConfigData
-	}
-
-	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
-	if err != nil {
-		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
 	mm, err := parseMultimodalConfig(configData)
@@ -952,10 +924,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				layerPrefix+".experts.gate_proj", layerPrefix+".moe.gate_proj"); gateW != nil {
 				// Separate (non-fused) pre-stacked gate/up projections (older HF
 				// layout, dense only). Transpose for GatherMM.
-				moe.GateWeight = transposeForGatherMM(gateW)
-				moe.UpWeight = transposeForGatherMM(firstNonNil(tensors,
+				moe.GateWeight = model.TransposeExpertWeightForGatherMM(gateW)
+				moe.UpWeight = model.TransposeExpertWeightForGatherMM(firstNonNil(tensors,
 					layerPrefix+".experts.up_proj", layerPrefix+".moe.up_proj"))
-				moe.DownWeight = transposeForGatherMM(firstNonNil(tensors,
+				moe.DownWeight = model.TransposeExpertWeightForGatherMM(firstNonNil(tensors,
 					layerPrefix+".experts.down_proj", layerPrefix+".moe.down_proj"))
 				if moe.UpWeight == nil || moe.DownWeight == nil {
 					return fmt.Errorf("layer %d: incomplete pre-stacked MoE weights", i)
@@ -1036,9 +1008,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 					moe.DownQuantMode = downStacked.Mode
 				} else {
 					// Unquantized: transpose for GatherMM (expects [experts, in, out]).
-					moe.GateWeight = transposeForGatherMM(denseStackedExpertResult(gateStacked))
-					moe.UpWeight = transposeForGatherMM(denseStackedExpertResult(upStacked))
-					moe.DownWeight = transposeForGatherMM(denseStackedExpertResult(downStacked))
+					moe.GateWeight = model.TransposeExpertWeightForGatherMM(denseStackedExpertResult(gateStacked))
+					moe.UpWeight = model.TransposeExpertWeightForGatherMM(denseStackedExpertResult(upStacked))
+					moe.DownWeight = model.TransposeExpertWeightForGatherMM(denseStackedExpertResult(downStacked))
 				}
 			}
 			layer.MoE = moe
@@ -1126,7 +1098,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -1166,7 +1138,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	var features []*mlx.Array
 	nextFeature := 0
 	for i, layer := range m.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
@@ -1340,7 +1312,7 @@ func sliceLayerDim(combined *mlx.Array, layerIdx, B, L, pleDim int32) *mlx.Array
 	return mlx.Squeeze(sliced, 2)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory, mask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
+func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory, mask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
 	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor, mask)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
@@ -1390,7 +1362,7 @@ func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, posi
 	return h, kv
 }
 
-func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory, baseMask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory, baseMask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
 	// Determine head dim and scale based on layer type.
 	headDim := cfg.HeadDim
 	scale := cfg.SlidingScale

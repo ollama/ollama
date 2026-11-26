@@ -1643,7 +1643,7 @@ func TestListMiddleware(t *testing.T) {
 			},
 			resp: `{
 				"object": "list",
-				"data": null
+				"data": []
 			}`,
 		},
 	}

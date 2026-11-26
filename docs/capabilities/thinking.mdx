@@ -39,7 +39,7 @@ The response includes a top-level `thinking` object:
 Set the `think` field on a chat or generate request:
 
 - `true`: request thinking output.
-- `false`: request no thinking output, if the model permits it.
+- `false`: request no thinking output. Models that cannot disable thinking use their lowest supported level instead.
 - `null`: use the model default.
 - A string: select a supported level from `thinking.values`. Use the exact value from `/api/show`. Numbers are not supported.
 

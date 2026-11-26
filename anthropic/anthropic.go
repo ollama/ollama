@@ -180,6 +180,8 @@ type Tool struct {
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 
+	DeferLoading bool `json:"defer_loading,omitempty"`
+
 	// Web search specific fields
 	MaxUses int `json:"max_uses,omitempty"`
 }
@@ -349,8 +351,9 @@ func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.C
 		}
 	}
 
+	conv := newMessageConverter(r.Tools)
 	for i, msg := range r.Messages {
-		converted, err := convertMessage(msg)
+		converted, err := conv.convertMessage(msg)
 		if err != nil {
 			logutil.Trace("anthropic: message conversion failed", "index", i, "role", msg.Role, "err", err)
 			return nil, err
@@ -379,15 +382,15 @@ func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.C
 	}
 
 	var tools api.Tools
-	hasBuiltinWebSearch := false
-	for _, t := range r.Tools {
-		if strings.HasPrefix(t.Type, "web_search") {
-			hasBuiltinWebSearch = true
-			break
-		}
-	}
+	hasBuiltinWebSearch := hasToolType(r.Tools, "web_search")
+	honorDefer := !hasToolType(r.Tools, "tool_search_tool")
 
 	for _, t := range r.Tools {
+		if t.DeferLoading && honorDefer && !conv.loaded[t.Name] {
+			logutil.Trace("anthropic: deferred tool kept out of tool list", "tool", t.Name)
+			continue
+		}
+
 		// Anthropic built-in web_search maps to Ollama function name "web_search".
 		// If a user-defined tool also uses that name in the same request, drop the
 		// user-defined one to avoid ambiguous tool-call routing.
@@ -442,8 +445,32 @@ func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.C
 	return convertedRequest, nil
 }
 
+type messageConverter struct {
+	tools  map[string]Tool
+	loaded map[string]bool
+}
+
+func newMessageConverter(tools []Tool) *messageConverter {
+	byName := make(map[string]Tool, len(tools))
+	for _, t := range tools {
+		if _, ok := byName[t.Name]; !ok {
+			byName[t.Name] = t
+		}
+	}
+	return &messageConverter{tools: byName, loaded: map[string]bool{}}
+}
+
+func hasToolType(tools []Tool, prefix string) bool {
+	for _, t := range tools {
+		if strings.HasPrefix(t.Type, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // convertMessage converts an Anthropic MessageParam to Ollama api.Message(s)
-func convertMessage(msg MessageParam) ([]api.Message, error) {
+func (c *messageConverter) convertMessage(msg MessageParam) ([]api.Message, error) {
 	var messages []api.Message
 	role := strings.ToLower(msg.Role)
 
@@ -493,6 +520,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				logutil.Trace("anthropic: tool_use block missing name", "role", role)
 				return nil, errors.New("tool_use block missing required 'name' field")
 			}
+			c.loaded[block.Name] = true
 			toolCalls = append(toolCalls, api.ToolCall{
 				ID: block.ID,
 				Function: api.ToolCallFunction{
@@ -503,18 +531,31 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 		case "tool_result":
 			toolResultBlocks++
-			resultContent, resultImages, err := convertToolResultContent(block.Content)
+			resultContent, resultImages, refs, err := convertToolResultContent(block.Content)
 			if err != nil {
 				logutil.Trace("anthropic: invalid tool_result content", "role", role, "error", err)
 				return nil, err
 			}
 
-			toolResults = append(toolResults, api.Message{
+			result := api.Message{
 				Role:       "tool",
 				Content:    resultContent,
 				Images:     resultImages,
 				ToolCallID: block.ToolUseID,
-			})
+			}
+			if len(refs) > 0 {
+				defs, err := c.renderToolReferences(refs)
+				if err != nil {
+					logutil.Trace("anthropic: invalid tool_reference", "role", role, "error", err)
+					return nil, err
+				}
+				if resultContent == "" {
+					result.Content = defs
+				} else if defs != "" {
+					result.Content = resultContent + "\n\n" + defs
+				}
+			}
+			toolResults = append(toolResults, result)
 
 		case "thinking":
 			thinkingBlocks++
@@ -1040,15 +1081,16 @@ func resolveImageSource(source *ImageSource) (api.ImageData, error) {
 	return decoded, nil
 }
 
-func convertToolResultContent(content any) (string, []api.ImageData, error) {
+func convertToolResultContent(content any) (string, []api.ImageData, []string, error) {
 	switch c := content.(type) {
 	case nil:
-		return "", nil, nil
+		return "", nil, nil, nil
 	case string:
-		return c, nil, nil
+		return c, nil, nil, nil
 	case []any:
 		var text strings.Builder
 		var images []api.ImageData
+		var refs []string
 
 		for _, cb := range c {
 			cbMap, ok := cb.(map[string]any)
@@ -1064,7 +1106,7 @@ func convertToolResultContent(content any) (string, []api.ImageData, error) {
 			case "image":
 				rawSource, ok := cbMap["source"].(map[string]any)
 				if !ok {
-					return "", nil, errors.New("invalid tool_result image source")
+					return "", nil, nil, errors.New("invalid tool_result image source")
 				}
 
 				var source ImageSource
@@ -1080,16 +1122,59 @@ func convertToolResultContent(content any) (string, []api.ImageData, error) {
 
 				img, err := resolveImageSource(&source)
 				if err != nil {
-					return "", nil, err
+					return "", nil, nil, err
 				}
 				images = append(images, img)
+			case "tool_reference":
+				if name, ok := cbMap["tool_name"].(string); ok && name != "" {
+					refs = append(refs, name)
+				}
 			}
 		}
 
-		return text.String(), images, nil
+		return text.String(), images, refs, nil
 	default:
-		return "", nil, nil
+		return "", nil, nil, nil
 	}
+}
+
+type toolSearchDefinition struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+func (c *messageConverter) renderToolReferences(names []string) (string, error) {
+	defs := make([]toolSearchDefinition, 0, len(names))
+	for _, name := range names {
+		t, ok := c.tools[name]
+		if !ok {
+			logutil.Trace("anthropic: tool_reference names an undeclared tool", "tool", name)
+			continue
+		}
+		c.loaded[name] = true
+		def := toolSearchDefinition{Type: "function", Name: name, Description: t.Description}
+		if len(t.InputSchema) > 0 {
+			var b bytes.Buffer
+			if err := json.Compact(&b, t.InputSchema); err != nil {
+				return "", fmt.Errorf("invalid input_schema for tool %q: %w", name, err)
+			}
+			def.Parameters = b.Bytes()
+		}
+		defs = append(defs, def)
+	}
+	if len(defs) == 0 {
+		return "", nil
+	}
+
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(defs); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(out.String(), "\n"), nil
 }
 
 // ptr returns a pointer to the given string value

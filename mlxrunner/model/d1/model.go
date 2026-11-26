@@ -108,6 +108,11 @@ func specialTokens(root *model.Root) ([]string, error) {
 // after it, so no prefix state can be reused.
 func (m *Model) NewCaches() []cache.Cache { return nil }
 
-func (m *Model) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
-	return m.VLModel.Forward(b, nil)
+func (m *Model) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
+	backbone := *m.VLModel.Model
+	cfg := *backbone.Config
+	cfg.UncachedAttention = batchSetAttention(b, int(cfg.SlidingWindow))
+	backbone.Config = &cfg
+	view := lfm3.VLModel{Model: &backbone}
+	return view.Forward(b, nil)
 }
