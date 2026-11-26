@@ -481,6 +481,11 @@ func (s *Sampler) Distribution(seqID int, logits *mlx.Array, draftTokens *mlx.Ar
 	return slot.distribution(&slotCtx{opts: slot.opts, history: hist}, logits)
 }
 
+// IsGreedy reports whether the request selects the highest-scoring candidate.
+func (s *Sampler) IsGreedy(seqID int) bool {
+	return s.mustSlot("IsGreedy", seqID).opts.Temperature <= 0
+}
+
 // SampleCandidates samples a proposal over model-selected unique IDs and scores
 // with shape [B,K] at the request's temperature. Top-k, top-p, min-p and
 // history penalties belong to the target distribution used by verification.

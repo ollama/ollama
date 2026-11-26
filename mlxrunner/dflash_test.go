@@ -386,17 +386,22 @@ func TestBlockSelectorVocabularyOrderWithTopKTarget(t *testing.T) {
 		r, draft, session, _ := newBlockTestSession(t, nil, 3)
 		defer session.close()
 		r.spec.draft = &vocabularyBlockSelector{&selectedBlockDraft{draft}}
-		r.Sampler.Remove(pipelineSlot)
-		r.Sampler.Add(pipelineSlot, sampler.Options{Temperature: 1, TopK: 2, UseSeed: true, Seed: 42}, nil)
-
-		// After the unused anchor row, the first proposal is uniform and the
-		// second assigns more than half its mass to token 3.
+		// After the unused anchor, the first row is tied and the second prefers token 3.
 		logits := mlx.FromValues([]float32{
 			0, 0, 0, 0,
 			0, 0, 0, 0,
 			0, 0, 0, 2,
 		}, 1, 3, 4)
-		q := session.selectBlock(logits, mlx.FromValues([]int32{0}, 1), 2).dist
+		anchor := mlx.FromValues([]int32{0}, 1)
+		q := session.selectBlock(logits, anchor, 2).dist
+		if q.IDs == nil || !slices.Equal(q.IDs.Ints(), []int32{0, 3}) ||
+			!slices.Equal(mlx.Contiguous(q.Probs, false).Floats(), []float32{1, 1}) {
+			t.Fatal("expected one greedy token with probability one per row")
+		}
+
+		r.Sampler.Remove(pipelineSlot)
+		r.Sampler.Add(pipelineSlot, sampler.Options{Temperature: 1, TopK: 2, UseSeed: true, Seed: 42}, nil)
+		q = session.selectBlock(logits, anchor, 2).dist
 		if q.IDs != nil || !slices.Equal(q.Probs.Dims(), []int{2, 4}) {
 			t.Fatalf("proposal IDs %v, shape %v, want dense [2 4]", q.IDs, q.Probs.Dims())
 		}

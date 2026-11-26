@@ -207,6 +207,12 @@ func (d *dflashDraftSession) selectBlock(hidden, current *mlx.Array, n int) *dra
 			tokens, dist := r.Sampler.SampleCandidates(spec.slotID, ids, scores)
 			return tokens, dist.Probs
 		})
+		if ids == nil && r.Sampler.IsGreedy(spec.slotID) {
+			// DSpark scores the full vocabulary. Its greedy proposal puts all
+			// probability on the chosen token, so the dense rows can stay unevaluated.
+			ids = tokens.ExpandDims(-1)
+			probs = mlx.BroadcastTo(mlx.FromValue(float32(1)), 1, int32(n), 1)
+		}
 		if ids != nil {
 			ids = ids.Squeeze(0)
 		}
