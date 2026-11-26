@@ -21,7 +21,6 @@ func TestLaunchCmdOpenCodeRequiresServer(t *testing.T) {
 	t.Setenv("PATH", bin)
 	t.Setenv("OLLAMA_HOST", "")
 	t.Setenv(openCodeStartupEnv, "")
-	t.Setenv("OPENCODE_CONFIG_DIR", t.TempDir())
 	executable := `#!/bin/sh
 if [ "$1" = "--version" ]; then
   printf '%s\n' "$OLLAMA_OPENCODE_TEST_VERSION"
@@ -106,21 +105,6 @@ func TestOpenCodePluginLaunch(t *testing.T) {
 	}
 }
 
-func TestOpenCodeStartupModel(t *testing.T) {
-	catalog := "opencode/llama3.2\r\nollama/llama3.2:latest\r\nollama/example/model:latest\r\nollama/example/model\r\n"
-	for requested, want := range map[string]string{
-		"llama3.2":             "llama3.2:latest",
-		"llama3.2:other":       "",
-		"example/model":        "example/model",
-		"example/absent":       "",
-		"example/model:latest": "example/model:latest",
-	} {
-		if got := openCodeStartupModel(catalog, requested); got != want {
-			t.Errorf("requested model %q resolved to %q, want %q", requested, got, want)
-		}
-	}
-}
-
 func TestEnsureOpenCodePlugin(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell fake executable")
@@ -140,37 +124,19 @@ esac
 		t.Fatal(err)
 	}
 
-	legacyContents := openCodePluginHeader + "\n// legacy server-only plugin\n"
 	for _, tc := range []struct {
-		name, listing, legacy, addStatus string
-		wantAdd, wantArchive             bool
+		name, listing, addStatus string
+		wantAdd                  bool
 	}{
 		{name: "installs missing package", listing: "ollama.integration.extra  1  another-package", addStatus: "0", wantAdd: true},
 		{name: "reuses installed package", listing: "ollama.integration  0.1.0  " + openCodePluginSource},
+		{name: "reuses resolved package on startup", listing: "-  4012112  " + openCodePluginSource},
 		{name: "reuses local package", listing: "ollama.integration  local  /config/plugins/ollama.integration"},
-		{name: "archives managed predecessor", legacy: legacyContents, addStatus: "0", wantAdd: true, wantArchive: true},
-		{name: "restores predecessor after failed install", legacy: legacyContents, addStatus: "1", wantAdd: true},
-		{name: "keeps user files", legacy: "// user plugin\n", addStatus: "0", wantAdd: true},
+		{name: "surfaces install failure", listing: "No plugins found", addStatus: "1", wantAdd: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			configDir := filepath.Join(t.TempDir(), "OpenCode config")
-			plugins := filepath.Join(configDir, "plugins")
-			legacy := filepath.Join(plugins, "ollama-thinking.js")
-			listing := tc.listing
-			if tc.legacy != "" {
-				if err := os.MkdirAll(plugins, 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(legacy, []byte(tc.legacy), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if tc.legacy == legacyContents {
-					listing = "ollama.integration  local  " + legacy
-				}
-			}
 			output := filepath.Join(t.TempDir(), "install-argument")
-			t.Setenv("OPENCODE_CONFIG_DIR", configDir)
-			t.Setenv("OLLAMA_OPENCODE_TEST_LIST", listing)
+			t.Setenv("OLLAMA_OPENCODE_TEST_LIST", tc.listing)
 			t.Setenv("OLLAMA_OPENCODE_TEST_OUTPUT", output)
 			t.Setenv("OLLAMA_OPENCODE_TEST_ADD_STATUS", tc.addStatus)
 
@@ -184,21 +150,6 @@ esac
 				}
 			} else if !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("plugin add was called despite the installed plugin: %v", err)
-			}
-			if tc.wantArchive {
-				if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("legacy plugin remains discoverable: %v", err)
-				}
-				backups, err := filepath.Glob(filepath.Join(plugins, ".ollama-thinking.*.bak"))
-				if err != nil || len(backups) != 1 {
-					t.Fatalf("expected one archived legacy plugin, got %v, %v", backups, err)
-				}
-				legacy = backups[0]
-			}
-			if tc.legacy != "" {
-				if contents, err := os.ReadFile(legacy); err != nil || string(contents) != tc.legacy {
-					t.Fatalf("legacy plugin contents changed: %v", err)
-				}
 			}
 		})
 	}
