@@ -67,6 +67,14 @@ func TestRenderContentWithImageTags(t *testing.T) {
 			want:        "[img-2] see arr[img-0]",
 			wantOffset:  3,
 		},
+		{
+			name:        "prefixes when only one index of the batch is present",
+			content:     "what does arr[img-1] mean",
+			imageCount:  2,
+			imageOffset: 0,
+			want:        "[img-0][img-1] what does arr[img-1] mean",
+			wantOffset:  2,
+		},
 	}
 
 	for _, tt := range tests {
