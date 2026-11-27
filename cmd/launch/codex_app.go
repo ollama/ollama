@@ -2370,7 +2370,7 @@ func codexAppMatchingProcessIDs(ctx context.Context) []int {
 
 func codexAppWindowsMatchingProcessIDs(ctx context.Context) []int {
 	script := fmt.Sprintf(`$current = %d; Get-CimInstance Win32_Process -Filter "Name = 'Codex.exe' OR Name = 'codex.exe' OR Name = 'ChatGPT.exe' OR Name = 'chatgpt.exe'" | Where-Object { $_.ProcessId -ne $current -and ((($_.Name -ieq 'Codex.exe' -or $_.Name -ieq 'ChatGPT.exe') -and (($null -eq $_.CommandLine) -or ($_.CommandLine -notlike '* --type=*'))) -or ((($_.Name -ieq 'codex.exe') -or ($_.Name -ieq 'chatgpt.exe')) -and ($_.CommandLine -like '*app-server*'))) } | Select-Object -ExpandProperty ProcessId`, os.Getpid())
-	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := backgroundCommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return nil
 	}
@@ -2390,7 +2390,7 @@ func defaultCodexAppRunningAppPath(ctx context.Context) string {
 		return ""
 	}
 	script := `(Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
-	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := backgroundCommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
 	}
@@ -2402,7 +2402,7 @@ func defaultCodexAppStartAppID(ctx context.Context) string {
 		return ""
 	}
 	script := `(Get-StartApps | Where-Object { $_.Name -eq 'ChatGPT' -or $_.Name -like 'ChatGPT*' -or $_.Name -eq 'Codex' -or $_.Name -like 'Codex*' } | Select-Object -First 1 -ExpandProperty AppID)`
-	out, err := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := backgroundCommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
 	}
