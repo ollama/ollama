@@ -209,7 +209,7 @@ func TestAnthropicMessagesMiddleware(t *testing.T) {
 							},
 						},
 					},
-					{Role: "tool", Content: "Sunny, 22°C", ToolCallID: "call_123"},
+					{Role: "tool", Content: "Sunny, 22°C", ToolName: "get_weather", ToolCallID: "call_123"},
 				},
 				Options: map[string]any{"num_predict": 1024},
 				Stream:  &False,
