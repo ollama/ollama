@@ -42,6 +42,9 @@ func TestRouterLogitsRowStable(t *testing.T) {
 
 func TestNVFP4ExpertAppliesActivationAndWeightScales(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("requires Metal or CUDA")
+		}
 		mlx.Scoped(func() {
 			const width, outputs = 64, 8
 			// E2M1 value 1 in every nibble, with E4M3 block scales of 1.
@@ -53,7 +56,7 @@ func TestNVFP4ExpertAppliesActivationAndWeightScales(t *testing.T) {
 			}
 			input := mlx.FromValues(slices.Repeat([]float32{2}, width), 1, 1, 1, width).AsType(mlx.DTypeBFloat16)
 			selected := mlx.FromValues([]int32{1, 0}, 1, 2)
-			got := bank.project(input, selected).AsType(mlx.DTypeFloat32).Floats()
+			got := bank.project(input, selected, nil, false).AsType(mlx.DTypeFloat32).Floats()
 			want := append(slices.Repeat([]float32{96}, outputs), slices.Repeat([]float32{64}, outputs)...)
 			if !slices.Equal(got, want) {
 				t.Errorf("expert outputs = %v, want %v", got, want)

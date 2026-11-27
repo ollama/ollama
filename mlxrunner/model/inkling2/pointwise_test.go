@@ -10,10 +10,10 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
 
-func TestMetalAttentionRounding(t *testing.T) {
+func TestCompiledAttentionRounding(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		if !mlx.MetalIsAvailable() {
-			t.Skip("requires Metal")
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("requires Metal or CUDA")
 		}
 		mlx.EnableCompile()
 		random := rand.New(rand.NewPCG(131, 49))

@@ -11,7 +11,7 @@ func TestShortMatmul(t *testing.T) {
 	for name, weightType := range map[string]DType{"bf16": DTypeBFloat16, "f32": DTypeFloat32} {
 		t.Run(name, func(t *testing.T) {
 			withMLXThread(t, func(t *mlxthreadtest.T) {
-				if !MetalIsAvailable() {
+				if !MetalIsAvailable() && !CUDAIsAvailable() {
 					t.Skip("requires Metal")
 				}
 				const rows, width, columns = 8, 520, 100

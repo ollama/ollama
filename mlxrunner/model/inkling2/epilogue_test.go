@@ -58,7 +58,7 @@ func TestNVFP4SwiGLUQuantize(t *testing.T) {
 		t.Run(fmt.Sprintf("rows%d/top%d", tc.rows, tc.topK), func(t *testing.T) {
 			mlxtest.Run(t, func(t *mlxtest.T) {
 				mlx.Scoped(func() {
-					if !mlx.MetalIsAvailable() {
+					if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
 						t.Skip("Metal epilogue required")
 					}
 					in := gateUpInputsFor(tc.rows, tc.topK)
@@ -101,7 +101,7 @@ func TestGateUpFloatBank(t *testing.T) {
 			flat := mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 2, 64), 1)
 			ids := mlx.FromValues([]uint32{1, 0}, 2, 1)
 			scores := mlx.FromValues([]float32{0.25, 0.75}, 2, 1)
-			got := e.gateUpInput(flat, ids, scores)
+			got := e.gateUpInput(flat, ids, nil, scores, false)
 			pair := mlx.GatherMM(flat.Reshape(2, 1, 1, 64), weight.Transpose(0, 2, 1), nil, ids, false)
 			gate, up := splitGateUp(pair)
 			want := weightedSwiGLU(gate, up, scores, 2, 7, mlx.DTypeFloat32)

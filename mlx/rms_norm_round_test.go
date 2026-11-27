@@ -9,8 +9,8 @@ import (
 
 func TestRMSNormRoundBF16(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		if !MetalIsAvailable() {
-			t.Skip("requires Metal")
+		if !MetalIsAvailable() && !CUDAIsAvailable() {
+			t.Skip("requires Metal or CUDA")
 		}
 		x := patternArray(DTypeBFloat16, []int{3, 2304}, 0.2, 0.03, 13, 211)
 		w := patternArray(DTypeFloat32, []int{2304}, 1, 0.01, 5, 37)

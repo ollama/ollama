@@ -30,7 +30,8 @@ func BlockResidualMixNorm(sources []*Array, query, weight *Array, epsilon, normE
 
 func blockResidualMix(sources []*Array, query, norm *Array, epsilon, normEpsilon float32) *Array {
 	const width, maxSources = 2304, 5
-	if len(sources) < 2 || len(sources) > maxSources || epsilon != 1e-6 || !MetalIsAvailable() || !isAppleGPU() {
+	useCUDA := CUDAIsAvailable()
+	if len(sources) < 2 || len(sources) > maxSources || epsilon != 1e-6 || (!useCUDA && (!MetalIsAvailable() || !isAppleGPU())) {
 		return nil
 	}
 	supported := func(x *Array) bool {
@@ -47,7 +48,7 @@ func blockResidualMix(sources []*Array, query, norm *Array, epsilon, normEpsilon
 	if len(shape) != 3 || shape[0] < 1 || shape[1] < 1 || shape[2] != width {
 		return nil
 	}
-	if !blockResidualMixRuns(shape[1], norm != nil, kernelArchitecture()) {
+	if !useCUDA && !blockResidualMixRuns(shape[1], norm != nil, kernelArchitecture()) {
 		return nil
 	}
 	for _, source := range sources[1:] {
@@ -68,8 +69,28 @@ func blockResidualMix(sources []*Array, query, norm *Array, epsilon, normEpsilon
 		return nil
 	}
 	batch, tokens, count := shape[0], shape[1], len(sources)
+	if useCUDA && batch*tokens < 64 {
+		return nil // small decode batches: the CUDA kernel's fixed launch underuses the GPU; graph is faster
+	}
 	if batch > math.MaxUint32/width/max(queries, count)/tokens {
 		return nil // Shader element offsets are unsigned 32-bit indices.
+	}
+	// CUDA caches each generated kernel source by its template arguments, not
+	// by its input dtypes. Mixed BF16/FP32 sources would therefore bake the
+	// first launch's per-slot element types and read later launches' slots
+	// with the wrong width (BF16 data through a float pointer), producing NaN.
+	// The kernel and the eager graph both accumulate in FP32, so upcast every
+	// source to FP32 once here and keep every source slot float.
+	if useCUDA {
+		cast := make([]*Array, count)
+		for i, source := range sources {
+			if source.DType() == DTypeFloat32 {
+				cast[i] = source
+			} else {
+				cast[i] = source.AsType(DTypeFloat32)
+			}
+		}
+		sources = cast
 	}
 	// The kernel has a fixed signature for mixed BF16/FP32 sources.
 	// Extra bindings alias a live source and are never read.
@@ -92,7 +113,7 @@ func blockResidualMix(sources []*Array, query, norm *Array, epsilon, normEpsilon
 		perGroup = 1
 	}
 	// Each query's mixture is stored contiguously so selecting one is a view.
-	out, ok := blockResidualMixKernel.applyMetal(gpuLaunch{
+	launch := gpuLaunch{
 		inputs: inputs[:],
 		dtypes: []gpuDTypeArg{{"QueryT", query.DType()}, {"OutT", dtype}},
 		ints: []gpuIntArg{
@@ -102,9 +123,15 @@ func blockResidualMix(sources []*Array, query, norm *Array, epsilon, normEpsilon
 			{"HasNorm", hasNorm},
 			{"NormEpsBits", int(math.Float32bits(normEpsilon))},
 		},
-		outputs: []gpuOutputSpec{{"mixed", []int32{int32(queries), int32(batch), int32(tokens), width}, dtype}},
-		grid:    [3]int{width / 4, queries / perGroup, batch * tokens}, threadGroup: [3]int{width / 4, 1, 1},
-	})
+		outputs:     []gpuOutputSpec{{"mixed", []int32{int32(queries), int32(batch), int32(tokens), width}, dtype}},
+		grid:        [3]int{width / 4, queries / perGroup, batch * tokens},
+		threadGroup: [3]int{width / 4, 1, 1},
+	}
+	apply := blockResidualMixKernel.applyMetal
+	if useCUDA {
+		apply = blockResidualMixKernel.applyCUDA
+	}
+	out, ok := apply(launch)
 	if !ok {
 		return nil
 	}
@@ -239,6 +266,130 @@ for (uint q = 0; q < PerGroup; ++q) {
     for (uint j = 0; j < 4; ++j) {
         float y = norm[(firstQuery + q) * Width + first + j] * (mix[j] * inv);
         mixed[at + j] = OutT(y);
+    }
+}
+`},
+	cuda: gpuSource{header: `
+__device__ float block_residual_warp_sum(float v) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v += __shfl_down_sync(0xffffffffu, v, offset);
+    }
+    return v;
+}
+
+__device__ float block_residual_warp_all_sum(float v) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        v += __shfl_down_sync(0xffffffffu, v, offset);
+    }
+    return __shfl_sync(0xffffffffu, v, 0);
+}
+`, source: `
+unsigned int row = blockIdx.z;
+unsigned int rows = gridDim.z;
+unsigned int firstQuery = blockIdx.y * PerGroup;
+unsigned int first = threadIdx.x * 4;
+unsigned int offset = row * Width + first;
+unsigned int lane = threadIdx.x % 32;
+unsigned int group = threadIdx.x / 32;
+constexpr unsigned int Groups = Width / (4 * 32);
+constexpr unsigned int NormLanes = Width / 8;
+constexpr unsigned int NormGroups = (NormLanes + 31) / 32;
+
+__shared__ float squares[Sources][Groups];
+__shared__ float dots[PerGroup][Sources][Groups];
+__shared__ float staged[HasNorm ? Width : 1];
+__shared__ float normPartial[NormGroups];
+
+float values[Sources][4];
+float weights[Sources];
+
+for (unsigned int s = 0; s < Sources; ++s) {
+    float total = 0.0f;
+    for (unsigned int j = 0; j < 4; ++j) {
+        float v;
+        switch (s) {
+            case 0: v = static_cast<float>(x0[offset + j]); break;
+            case 1: v = static_cast<float>(x1[offset + j]); break;
+            case 2: v = static_cast<float>(x2[offset + j]); break;
+            case 3: v = static_cast<float>(x3[offset + j]); break;
+            default: v = static_cast<float>(x4[offset + j]); break;
+        }
+        values[s][j] = v;
+        total += v * v;
+    }
+    float partial = block_residual_warp_sum(total);
+    if (lane == 0) squares[s][group] = partial;
+}
+__syncthreads();
+for (unsigned int s = 0; s < Sources; ++s) {
+    float total = block_residual_warp_all_sum(lane < Groups ? squares[s][lane] : 0.0f);
+    float invRMS = rsqrtf(total / float(Width) + 1e-6f);
+    for (unsigned int j = 0; j < 4; ++j) values[s][j] *= invRMS;
+}
+for (unsigned int q = 0; q < PerGroup; ++q) {
+    float key[4];
+    for (unsigned int j = 0; j < 4; ++j) {
+        key[j] = static_cast<float>(static_cast<QueryT>(query[(firstQuery + q) * Width + first + j] * static_cast<QueryT>(1.0f / sqrtf(float(Width)))));
+    }
+    for (unsigned int s = 0; s < Sources; ++s) {
+        float score = 0.0f;
+        for (unsigned int j = 0; j < 4; ++j) {
+            float product = values[s][j] * key[j];
+            score += product;
+        }
+        float partial = block_residual_warp_sum(score);
+        if (lane == 0) dots[q][s][group] = partial;
+    }
+}
+__syncthreads();
+for (unsigned int q = 0; q < PerGroup; ++q) {
+    float peak = -INFINITY;
+    for (unsigned int s = 0; s < Sources; ++s) {
+        weights[s] = block_residual_warp_all_sum(lane < Groups ? dots[q][s][lane] : 0.0f);
+        peak = fmaxf(peak, weights[s]);
+    }
+    float sum = 0.0f;
+    for (unsigned int s = 0; s < Sources; ++s) {
+        weights[s] = expf(weights[s] - peak);
+        sum += weights[s];
+    }
+    float inverse = 1.0f / sum;
+    for (unsigned int s = 0; s < Sources; ++s) weights[s] *= inverse;
+    float mix[4];
+    for (unsigned int j = 0; j < 4; ++j) {
+        float value = 0.0f;
+        for (unsigned int s = 0; s < Sources; ++s) {
+            float product = values[s][j] * weights[s];
+            value += product;
+        }
+        mix[j] = value;
+    }
+    unsigned int at = ((firstQuery + q) * rows + row) * Width + first;
+    if (!HasNorm) {
+        for (unsigned int j = 0; j < 4; ++j) mixed[at + j] = static_cast<OutT>(mix[j]);
+        continue;
+    }
+    for (unsigned int j = 0; j < 4; ++j) staged[first + j] = mix[j];
+    __syncthreads();
+    unsigned int t = threadIdx.x;
+    if (t < NormGroups * 32) {
+        float sum = 0.0f;
+        for (unsigned int i = 0; i < 8; ++i) {
+            float v = t < NormLanes ? staged[t * 8 + i] : 0.0f;
+            sum += v * v;
+        }
+        sum = block_residual_warp_sum(sum);
+        if (lane == 0) normPartial[group] = sum;
+    }
+    __syncthreads();
+    float total = 0.0f;
+    for (unsigned int g = 0; g < NormGroups; ++g) total += normPartial[g];
+    float inv = rsqrtf(total / float(Width) + __uint_as_float(NormEpsBits));
+    for (unsigned int j = 0; j < 4; ++j) {
+        float y = static_cast<float>(norm[(firstQuery + q) * Width + first + j]) * (mix[j] * inv);
+        mixed[at + j] = static_cast<OutT>(y);
     }
 }
 `},

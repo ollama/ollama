@@ -59,9 +59,18 @@ func TestBlockResidualMixMatchesGraph(t *testing.T) {
 					} else {
 						got = BlockResidualMix(sources, query, 1e-6)
 					}
-					if arch := kernelArchitecture(); !isAppleGPU() || !blockResidualMixRuns(tc.tokens, norm, arch) {
+					if arch := kernelArchitecture(); !isAppleGPU() {
+						if CUDAIsAvailable() {
+							return // CUDA parity is covered by TestBlockResidualMixMatchesGraphCUDA.
+						}
 						if got != nil {
-							t.Fatalf("selected the Metal residual mixer on %s for %d tokens", arch, tc.tokens)
+							t.Fatalf("selected a residual mixer on unsupported device %s", arch)
+						}
+						return
+					}
+					if !blockResidualMixRuns(tc.tokens, norm, kernelArchitecture()) {
+						if got != nil {
+							t.Fatalf("selected the Metal residual mixer on %s for %d tokens", kernelArchitecture(), tc.tokens)
 						}
 						return
 					}
@@ -135,7 +144,68 @@ func TestBlockResidualMixFallback(t *testing.T) {
 			{"nonfinite_epsilon", valid, q, float32(math.NaN())},
 		} {
 			if got := BlockResidualMix(tc.sources, tc.query, tc.epsilon); got != nil {
-				t.Errorf("%s selected the Metal residual mixer", tc.name)
+				t.Errorf("%s selected the residual mixer", tc.name)
+			}
+		}
+	})
+}
+
+// TestBlockResidualMixMatchesGraphCUDA checks the fused CUDA mixer against the
+// release graph. The kernel reorders the RMS and score reductions, so results
+// can differ by one BF16 ULP; the comparison allows a few.
+func TestBlockResidualMixMatchesGraphCUDA(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !CUDAIsAvailable() {
+			t.Skip("requires CUDA")
+		}
+		const width = 2304
+		for _, tc := range []struct {
+			name                   string
+			batch, tokens, sources int
+		}{
+			{"prefill", 1, 65, 5},
+			{"prefill_large", 1, 2048, 3},
+		} {
+			for _, norm := range []bool{false, true} {
+				name := tc.name
+				if norm {
+					name += "_norm"
+				}
+				Scoped(func() {
+					shape := []int{tc.batch, tc.tokens, width}
+					sources := make([]*Array, tc.sources)
+					for i := range sources {
+						dtype := DTypeBFloat16
+						if i%2 == 1 {
+							dtype = DTypeFloat32
+						}
+						sources[i] = patternArray(dtype, shape, 0.05, 0.004, 13+2*i, 263)
+					}
+					query := patternArray(DTypeBFloat16, []int{width}, -0.07, 0.013, 37, 271)
+					weight := patternArray(DTypeFloat32, []int{width}, 1, 0.01, 17, 61)
+
+					var got *Array
+					if norm {
+						got = BlockResidualMixNorm(sources, query, weight, 1e-6, 1e-6)
+					} else {
+						got = BlockResidualMix(sources, query, 1e-6)
+					}
+					if got == nil {
+						t.Fatalf("%s: CUDA residual mixer did not run", name)
+					}
+
+					keys := RMSNormFn(Stack(sources, -2).AsType(DTypeFloat32), nil, 1e-6)
+					scaled := MulScalar(query, float32(1/math.Sqrt(width)))
+					scores := Sum(Mul(keys.ExpandDims(-3), scaled.ExpandDims(-2)), -1, false)
+					weights := SoftmaxAxis(scores, -1, true).ExpandDims(-1)
+					want := Sum(Mul(keys.ExpandDims(-3), weights), -2, false).Squeeze(-2)
+					if norm {
+						want = RMSNormFn(want.AsType(DTypeFloat32), weight, 1e-6).AsType(DTypeBFloat16)
+					}
+					if err := requireClose(name, got, want, 1e-2); err != nil {
+						t.Fatal(err)
+					}
+				})
 			}
 		}
 	})

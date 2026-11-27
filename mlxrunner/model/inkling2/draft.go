@@ -130,7 +130,7 @@ func newDraft(root *model.Root, target model.Model) (model.DraftModel, error) {
 }
 
 func (d *draft) LoadWeights(tensors map[string]*mlx.Array) error {
-	if mlx.MetalIsAvailable() {
+	if mlx.MetalIsAvailable() || mlx.CUDAIsAvailable() {
 		return d.loadWeights(tensors, draftBits, draftVocabularyBits)
 	}
 	return d.loadWeights(tensors, 0, 0)
@@ -204,7 +204,11 @@ func (d *draft) loadWeights(tensors map[string]*mlx.Array, bits, vocabularyBits 
 		if d.target.ShortOutput != nil {
 			head = d.target.ShortOutput.Weight
 		}
-		d.Vocabulary = newDraftProjection(vocabularyBits, head.AsType(mlx.DTypeBFloat16))
+		weight := head.AsType(mlx.DTypeBFloat16)
+		if mlx.CUDAIsAvailable() {
+			weight = padVocabWeight(weight, d.target.config.UnpaddedVocab)
+		}
+		d.Vocabulary = newDraftProjection(vocabularyBits, weight)
 	}
 	d.correct = compiledCorrection(d.target.config.LogitCap, draftProposalMinP)
 	d.target.draftTaps = slices.Clone(c.Taps)
@@ -417,7 +421,11 @@ func (p *draftProjection) forward(x *mlx.Array) []*mlx.Array {
 func (d *draft) Unembed(h *mlx.Array) *mlx.Array {
 	hidden := h.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, d.config.Width))
 	if d.Vocabulary != nil {
-		return d.Vocabulary.forward(hidden)[0]
+		logits := d.Vocabulary.forward(hidden)[0]
+		if mlx.CUDAIsAvailable() && logits.Dim(-1) != d.target.config.UnpaddedVocab {
+			logits = logits.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, d.target.config.UnpaddedVocab))
+		}
+		return logits
 	}
 	if logits := d.target.shortVocabularyProjection(hidden); logits != nil {
 		return logits.AsType(mlx.DTypeBFloat16)

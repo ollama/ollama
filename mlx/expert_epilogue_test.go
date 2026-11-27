@@ -27,7 +27,7 @@ func TestNVFP4SwiGLUQuantizeWidths(t *testing.T) {
 		gateCap, upCap := tc.gateCap, tc.upCap
 		t.Run(fmt.Sprintf("routes%d/width%d/caps%g,%g", tc.routes, tc.width, gateCap, upCap), func(t *testing.T) {
 			withMLXThread(t, func(t *mlxthreadtest.T) {
-				if !MetalIsAvailable() {
+				if !MetalIsAvailable() && !CUDAIsAvailable() {
 					t.Skip("requires Metal")
 				}
 				routes, width := tc.routes, tc.width

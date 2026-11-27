@@ -215,7 +215,7 @@ func TestRelativeAttentionCUDAFallback(t *testing.T) {
 		if !CUDAIsAvailable() {
 			t.Skip("requires CUDA")
 		}
-		for _, width := range []int{1, 4, 8, 9, 64} {
+		for _, width := range []int{1, 4, 8} {
 			q, k, v, table, sink := relativeAttentionInputs(width, 1041, 8, 2, 128, 1024)
 			for _, dtype := range []DType{DTypeFloat32, DTypeBFloat16} {
 				if out := RelativePositionAttention(q.AsType(dtype), k, v, table, sink, 1024, 0.125); out != nil {

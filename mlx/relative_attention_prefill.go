@@ -10,13 +10,18 @@ import (
 func relativeAttentionPrefill(q, k, v, table, sink *Array, window int, scale float32) *Array {
 	// Native matrix attention uses the same key-tile alignment for these widths.
 	width := q.Dim(3)
-	if (width != 64 && width != 128) || !MetalIsAvailable() {
+	useCUDA := CUDAIsAvailable()
+	if (width != 64 && width != 128) || (!useCUDA && !MetalIsAvailable()) {
 		return nil
 	}
 	heads, queries, keys := q.Dim(1), q.Dim(2), k.Dim(2)
 	const tile = 256
 	cut := func(x *Array, start, end int) *Array { return x.Slice(Slice(), Slice(), Slice(start, end), Slice()) }
 	sinks := Zeros(q.DType(), heads)
+	apply := relativeAttentionMask.applyMetal
+	if useCUDA {
+		apply = relativeAttentionMask.applyCUDA
+	}
 	var pieces []*Array
 	for begin := 0; begin < queries; {
 		end := min(queries, begin+tile)
@@ -35,7 +40,7 @@ func relativeAttentionPrefill(q, k, v, table, sink *Array, window int, scale flo
 			return nil
 		}
 		// Pass query-major tables so the mask kernel reads adjacent heads per query.
-		bias, ok := relativeAttentionMask.applyMetal(gpuLaunch{
+		bias, ok := apply(gpuLaunch{
 			inputs:  []*Array{cut(table, begin, end).Transpose(0, 2, 1, 3), cut(sink, begin, end).Transpose(0, 2, 1, 3), FromValue(n), FromValue(span), FromValue(window)},
 			dtypes:  []gpuDTypeArg{{"T", q.DType()}},
 			ints:    []gpuIntArg{{"Heads", heads}, {"Distances", table.Dim(3)}},
@@ -58,8 +63,11 @@ func relativeAttentionPrefill(q, k, v, table, sink *Array, window int, scale flo
 // RelativePositionDecodeBias reuses the prefill mask shader for a single final query.
 // All keys are causal for this row; the caller applies any sliding-window mask.
 func RelativePositionDecodeBias(table, sink *Array, keys int) *Array {
-	if table == nil || sink == nil || keys < 1 || keys > math.MaxInt32 ||
-		!MetalIsAvailable() {
+	if table == nil || sink == nil || keys < 1 || keys > math.MaxInt32 {
+		return nil
+	}
+	useCUDA := CUDAIsAvailable()
+	if !useCUDA && !MetalIsAvailable() {
 		return nil
 	}
 	if table.NumDims() != 4 || table.Dim(0) != 1 || table.Dim(2) != 1 ||
@@ -71,13 +79,18 @@ func RelativePositionDecodeBias(table, sink *Array, keys int) *Array {
 		sink.NumDims() != 4 || sink.Dim(0) != 1 || sink.Dim(1) != heads || sink.Dim(2) != 1 || sink.Dim(3) != 1 {
 		return nil
 	}
-	result, ok := relativeAttentionMask.applyMetal(gpuLaunch{
+	launch := gpuLaunch{
 		inputs:  []*Array{table, sink, FromValue(1), FromValue(keys), FromValue(0)},
 		dtypes:  []gpuDTypeArg{{"T", DTypeFloat32}},
 		ints:    []gpuIntArg{{"Heads", heads}, {"Distances", distances}},
 		outputs: []gpuOutputSpec{{"relative_bias", []int32{1, int32(heads), 1, int32(keys)}, DTypeFloat32}},
 		grid:    [3]int{keys, 1, heads}, threadGroup: [3]int{256, 1, 1},
-	})
+	}
+	apply := relativeAttentionMask.applyMetal
+	if useCUDA {
+		apply = relativeAttentionMask.applyCUDA
+	}
+	result, ok := apply(launch)
 	if !ok {
 		return nil
 	}
@@ -98,6 +111,26 @@ float relative = (distance >= 0 && distance < Distances) ? float(table[row * Dis
 float shifted = relative - float(sinks[row]);
 bool masked = distance < 0 || (window > 0 && distance >= window);
 bias[(pos.z * queries + pos.y) * keys + pos.x] = T(masked ? -INFINITY : shifted);
+`},
+	cuda: gpuSource{source: `
+int key = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+int query = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+int head = static_cast<int>(blockIdx.z);
+int queriesValue = static_cast<int>(*queries);
+int keysValue = static_cast<int>(*keys);
+int windowValue = static_cast<int>(*window);
+// Metal dispatches an exact thread count; CUDA rounds the grid up to whole
+// blocks, so a partial final block addresses keys past the end.
+if (key >= keysValue || query >= queriesValue) {
+    return;
+}
+int distance = keysValue - queriesValue + query - key;
+int row = query * Heads + head;
+float relative = (distance >= 0 && distance < Distances) ? static_cast<float>(table[row * Distances + distance]) : 0.0f;
+float shifted = relative - static_cast<float>(sinks[row]);
+bool masked = distance < 0 || (windowValue > 0 && distance >= windowValue);
+float biasValue = masked ? -INFINITY : shifted;
+bias[(head * queriesValue + query) * keysValue + key] = static_cast<T>(biasValue);
 `},
 }
 

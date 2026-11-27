@@ -9,7 +9,7 @@ import "math"
 // uint32 indices and FP32 weights, both [rows, topK], or nils when the Metal
 // kernel cannot run.
 func RouteSigmoidTopK(logits, bias *Array, topK int, scale float32) (indices, weights *Array) {
-	if !MetalIsAvailable() || logits == nil || logits.NumDims() != 2 || logits.DType() != DTypeFloat32 {
+	if (!MetalIsAvailable() && !CUDAIsAvailable()) || logits == nil || logits.NumDims() != 2 || logits.DType() != DTypeFloat32 {
 		return nil, nil
 	}
 	rows, experts := logits.Dim(0), logits.Dim(1)
@@ -26,7 +26,11 @@ func RouteSigmoidTopK(logits, bias *Array, topK int, scale float32) (indices, we
 	} else {
 		bias = logits
 	}
-	out, ok := routeSigmoidTopK.applyMetal(gpuLaunch{
+	apply := routeSigmoidTopK.applyMetal
+	if !MetalIsAvailable() {
+		apply = routeSigmoidTopK.applyCUDA
+	}
+	out, ok := apply(gpuLaunch{
 		inputs: []*Array{logits, bias},
 		ints: []gpuIntArg{
 			{"Experts", experts},
@@ -102,4 +106,54 @@ inline float log_sigmoid(float x) {
     return -(metal::max(-x, 0.0f) + metal::precise::log(1.0f + metal::precise::exp(-metal::fabs(x))));
 }
 `},
+	cuda: gpuSource{
+		header: `
+__device__ float log_sigmoid(float x) {
+    return -(fmaxf(-x, 0.0f) + logf(1.0f + expf(-fabsf(x))));
+}
+`,
+		source: `
+const int row = blockIdx.y;
+const int e = threadIdx.x;
+float logit = logits[row * Experts + e];
+float gate = 1.0f / (1.0f + expf(-logit));
+float score = HasBias ? gate + bias[e] : gate;
+__shared__ float ranked[Experts];
+__shared__ float chosenGate[TopK];
+__shared__ float chosenLogit[TopK];
+__shared__ unsigned chosen[TopK];
+score = isnan(score) ? -INFINITY : score;
+ranked[e] = score;
+__syncthreads();
+unsigned rank = 0;
+for (int other = 0; other < Experts; ++other) {
+    float s = ranked[other];
+    rank += (s > score || (s == score && other < e)) ? 1u : 0u;
+}
+if (rank < TopK) {
+    chosen[rank] = e;
+    chosenGate[rank] = gate;
+    chosenLogit[rank] = logit;
+}
+__syncthreads();
+if (e < TopK) {
+    float total = 0.0f;
+    bool underflow = false;
+    for (int k = 0; k < TopK; ++k) {
+        total += chosenGate[k];
+        underflow = underflow || chosenGate[k] < FLT_MIN;
+    }
+    float weight = chosenGate[e] / total;
+    if (underflow) {
+        float top = -INFINITY;
+        for (int k = 0; k < TopK; ++k) top = fmaxf(top, log_sigmoid(chosenLogit[k]));
+        float sum = 0.0f;
+        for (int k = 0; k < TopK; ++k) sum += expf(log_sigmoid(chosenLogit[k]) - top);
+        weight = expf(log_sigmoid(chosenLogit[e]) - top) / sum;
+    }
+    indices[row * TopK + e] = chosen[e];
+    weights[row * TopK + e] = weight * __uint_as_float(ScaleBits);
+}
+`,
+	},
 }

@@ -34,7 +34,7 @@ inline float expert_swiglu(float gate, float up, float scale, float score, float
 func NVFP4SwiGLUQuantize(inner, xmax, maxima, denominator, ids, scores *Array, xmaxStride int,
 	gateCap, upCap float32, maxProduct int, dtype DType,
 ) (values, amax *Array) {
-	if !MetalIsAvailable() || inner == nil || inner.NumDims() != 2 || ids == nil || scores == nil {
+	if (!MetalIsAvailable() && !CUDAIsAvailable()) || inner == nil || inner.NumDims() != 2 || ids == nil || scores == nil {
 		return nil, nil
 	}
 	routes, width := inner.Dim(0), inner.Dim(1)/2
@@ -44,12 +44,18 @@ func NVFP4SwiGLUQuantize(inner, xmax, maxima, denominator, ids, scores *Array, x
 		(dtype != DTypeFloat32 && dtype != DTypeBFloat16) || uint64(inner.Size()) > math.MaxInt32 {
 		return nil, nil
 	}
-	arch := kernelArchitecture()
-	per := tuneNVFP4Quantize(routes, width, arch)
+	per := 16
+	if MetalIsAvailable() {
+		per = tuneNVFP4Quantize(routes, width, kernelArchitecture())
+	}
 	workers := (width/per + 31) / 32 * 32
 	// Kernels index every input; a 0-d array would arrive as a scalar.
 	denominator = denominator.Reshape(1)
-	out, ok := nvfp4SwiGLUQuantize.applyMetal(gpuLaunch{
+	apply := nvfp4SwiGLUQuantize.applyMetal
+	if !MetalIsAvailable() {
+		apply = nvfp4SwiGLUQuantize.applyCUDA
+	}
+	out, ok := apply(gpuLaunch{
 		inputs: []*Array{inner, xmax, maxima, denominator, ids, scores},
 		dtypes: []gpuDTypeArg{{"OutT", dtype}},
 		ints: []gpuIntArg{
@@ -117,6 +123,94 @@ if (active) {
     for (uint i = 0; i < Per; ++i) values[start + i] = OutT(quantized[i]);
 }
 `},
+	cuda: gpuSource{
+		header: `
+__device__ float nvfp4_round_e4m3(float input) {
+    unsigned exponent = __float_as_uint(input) >> 23;
+    int spacing_exponent = int(exponent > 121 ? exponent : 121) - 130;
+    float spacing = ldexpf(1.0f, spacing_exponent);
+    return nearbyintf(__fdiv_rn(input, spacing)) * spacing;
+}
+__device__ float nvfp4_round_e2m1(float input) {
+    float magnitude = fabsf(input);
+    float value = magnitude > 0.25f ? 0.5f : 0.0f;
+    if (magnitude >= 0.75f) value = 1.0f;
+    if (magnitude > 1.25f) value = 1.5f;
+    if (magnitude >= 1.75f) value = 2.0f;
+    if (magnitude > 2.5f) value = 3.0f;
+    if (magnitude >= 3.5f) value = 4.0f;
+    if (magnitude > 5.0f) value = 6.0f;
+    return input < 0.0f ? -value : value;
+}
+__device__ float softcapped_swiglu(float g, float u, float gate_cap, float up_cap) {
+    float sigmoid = 1.0f / (1.0f + expf(-g));
+    float gate = gate_cap > 0.0f ? tanhf(g / gate_cap) * gate_cap : g;
+    float up = up_cap > 0.0f ? tanhf(u / up_cap) * up_cap : u;
+    return (gate * sigmoid) * up;
+}
+__device__ float expert_swiglu(float gate, float up, float scale, float score, float gate_cap, float up_cap) {
+    float g = (float)(__nv_bfloat16)(gate * scale);
+    float u = (float)(__nv_bfloat16)(up * scale);
+    return (float)(__nv_bfloat16)(softcapped_swiglu(g, u, gate_cap, up_cap) * score);
+}
+`,
+		source: `
+const int route = blockIdx.y;
+const int worker = threadIdx.x;
+const int lane = threadIdx.x % 32;
+const int warp = threadIdx.x / 32;
+bool active = worker < Width / Per;
+float gateCap = __uint_as_float(GateCapBits), upCap = __uint_as_float(UpCapBits);
+float scale = (xmax[route / XmaxStride] * maxima[(int)ids[route]]) / (denominator[0] * (float)MaxProduct);
+float score = scores[route];
+float data[Per];
+float block_max = 0.0f;
+for (int i = 0; i < Per; ++i) {
+    float value = 0.0f;
+    if (active) {
+        size_t at = (size_t)route * (2 * Width) + 2 * (worker * Per + i);
+        value = expert_swiglu((float)inner[at], (float)inner[at + 1], scale, score, gateCap, upCap);
+    }
+    data[i] = value;
+    block_max = fmaxf(block_max, fabsf(value));
+}
+for (int offset = 1; offset < 16 / Per; offset *= 2) {
+    block_max = fmaxf(block_max, __shfl_xor_sync(0xffffffff, block_max, offset));
+}
+__shared__ float partial[Workers / 32];
+float warp_amax = block_max;
+for (int stride = 16; stride; stride >>= 1) warp_amax = fmaxf(warp_amax, __shfl_down_sync(0xffffffff, warp_amax, stride));
+if (lane == 0) partial[warp] = warp_amax;
+__syncthreads();
+float row_max = lane < Workers / 32 ? partial[lane] : 0.0f;
+for (int stride = 16; stride; stride >>= 1) row_max = fmaxf(row_max, __shfl_down_sync(0xffffffff, row_max, stride));
+row_max = __shfl_sync(0xffffffff, row_max, 0);
+if (worker == 0) amax[route] = row_max;
+if (!active) return;
+float float_max = __uint_as_float(0x7f7fffff);
+float normalizer = fminf(__fdiv_rn((float)MaxProduct, row_max), float_max);
+float decoder = __fdiv_rn(1.0f, normalizer);
+float outer = __fmul_rn(row_max, 1.0f / (float)MaxProduct);
+float cand[2][Per], errors[2];
+for (int candidate = 0; candidate < 2; ++candidate) {
+    float reciprocal = candidate == 0 ? 1.0f / 6.0f : 0.25f;
+    float limit = __fmul_rn(block_max, __fmul_rn(normalizer, reciprocal));
+    float qscale = nvfp4_round_e4m3(fminf(limit, 448.0f));
+    float inverse = fminf(__fdiv_rn(1.0f, __fmul_rn(qscale, decoder)), float_max);
+    float partial4[4] = {};
+    for (int i = 0; i < Per; ++i) {
+        float quantized = nvfp4_round_e2m1(__fmul_rn(data[i], inverse));
+        cand[candidate][i] = __fmul_rn(quantized, qscale);
+        float restored = __fmul_rn(cand[candidate][i], outer);
+        partial4[i / 4] += fabsf(__fsub_rn(data[i], restored));
+    }
+    errors[candidate] = (partial4[0] + partial4[2]) + (partial4[1] + partial4[3]);
+}
+int selected = errors[1] < errors[0];
+size_t start = (size_t)route * Width + worker * Per;
+for (int i = 0; i < Per; ++i) values[start + i] = (OutT)cand[selected][i];
+`,
+	},
 }
 
 // MXFP8SwiGLUQuantize finishes an MXFP8 gate/up projection. inner
@@ -177,7 +271,7 @@ values[size_t(route) * Width + c] = OutT(mxfp8_value(v, block_max));
 // Each route rounds to BF16, the sum is FP32 and the result is BF16.
 // It returns nil when the Metal kernel cannot run.
 func ExpertSum(inner, amax, maxima, denominator, ids, order *Array, topK, maxProduct int) *Array {
-	if !MetalIsAvailable() || inner == nil || inner.NumDims() != 2 || topK < 1 || inner.Dim(0)%topK != 0 ||
+	if (!MetalIsAvailable() && !CUDAIsAvailable()) || inner == nil || inner.NumDims() != 2 || topK < 1 || inner.Dim(0)%topK != 0 ||
 		uint64(inner.Size()) > math.MaxInt32 {
 		return nil
 	}
@@ -198,8 +292,13 @@ func ExpertSum(inner, amax, maxima, denominator, ids, order *Array, topK, maxPro
 	} else if order.Size() != routes {
 		return nil
 	}
-	out, ok := expertSum.applyMetal(gpuLaunch{
+	apply := expertSum.applyMetal
+	if !MetalIsAvailable() {
+		apply = expertSum.applyCUDA
+	}
+	out, ok := apply(gpuLaunch{
 		inputs: []*Array{inner, amax, maxima, denominator, ids, order},
+		dtypes: []gpuDTypeArg{{"T", DTypeBFloat16}},
 		ints: []gpuIntArg{
 			{"Width", width},
 			{"TopK", topK},
@@ -237,5 +336,22 @@ for (uint k = 0; k < TopK; ++k) {
     sum = k == 0 ? value : sum + value;
 }
 out[size_t(token) * Width + c] = bfloat(sum);
+`},
+	cuda: gpuSource{source: `
+const int c = blockIdx.x * blockDim.x + threadIdx.x;
+const int token = blockIdx.y;
+if (c >= Width) return;
+float sum = 0.0f;
+for (int k = 0; k < TopK; ++k) {
+    int route = token * TopK + k;
+    if (Reorder) route = (int)order[route];
+    float value = (float)inner[(size_t)route * Width + c];
+    if (Scaled) {
+        value *= ((float)amax[route] * (float)maxima[(int)ids[route]]) / ((float)denominator[0] * (float)MaxProduct);
+    }
+    value = (float)(__nv_bfloat16)value;
+    sum = k == 0 ? value : sum + value;
+}
+out[(size_t)token * Width + c] = static_cast<T>(sum);
 `},
 }

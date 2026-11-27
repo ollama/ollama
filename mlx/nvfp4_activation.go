@@ -193,8 +193,7 @@ func QuantizeNVFP4Activation4Over6(x *Array, maxProduct int) (values, maxima *Ar
 	return values, maxima.Reshape(shape...)
 }
 
-// One thread handles 16 channels, with up to 256 threads per threadgroup.
-// A short Metal launch may spread each block over several lanes instead.
+// One SIMD lane handles 16 channels, with up to 256 lanes per threadgroup.
 func fastNVFP4Activation(x *Array, maxProduct int) (values, maxima *Array) {
 	if x == nil || x.NumDims() == 0 || x.DType() != DTypeBFloat16 {
 		return nil, nil
@@ -325,8 +324,12 @@ var nvfp4ActivationCUDAEnabled = sync.OnceValue(func() bool {
 		return false
 	}
 	arch := kernelArchitecture()
-	return arch == "sm_120"
+	return supportsNVFP4ActivationCUDA(arch)
 })
+
+func supportsNVFP4ActivationCUDA(arch string) bool {
+	return arch == "sm_120" || arch == "sm_121"
+}
 
 var compiledNVFP4Blocks = Compile("NVFP4ActivationBlocks", func(inputs ...*Array) []*Array {
 	values, maxima := quantizeNVFP4Blocks(inputs[0], inputs[1], inputs[2])
