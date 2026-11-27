@@ -88,8 +88,8 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	}
 	pick := req.ForceConfigure || req.ConfigureOnly || target == ""
 	picked := false
-	discoverThinking := false
 	var models []LaunchModel
+	var fallbackThinking map[string]*api.ModelRecommendationThinking
 	for {
 		if pick {
 			cancelDiscovery()
@@ -104,7 +104,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 		}
 		// The regular launch already refreshes the catalog. Only setup or an
 		// explicit model selection should incur a lookup just for thinking controls.
-		discoverThinking = picked || req.ModelOverride != ""
+		discoverThinking := picked || req.ModelOverride != ""
 		remaining := piModelDiscoveryTimeout
 		model, retryAfterAuth, err := c.piTargetModel(discoveryCtx, target, &remaining, nil, discoverThinking)
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
@@ -185,7 +185,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 				}
 			}
 		}
-		models, err = c.piModelCatalog(discoveryCtx, model, remaining, discoverThinking)
+		models, fallbackThinking, err = c.piModelCatalogWithFallback(discoveryCtx, model, remaining, discoverThinking)
 		if err != nil {
 			return err
 		}
@@ -195,7 +195,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 		break
 	}
 
-	configured, err := pi.writeConfigModels(models, discoveryCtx.Err() != nil, !discoverThinking)
+	configured, err := pi.writeConfigModels(models, discoveryCtx.Err() != nil, fallbackThinking)
 	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -320,15 +320,20 @@ func (c *launcherClient) piSelectableModels(ctx context.Context, items []ModelIt
 }
 
 func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel, budget time.Duration, discoverThinking bool) ([]LaunchModel, error) {
+	models, _, err := c.piModelCatalogWithFallback(ctx, primary, budget, discoverThinking)
+	return models, err
+}
+
+func (c *launcherClient) piModelCatalogWithFallback(ctx context.Context, primary LaunchModel, budget time.Duration, discoverThinking bool) ([]LaunchModel, map[string]*api.ModelRecommendationThinking, error) {
 	inventory, err := c.modelInventory().Load(ctx)
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		inventory, err = c.modelInventory().Refresh(ctx)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return []LaunchModel{primary}, nil
+		return []LaunchModel{primary}, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
 	if model, ok := findLaunchModel(inventory, primary.Name); ok {
@@ -353,11 +358,11 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 		models = append(models, model)
 	}
 	recommendations := c.recommendations(ctx)
-	thinkingByModel := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
+	fallbackThinking := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
 	for _, rec := range recommendations {
 		key := launchModelRecommendationKey(rec.Name)
 		if rec.Thinking.Valid() {
-			thinkingByModel[key] = rec.Thinking
+			fallbackThinking[key] = rec.Thinking.Clone()
 		}
 		if seen[key] || cloudDisabled || !isCloudModelName(rec.Name) || isDeprecatedLaunchModel(rec.Name) {
 			continue
@@ -370,9 +375,6 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 	showCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	for i, model := range models {
-		if !model.Thinking.Valid() {
-			model.Thinking = thinkingByModel[launchModelRecommendationKey(model.Name)].Clone()
-		}
 		models[i] = model.WithCloudLimits()
 	}
 	var wg sync.WaitGroup
@@ -418,21 +420,21 @@ queue:
 	close(jobs)
 	wg.Wait()
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+		return nil, nil, err
 	}
 	if !piSupportsChat(models[0]) {
-		return nil, fmt.Errorf("model %q does not support chat; choose a chat model", primary.Name)
+		return nil, nil, fmt.Errorf("model %q does not support chat; choose a chat model", primary.Name)
 	}
 	if cloudDisabled && models[0].Remote {
-		return nil, fmt.Errorf("cloud is disabled; enable cloud to use %s", primary.Name)
+		return nil, nil, fmt.Errorf("cloud is disabled; enable cloud to use %s", primary.Name)
 	}
 	if models[0].Name == "" {
-		return nil, fmt.Errorf("model %q is no longer available", primary.Name)
+		return nil, nil, fmt.Errorf("model %q is no longer available", primary.Name)
 	}
 	models = slices.DeleteFunc(models, func(model LaunchModel) bool {
 		return model.Name == "" || !piSupportsChat(model) || (cloudDisabled && model.Remote)
 	})
-	return models, nil
+	return models, fallbackThinking, nil
 }
 
 func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
@@ -945,10 +947,10 @@ func (p *Pi) Edit(models []LaunchModel) error {
 }
 
 func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, error) {
-	return p.writeConfigModels(models, preserveCatalog, false)
+	return p.writeConfigModels(models, preserveCatalog, nil)
 }
 
-func (p *Pi) writeConfigModels(models []LaunchModel, preserveCatalog, preserveThinking bool) (string, error) {
+func (p *Pi) writeConfigModels(models []LaunchModel, preserveCatalog bool, fallbackThinking map[string]*api.ModelRecommendationThinking) (string, error) {
 	if len(models) == 0 {
 		return "", nil
 	}
@@ -1053,18 +1055,23 @@ func (p *Pi) writeConfigModels(models []LaunchModel, preserveCatalog, preserveTh
 			if input, ok := old["input"]; ok && len(model.Capabilities) == 0 {
 				entry["input"] = input
 			}
-			// A failed or skipped lookup must not erase previously known controls,
-			// and a regular launch must not downgrade saved /show controls with a
-			// weaker recommendation while still backfilling legacy entries.
-			levels, known := old["thinkingLevelMap"]
-			_, refreshed := entry["thinkingLevelMap"]
-			if !refreshed || (preserveThinking && known) {
+			// Prefer live /api/show results, then previously saved controls,
+			// and use recommendations only to backfill entries with no map yet.
+			if _, refreshed := entry["thinkingLevelMap"]; !refreshed {
+				levels, known := old["thinkingLevelMap"]
 				if known {
 					entry["thinkingLevelMap"] = levels
 				}
 				if reasoning, ok := old["reasoning"]; ok && (known || len(model.Capabilities) == 0) {
 					entry["reasoning"] = reasoning
 				}
+			}
+		}
+		if _, ok := entry["thinkingLevelMap"]; !ok {
+			if fallback := fallbackThinking[key]; fallback.Valid() {
+				fallbackModel := model
+				fallbackModel.Thinking = fallback
+				setPiThinkingControls(entry, fallbackModel)
 			}
 		}
 		newModels = append(newModels, entry)

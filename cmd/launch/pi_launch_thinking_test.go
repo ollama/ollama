@@ -300,4 +300,99 @@ func TestLaunchIntegrationPiThinkingCatalogAndUpgrade(t *testing.T) {
 			t.Fatalf("saved-show:latest lost saved thinkingLevelMap: %v", byID["saved-show:latest"]["thinkingLevelMap"])
 		}
 	})
+
+	t.Run("explicit config keeps saved controls over weaker recommendation", func(t *testing.T) {
+		for _, tc := range []struct {
+			name             string
+			inspect          string
+			primaryShowFails bool
+			wantShowCalls    int32
+		}{
+			{"primary show 503 preserves saved map", "primary:latest", true, 1},
+			{"secondary with weaker recommendation still queries show", "secondary:latest", false, 1},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				home := t.TempDir()
+				setLaunchTestHome(t, home)
+				withLauncherHooks(t)
+				withInteractiveSession(t, true)
+				DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+				DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) {
+					return "primary:latest", nil
+				}
+				dir := filepath.Join(home, ".pi", "agent")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				modelsPath := filepath.Join(dir, "models.json")
+				saved := `{"providers":{"ollama":{"models":[
+					{"id":"primary:latest","_launch":true,"contextWindow":32768,"reasoning":true,"thinkingLevelMap":{"off":null,"minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}},
+					{"id":"secondary:latest","_launch":true,"contextWindow":32768,"reasoning":true,"thinkingLevelMap":{"off":null,"minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}}
+				]}}}`
+				if err := os.WriteFile(modelsPath, []byte(saved), 0o600); err != nil {
+					t.Fatal(err)
+				}
+
+				var inspectShows atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/api/experimental/model-recommendations":
+						fmt.Fprintf(w, `{"recommendations":[{"model":%q,"thinking":{"values":[false,true],"default":true}}]}`, tc.inspect)
+					case "/api/tags":
+						fmt.Fprint(w, `{"models":[
+							{"name":"primary:latest","capabilities":["completion","thinking"],"details":{"context_length":32768}},
+							{"name":"secondary:latest","capabilities":["completion","thinking"],"details":{"context_length":32768}}
+						]}`)
+					case "/api/status":
+						fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
+					case "/api/show":
+						var req struct {
+							Model string `json:"model"`
+						}
+						if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+							http.Error(w, "invalid request", http.StatusBadRequest)
+							return
+						}
+						if req.Model == tc.inspect {
+							inspectShows.Add(1)
+						}
+						if tc.primaryShowFails && req.Model == "primary:latest" {
+							http.Error(w, "temporary error", http.StatusServiceUnavailable)
+							return
+						}
+						fmt.Fprint(w, `{"capabilities":["completion","thinking"],"thinking":{"values":["low","high","max"],"default":"max"}}`)
+					default:
+						http.NotFound(w, r)
+					}
+				}))
+				defer server.Close()
+				t.Setenv("OLLAMA_HOST", server.URL)
+
+				if err := LaunchIntegration(t.Context(), IntegrationLaunchRequest{Name: "pi", ForceConfigure: true, ConfigureOnly: true}); err != nil {
+					t.Fatal(err)
+				}
+				if got := inspectShows.Load(); got != tc.wantShowCalls {
+					t.Fatalf("%s /api/show calls = %d, want %d", tc.inspect, got, tc.wantShowCalls)
+				}
+				cfg, err := fileutil.ReadJSON(modelsPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				entries := cfg["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
+				for _, entry := range entries {
+					m := entry.(map[string]any)
+					if m["id"] != tc.inspect {
+						continue
+					}
+					levels := m["thinkingLevelMap"].(map[string]any)
+					want := map[string]any{"off": nil, "minimal": nil, "low": "low", "medium": nil, "high": "high", "xhigh": nil, "max": "max"}
+					if diff := cmp.Diff(want, levels); diff != "" {
+						t.Fatalf("%s thinkingLevelMap (-want +got):\n%s", tc.inspect, diff)
+					}
+					return
+				}
+				t.Fatalf("missing %s", tc.inspect)
+			})
+		}
+	})
 }
