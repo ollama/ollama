@@ -295,10 +295,10 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 					}
 					if _, hasName := obj["name"]; hasName {
 						if args, ok := findMap("arguments", obj); ok {
-							return args, true
+							return unwrapNestedToolCall(tool, args), true
 						}
 						if args, ok := findMap("parameters", obj); ok {
-							return args, true
+							return unwrapNestedToolCall(tool, args), true
 						}
 						return nil, true
 					}
@@ -340,6 +340,45 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 	}
 
 	return nil, 0
+}
+
+// unwrapNestedToolCall removes a duplicated tool-call envelope from arguments.
+// Some models repeat {"name": ..., "arguments": ...} inside the outer
+// arguments object. Preserve it when both fields are declared by the tool
+// schema, since in that case it may be the intended payload.
+func unwrapNestedToolCall(tool *api.Tool, args map[string]any) map[string]any {
+	if len(args) != 2 {
+		return args
+	}
+
+	name, ok := args["name"].(string)
+	if !ok || name != tool.Function.Name {
+		return args
+	}
+
+	for _, key := range []string{"arguments", "parameters"} {
+		nested, ok := args[key].(map[string]any)
+		if !ok {
+			if nestedJSON, ok := args[key].(string); ok {
+				if err := json.Unmarshal([]byte(nestedJSON), &nested); err != nil {
+					continue
+				}
+			} else {
+				continue
+			}
+		}
+
+		properties := tool.Function.Parameters.Properties
+		_, hasName := properties.Get("name")
+		_, hasNested := properties.Get(key)
+		if hasName && hasNested {
+			return args
+		}
+
+		return nested
+	}
+
+	return args
 }
 
 // done checks if the parser is done parsing by looking
