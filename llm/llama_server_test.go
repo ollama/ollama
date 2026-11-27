@@ -253,6 +253,265 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerStreamMidStreamErrors(t *testing.T) {
+	tests := []struct {
+		name         string
+		chat         bool
+		sseLines     []string
+		statusErr    string
+		wantErr      string
+		wantOOM      bool
+		wantContents []string
+	}{
+		{
+			name: "completion grammar exception on first event",
+			sseLines: []string{
+				`data: {"error":{"code":500,"message":"got exception: Unexpected empty grammar stack after accepting piece: @ (31)","type":"server_error"}}`,
+			},
+			wantErr: "Unexpected empty grammar stack after accepting piece: @ (31)",
+		},
+		{
+			name: "completion decode error after partial output includes OOM status",
+			sseLines: []string{
+				`data: {"content":"{\"a\":","stop":false}`,
+				`data: {"error":{"code":500,"message":"Compute error.","type":"server_error"}}`,
+			},
+			statusErr:    "error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)",
+			wantErr:      "Compute error.",
+			wantOOM:      true,
+			wantContents: []string{`{"a":`},
+		},
+		{
+			name: "completion string error event",
+			sseLines: []string{
+				`data: {"error":"slot failed"}`,
+			},
+			wantErr: "slot failed",
+		},
+		{
+			name: "completion null error field succeeds",
+			sseLines: []string{
+				`data: {"content":"ok","stop":false,"error":null}`,
+				`data: {"content":"","stop":true,"stop_type":"eos","error":null}`,
+			},
+			wantContents: []string{"ok"},
+		},
+		{
+			name: "chat decode error includes OOM status",
+			chat: true,
+			sseLines: []string{
+				`data: {"choices":[{"delta":{"content":"hi"}}]}`,
+				`data: {"error":{"code":500,"message":"Compute error.","type":"server_error"}}`,
+			},
+			statusErr:    "error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)",
+			wantErr:      "Compute error.",
+			wantOOM:      true,
+			wantContents: []string{"hi"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := "/completion"
+			if tt.chat {
+				path = "/v1/chat/completions"
+			}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case path:
+					w.Header().Set("Content-Type", "text/event-stream")
+					for _, line := range tt.sseLines {
+						fmt.Fprintln(w, line)
+					}
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			status := &StatusWriter{}
+			if tt.statusErr != "" {
+				status.SetLastError(tt.statusErr)
+			}
+			runner := &llamaServerRunner{
+				port:    srv.Listener.Addr().(*net.TCPAddr).Port,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				status:  status,
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			var contents []string
+			var gotDone bool
+			opts := api.DefaultOptions()
+			var err error
+			if tt.chat {
+				err = runner.Chat(t.Context(), ChatRequest{
+					Messages: []api.Message{{Role: "user", Content: "test"}},
+					Options:  &opts,
+				}, func(cr ChatResponse) {
+					if cr.Message.Content != "" {
+						contents = append(contents, cr.Message.Content)
+					}
+					if cr.Done {
+						gotDone = true
+					}
+				})
+			} else {
+				err = runner.Completion(t.Context(), CompletionRequest{
+					Prompt:  "test",
+					Options: &opts,
+				}, func(cr CompletionResponse) {
+					if cr.Content != "" {
+						contents = append(contents, cr.Content)
+					}
+					if cr.Done {
+						gotDone = true
+					}
+				})
+			}
+
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !gotDone {
+					t.Fatal("expected Done response")
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %q, want substring %q", err, tt.wantErr)
+				}
+				if IsOutOfMemory(err) != tt.wantOOM {
+					t.Fatalf("IsOutOfMemory(%q) = %v, want %v", err, IsOutOfMemory(err), tt.wantOOM)
+				}
+				if gotDone {
+					t.Fatal("unexpected Done response on error")
+				}
+			}
+
+			if !slices.Equal(contents, tt.wantContents) {
+				t.Fatalf("contents = %v, want %v", contents, tt.wantContents)
+			}
+		})
+	}
+}
+
+func TestLlamaServerStreamEndedWithoutFinalResponse(t *testing.T) {
+	tests := []struct {
+		name      string
+		chat      bool
+		sseLines  []string
+		statusErr string
+		wantOOM   bool
+	}{
+		{
+			name: "completion empty SSE stream",
+		},
+		{
+			name: "completion partial SSE stream without stop",
+			sseLines: []string{
+				`data: {"content":"partial","stop":false}`,
+			},
+		},
+		{
+			name:      "completion clean EOF after OOM status",
+			statusErr: "error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)",
+			wantOOM:   true,
+		},
+		{
+			name: "chat empty SSE stream",
+			chat: true,
+		},
+		{
+			name: "chat stream ends with DONE but no finish_reason",
+			chat: true,
+			sseLines: []string{
+				`data: {"choices":[{"delta":{"content":"partial"}}]}`,
+				`data: [DONE]`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := "/completion"
+			if tt.chat {
+				path = "/v1/chat/completions"
+			}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case path:
+					w.Header().Set("Content-Type", "text/event-stream")
+					for _, line := range tt.sseLines {
+						fmt.Fprintln(w, line)
+					}
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			status := &StatusWriter{}
+			if tt.statusErr != "" {
+				status.SetLastError(tt.statusErr)
+			}
+			runner := &llamaServerRunner{
+				port:    srv.Listener.Addr().(*net.TCPAddr).Port,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				status:  status,
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			var gotDone bool
+			opts := api.DefaultOptions()
+			var err error
+			if tt.chat {
+				err = runner.Chat(t.Context(), ChatRequest{
+					Messages: []api.Message{{Role: "user", Content: "test"}},
+					Options:  &opts,
+				}, func(cr ChatResponse) {
+					if cr.Done {
+						gotDone = true
+					}
+				})
+			} else {
+				err = runner.Completion(t.Context(), CompletionRequest{
+					Prompt:  "test",
+					Options: &opts,
+				}, func(cr CompletionResponse) {
+					if cr.Done {
+						gotDone = true
+					}
+				})
+			}
+
+			if err == nil {
+				t.Fatal("expected error for stream ending without final response, got nil")
+			}
+			if !strings.Contains(err.Error(), "llama-server stream ended without a final response") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if IsOutOfMemory(err) != tt.wantOOM {
+				t.Fatalf("IsOutOfMemory(%q) = %v, want %v", err, IsOutOfMemory(err), tt.wantOOM)
+			}
+			if gotDone {
+				t.Fatal("unexpected Done response on incomplete stream")
+			}
+		})
+	}
+}
+
 func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -1657,6 +1657,7 @@ type llamaServerCompletionResponse struct {
 	StopType                string                 `json:"stop_type"`
 	Timings                 llamaServerTimings     `json:"timings"`
 	CompletionProbabilities []llamaServerTokenProb `json:"completion_probabilities"`
+	Error                   any                    `json:"error"`
 }
 
 type llamaServerChatChoice struct {
@@ -1887,6 +1888,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			if err := json.Unmarshal(evt, &lsResp); err != nil {
 				return fmt.Errorf("error unmarshalling llama-server response: %v", err)
 			}
+			if lsResp.Error != nil {
+				return fmt.Errorf("llama-server completion error: %s", s.statusErrorMessage(evt))
+			}
 
 			// Token repeat detection
 			switch {
@@ -1952,8 +1956,12 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		return nil
 	}
 
+	return s.streamIncompleteError("response", scanner)
+}
+
+func (s *llamaServerRunner) streamIncompleteError(label string, scanner *bufio.Scanner) error {
 	if err := scanner.Err(); err != nil {
-		if err := llamaServerStreamLimitError("response", err); err != nil {
+		if err := llamaServerStreamLimitError(label, err); err != nil {
 			return err
 		}
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
@@ -1964,10 +1972,13 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 			return fmt.Errorf("an error was encountered while running the model: %s", msg)
 		}
-		return fmt.Errorf("error reading llama-server response: %v", err)
+		return fmt.Errorf("error reading llama-server %s: %v", label, err)
 	}
 
-	return nil
+	if msg := s.lastErrMsg(); msg != "" {
+		return fmt.Errorf("llama-server stream ended without a final response: %s", msg)
+	}
+	return errors.New("llama-server stream ended without a final response")
 }
 
 func llamaServerStreamLimitError(label string, err error) error {
@@ -2199,7 +2210,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				return fmt.Errorf("error unmarshalling llama-server chat response: %v", err)
 			}
 			if lsResp.Error != nil {
-				return fmt.Errorf("llama-server chat error: %v", lsResp.Error)
+				return fmt.Errorf("llama-server chat error: %s", s.statusErrorMessage(evt))
 			}
 			if len(lsResp.Choices) == 0 {
 				continue
@@ -2280,22 +2291,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		return nil
 	}
 
-	if err := scanner.Err(); err != nil {
-		if err := llamaServerStreamLimitError("chat response", err); err != nil {
-			return err
-		}
-		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
-			s.Close()
-			msg := s.lastErrMsg()
-			if msg == "" {
-				msg = err.Error()
-			}
-			return fmt.Errorf("an error was encountered while running the model: %s", msg)
-		}
-		return fmt.Errorf("error reading llama-server chat response: %v", err)
-	}
-
-	return nil
+	return s.streamIncompleteError("chat response", scanner)
 }
 
 type llamaServerToolCallAccumulator struct {
