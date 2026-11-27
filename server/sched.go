@@ -137,9 +137,8 @@ func InitScheduler(ctx context.Context) *Scheduler {
 }
 
 // schedulerModelKey returns the scheduler map key for a model.
-// GGUF-backed models use ModelPath; safetensors/image models without a
-// ModelPath use the selected manifest digest so distinct child manifests don't
-// collide.
+// GGUF models use their shard paths. MLX adapters share the native base
+// identified by its tensor and config layers. Other runners use the manifest.
 func schedulerModelKey(m *Model) string {
 	if m == nil {
 		return ""
@@ -150,6 +149,9 @@ func schedulerModelKey(m *Model) string {
 			return strings.Join(m.modelPaths(), "\x00")
 		}
 		return m.ModelPath
+	}
+	if m.MLXBaseKey != "" {
+		return m.MLXBaseKey
 	}
 	if m.ManifestDigest != "" {
 		return "manifest:" + m.ManifestDigest
@@ -628,7 +630,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				}
 			}
 		} else {
-			llama, err = mlxrunner.NewClient(req.model.ShortName, req.opts.NumCtx, req.numCtxAuto)
+			llama, err = mlxrunner.NewClientForManifest(req.model.ShortName, req.model.ManifestDigest, req.opts.NumCtx, req.numCtxAuto)
 		}
 		if err != nil {
 			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)

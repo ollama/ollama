@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/model/lora"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
@@ -30,6 +31,7 @@ type targetModel struct {
 	OutputQuery *mlx.Array
 	Output      *nn.Linear
 	ShortOutput *nn.Linear
+	headLoRA    *lora.Factors
 	fp32Output  bool
 	Layers      []decoderLayer
 }
@@ -251,16 +253,20 @@ func (m *targetModel) shortVocabularyLogits(hidden *mlx.Array) *mlx.Array {
 }
 
 func (m *targetModel) Unembed(hidden *mlx.Array) *mlx.Array {
-	if logits := m.shortVocabularyLogits(hidden); logits != nil {
-		return logits
+	if m.headLoRA == nil {
+		if logits := m.shortVocabularyLogits(hidden); logits != nil {
+			return logits
+		}
 	}
-	if logits := m.shortVocabularyProjection(hidden); logits != nil {
-		return softcap(logits, m.config.LogitCap)
+	logits := m.shortVocabularyProjection(hidden)
+	if logits == nil {
+		input := hidden
+		if m.fp32Output {
+			input = hidden.AsType(mlx.DTypeFloat32)
+		}
+		logits = projectTarget(m.Output, input).AsType(mlx.DTypeFloat32)
 	}
-	if m.fp32Output {
-		hidden = hidden.AsType(mlx.DTypeFloat32)
-	}
-	return softcap(projectTarget(m.Output, hidden).AsType(mlx.DTypeFloat32), m.config.LogitCap)
+	return softcap(m.headLoRA.Add(logits, hidden), m.config.LogitCap)
 }
 
 func modelRMS(x, weight *mlx.Array, epsilon float32) *mlx.Array {
@@ -339,6 +345,9 @@ func selectMessage(inputs *mlx.Array, index int) *mlx.Array {
 // product launch scales each group's FP32 sums by its input's inverse RMS. It
 // returns nil where the separate products apply.
 func (l decoderLayer) stackedProjection(state residualStream, messages *mlx.Array, cfg textConfig) *mlx.Array {
+	if l.Attention.lora != nil {
+		return nil
+	}
 	query := l.AttentionQuery
 	if query == nil || len(state.blocks) == 0 || !cfg.NormalizeResidualValues ||
 		state.partial.NumDims() != 3 || state.partial.Dim(1) > shortTargetRows {

@@ -758,6 +758,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		if err := r.Completion(ctx, llm.CompletionRequest{
+			Adapter:         m.Adapter,
 			Prompt:          prompt,
 			Media:           media,
 			Format:          req.Format,
@@ -1075,6 +1076,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	compiled.Request.Adapter = m.Adapter
 	compiled.Request.MaxTokens = r.ContextLength()
 	result, err := scorer.Score(c.Request.Context(), compiled.Request)
 	if err != nil {
@@ -3370,6 +3372,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		thinkingClose, formatFrames := prepareStructuredOutput(builtinParser, thinkTagParser, req.Format, prompt)
 		err := r.Completion(ctx, llm.CompletionRequest{
+			Adapter:         m.Adapter,
 			Prompt:          prompt,
 			Media:           media,
 			Format:          req.Format,

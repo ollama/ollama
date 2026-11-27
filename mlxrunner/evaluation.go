@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
@@ -16,7 +17,10 @@ type activeEvaluation struct {
 }
 
 func (r *Runner) scheduleEvaluation(ctx context.Context, tokens []int32, items []mediaItem, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
-	request := &evaluationRequest{ctx: ctx, tokens: tokens, items: items, open: open, done: make(chan error, 1)}
+	return r.scheduleAdapterEvaluation(ctx, manifest.AdapterRef{}, tokens, items, open)
+}
+func (r *Runner) scheduleAdapterEvaluation(ctx context.Context, ref manifest.AdapterRef, tokens []int32, items []mediaItem, open func(*batchSlot, []*prefixCache) (*evaluationState, error)) error {
+	request := &evaluationRequest{adapter: ref, ctx: ctx, tokens: tokens, items: items, open: open, done: make(chan error, 1)}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -39,7 +43,7 @@ func (s *batchScheduler) admitEvaluation(request *evaluationRequest, index int) 
 	}
 	var peers []*prefixCache
 	for _, other := range s.slots {
-		if other != nil && other != slot && other.scoreCache != nil {
+		if other != nil && other != slot && other.adapter == slot.adapter && other.scoreCache != nil {
 			peers = append(peers, other.scoreCache)
 		}
 	}
@@ -60,13 +64,15 @@ func (s *batchScheduler) finishEvaluation(slot *batchSlot, err error) {
 }
 
 func (s *batchScheduler) stepEvaluation(slot *batchSlot) {
-	if rows, n := s.cachedForwardSlots(slot); len(rows) > 1 {
-		s.cachedForward(rows, n)
-		return
-	}
-	if rows := s.wholeForwardSlots(slot); len(rows) > 1 {
-		s.wholeForward(rows)
-		return
+	if slot.adapter == nil {
+		if rows, n := s.cachedForwardSlots(slot); len(rows) > 1 {
+			s.cachedForward(rows, n)
+			return
+		}
+		if rows := s.wholeForwardSlots(slot); len(rows) > 1 {
+			s.wholeForward(rows)
+			return
+		}
 	}
 	done, err := slot.evaluation.state.step(slot.evaluation.request.ctx)
 	if done || err != nil {
@@ -210,7 +216,7 @@ func (s *batchScheduler) wholeForwardSlots(first *batchSlot) []*batchSlot {
 	slots := []*batchSlot{first}
 	length := len(p.input.Tokens)
 	for _, slot := range s.slots {
-		if slot == nil || slot == first || slot.evaluation == nil || slot.evaluation.request.ctx.Err() != nil {
+		if slot == nil || slot == first || slot.adapter != first.adapter || slot.evaluation == nil || slot.evaluation.request.ctx.Err() != nil {
 			continue
 		}
 		other := slot.evaluation.state
@@ -254,7 +260,7 @@ func (s *batchScheduler) cachedForwardSlots(first *batchSlot) ([]*batchSlot, int
 	slots := []*batchSlot{first}
 	n := min(prefillChunkSize(), len(p.input.Tokens)-p.position)
 	for _, slot := range s.slots {
-		if slot == nil || slot == first || slot.evaluation == nil || slot.evaluation.request.ctx.Err() != nil {
+		if slot == nil || slot == first || slot.adapter != first.adapter || slot.evaluation == nil || slot.evaluation.request.ctx.Err() != nil {
 			continue
 		}
 		other := slot.evaluation.state

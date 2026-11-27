@@ -857,9 +857,8 @@ type CreateRequest struct {
 	// DraftFiles maps draft source file names to their SHA-256 digests.
 	DraftFiles map[string]string `json:"draft_files,omitempty"`
 
-	// Adapters is a map of LoRA adapters to include when creating the model.
-	//
-	// Deprecated: LoRA adapters are no longer supported.
+	// Adapters maps PEFT adapter_config.json and adapter_model.safetensors
+	// to their blob digests when From names a native MLX base model.
 	Adapters map[string]string `json:"adapters,omitempty"`
 
 	// Template is the template used when constructing a request to the model.

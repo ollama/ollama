@@ -37,6 +37,7 @@ import (
 type Client struct {
 	port                int
 	modelName           string
+	manifestDigest      string
 	contextLength       atomic.Int64
 	softContextLength   int // recommended limit to avoid poor performance
 	numCtxAuto          bool
@@ -56,6 +57,12 @@ var ErrRuntimeUnavailable = errors.New("MLX runtime is not available")
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
 func NewClient(modelName string, softContextLength int, numCtxAuto bool) (*Client, error) {
+	return NewClientForManifest(modelName, "", softContextLength, numCtxAuto)
+}
+
+// NewClientForManifest starts the runner only if the selected tag still resolves
+// to the manifest used by the scheduler to identify the resident base.
+func NewClientForManifest(modelName, digest string, softContextLength int, numCtxAuto bool) (*Client, error) {
 	if err := CheckRuntime(); err != nil {
 		return nil, err
 	}
@@ -68,13 +75,19 @@ func NewClient(modelName string, softContextLength int, numCtxAuto bool) (*Clien
 		client:            http.DefaultClient,
 	}
 
-	modelManifest, err := manifest.ParseNamedManifest(model.ParseName(modelName))
+	modelManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName(modelName), manifest.RunnerMLX)
 	if err != nil {
 		return nil, err
 	}
-	var tensorBytes int64
-	for _, layer := range modelManifest.TensorLayers() {
-		tensorBytes += layer.Size
+	if digest != "" && modelManifest.SelectedDigest() != digest {
+		return nil, fmt.Errorf("model %q changed before loading. Retry the request", modelName)
+	}
+	c.manifestDigest = modelManifest.SelectedDigest()
+	tensorBytes := modelManifest.AdapterSize()
+	for _, layer := range modelManifest.Layers {
+		if layer.MediaType == manifest.MediaTypeImageTensor {
+			tensorBytes += layer.Size
+		}
 	}
 	c.memory.Store(uint64(tensorBytes))
 
@@ -119,6 +132,7 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 }
 
 type CompletionRequest struct {
+	Adapter     manifest.AdapterRef `json:"adapter,omitzero"`
 	Prompt      string
 	Media       []llm.MediaData
 	Format      json.RawMessage
@@ -226,6 +240,7 @@ func jsonString(s string) string {
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
+		Adapter:     req.Adapter,
 		Prompt:      req.Prompt,
 		Media:       req.Media,
 		Format:      requestGrammar(req),
@@ -472,7 +487,7 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	// Spawn subprocess: ollama runner --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port), "--ctx-size", strconv.Itoa(c.parallelContextHint()))
+	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--manifest-digest", c.manifestDigest, "--port", strconv.Itoa(port), "--ctx-size", strconv.Itoa(c.parallelContextHint()))
 	cmd.Env = os.Environ()
 	loadedLibraryPath, err := mlx.LoadedLibraryPath()
 	if err != nil {

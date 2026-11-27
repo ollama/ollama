@@ -85,6 +85,7 @@ func routeExperts(logits, bias *mlx.Array, topK int, scale float32) (indices, we
 }
 
 type routedExperts struct {
+	lora       *expertLoRA
 	Router     *mlx.Array
 	Bias       *mlx.Array
 	GateUp     expertBank
@@ -126,6 +127,9 @@ func (e routedExperts) routerLogits(x *mlx.Array) *mlx.Array {
 // combine evaluates the selected experts and sums them for each token.
 // Grouped routes are sorted by expert for the Metal path.
 func (e routedExperts) combine(flat, indices, weights *mlx.Array, grouped bool) *mlx.Array {
+	if e.lora != nil {
+		return e.combineLoRA(flat, indices, weights)
+	}
 	if out := e.combineQuantized(flat, indices, weights, grouped); out != nil {
 		return out
 	}

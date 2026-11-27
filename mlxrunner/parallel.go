@@ -57,6 +57,8 @@ func (r *Runner) configureParallelism() {
 		return
 	}
 	headroom := min(int64(limit)-int64(mlx.ActiveMemory()), memory.AvailableRAM)
+	// The initial adapter loads on first admission, after this estimate.
+	headroom -= r.baseManifest.AdapterSize()
 	r.parallel = defaultParallelism(r.fullContextBytes, headroom)
 	slog.Info("MLX automatic parallelism", "parallel", r.parallel, "context_length", r.contextLength,
 		"projected_context_length", parallelContextLength(r.contextLength, r.parallelContext),

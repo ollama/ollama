@@ -233,6 +233,9 @@ func readCreateModelfile(cmd *cobra.Command) (*parser.Modelfile, string, error) 
 }
 
 func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName string) (createOptions, bool, error) {
+	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool { return c.Name == "adapter" }) {
+		return createOptions{}, false, nil
+	}
 	modelDir, mfConfig, err := configFromModelfile(modelfile)
 	if err != nil {
 		return createOptions{}, false, err
@@ -282,7 +285,7 @@ func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName s
 }
 
 var (
-	errAdaptersUnsupported = errors.New("LoRA adapters are no longer supported")
+	errAdaptersUnsupported = errors.New("ADAPTER requires a PEFT safetensors directory and FROM a native MLX model tag")
 	errForceLocalOnly      = errors.New("--force is only supported for local MLX safetensors imports")
 	errTypicalPDeprecated  = errors.New("typical_p is deprecated and cannot be set as a model parameter; pass it as a request option instead")
 )
@@ -360,7 +363,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool { return c.Name == "adapter" }) {
+	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool {
+		return c.Name == "adapter" && strings.HasSuffix(strings.ToLower(c.Args), ".gguf")
+	}) {
 		return errAdaptersUnsupported
 	}
 	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool { return c.Name == "typical_p" }) {
@@ -402,6 +407,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}
 		return errors.New("draft quantization during create is only supported for safetensors imports; quantize GGUF draft models before importing")
 	}
+	if len(req.Adapters) > 0 && (req.From == "" || len(req.Files) > 0 || len(req.DraftFiles) > 0) {
+		return errAdaptersUnsupported
+	}
 	if err := checkServerHeartbeat(cmd, args); err != nil {
 		return err
 	}
@@ -409,44 +417,30 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// A FROM-only create has nothing to transfer, so skip the store probe.
-	local := len(req.Files)+len(req.DraftFiles) > 0 && sharedBlobStore(cmd.Context(), client)
+	local := len(req.Files)+len(req.DraftFiles)+len(req.Adapters) > 0 && sharedBlobStore(cmd.Context(), client)
 
 	var g errgroup.Group
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 
-	files := syncmap.NewSyncMap[string, string]()
-	fileNames := createRequestFileNames(req.Files)
-	for f, digest := range req.Files {
-		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p, local); err != nil {
-				return err
-			}
-
-			files.Store(fileNames[f], digest)
-			return nil
-		})
+	upload := func(paths map[string]string) *syncmap.SyncMap[string, string] {
+		files := syncmap.NewSyncMap[string, string]()
+		names := createRequestFileNames(paths)
+		for f, digest := range paths {
+			g.Go(func() error {
+				if _, err := createBlob(cmd, client, f, digest, p, local); err != nil {
+					return err
+				}
+				files.Store(names[f], digest)
+				return nil
+			})
+		}
+		return files
 	}
-
-	draftFiles := syncmap.NewSyncMap[string, string]()
-	draftFileNames := createRequestFileNames(req.DraftFiles)
-	for f, digest := range req.DraftFiles {
-		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p, local); err != nil {
-				return err
-			}
-
-			draftFiles.Store(draftFileNames[f], digest)
-			return nil
-		})
-	}
-
+	files, draft, adapters := upload(req.Files), upload(req.DraftFiles), upload(req.Adapters)
 	if err := g.Wait(); err != nil {
 		return err
 	}
-
-	req.Files = files.Items()
-	req.DraftFiles = draftFiles.Items()
+	req.Files, req.DraftFiles, req.Adapters = files.Items(), draft.Items(), adapters.Items()
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {

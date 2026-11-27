@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 )
 
 // Scorer is an optional runner capability for bounded decision scoring.
@@ -15,6 +16,7 @@ type Scorer interface {
 
 // ScoreRequest carries prompt rows or model-native decision head inputs.
 type ScoreRequest struct {
+	Adapter manifest.AdapterRef `json:"adapter,omitzero"`
 	// System is the Modelfile instruction for scorers that assemble a native prompt.
 	// Generic candidate rows already include it in their rendered prompts.
 	System        string            `json:"system,omitempty"`

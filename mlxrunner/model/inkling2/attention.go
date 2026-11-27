@@ -7,10 +7,13 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model/lora"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
 type selfAttention struct {
+	lora       *attentionLoRA
+	outputLoRA *lora.Factors
 	// Projection stacks the rows that read the query input (query, relative,
 	// gate, sink), then the key rows and the value rows, each followed by
 	// its dynamic convolution rows. The three groups are views of it.
@@ -76,15 +79,15 @@ func (a selfAttention) attend(qp, kp, vp *mlx.Array, dtype mlx.DType, b *batch.B
 	compiledGate := mlx.MetalIsAvailable() && gate.DType() == dtype
 	if compiledGate {
 		if gated := gatedShortAttention(b, q, table, sink, gate, history, a.window, scale); gated != nil {
-			return projectTarget(a.Output, gated)
+			return a.projectOutput(gated)
 		}
 	}
 	attended := relativeSDPA(b, q, k, v, table, sink, history, a.window, scale)
 	attended = attended.Transpose(0, 2, 1, 3).Reshape(rows, tokens, a.heads*a.headDim)
 	if compiledGate {
-		return projectTarget(a.Output, compiledAttentionGate(attended, gate))
+		return a.projectOutput(compiledAttentionGate(attended, gate))
 	}
-	return projectTarget(a.Output, gateAttention(attended, gate, dtype))
+	return a.projectOutput(gateAttention(attended, gate, dtype))
 }
 
 // temperature scales global attention queries by the log of their length
@@ -140,7 +143,7 @@ func gatedShortAttention(b *batch.Batch, q, table, sink, gate *mlx.Array, histor
 
 // project applies the three row groups to their inputs. Inputs shared by all
 // groups take one product over the whole stack, and q then holds every column.
-func (a selfAttention) project(qInput, kInput, vInput *mlx.Array) (q, k, v *mlx.Array) {
+func (a selfAttention) projectBase(qInput, kInput, vInput *mlx.Array) (q, k, v *mlx.Array) {
 	if qInput == kInput && kInput == vInput {
 		all := projectTarget(a.Projection, qInput)
 		qRows, kRows := a.QueryRows.Weight.Dim(0), a.KeyRows.Weight.Dim(0)

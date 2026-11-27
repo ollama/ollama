@@ -67,6 +67,8 @@ type Model struct {
 	Name               string `json:"name"`
 	Config             model.ConfigV2
 	ShortName          string
+	MLXBaseKey         string
+	Adapter            manifest.AdapterRef
 	ModelPath          string
 	ModelShardPaths    []string
 	DraftPath          string
@@ -792,6 +794,14 @@ func modelFromManifest(n model.Name, mf *manifest.Manifest) (*Model, error) {
 		m.GenerationDefaults = m.Config.GenerationDefaults
 	}
 
+	if m.IsMLX() {
+		m.MLXBaseKey = mf.MLXBaseKey(m.Config.Draft)
+		ref, err := mf.Adapter()
+		if err != nil {
+			return nil, err
+		}
+		m.Adapter = ref
+	}
 	modelHasPooling := false
 	ggufChatTemplate := ""
 	for _, layer := range mf.Layers {
