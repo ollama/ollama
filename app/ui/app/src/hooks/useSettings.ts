@@ -13,6 +13,10 @@ interface SettingsState {
   onboardingVersion: number;
   thinkEnabled: boolean;
   thinkLevel: string;
+  speechVoice: string;
+  speechRate: number;
+  speechVolume: number;
+  speechAutoRead: boolean;
 }
 
 // Type for partial settings updates
@@ -25,6 +29,10 @@ type SettingsUpdate = Partial<{
   SidebarOpen: boolean;
   LastHomeView: string;
   OnboardingVersion: number;
+  SpeechVoice: string;
+  SpeechRate: number;
+  SpeechVolume: number;
+  SpeechAutoRead: boolean;
 }>;
 
 export function useSettings({
@@ -59,6 +67,10 @@ export function useSettings({
       sidebarOpen: settingsData?.settings?.SidebarOpen ?? false,
       lastHomeView: settingsData?.settings?.LastHomeView ?? "chat",
       onboardingVersion: settingsData?.settings?.OnboardingVersion ?? 0,
+      speechVoice: settingsData?.settings?.SpeechVoice ?? "",
+      speechRate: settingsData?.settings?.SpeechRate ?? 1,
+      speechVolume: settingsData?.settings?.SpeechVolume ?? 1,
+      speechAutoRead: settingsData?.settings?.SpeechAutoRead ?? false,
     }),
     [settingsData?.settings],
   );
