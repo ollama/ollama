@@ -21,6 +21,10 @@ func TestQwenParserStreaming(t *testing.T) {
 		wantEvents []qwenEvent
 	}
 
+	// shared content for the "well-formed nested pair" case below, so the
+	// input and the expected raw event can't drift out of sync
+	nestedInner := "<function=outer><parameter=note><tool_call><function=inner><parameter=x>1</parameter></function></tool_call></parameter></function>"
+
 	cases := []struct {
 		desc  string
 		steps []step
@@ -120,6 +124,77 @@ func TestQwenParserStreaming(t *testing.T) {
 				{input: "l", wantEvents: []qwenEvent{}},
 				{input: "l", wantEvents: []qwenEvent{}},
 				{input: ">", wantEvents: []qwenEvent{qwenEventRawToolCall{raw: "abc"}}},
+			},
+		},
+		{
+			// this documents a known, intentionally scoped-out limitation: a bare
+			// </tool_call>-shaped substring with no matching <tool_call> open can't
+			// be distinguished from a real terminator by depth counting alone, so
+			// it still closes the call early. This is not a regression from the
+			// nesting fix below, and behavior here is unchanged from before it.
+			desc: "unpaired </tool_call>-like substring in a parameter value still closes early (known limitation, not a regression)",
+			steps: []step{
+				{
+					input: "<tool_call><function=outer><parameter=note>value with </tool_call> inside</parameter></function></tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "<function=outer><parameter=note>value with "},
+						qwenEventContent{content: "inside</parameter></function></tool_call>"},
+					},
+				},
+			},
+		},
+		{
+			desc: "well-formed nested <tool_call> pair closes on the outer tag, not the inner one",
+			steps: []step{
+				{
+					input: "<tool_call>" + nestedInner + "</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: nestedInner},
+					},
+				},
+			},
+		},
+		{
+			desc: "regression: multiple sequential (non-nested) tool calls still parsed independently",
+			steps: []step{
+				{
+					input: "before1<tool_call>call one</tool_call>between<tool_call>call two</tool_call>between2<tool_call>call three</tool_call>after",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "before1"},
+						qwenEventRawToolCall{raw: "call one"},
+						qwenEventContent{content: "between"},
+						qwenEventRawToolCall{raw: "call two"},
+						qwenEventContent{content: "between2"},
+						qwenEventRawToolCall{raw: "call three"},
+						qwenEventContent{content: "after"},
+					},
+				},
+			},
+		},
+		{
+			desc: "regression: nested tool call streamed across chunks with partial tag boundaries",
+			steps: []step{
+				{
+					// ends mid partial open tag ("<tool_c") while already inside
+					// CollectingToolContent, exercising the depth scan's "not found
+					// yet, wait for more" path
+					input:      "<tool_call>outer-start<tool_c",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					// completes a full, well-formed nested pair, but the outer close
+					// still hasn't arrived - depth must not drop to 0 here
+					input:      "all>inner</tool_call>outer-e",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					// the real outer close arrives; the whole nested span should be
+					// emitted as a single raw tool call
+					input: "nd</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "outer-start<tool_call>inner</tool_call>outer-end"},
+					},
+				},
 			},
 		},
 		{
