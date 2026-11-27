@@ -263,15 +263,35 @@ export async function getClaudeDesktopAvailableModels(
 
     const localModels = localResult.models.filter((model: ModelResponse) => {
       const response = model as ModelResponse & {
+        model?: string;
         remote_model?: string;
         remote_host?: string;
       };
       const name = model.name.replace(/:latest$/, "");
-      return (
-        !response.remote_model &&
-        !response.remote_host &&
-        !name.endsWith("cloud")
-      );
+      if (
+        name.endsWith("cloud") ||
+        [model.name, response.model, response.remote_model].some(
+          (value) => value && /:(?:cloud|[^:/]+-cloud)$/i.test(value.trim()),
+        )
+      ) {
+        return false;
+      }
+      if (!response.remote_model && !response.remote_host) return true;
+      if (!response.remote_model || !response.remote_host) return false;
+
+      // Self-hosted manifests are served through the local Ollama server.
+      // Ollama cloud placeholders still require the account cloud catalog.
+      try {
+        const remote = new URL(response.remote_host);
+        const host = remote.hostname.toLowerCase().replace(/\.$/, "");
+        return (
+          (remote.protocol === "http:" || remote.protocol === "https:") &&
+          host !== "ollama.com" &&
+          !host.endsWith(".ollama.com")
+        );
+      } catch {
+        return false;
+      }
     });
     const cloudModels = (cloudResult.models ?? []).map((model) => {
       const name = model.name.replace(/:latest$/, "");
@@ -288,9 +308,7 @@ export async function getClaudeDesktopAvailableModels(
     const seen = new Set<string>();
     return [...localModels, ...cloudModels]
       .filter((model: ModelResponse) => {
-        const base = model.name
-          .replace(/:latest$/, "")
-          .replace(/:cloud$/, "");
+        const base = model.name.replace(/:latest$/, "").replace(/:cloud$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;

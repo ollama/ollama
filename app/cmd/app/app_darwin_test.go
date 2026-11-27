@@ -2433,6 +2433,58 @@ func TestClaudeLocalModels(t *testing.T) {
 	}
 }
 
+func TestClaudeLocalModelsSelfHostedRemotes(t *testing.T) {
+	tests := []struct {
+		name        string
+		host        string
+		upstream    string
+		modelName   string
+		modelAlias  string
+		wantAllowed bool
+	}{
+		{name: "http remote", host: "http://inference.example:11434", upstream: "model:8b", wantAllowed: true},
+		{name: "https remote", host: "https://inference.example/ollama", upstream: "model:8b", wantAllowed: true},
+		{name: "missing remote host", upstream: "model:8b"},
+		{name: "missing remote model", host: "http://inference.example:11434"},
+		{name: "invalid remote host", host: "://invalid", upstream: "model:8b"},
+		{name: "relative remote host", host: "inference.example", upstream: "model:8b"},
+		{name: "unsupported scheme", host: "ftp://inference.example", upstream: "model:8b"},
+		{name: "cloud alias", host: "http://inference.example:11434", upstream: "model:8b", modelName: "model:cloud"},
+		{name: "cloud model field", host: "http://inference.example:11434", upstream: "model:8b", modelAlias: "model:8b-cloud"},
+		{name: "cloud upstream model", host: "http://inference.example:11434", upstream: "model:cloud"},
+		{name: "ollama cloud host", host: "https://ollama.com", upstream: "model:8b"},
+		{name: "ollama cloud host with port", host: "https://OLLAMA.COM.:443", upstream: "model:8b"},
+		{name: "ollama cloud subdomain", host: "https://api.ollama.com", upstream: "model:8b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := api.ListModelResponse{Name: "remote:latest", Model: "remote:latest", RemoteHost: tt.host, RemoteModel: tt.upstream}
+			if tt.modelName != "" {
+				model.Name = tt.modelName
+			}
+			if tt.modelAlias != "" {
+				model.Model = tt.modelAlias
+			}
+			names, err := claudeLocalModels(context.Background(), func(context.Context) (*api.ListResponse, error) {
+				return &api.ListResponse{Models: []api.ListModelResponse{model}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := proxy.MapClaudeDesktopModels(nil, map[string]string{"claude-sonnet-5": model.Name})
+			// Self-hosted routes do not require an Ollama cloud account. Cloud
+			// placeholders must still be excluded from the installed inventory.
+			err = validateClaudeDesktopModels(selected, proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedOut}, names, true)
+			if got := err == nil; got != tt.wantAllowed {
+				t.Fatalf("remote model allowed = %v, want %v (inventory %v, error %v)", got, tt.wantAllowed, names, err)
+			}
+			if tt.wantAllowed && strings.Join(names, ",") != "remote:latest,remote" {
+				t.Fatalf("remote aliases = %v, want remote:latest and remote", names)
+			}
+		})
+	}
+}
+
 func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoadsCatalog(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OLLAMA_HOST", "127.0.0.1:11434")
