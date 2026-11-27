@@ -6,6 +6,12 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+var glm47DeclaredTools = []api.Tool{
+	tool("first", nil),
+	tool("second", nil),
+	tool("third", nil),
+}
+
 func TestGLM47ParserAdd(t *testing.T) {
 	parser := GLM47Parser{}
 	parser.Init([]api.Tool{
@@ -99,7 +105,7 @@ func TestGLM47ParserToolCallEscaping(t *testing.T) {
 
 func TestGLM47ParserToolCallIndexing(t *testing.T) {
 	parser := GLM47Parser{}
-	parser.Init(nil, nil, nil)
+	parser.Init(glm47DeclaredTools, nil, nil)
 
 	input := `plan</think>
 <tool_call>first<arg_key>a</arg_key><arg_value>1</arg_value></tool_call>
@@ -128,7 +134,7 @@ func TestGLM47ParserToolCallIndexing(t *testing.T) {
 
 func TestGLM47ParserToolCallIndexingStreaming(t *testing.T) {
 	parser := GLM47Parser{}
-	parser.Init(nil, nil, nil)
+	parser.Init(glm47DeclaredTools, nil, nil)
 
 	var all []api.ToolCall
 
@@ -161,14 +167,14 @@ func TestGLM47ParserToolCallIndexingStreaming(t *testing.T) {
 
 func TestGLM47ParserToolCallIndexResetOnInit(t *testing.T) {
 	parser := GLM47Parser{}
-	parser.Init(nil, nil, nil)
+	parser.Init(glm47DeclaredTools, nil, nil)
 
 	_, _, _, err := parser.Add("plan</think><tool_call>first<arg_key>a</arg_key><arg_value>1</arg_value></tool_call>", true)
 	if err != nil {
 		t.Fatalf("first parse failed: %v", err)
 	}
 
-	parser.Init(nil, nil, nil)
+	parser.Init(glm47DeclaredTools, nil, nil)
 	_, _, calls, err := parser.Add("plan</think><tool_call>second<arg_key>b</arg_key><arg_value>2</arg_value></tool_call>", true)
 	if err != nil {
 		t.Fatalf("second parse failed: %v", err)

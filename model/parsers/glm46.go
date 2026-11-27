@@ -36,11 +36,12 @@ const (
 )
 
 type GLM46Parser struct {
-	state           glm46ParserState
-	buffer          strings.Builder
-	tools           []api.Tool
-	callIndex       int
-	thinkingEnabled bool
+	state                          glm46ParserState
+	buffer                         strings.Builder
+	tools                          []api.Tool
+	callIndex                      int
+	thinkingEnabled                bool
+	preserveToolMarkupWithoutTools bool
 }
 
 func (p *GLM46Parser) HasToolSupport() bool {
@@ -328,7 +329,7 @@ func (p *GLM46Parser) eat() ([]glm46Event, bool) {
 		return p.eatLeadingWhitespaceAndTransitionTo(glm46ParserState_CollectingContent)
 
 	case glm46ParserState_CollectingContent:
-		if strings.Contains(p.buffer.String(), glm46ToolOpenTag) {
+		if !p.preserveToolMarkupWithoutTools && strings.Contains(p.buffer.String(), glm46ToolOpenTag) {
 			before, after := glm46SplitAtTag(p, glm46ToolOpenTag, true)
 			if len(before) > 0 {
 				events = append(events, glm46EventContent{content: before})
@@ -339,7 +340,7 @@ func (p *GLM46Parser) eat() ([]glm46Event, bool) {
 				p.state = glm46ParserState_CollectingToolContent
 			}
 			return events, true
-		} else if overlapLen := overlap(p.buffer.String(), glm46ToolOpenTag); overlapLen > 0 {
+		} else if overlapLen := overlap(p.buffer.String(), glm46ToolOpenTag); overlapLen > 0 && !p.preserveToolMarkupWithoutTools {
 			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
