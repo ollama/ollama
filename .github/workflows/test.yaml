@@ -77,6 +77,20 @@ jobs:
             -DGGML_OPENMP=OFF \
             -DGGML_CPU_ALL_VARIANTS=ON \
             -DOLLAMA_RUNNER_DIR=
+      - name: Test patched scheduler
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cmake -S "$RUNNER_TEMP/llama-server-patch-check/_deps/llama_cpp-src" \
+            -B "$RUNNER_TEMP/llama-scheduler-test" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLAMA_BUILD_TESTS=ON \
+            -DLLAMA_CURL=OFF \
+            -DGGML_METAL=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF
+          cmake --build "$RUNNER_TEMP/llama-scheduler-test" --target test-backend-sched --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/llama-scheduler-test" -R '^test-backend-sched$' --output-on-failure --no-tests=error
 
   linux:
     needs: [changes]
