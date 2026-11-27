@@ -79,9 +79,12 @@ func (w *WebSearch) Execute(ctx context.Context, args map[string]any) (any, stri
 		return nil, "", fmt.Errorf("query must be a non-empty string")
 	}
 
-	maxResults := 5
-	if v, ok := args["max_results"].(float64); ok && int(v) > 0 {
-		maxResults = int(v)
+	maxResults, err := integerArgument(args, "max_results", 5)
+	if err != nil {
+		return nil, "", err
+	}
+	if maxResults <= 0 {
+		maxResults = 5
 	}
 
 	result, err := performWebSearch(ctx, queryStr, maxResults)
