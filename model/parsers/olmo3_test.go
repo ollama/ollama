@@ -34,6 +34,35 @@ func TestOlmo3Parser(t *testing.T) {
 			},
 		},
 		{
+			name:  "unicode tool argument",
+			input: `<function_calls>get_weather(location="Zürich, 日本 🌦️")</function_calls>`,
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "Zürich, 日本 🌦️"}),
+					},
+				},
+			},
+		},
+		{
+			name:  "unicode nested arguments",
+			input: `<function_calls>update_config(settings={"都市": "東京", "labels": ["café", "雪❄️"]})</function_calls>`,
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "update_config",
+						Arguments: testArgs(map[string]any{
+							"settings": map[string]any{
+								"都市":     "東京",
+								"labels": []any{"café", "雪❄️"},
+							},
+						}),
+					},
+				},
+			},
+		},
+		{
 			name:            "content then tool call",
 			input:           `Let me check the weather.<function_calls>get_weather(location="NYC")</function_calls>`,
 			expectedContent: "Let me check the weather.",
@@ -286,6 +315,18 @@ func TestOlmo3Parser_Streaming(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
 						Arguments: testArgs(map[string]any{"location": "SF"}),
+					},
+				},
+			},
+		},
+		{
+			name:   "unicode argument split across chunks",
+			chunks: []string{"<function_calls>get_weather(location=\"Z", "\xc3", "\xbc", "rich\")", "</function_calls>"},
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "Zürich"}),
 					},
 				},
 			},
