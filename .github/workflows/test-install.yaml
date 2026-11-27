@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/install.sh'
+      - 'scripts/test-install.sh'
       - '.github/workflows/test-install.yaml'
 
 jobs:
@@ -14,6 +15,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Test Linux installer with mocked hardware
+        if: runner.os == 'Linux'
+        run: bash ./scripts/test-install.sh
       - name: Run install script
         run: sh ./scripts/install.sh
         env:
