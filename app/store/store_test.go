@@ -460,6 +460,157 @@ func TestCodexDesktopUsedPreservedBySettings(t *testing.T) {
 	}
 }
 
+func TestSavedModels(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	t.Run("empty by default", func(t *testing.T) {
+		models, err := s.SavedModels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(models) != 0 {
+			t.Fatalf("expected no saved models, got %v", models)
+		}
+	})
+
+	t.Run("save and list", func(t *testing.T) {
+		if err := s.SaveModel("qwen3:8b"); err != nil {
+			t.Fatal(err)
+		}
+
+		models, err := s.SavedModels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(models) != 1 || models[0] != "qwen3:8b" {
+			t.Fatalf("expected [qwen3:8b], got %v", models)
+		}
+	})
+
+	t.Run("saving twice does not duplicate", func(t *testing.T) {
+		if err := s.SaveModel("qwen3:8b"); err != nil {
+			t.Fatal(err)
+		}
+
+		models, err := s.SavedModels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(models) != 1 {
+			t.Fatalf("expected 1 saved model after duplicate save, got %v", models)
+		}
+	})
+
+	t.Run("multiple models are all kept", func(t *testing.T) {
+		if err := s.SaveModel("gemma3:4b"); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SaveModel("llama3.2:3b"); err != nil {
+			t.Fatal(err)
+		}
+
+		models, err := s.SavedModels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(models) != 3 {
+			t.Fatalf("expected 3 saved models, got %v", models)
+		}
+	})
+
+	t.Run("unsave removes only the requested model", func(t *testing.T) {
+		if err := s.UnsaveModel("gemma3:4b"); err != nil {
+			t.Fatal(err)
+		}
+
+		models, err := s.SavedModels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(models) != 2 {
+			t.Fatalf("expected 2 saved models after unsave, got %v", models)
+		}
+		for _, m := range models {
+			if m == "gemma3:4b" {
+				t.Fatalf("expected gemma3:4b to be removed, got %v", models)
+			}
+		}
+	})
+
+	t.Run("unsaving a model that is not saved is a no-op", func(t *testing.T) {
+		if err := s.UnsaveModel("never-saved"); err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		models, err := s.SavedModels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(models) != 2 {
+			t.Fatalf("expected saved models to be unchanged, got %v", models)
+		}
+	})
+
+	t.Run("empty model name is rejected", func(t *testing.T) {
+		if err := s.SaveModel("   "); err == nil {
+			t.Fatal("expected error saving an empty model name")
+		}
+		if err := s.UnsaveModel(""); err == nil {
+			t.Fatal("expected error unsaving an empty model name")
+		}
+	})
+
+	t.Run("model names are trimmed", func(t *testing.T) {
+		if err := s.SaveModel("  mistral:7b  "); err != nil {
+			t.Fatal(err)
+		}
+
+		models, err := s.SavedModels()
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, m := range models {
+			if m == "mistral:7b" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("expected trimmed model name mistral:7b, got %v", models)
+		}
+	})
+}
+
+func TestSavedModelsPersistAcrossReopen(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	oldLegacyConfigPath := legacyConfigPath
+	legacyConfigPath = filepath.Join(tmpDir, "config.json")
+	defer func() { legacyConfigPath = oldLegacyConfigPath }()
+
+	dbPath := filepath.Join(tmpDir, "db.sqlite")
+
+	first := &Store{DBPath: dbPath}
+	if err := first.SaveModel("qwen3:8b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second := &Store{DBPath: dbPath}
+	defer second.Close()
+
+	models, err := second.SavedModels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0] != "qwen3:8b" {
+		t.Fatalf("expected saved model to survive reopen, got %v", models)
+	}
+}
+
 // setupTestStore creates a temporary store for testing
 func setupTestStore(t *testing.T) (*Store, func()) {
 	t.Helper()
