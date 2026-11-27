@@ -210,6 +210,86 @@ func TestCheckedDialerRejectsRebind(t *testing.T) {
 	}
 }
 
+func TestCheckedDialerFallsBackToNextAddress(t *testing.T) {
+	// A host whose first resolved address is unreachable (e.g. AAAA records
+	// on a machine with no IPv6 route) must still connect through a later
+	// validated address instead of failing every blob request (#19841).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	// Nothing listens on [::1] at the listener's port, so the first dial
+	// fails fast (connection refused, or no IPv6 at all).
+	orig := lookupDialIPs
+	lookupDialIPs = func(context.Context, *net.Resolver, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("::1"), net.ParseIP("127.0.0.1")}, nil
+	}
+	defer func() { lookupDialIPs = orig }()
+
+	dial := checkedDialer(&net.Dialer{Timeout: 2 * time.Second}, true)
+	conn, err := dial(t.Context(), "tcp", net.JoinHostPort("cdn.example.com", port))
+	if err != nil {
+		t.Fatalf("dial did not fall back to the second address: %v", err)
+	}
+	defer conn.Close()
+	if got := conn.RemoteAddr().(*net.TCPAddr).IP.String(); got != "127.0.0.1" {
+		t.Errorf("connected to %s, want 127.0.0.1", got)
+	}
+}
+
+func TestCheckedDialerRejectsAnyPrivateAddress(t *testing.T) {
+	// Falling back across addresses must not weaken validation: one
+	// non-public address in the answer still rejects the whole host.
+	orig := lookupDialIPs
+	lookupDialIPs = func(context.Context, *net.Resolver, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("8.8.8.8"), net.ParseIP("10.0.0.1")}, nil
+	}
+	defer func() { lookupDialIPs = orig }()
+
+	dial := checkedDialer(&net.Dialer{Timeout: 2 * time.Second}, false)
+	if _, err := dial(t.Context(), "tcp", "cdn.example.com:443"); !errors.Is(err, errRedirectNotAllowed) {
+		t.Errorf("expected errRedirectNotAllowed, got %v", err)
+	}
+}
+
+func TestPartialDialDeadline(t *testing.T) {
+	now := time.Now()
+	deadline := now.Add(30 * time.Second)
+	// The remaining budget is split evenly across the remaining addresses.
+	if got := partialDialDeadline(now, deadline, 3); !got.Equal(now.Add(10 * time.Second)) {
+		t.Errorf("3 addrs: got %v, want +10s", got.Sub(now))
+	}
+	// The last address gets everything that's left.
+	if got := partialDialDeadline(now, deadline, 1); !got.Equal(deadline) {
+		t.Errorf("1 addr: got %v, want +30s", got.Sub(now))
+	}
+	// Each attempt gets a minimum slice, but never past the overall deadline.
+	short := now.Add(3 * time.Second)
+	if got := partialDialDeadline(now, short, 4); !got.Equal(now.Add(2 * time.Second)) {
+		t.Errorf("min slice: got %v, want +2s", got.Sub(now))
+	}
+	tiny := now.Add(time.Second)
+	if got := partialDialDeadline(now, tiny, 4); !got.Equal(tiny) {
+		t.Errorf("capped: got %v, want +1s", got.Sub(now))
+	}
+	// No overall deadline means no per-attempt deadline either.
+	if got := partialDialDeadline(now, time.Time{}, 3); !got.IsZero() {
+		t.Errorf("no deadline: got %v, want zero", got)
+	}
+}
+
 func TestCheckedClientExemptsBaseHost(t *testing.T) {
 	// The registry base host is caller-directed, so it must be exempt from
 	// the public-IP dial check even when the base URL has no explicit port —
