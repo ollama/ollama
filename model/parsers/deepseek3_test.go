@@ -358,6 +358,37 @@ func TestDeepSeekParser_Streaming(t *testing.T) {
 			hasThinking:      true,
 		},
 		{
+			name:             "streaming_thinking_whitespace_after_end_tag",
+			chunks:           []string{"Let me think.", "\n", "</think>", "\n\n", "The answer", "\n\n", "is 42."},
+			expectedThinking: "Let me think.",
+			expectedContent:  "The answer\n\nis 42.",
+			hasThinking:      true,
+		},
+		{
+			name:             "streaming_thinking_whitespace_after_end_tag_over_several_chunks",
+			chunks:           []string{"Hmm</think>", "\n", " \n", "\t", "Done."},
+			expectedThinking: "Hmm",
+			expectedContent:  "Done.",
+			hasThinking:      true,
+		},
+		{
+			name:             "streaming_thinking_whitespace_after_end_tag_before_tool_call",
+			chunks:           []string{"Need weather.</think>", "\n\n", "<｜tool▁calls▁begin｜>", "<｜tool▁call▁begin｜>get_weather", "<｜tool▁sep｜>{\"location\":\"Paris\"}", "<｜tool▁call▁end｜><｜tool▁calls▁end｜>"},
+			expectedThinking: "Need weather.",
+			expectedContent:  "",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "Paris",
+						}),
+					},
+				},
+			},
+			hasThinking: true,
+		},
+		{
 			name:            "streaming_unicode_content",
 			chunks:          []string{"مرحبا ", "بالعالم! ", "你好", "世界!"},
 			expectedContent: "مرحبا بالعالم! 你好世界!",

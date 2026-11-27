@@ -35,6 +35,9 @@ type DeepSeek3Parser struct {
 	buffer             strings.Builder
 	callIndex          int
 	hasThinkingSupport bool
+	// trimContentStart drops the whitespace between </think> and the content,
+	// which often arrives in later chunks than the tag itself
+	trimContentStart bool
 }
 
 func (p *DeepSeek3Parser) HasToolSupport() bool {
@@ -171,6 +174,7 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = DeepSeekCollectingContent
+			p.trimContentStart = true
 
 			if len(thinking) > 0 {
 				events = append(events, deepseekEventThinkingContent{content: thinking})
@@ -204,6 +208,16 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 		}
 
 	case DeepSeekCollectingContent:
+		if p.trimContentStart {
+			bufStr = strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+			p.buffer.Reset()
+			if bufStr == "" {
+				return events, false
+			}
+			p.buffer.WriteString(bufStr)
+			p.trimContentStart = false
+		}
+
 		switch {
 		case strings.Contains(bufStr, deepseekToolCallsBeginTag): // content[<｜tool▁calls▁begin｜>] -> tool calls
 			split := strings.SplitN(bufStr, deepseekToolCallsBeginTag, 2)
