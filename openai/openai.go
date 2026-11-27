@@ -672,6 +672,18 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 					}
 
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+				case "video_url":
+					var url string
+					if video, ok := data["video_url"].(map[string]any); ok {
+						url, _ = video["url"].(string)
+					} else {
+						url, _ = data["video_url"].(string)
+					}
+					video, err := decodeVideoURL(url)
+					if err != nil {
+						return nil, err
+					}
+					messages = append(messages, api.Message{Role: msg.Role, Videos: []api.VideoData{video}})
 				case "input_audio":
 					audioMap, ok := data["input_audio"].(map[string]any)
 					if !ok {
@@ -696,7 +708,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			// position among the text
 			if strings.ToLower(msg.Role) == "tool" {
 				parts := messages[start:]
-				if slices.ContainsFunc(parts, func(m api.Message) bool { return len(m.Images) > 0 }) {
+				if slices.ContainsFunc(parts, func(m api.Message) bool { return len(m.Images)+len(m.Videos) > 0 }) {
 					for i := range parts {
 						parts[i].ToolName = toolName
 						parts[i].ToolCallID = msg.ToolCallID
@@ -813,6 +825,24 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		DebugRenderOnly: r.DebugRenderOnly,
 		KeepAlive:       r.KeepAlive,
 	}, nil
+}
+
+// Like images, videos are supplied inline. URL fetching belongs to the caller;
+// conversion must not issue requests to the server's private network.
+func decodeVideoURL(url string) (api.VideoData, error) {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return nil, errors.New("video URLs are not currently supported, please use base64 encoded data instead")
+	}
+	header, data, ok := strings.Cut(url, ",")
+	if !ok || !strings.HasSuffix(header, ";base64") ||
+		(!strings.HasPrefix(header, "data:video/") && header != "data:;base64") {
+		return nil, errors.New("invalid video input")
+	}
+	video, err := base64.StdEncoding.DecodeString(data)
+	if err != nil || len(video) == 0 {
+		return nil, errors.New("invalid video input")
+	}
+	return video, nil
 }
 
 func nameFromToolCallID(messages []Message, toolCallID string) string {

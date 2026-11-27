@@ -83,6 +83,11 @@ components:
           items:
             type: string
             description: Base64-encoded images for models that support image input
+        videos:
+          type: array
+          description: Base64-encoded video files for supported local multimodal GGUF models. Frames and timestamps are decoded by the runner.
+          items:
+            type: string
         format:
           description: Structured output format for the model to generate a response from. Supports either the string `"json"` or a JSON schema object.
           oneOf:
@@ -219,6 +224,11 @@ components:
             type: string
             description: Base64-encoded image content
           description: Optional list of inline images for multimodal models
+        videos:
+          type: array
+          description: Optional base64-encoded video files for supported local multimodal GGUF models
+          items:
+            type: string
         tool_calls:
           type: array
           items:
