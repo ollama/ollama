@@ -345,6 +345,7 @@ console.log(response.message.content);
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
+- [Control Plane](https://docs.controlplane.com/template-catalog/templates/ollama?utm_source=github&utm_medium=readme&utm_campaign=upstream-ollama)
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
 
 #### Package Managers
