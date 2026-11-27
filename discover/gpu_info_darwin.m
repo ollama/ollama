@@ -50,8 +50,8 @@ uint64_t getFreeMemory() {
 }
 
 // Observe reclaimable capacity separately from immediately available pages and
-// uncompressed content stored by the system compressor.
-int getMemoryHeadroom(uint64_t *available, uint64_t *immediate, uint64_t *compressed) {
+// uncompressed content stored by the system compressor and cumulative swap-outs.
+int getMemoryHeadroom(uint64_t *available, uint64_t *immediate, uint64_t *compressed, uint64_t *swappedOut) {
   vm_size_t pagesize;
   vm_statistics64_data_t stats;
   if (readMemoryStatistics(&stats, &pagesize) != KERN_SUCCESS) {
@@ -61,5 +61,6 @@ int getMemoryHeadroom(uint64_t *available, uint64_t *immediate, uint64_t *compre
     - stats.speculative_count) * pagesize;
   *available = *immediate + (uint64_t)stats.external_page_count * pagesize;
   *compressed = stats.total_uncompressed_pages_in_compressor * pagesize;
+  *swappedOut = stats.swapouts * pagesize;
   return 1;
 }
