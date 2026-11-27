@@ -418,6 +418,7 @@ func writeSafetensorsManifest(r api.CreateRequest, draftDir string, fn func(resp
 		DraftDir:            draftDir,
 		Template:            r.Template,
 		System:              r.System,
+		SystemSet:           r.SystemSet,
 		License:             r.License,
 		Parameters:          r.Parameters,
 		Messages:            r.Messages,
@@ -904,6 +905,7 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 	layers, err = create.ApplyModelfileLayers(layers, create.ModelfileLayerOptions{
 		Template:   r.Template,
 		System:     r.System,
+		SystemSet:  r.SystemSet,
 		License:    r.License,
 		Parameters: r.Parameters,
 		Messages:   r.Messages,
@@ -1070,7 +1072,7 @@ func validateCreateManifestListRequest(r api.CreateRequest) error {
 	switch {
 	case r.From != "", r.RemoteHost != "", len(r.Files) > 0, len(r.DraftFiles) > 0:
 		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
-	case r.Template != "", r.System != "", r.License != nil, len(r.Parameters) > 0, len(r.Messages) > 0:
+	case r.Template != "", r.SystemSet, r.System != "", r.License != nil, len(r.Parameters) > 0, len(r.Messages) > 0:
 		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
 	case r.Renderer != "", r.Parser != "", r.Requires != "", len(r.Info) > 0, len(r.Capabilities) > 0:
 		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
