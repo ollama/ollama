@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -255,7 +256,7 @@ func writeGlimmerATEM(sb *strings.Builder, call api.ToolCall) error {
 	sb.WriteString("<atem:function_calls>\n<atem:invoke name=\"")
 	sb.WriteString(call.Function.Name)
 	sb.WriteString("\">\n")
-	for name, value := range call.Function.Arguments.All() {
+	for name, value := range toolargs.RenderValues(&call.Function.Arguments) {
 		sb.WriteString("<atem:parameter name=\"")
 		sb.WriteString(name)
 		sb.WriteString("\">")

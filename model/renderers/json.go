@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 )
 
 // marshalWithSpaces marshals v to JSON and adds a space after each ':' and ','
@@ -18,6 +23,25 @@ func marshalWithSpaces(v any) ([]byte, error) {
 		return nil, err
 	}
 	return AddJSONSpaces(b), nil
+}
+
+func sortedToolCallArgumentValues(args api.ToolCallFunctionArguments) iter.Seq2[string, any] {
+	type entry struct {
+		name  string
+		value any
+	}
+	var entries []entry
+	for name, value := range toolargs.RenderValues(&args) {
+		entries = append(entries, entry{name: name, value: value})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+	return func(yield func(string, any) bool) {
+		for _, entry := range entries {
+			if !yield(entry.name, entry.value) {
+				return
+			}
+		}
+	}
 }
 
 // AddJSONSpaces adds Python-style separator spaces to compact JSON without

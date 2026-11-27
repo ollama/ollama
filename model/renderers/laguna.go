@@ -5,6 +5,7 @@ import (
 	"unicode"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/toolargs"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -109,7 +110,7 @@ func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think 
 				sb.WriteString("<tool_call>")
 				sb.WriteString(toolCall.Function.Name)
 				sb.WriteByte('\n')
-				for name, value := range toolCall.Function.Arguments.All() {
+				for name, value := range toolargs.RenderValues(&toolCall.Function.Arguments) {
 					sb.WriteString("<arg_key>")
 					sb.WriteString(name)
 					sb.WriteString("</arg_key>\n")
@@ -235,7 +236,7 @@ func (r *LagunaV8Renderer) Render(messages []api.Message, tools []api.Tool, thin
 			for _, toolCall := range message.ToolCalls {
 				sb.WriteString("<tool_call>")
 				sb.WriteString(toolCall.Function.Name)
-				for name, value := range toolCall.Function.Arguments.All() {
+				for name, value := range toolargs.RenderValues(&toolCall.Function.Arguments) {
 					sb.WriteString("<arg_key>")
 					sb.WriteString(name)
 					sb.WriteString("</arg_key>")
