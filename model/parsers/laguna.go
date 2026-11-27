@@ -36,6 +36,7 @@ type LagunaParser struct {
 	buffer                strings.Builder
 	tools                 []api.Tool
 	callIndex             int
+	toolCloseSearchFrom   int
 	thinkingEnabled       bool
 	thinkingSuppressed    bool
 	allowLeadingThinkOpen bool
@@ -75,6 +76,7 @@ func (p *LagunaParser) PreservedTokens() []string {
 func (p *LagunaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
+	p.toolCloseSearchFrom = 0
 	p.buffer.Reset()
 	// The prompt primes the reasoning mode: <think> when thinking is enabled
 	// (so the model's output begins with reasoning and no opening tag), or
@@ -419,20 +421,59 @@ func lagunaResolveToolName(name string, tools []api.Tool) (string, bool) {
 	return name, false
 }
 
+func lagunaToolCallTagIndex(raw, tag string, recoverUnclosed bool) int {
+	if !strings.Contains(raw, tag) {
+		return -1
+	}
+	for offset := 0; offset < len(raw); {
+		remaining := raw[offset:]
+		if strings.HasPrefix(remaining, tag) {
+			return offset
+		}
+
+		var endTag string
+		switch {
+		case strings.HasPrefix(remaining, lagunaArgKeyOpenTag):
+			endTag = lagunaArgKeyCloseTag
+		case strings.HasPrefix(remaining, lagunaArgValueOpenTag):
+			endTag = lagunaArgValueCloseTag
+		case remaining[0] == '{':
+			if end := findJSONEnd(remaining); end >= 0 {
+				offset += end + 1
+				continue
+			}
+		default:
+			offset++
+			continue
+		}
+		if endTag != "" {
+			if end := strings.Index(remaining, endTag); end >= 0 {
+				offset += end + len(endTag)
+				continue
+			}
+		}
+		// At EOF, recover an outer close from an unfinished argument so
+		// assistant text following a malformed tool call is still emitted.
+		if recoverUnclosed {
+			if idx := strings.Index(remaining, tag); idx >= 0 {
+				return offset + idx
+			}
+		}
+		return -1
+	}
+	return -1
+}
+
 func cleanLagunaToolCallRaw(raw string) string {
 	raw = strings.TrimSpace(raw)
 	for strings.HasPrefix(raw, lagunaToolCallOpenTag) {
 		raw = strings.TrimSpace(strings.TrimPrefix(raw, lagunaToolCallOpenTag))
 	}
-	if idx := strings.Index(raw, lagunaToolCallCloseTag); idx != -1 {
+	if idx := lagunaToolCallTagIndex(raw, lagunaToolCallCloseTag, false); idx != -1 {
 		raw = strings.TrimSpace(raw[:idx])
 	}
-	if idx := strings.Index(raw, lagunaToolCallOpenTag); idx != -1 {
-		before := strings.TrimSpace(raw[:idx])
-		if before != "" {
-			return before
-		}
-		raw = strings.TrimSpace(raw[idx+len(lagunaToolCallOpenTag):])
+	if idx := lagunaToolCallTagIndex(raw, lagunaToolCallOpenTag, false); idx != -1 {
+		raw = strings.TrimSpace(raw[:idx])
 	}
 	return raw
 }
@@ -466,32 +507,37 @@ func lagunaToolCallName(raw string) (string, bool) {
 
 func (p *LagunaParser) consumeTool(done bool) (bool, api.ToolCall, error) {
 	acc := p.buffer.String()
-	if idx := strings.Index(acc, lagunaToolCallCloseTag); idx != -1 {
-		raw := acc[:idx]
-		after := strings.TrimLeftFunc(acc[idx+len(lagunaToolCallCloseTag):], unicode.IsSpace)
-		p.buffer.Reset()
-		p.buffer.WriteString(after)
-		p.state = lagunaParserStateContent
-		call, err := parseLagunaToolCall(raw, p.tools)
-		if err != nil {
-			return false, api.ToolCall{}, err
-		}
-		call.Function.Index = p.callIndex
-		p.callIndex++
-		return true, call, nil
+	idx := -1
+	if done || strings.Contains(acc[p.toolCloseSearchFrom:], lagunaToolCallCloseTag) {
+		idx = lagunaToolCallTagIndex(acc, lagunaToolCallCloseTag, done)
 	}
-	if done && strings.TrimSpace(acc) != "" {
-		p.buffer.Reset()
-		p.state = lagunaParserStateContent
-		call, err := parseLagunaToolCall(acc, p.tools)
-		if err != nil {
-			return false, api.ToolCall{}, err
-		}
-		call.Function.Index = p.callIndex
-		p.callIndex++
-		return true, call, nil
+	if idx < 0 && !done {
+		// Only scan the tool arguments again when a new candidate close
+		// arrives. Keep enough bytes to detect a tag split across chunks.
+		p.toolCloseSearchFrom = max(0, len(acc)-len(lagunaToolCallCloseTag)+1)
+		return false, api.ToolCall{}, nil
 	}
-	return false, api.ToolCall{}, nil
+
+	raw := acc
+	after := ""
+	if idx >= 0 {
+		raw = acc[:idx]
+		after = strings.TrimLeftFunc(acc[idx+len(lagunaToolCallCloseTag):], unicode.IsSpace)
+	} else if strings.TrimSpace(raw) == "" {
+		return false, api.ToolCall{}, nil
+	}
+
+	p.buffer.Reset()
+	p.buffer.WriteString(after)
+	p.toolCloseSearchFrom = 0
+	p.state = lagunaParserStateContent
+	call, err := parseLagunaToolCall(raw, p.tools)
+	if err != nil {
+		return false, api.ToolCall{}, err
+	}
+	call.Function.Index = p.callIndex
+	p.callIndex++
+	return true, call, nil
 }
 
 var lagunaArgRE = regexp.MustCompile(`(?s)<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg_value>`)
