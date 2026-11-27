@@ -1,6 +1,49 @@
 package renderers
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+func BenchmarkRenderContentWithImageTags(b *testing.B) {
+	for _, count := range []int{16, 128, 512} {
+		for _, placed := range []bool{false, true} {
+			name := "prefix"
+			if placed {
+				name = "placeholders"
+			}
+			b.Run(fmt.Sprintf("%s/%d", name, count), func(b *testing.B) {
+				content := "text"
+				var want strings.Builder
+				if placed {
+					content = "start" + strings.Repeat(" [img]", count) + " end"
+					want.WriteString("start")
+				}
+				for i := range count {
+					if placed {
+						want.WriteByte(' ')
+					}
+					fmt.Fprintf(&want, "[img-%d]", i)
+				}
+				if placed {
+					want.WriteString(" end")
+				} else {
+					want.WriteString(" " + content)
+				}
+				got, offset := renderContentWithImageTags(content, count, 0)
+				if got != want.String() || offset != count {
+					b.Fatal("incorrect fixture output")
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					renderContentWithImageTags(content, count, 0)
+				}
+			})
+		}
+	}
+}
 
 func TestRenderContentWithImageTags(t *testing.T) {
 	tests := []struct {
@@ -11,6 +54,13 @@ func TestRenderContentWithImageTags(t *testing.T) {
 		want        string
 		wantOffset  int
 	}{
+		{
+			name:        "leaves content unchanged without images",
+			content:     "literal [img] text",
+			imageOffset: 3,
+			want:        "literal [img] text",
+			wantOffset:  3,
+		},
 		{
 			name:        "prefixes when there are no placeholders",
 			content:     "describe this image",
@@ -51,6 +101,21 @@ func TestRenderContentWithImageTags(t *testing.T) {
 			want:        "compare [img-0] and [img-1]",
 			wantOffset:  2,
 		},
+		{
+			name:        "preserves mixed indexed and unindexed placeholders",
+			content:     "[img-99] and [img]",
+			imageCount:  2,
+			imageOffset: 3,
+			want:        "[img-99] and [img]",
+			wantOffset:  5,
+		},
+		{
+			name:       "preserves leading whitespace after prefixes",
+			content:    "\t[img]",
+			imageCount: 2,
+			want:       "[img-1]\t[img-0]",
+			wantOffset: 2,
+		},
 	}
 
 	for _, tt := range tests {
@@ -61,6 +126,32 @@ func TestRenderContentWithImageTags(t *testing.T) {
 			}
 			if gotOffset != tt.wantOffset {
 				t.Fatalf("offset = %d, want %d", gotOffset, tt.wantOffset)
+			}
+		})
+	}
+}
+
+func TestRenderContentWithManyImageTags(t *testing.T) {
+	const count, offset = 256, 7
+	for _, slots := range []int{0, 128, 300} {
+		t.Run(fmt.Sprint(slots), func(t *testing.T) {
+			content := "start" + strings.Repeat(" [img]", slots) + " end"
+			want := content
+			var prefix strings.Builder
+			for i := range count {
+				tag := fmt.Sprintf("[img-%d]", offset+i)
+				if strings.Contains(want, "[img]") {
+					want = strings.Replace(want, "[img]", tag, 1)
+				} else {
+					prefix.WriteString(tag)
+				}
+			}
+			if prefix.Len() > 0 {
+				want = prefix.String() + " " + want
+			}
+			got, gotOffset := renderContentWithImageTags(content, count, offset)
+			if got != want || gotOffset != offset+count {
+				t.Fatalf("unexpected content or offset: got offset %d", gotOffset)
 			}
 		})
 	}

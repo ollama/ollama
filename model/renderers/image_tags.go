@@ -19,15 +19,26 @@ func renderContentWithImageTags(content string, imageCount int, imageOffset int)
 		return content, imageOffset + imageCount
 	}
 
-	var prefix strings.Builder
+	var prefix, rendered strings.Builder
+	remaining := content
+	hasPlaceholders := true
 	for i := range imageCount {
 		imgTag := fmt.Sprintf("[img-%d]", imageOffset+i)
-		if strings.Contains(content, "[img]") {
-			content = strings.Replace(content, "[img]", imgTag, 1)
+		pos := -1
+		if hasPlaceholders {
+			pos = strings.Index(remaining, "[img]")
+			hasPlaceholders = pos >= 0
+		}
+		if pos >= 0 {
+			rendered.WriteString(remaining[:pos])
+			rendered.WriteString(imgTag)
+			remaining = remaining[pos+len("[img]"):]
 		} else {
 			prefix.WriteString(imgTag)
 		}
 	}
+	rendered.WriteString(remaining)
+	content = rendered.String()
 
 	if prefix.Len() > 0 && content != "" {
 		if r, _ := utf8.DecodeRuneInString(content); r != utf8.RuneError && !unicode.IsSpace(r) {

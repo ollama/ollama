@@ -851,6 +851,59 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 	}
 }
 
+func TestReplaceOllamaMediaTags(t *testing.T) {
+	const unchanged = "literal [img-1] and [img-001]"
+	if got := replaceOllamaMediaTags(unchanged, nil, "<media>"); got != unchanged {
+		t.Fatalf("without media: got %q, want %q", got, unchanged)
+	}
+	if got := replaceOllamaMediaTags(unchanged, []MediaData{{ID: 9}}, "<media>"); got != unchanged {
+		t.Fatalf("without matching markers: got %q, want %q", got, unchanged)
+	}
+	media := []MediaData{{ID: 2}, {ID: -1}, {ID: 2}, {ID: 7}, {ID: 42}}
+	prompt := "[img-2] [img-7] [img-2] [img-2] [img--1] [img-02] [img-99] [img-[img-7]"
+	want := prompt
+	for _, item := range media {
+		want = strings.Replace(want, fmt.Sprintf("[img-%d]", item.ID), "<media>", 1)
+	}
+	if got := replaceOllamaMediaTags(prompt, media, "<media>"); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	var many strings.Builder
+	media = make([]MediaData, 256)
+	for i := range media {
+		media[i].ID = i
+		fmt.Fprintf(&many, "x[img-%d]", i)
+	}
+	if got, want := replaceOllamaMediaTags(many.String(), media, "<media>"), strings.Repeat("x<media>", len(media)); got != want {
+		t.Fatalf("unexpected replacement of many media tags")
+	}
+}
+
+func BenchmarkReplaceOllamaMediaTags(b *testing.B) {
+	for _, count := range []int{16, 128, 512} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			const marker = "<__media__>"
+			media := make([]MediaData, count)
+			var prompt strings.Builder
+			for i := range count {
+				media[i].ID = i
+				fmt.Fprintf(&prompt, "x[img-%d]", i)
+			}
+			input := prompt.String()
+			want := strings.Repeat("x"+marker, count)
+			if got := replaceOllamaMediaTags(input, media, marker); got != want {
+				b.Fatal("incorrect fixture output")
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				replaceOllamaMediaTags(input, media, marker)
+			}
+		})
+	}
+}
+
 func TestLlamaServerCompletionWithMediaUsesRunnerMarker(t *testing.T) {
 	var capturedReq llamaServerCompletionRequest
 

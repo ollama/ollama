@@ -260,6 +260,22 @@ func (s *llamaServerRunner) llamaServerMediaMarker() string {
 	return "<__media__>"
 }
 
+var ollamaMediaTagPattern = regexp.MustCompile(`\[img--?[0-9]+\]`)
+
+func replaceOllamaMediaTags(prompt string, media []MediaData, marker string) string {
+	counts := make(map[string]int, len(media))
+	for _, item := range media {
+		counts[fmt.Sprintf("[img-%d]", item.ID)]++
+	}
+	return ollamaMediaTagPattern.ReplaceAllStringFunc(prompt, func(tag string) string {
+		if counts[tag] == 0 {
+			return tag
+		}
+		counts[tag]--
+		return marker
+	})
+}
+
 func newLlamaServerMediaMarker() string {
 	var b [16]byte
 	if _, err := crand.Read(b[:]); err == nil {
@@ -1800,11 +1816,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
 	// llama-server media marker and package the matching payloads as base64.
 	if len(req.Media) > 0 {
-		promptStr := lsReq.Prompt.(string)
+		promptStr := replaceOllamaMediaTags(lsReq.Prompt.(string), req.Media, s.llamaServerMediaMarker())
 		var mediaData []string
 		for _, media := range req.Media {
-			marker := fmt.Sprintf("[img-%d]", media.ID)
-			promptStr = strings.Replace(promptStr, marker, s.llamaServerMediaMarker(), 1)
 			data, err := llamaServerMediaBytes(media.Data)
 			if err != nil {
 				return err
