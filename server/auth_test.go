@@ -53,6 +53,22 @@ func TestParseRegistryChallenge(t *testing.T) {
 			"https://r.ollama.ai/v2/token", "ollama", "-",
 		},
 		{"", "", "", ""},
+		// Truncated unquoted values that previously panicked with slice bounds out of range
+		{"Bearer realm=", "", "", ""},
+		{"Bearer scope=", "", "", ""},
+		{"Bearer service=", "", "", ""},
+		{`Bearer realm="https://auth.example.com/token",scope=`, "https://auth.example.com/token", "", ""},
+		// Empty, unterminated, and inner-quote / comma-containing quoted values
+		{`Bearer realm="`, "", "", ""},
+		{`Bearer realm=""`, "", "", ""},
+		{`Bearer realm="",service="registry"`, "", "registry", ""},
+		{`Bearer realm="https://auth.example.com/token`, "https://auth.example.com/token", "", ""},
+		{`Bearer realm="https://a/t",scope="repository:foo:pull,push"`, "https://a/t", "", "repository:foo:pull,push"},
+		{`Bearer realm="a"b",service="x"`, `a"b`, "x", ""},
+		// Unquoted values
+		{`Bearer realm=https://auth.example.com/token,service=registry,scope=repo:foo:pull`, "https://auth.example.com/token", "registry", "repo:foo:pull"},
+		{`Bearer realm=,service="registry"`, "", "registry", ""},
+		{`Bearer realm=a`, "a", "", ""},
 	}
 
 	for _, tt := range tests {
