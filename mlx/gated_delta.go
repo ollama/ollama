@@ -896,9 +896,12 @@ func resolveGatedDeltaDims(packed, ba, dtBias, aExp, state *Array) (gatedDeltaDi
 		!exactShape(aExp, dims.Hv) {
 		return dims, false
 	}
-	if packed.DType() != DTypeBFloat16 || ba.DType() != DTypeBFloat16 ||
-		dtBias.DType() != DTypeBFloat16 || aExp.DType() != DTypeFloat32 ||
-		state.DType() != DTypeFloat32 {
+	// The kernels are generic over the input dtype; float16 runs only where
+	// it is validated, on Metal.
+	in := packed.DType()
+	supported := in == DTypeBFloat16 || (in == DTypeFloat16 && MetalIsAvailable())
+	if !supported || ba.DType() != in || dtBias.DType() != in ||
+		aExp.DType() != DTypeFloat32 || state.DType() != DTypeFloat32 {
 		return dims, false
 	}
 	return dims, true

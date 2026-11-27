@@ -9,15 +9,31 @@ import (
 
 func TestDepthwiseConvSiLUMatchesGraph(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		for _, mismatch := range depthwiseConvSiLUMismatches() {
+		for _, mismatch := range depthwiseConvSiLUMismatches(DTypeBFloat16, DTypeFloat32) {
 			t.Error(mismatch)
 		}
 	})
 }
 
-func depthwiseConvSiLUMismatches() []string {
+// Float16 activations (as Prism's Hadamard packs run) take the same kernel
+// on Metal.
+func TestDepthwiseConvSiLUFloat16MatchesGraph(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !MetalIsAvailable() {
+			t.Skip("float16 runs the fused kernel only on Metal")
+		}
+		for _, mismatch := range depthwiseConvSiLUMismatches(DTypeFloat16) {
+			t.Error(mismatch)
+		}
+		if depthwiseConvSiLU.metalDisabled || depthwiseConvSiLUBias.metalDisabled {
+			t.Fatal("float16 inputs fell back from the Metal kernel to the graph")
+		}
+	})
+}
+
+func depthwiseConvSiLUMismatches(dtypes ...DType) []string {
 	var mismatches []string
-	for _, dtype := range []DType{DTypeBFloat16, DTypeFloat32} {
+	for _, dtype := range dtypes {
 		for _, withBias := range []bool{false, true} {
 			for _, shape := range []struct{ B, T, C, K int }{
 				{1, 1, 64, 4},

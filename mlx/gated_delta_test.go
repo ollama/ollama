@@ -39,11 +39,25 @@ func gatedDeltaReference(in gatedDeltaTestInputs, captureAll bool) (y, nextState
 // differing inputs (beta sigmoid at -6.84375); the lattice here avoids them.
 func TestGatedDeltaMatchesGraph(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		testGatedDeltaMatchesGraph(t)
+		testGatedDeltaMatchesGraph(t, DTypeBFloat16, gatedDeltaGraphTol)
 	})
 }
 
-func testGatedDeltaMatchesGraph(t *mlxthreadtest.T) {
+// Float16 activations (as Prism's Hadamard packs run) take the same kernels
+// on Metal.
+func TestGatedDeltaFloat16MatchesGraph(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !MetalIsAvailable() {
+			t.Skip("float16 runs the fused kernels only on Metal")
+		}
+		testGatedDeltaMatchesGraph(t, DTypeFloat16, gatedDeltaGraphTolF16)
+		if gatedDelta.metalDisabled || gatedDeltaStates.metalDisabled {
+			t.Fatal("float16 inputs fell back from the Metal kernels to the graph")
+		}
+	})
+}
+
+func testGatedDeltaMatchesGraph(t *mlxthreadtest.T, dtype DType, tol float64) {
 	geometries := []gatedDeltaTestGeometry{
 		{Hk: 16, Dk: 128, Hv: 32, Dv: 128},
 		{Hk: 4, Dk: 64, Hv: 8, Dv: 32},
@@ -52,21 +66,25 @@ func testGatedDeltaMatchesGraph(t *mlxthreadtest.T) {
 		for T := 1; T <= gatedDeltaMaxTokens; T++ {
 			for _, B := range []int{1, 3} {
 				for _, captureAll := range []bool{false, true} {
-					name := fmt.Sprintf("hk%d_dk%d_T%d_B%d_all%v", g.Hk, g.Dk, T, B, captureAll)
+					name := fmt.Sprintf("%v_hk%d_dk%d_T%d_B%d_all%v", dtype, g.Hk, g.Dk, T, B, captureAll)
 					in := batchGatedDeltaRows(gatedDeltaTestInputs36(g, T), B)
+					in.packed, in.ba, in.dtBias = in.packed.AsType(dtype), in.ba.AsType(dtype), in.dtBias.AsType(dtype)
+					if _, ok := resolveGatedDeltaDims(in.packed, in.ba, in.dtBias, in.aExp, in.state); !ok {
+						t.Fatalf("%s: inputs fell back to the graph path", name)
+					}
 					refY, refState, refInterior := gatedDeltaReference(in, captureAll)
 					y, state, interior := GatedDelta(in.packed, in.ba, in.dtBias, in.aExp, in.state, nil, captureAll)
-					if err := requireClose("y", y, refY, gatedDeltaGraphTol); err != nil {
+					if err := requireClose("y", y, refY, tol); err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
-					if err := requireClose("state", state, refState, gatedDeltaGraphTol); err != nil {
+					if err := requireClose("state", state, refState, tol); err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
 					if captureAll && len(interior) != len(refInterior) {
 						t.Fatalf("%s: interior count = %d, want %d", name, len(interior), len(refInterior))
 					}
 					for i := range interior {
-						if err := requireClose(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i], gatedDeltaGraphTol); err != nil {
+						if err := requireClose(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i], tol); err != nil {
 							t.Fatalf("%s: %v", name, err)
 						}
 					}
@@ -147,26 +165,49 @@ func TestGatedDeltaPreciseSkipsBF16FastUpdate(t *testing.T) {
 
 func TestGatedDeltaPreciseMatchesGraph(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
-		in := gatedDeltaTestInputs36(gatedDeltaTestGeometry{Hk: 4, Dk: 64, Hv: 8, Dv: 32}, 3)
-		for _, captureAll := range []bool{false, true} {
-			refY, refState, refInterior := gatedDeltaGraph(in.packed, in.ba, in.dtBias, in.aExp, in.state, captureAll, true)
-			y, state, interior := GatedDeltaPrecise(in.packed, in.ba, in.dtBias, in.aExp, in.state, nil, captureAll)
-			if err := requireExact("y", y, refY); err != nil {
-				t.Fatalf("captureAll=%v: %v", captureAll, err)
-			}
-			if err := requireExact("state", state, refState); err != nil {
-				t.Fatalf("captureAll=%v: %v", captureAll, err)
-			}
-			if len(interior) != len(refInterior) {
-				t.Fatalf("captureAll=%v: interior count = %d, want %d", captureAll, len(interior), len(refInterior))
-			}
-			for i := range interior {
-				if err := requireExact(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i]); err != nil {
-					t.Fatalf("captureAll=%v: %v", captureAll, err)
-				}
-			}
+		testGatedDeltaPreciseMatchesGraph(t, DTypeBFloat16, requireExact)
+	})
+}
+
+// Float16 inputs reach the precise kernels on Metal too.
+func TestGatedDeltaPreciseFloat16MatchesGraph(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !MetalIsAvailable() {
+			t.Skip("float16 runs the fused kernels only on Metal")
+		}
+		testGatedDeltaPreciseMatchesGraph(t, DTypeFloat16, func(label string, got, want *Array) error {
+			return requireClose(label, got, want, gatedDeltaGraphTolF16)
+		})
+		if gatedDeltaPrecise.metalDisabled || gatedDeltaPreciseStates.metalDisabled {
+			t.Fatal("float16 inputs fell back from the Metal kernels to the graph")
 		}
 	})
+}
+
+func testGatedDeltaPreciseMatchesGraph(t *mlxthreadtest.T, dtype DType, match func(label string, got, want *Array) error) {
+	in := gatedDeltaTestInputs36(gatedDeltaTestGeometry{Hk: 4, Dk: 64, Hv: 8, Dv: 32}, 3)
+	in.packed, in.ba, in.dtBias = in.packed.AsType(dtype), in.ba.AsType(dtype), in.dtBias.AsType(dtype)
+	if _, ok := resolveGatedDeltaDims(in.packed, in.ba, in.dtBias, in.aExp, in.state); !ok {
+		t.Fatalf("%v: inputs fell back to the graph path", dtype)
+	}
+	for _, captureAll := range []bool{false, true} {
+		refY, refState, refInterior := gatedDeltaGraph(in.packed, in.ba, in.dtBias, in.aExp, in.state, captureAll, true)
+		y, state, interior := GatedDeltaPrecise(in.packed, in.ba, in.dtBias, in.aExp, in.state, nil, captureAll)
+		if err := match("y", y, refY); err != nil {
+			t.Fatalf("captureAll=%v: %v", captureAll, err)
+		}
+		if err := match("state", state, refState); err != nil {
+			t.Fatalf("captureAll=%v: %v", captureAll, err)
+		}
+		if len(interior) != len(refInterior) {
+			t.Fatalf("captureAll=%v: interior count = %d, want %d", captureAll, len(interior), len(refInterior))
+		}
+		for i := range interior {
+			if err := match(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i]); err != nil {
+				t.Fatalf("captureAll=%v: %v", captureAll, err)
+			}
+		}
+	}
 }
 
 func TestGatedDeltaGraphRouting(t *testing.T) {
@@ -199,6 +240,10 @@ func testGatedDeltaGraphRouting(t *mlxthreadtest.T) {
 	f32 := gatedDeltaTestInputs36(g, 2)
 	f32.packed = f32.packed.AsType(DTypeFloat32)
 	check("float32", f32, false)
+
+	mixed := gatedDeltaTestInputs36(g, 2)
+	mixed.packed, mixed.ba = mixed.packed.AsType(DTypeFloat16), mixed.ba.AsType(DTypeFloat16)
+	check("float16 with bfloat16 dtBias", mixed, false)
 }
 
 // batchGatedDeltaRows widens a single-row input to B rows with distinct
