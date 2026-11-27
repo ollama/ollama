@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Enconvo](https://enconvo.com) - AI agent for macOS with computer use and browser use ([docs](https://docs.enconvo.ai/providers/ollama))
 
 #### Mobile
 
