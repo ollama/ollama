@@ -78,7 +78,41 @@ func (w *BaseWriter) writeError(data []byte) (int, error) {
 	return len(data), nil
 }
 
+func (w *BaseWriter) writeMidStreamError(errMsg string, stream bool, dataLen int) (int, error) {
+	status := w.ResponseWriter.Status()
+	if status == 0 || status == http.StatusOK {
+		status = http.StatusInternalServerError
+	}
+	payload := openai.NewError(status, errMsg)
+	if stream {
+		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+		d, err := json.Marshal(payload)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d))); err != nil {
+			return 0, err
+		}
+		if _, err := w.ResponseWriter.Write([]byte("data: [DONE]\n\n")); err != nil {
+			return 0, err
+		}
+		return dataLen, nil
+	}
+	w.ResponseWriter.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w.ResponseWriter).Encode(payload); err != nil {
+		return 0, err
+	}
+	return dataLen, nil
+}
+
 func (w *ChatWriter) writeResponse(data []byte) (int, error) {
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &errResp); err == nil && errResp.Error != "" {
+		return w.writeMidStreamError(errResp.Error, w.stream, len(data))
+	}
+
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
 	if err != nil {
@@ -185,6 +219,13 @@ func (w *ChatWriter) Write(data []byte) (int, error) {
 }
 
 func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &errResp); err == nil && errResp.Error != "" {
+		return w.writeMidStreamError(errResp.Error, w.stream, len(data))
+	}
+
 	var generateResponse api.GenerateResponse
 	err := json.Unmarshal(data, &generateResponse)
 	if err != nil {
