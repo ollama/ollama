@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/mlxrunner/batch"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
@@ -33,7 +36,7 @@ func TestSmartResize(t *testing.T) {
 		{37, 5000, 32, 4992},
 	}
 	for _, c := range cases {
-		h, w, err := smartResize(c.h, c.w, 32)
+		h, w, err := smartResize(c.h, c.w, 32, visionMaxPixels)
 		if err != nil {
 			t.Fatalf("smartResize(%d, %d): %v", c.h, c.w, err)
 		}
@@ -41,8 +44,12 @@ func TestSmartResize(t *testing.T) {
 			t.Errorf("smartResize(%d, %d) = (%d, %d), want (%d, %d)", c.h, c.w, h, w, c.wantH, c.wantW)
 		}
 	}
-	if _, _, err := smartResize(10, 5000, 32); err == nil {
+	if _, _, err := smartResize(10, 5000, 32, visionMaxPixels); err == nil {
 		t.Error("aspect ratio over 200 should error")
+	}
+	h, w, err := smartResize(3024, 4032, 32, 2048*2048)
+	if err != nil || h*w > 2048*2048 || h*w >= 3008*4032 {
+		t.Fatalf("decision pixel cap: size=%dx%d error=%v", h, w, err)
 	}
 }
 
@@ -174,6 +181,25 @@ func TestVisionPatchLookups(t *testing.T) {
 		}
 		if sum < 0.999 || sum > 1.001 {
 			t.Fatalf("patch %d weights sum %f", i, sum)
+		}
+	}
+}
+
+func TestMRopeMixedDecodeRows(t *testing.T) {
+	a := &visionLayout{promptLen: 69, delta: -56}
+	b := &visionLayout{promptLen: 103, delta: -80}
+	for _, tc := range []struct {
+		offsets []int32
+		layouts []any
+		want    []int32
+	}{
+		{[]int32{70, 12, 105}, []any{a, nil, b}, []int32{14, 14, 14, 12, 12, 12, 25, 25, 25}},
+		{[]int32{106, 71}, []any{b, a}, []int32{26, 26, 26, 15, 15, 15}},
+		{[]int32{13}, nil, nil},
+	} {
+		got := ropePositions(&batch.Batch{SeqOffsets: tc.offsets, Layout: tc.layouts}, 1)
+		if !slices.Equal(got, tc.want) {
+			t.Fatalf("offsets %v positions %v want %v", tc.offsets, got, tc.want)
 		}
 	}
 }

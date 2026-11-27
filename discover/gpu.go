@@ -41,8 +41,8 @@ func cudaJetpack() string {
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
 		if CudaTegra != "" {
 			ver := strings.Split(CudaTegra, ".")
-			if len(ver) > 0 {
-				return "jetpack" + ver[0]
+			if len(ver) > 0 && ver[0] == "6" {
+				return "jetpack6"
 			}
 		} else if data, err := os.ReadFile("/etc/nv_tegra_release"); err == nil {
 			r := regexp.MustCompile(` R(\d+) `)
@@ -54,8 +54,6 @@ func cudaJetpack() string {
 					// Note: mapping from L4t -> JP is inconsistent (can't just subtract 30)
 					// https://developer.nvidia.com/embedded/jetpack-archive
 					switch l4t {
-					case 35:
-						return "jetpack5"
 					case 36:
 						return "jetpack6"
 					default:

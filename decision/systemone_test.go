@@ -74,10 +74,10 @@ func TestCompile(t *testing.T) {
 				t.Fatalf("schema order changed: %+v", payload.Schema)
 			}
 		}
-		if got := payload.Schema[0].Choices; got[0].Value != "billing" || got[1].Value != "technical" || got[1].Description != "technical" {
+		if got := payload.Schema[0].Choices; got[0].Value != "billing" || got[1].Value != "technical" || got[1].Description != nil {
 			t.Fatalf("choice order or null description changed: %+v", got)
 		}
-		if payload.Schema[1].Description != `{"rule":"Explicit refund request?","notes":["Only facts"]}` {
+		if payload.Schema[1].Description != `{"rule": "Explicit refund request?", "notes": ["Only facts"]}` {
 			t.Fatalf("structured instructions changed: %q", payload.Schema[1].Description)
 		}
 		want := []string{"A", "B"}
@@ -109,7 +109,7 @@ func TestStructuredStateFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range compiled.Request.Rows {
-		if !strings.Contains(row.Prompt, `"context": "{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
+		if !strings.Contains(row.Prompt, `"context": "{\"frames\": [\"first\", \"second\"], \"position\": 7}"`) {
 			t.Fatalf("structured state was not preserved in the text prompt: %q", row.Prompt)
 		}
 	}
@@ -166,6 +166,25 @@ func TestAnswers(t *testing.T) {
 	}
 }
 
+func TestConcentration(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		p    []float64
+		want float64
+	}{
+		{"uniform", []float64{0.25, 0.25, 0.25, 0.25}, 0},
+		{"one candidate holds all the mass", []float64{0, 1, 0}, 1},
+		{"single candidate", []float64{1}, 1},
+		{"two candidates", []float64{0.75, 0.25}, 1 - (0.75*math.Log(4.0/3)+0.25*math.Log(4))/math.Log(2)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Concentration(tc.p); math.Abs(got-tc.want) > 1e-12 {
+				t.Errorf("Concentration(%v) = %v, want %v", tc.p, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAnswerLogprobs(t *testing.T) {
 	c, err := Compile(testRequest(t), "")
 	if err != nil {
@@ -216,11 +235,30 @@ func TestInvalidRequests(t *testing.T) {
 	}
 	req := testRequest(t)
 	q, _ := req.Questions.Get("urgency")
-	q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, 26) + `]`)
-	req.Questions.Set("urgency", q)
-	for _, encoding := range []string{"", "clef"} {
-		if _, err := Compile(req, encoding); err == nil {
-			t.Fatalf("encoding %q accepted 27 candidates", encoding)
+	for _, levels := range []int{1, 2, 10, 11, 27} {
+		q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, levels-1) + `]`)
+		req.Questions.Set("urgency", q)
+		for _, encoding := range []string{"", "tev1", "clef", "strands"} {
+			_, err := Compile(req, encoding)
+			valid := levels >= 2 && levels <= 10
+			if (err == nil) != valid {
+				t.Fatalf("encoding %q, %d score levels: error = %v, want valid = %v", encoding, levels, err, valid)
+			}
+		}
+	}
+}
+
+func TestValidateLimitsEmptyState(t *testing.T) {
+	for _, state := range []string{`""`, `" "`} {
+		for _, decisionType := range []string{"vllm-d3", "laya", "clef", ""} {
+			t.Run(decisionType+"/"+state, func(t *testing.T) {
+				req := testRequest(t)
+				req.State = json.RawMessage(state)
+				err := ValidateLimits(req, decisionType)
+				if (err == nil) != (decisionType == "vllm-d3") {
+					t.Fatalf("ValidateLimits(%q) error = %v", decisionType, err)
+				}
+			})
 		}
 	}
 }
@@ -228,16 +266,16 @@ func TestInvalidRequests(t *testing.T) {
 func TestContent(t *testing.T) {
 	for _, tt := range []struct{ input, want string }{
 		{` "line\nquoted \"text\"" `, "line\nquoted \"text\""},
-		{` {"z": 9007199254740993, "a": 1e999} `, `{"z":9007199254740993,"a":1e999}`},
-		{` [1.0, 1e6, -0, "€"] `, `[1.0,1e6,-0,"€"]`},
+		{` {"z": 9007199254740993, "a": 1e999} `, `{"z": 9007199254740993, "a": Infinity}`},
+		{` [1.0, 1e6, -0, "€"] `, `[1.0, 1000000.0, 0, "€"]`},
 	} {
-		got, err := content(json.RawMessage(tt.input))
+		got, err := Content(json.RawMessage(tt.input))
 		if err != nil || got != tt.want {
-			t.Errorf("content(%s) = %q, %v; want %q", tt.input, got, err, tt.want)
+			t.Errorf("Content(%s) = %q, %v; want %q", tt.input, got, err, tt.want)
 		}
 	}
 	for _, input := range []string{"", "null", "true", "42", `"unterminated`, `{"x":}`, `[1,]`} {
-		if _, err := content(json.RawMessage(input)); err == nil {
+		if _, err := Content(json.RawMessage(input)); err == nil {
 			t.Errorf("accepted invalid content %q", input)
 		}
 	}

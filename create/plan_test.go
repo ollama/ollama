@@ -23,6 +23,19 @@ func TestPlanRejectsOutputNameCollision(t *testing.T) {
 	}
 }
 
+func TestPlanDirectFlintNVFP4(t *testing.T) {
+	inv := newInventory(sourceModelConfig{Architectures: []string{"FlintForCausalLM"}}, map[string]string{
+		"model.layers.2.mlp.experts.0.gate_proj.weight": "BF16",
+	})
+	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "nvfp4"}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 1 || len(specs[0].Tensors) != 1 || specs[0].Tensors[0].Quantize != "nvfp4" {
+		t.Fatalf("Plan() = %+v, want an NVFP4 expert bank", specs)
+	}
+}
+
 func TestPlanFloat(t *testing.T) {
 	inv := newInventory(sourceModelConfig{}, map[string]string{
 		"model.embed_tokens.weight":              "BF16",

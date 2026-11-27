@@ -70,6 +70,7 @@ func TestLeadingBOSForRenderer(t *testing.T) {
 		{name: "gemma4", want: "<bos>"},
 		{name: "gemma4-small", want: "<bos>"},
 		{name: "gemma4-large", want: "<bos>"},
+		{name: "gemma4-nemotron", want: "<bos>"},
 		{name: "functiongemma", want: "<bos>"},
 		{name: "lfm2", want: "<|startoftext|>"},
 		{name: "lfm2-thinking", want: "<|startoftext|>"},

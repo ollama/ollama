@@ -75,6 +75,47 @@ func TestResolveRunModelsCarriesRecommendationThinkingMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveRunModelsCodexIncludesInstalledToolModels(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cloud disabled=%t", disabled), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"qwen3:latest","capabilities":["completion","tools"]},{"name":"qwen3:4b","capabilities":["completion","tools"]},{"name":"embedding:latest","capabilities":["embedding"]},{"name":"custom:cloud","remote_model":"custom","capabilities":["completion","tools"]}]}`)
+				case "/api/experimental/model-recommendations":
+					fmt.Fprint(w, `{"recommendations":[]}`)
+				case "/api/status":
+					fmt.Fprintf(w, `{"cloud":{"disabled":%t}}`, disabled)
+				case "/api/show":
+					fmt.Fprint(w, `{}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			models := client.resolveRunModels(t.Context(), "codex", []string{"qwen3"})
+			want := []string{"qwen3:latest", "qwen3:4b"}
+			if !disabled {
+				want = append(want, "custom:cloud")
+			}
+			// The writer collapses the requested alias and installed canonical name.
+			catalog := codexCatalogModels("qwen3", models)
+			want[0] = "qwen3"
+			if got := launchModelNames(catalog); !slices.Equal(got, want) {
+				t.Fatalf("catalog = %v, want %v", got, want)
+			}
+			if got := launchModelNames(client.resolveRunModels(t.Context(), "test", []string{"qwen3"})); !slices.Equal(got, []string{"qwen3:latest"}) {
+				t.Fatalf("other integration received extra models: %v", got)
+			}
+		})
+	}
+}
+
 func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 	for _, tc := range []struct {
 		name, show     string
@@ -82,12 +123,9 @@ func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 		recommendation bool
 		want           []any
 	}{
-		{"local custom Pi model", `{"thinking":{"values":[false,"low","high","max"],"default":"max"}}`, "pi", false, []any{false, "low", "high", "max"}},
-		{"Pi show overrides recommendation", `{"thinking":{"values":["low","high","max"],"default":"max"}}`, "pi", true, []any{"low", "high", "max"}},
-		{"Pi missing metadata preserves recommendation", `{}`, "pi", true, []any{false, true}},
-		{"Pi invalid metadata preserves recommendation", `{"thinking":{"values":["low"],"default":"missing"}}`, "pi", true, []any{false, true}},
 		{"local custom CLI model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", false, []any{false, true, "medium"}},
 		{"local custom desktop model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "chatgpt", false, []any{false, true, "medium"}},
+		{"local custom OpenCode model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "opencode", false, []any{false, true, "medium"}},
 		{"show overrides recommendation", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", true, []any{false, true, "medium"}},
 		{"invalid metadata preserves recommendation", `{"thinking":{"values":[false,true],"default":"missing"}}`, "codex", true, []any{false, true}},
 		{"missing metadata preserves recommendation", `{}`, "codex", true, []any{false, true}},
@@ -121,16 +159,9 @@ func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 			if len(models) != 1 || models[0].Thinking == nil || !slices.Equal(models[0].Thinking.Values, tc.want) || showCalls != 1 {
 				t.Fatalf("models=%+v showCalls=%d", models, showCalls)
 			}
-			if tc.integration == "pi" {
-				cfg := createConfig(models[0])
-				if cfg["reasoning"] != true || cfg["thinkingLevelMap"] == nil {
-					t.Fatalf("Pi config missing discovered thinking controls: %v", cfg)
-				}
-			} else {
-				contract := codexAppThinkingContractForModel(models[0])
-				if !slices.Equal(contract.controls.Values, tc.want) {
-					t.Fatalf("desktop controls=%+v, want %v", contract.controls, tc.want)
-				}
+			contract := codexAppThinkingContractForModel(models[0])
+			if !slices.Equal(contract.controls.Values, tc.want) {
+				t.Fatalf("desktop controls=%+v, want %v", contract.controls, tc.want)
 			}
 		})
 	}
@@ -367,7 +398,6 @@ func withLauncherHooks(t *testing.T) {
 	oldMultiWithUpdates := DefaultMultiSelectorWithUpdates
 	oldConfirm := DefaultConfirmPrompt
 	oldSignIn := DefaultSignIn
-	oldUpgrade := DefaultUpgrade
 	t.Cleanup(func() {
 		DefaultSingleSelector = oldSingle
 		DefaultSingleSelectorWithUpdates = oldSingleWithUpdates
@@ -375,7 +405,6 @@ func withLauncherHooks(t *testing.T) {
 		DefaultMultiSelectorWithUpdates = oldMultiWithUpdates
 		DefaultConfirmPrompt = oldConfirm
 		DefaultSignIn = oldSignIn
-		DefaultUpgrade = oldUpgrade
 	})
 }
 
@@ -2376,7 +2405,7 @@ func TestResolveRunModel_MetadataSignedOutUsesSignInHook(t *testing.T) {
 	}
 }
 
-func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
+func TestResolveRunModel_PaidModelContinuesWithoutPlanChange(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2394,8 +2423,8 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 		}
 		for _, item := range items {
 			if item.Name == "kimi-k2.6:cloud" {
-				if item.AvailabilityBadge != "Upgrade required" {
-					t.Fatalf("availability badge = %q, want Upgrade required", item.AvailabilityBadge)
+				if item.AvailabilityBadge != "Use usage credits or upgrade your plan" {
+					t.Fatalf("availability badge = %q, want Use usage credits or upgrade your plan", item.AvailabilityBadge)
 				}
 				return "kimi-k2.6:cloud", nil
 			}
@@ -2408,18 +2437,17 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 		return "", nil
 	}
 
-	plan := "free"
-	upgradeCalled := false
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		upgradeCalled = true
-		if modelName != "kimi-k2.6:cloud" {
-			t.Fatalf("unexpected model passed to upgrade: %q", modelName)
+	withInteractiveSession(t, true)
+	paymentConfirmed := false
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		paymentConfirmed = true
+		if !strings.Contains(prompt, "This model requires usage credits or a paid plan.") || !strings.Contains(prompt, "kimi-k2.6:cloud") {
+			t.Fatalf("unexpected payment prompt: %q", prompt)
 		}
-		if requiredPlan != "pro" {
-			t.Fatalf("unexpected required plan: %q", requiredPlan)
+		if options.YesLabel != "Continue" || options.NoLabel != "Choose another model" || options.Default != ConfirmDefaultYes {
+			t.Fatalf("unexpected payment actions: %+v", options)
 		}
-		plan = "max"
-		return plan, nil
+		return true, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2434,7 +2462,7 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 		case "/api/show":
 			fmt.Fprint(w, `{"remote_model":"kimi-k2.6"}`)
 		case "/api/me":
-			fmt.Fprintf(w, `{"name":"test-user","plan":%q}`, plan)
+			fmt.Fprint(w, `{"name":"test-user","plan":"free"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2449,12 +2477,12 @@ func TestResolveRunModel_SubscriptionModelUsesUpgradeHook(t *testing.T) {
 	if model != "kimi-k2.6:cloud" {
 		t.Fatalf("expected selected cloud model, got %q", model)
 	}
-	if !upgradeCalled {
-		t.Fatal("expected upgrade hook to be used for subscription-gated cloud model")
+	if !paymentConfirmed {
+		t.Fatal("expected payment guidance before continuing with the free account")
 	}
 }
 
-func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
+func TestResolveRunModel_PaymentDeclinedReturnsToModelSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2472,8 +2500,9 @@ func TestResolveRunModel_UpgradeCancelledReturnsToModelSelector(t *testing.T) {
 			return "", nil
 		}
 	}
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		return "", ErrCancelled
+	withInteractiveSession(t, true)
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2518,9 +2547,9 @@ func TestResolveRunModel_SubscriptionModelUnavailableWhoamiAllowsSelection(t *te
 	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		return "kimi-k2.6:cloud", nil
 	}
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		t.Fatalf("did not expect upgrade hook when plan could not be verified")
-		return "", nil
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect payment guidance when account could not be verified")
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2966,14 +2995,16 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 		t.Fatalf("unexpected prompt: %q", prompt)
 		return false, nil
 	}
+	signInCalls := 0
 	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		signInCalls++
 		return "", ErrCancelled
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[]}`)
+			fmt.Fprint(w, `{"recommendations":[{"model":"glm-5:cloud","context_length":262144,"max_output_tokens":32768,"required_plan":"pro"}]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"sample-model"},{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
 		case "/api/status":
@@ -3010,6 +3041,9 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	if launchErr != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
 	}
+	if signInCalls != 1 {
+		t.Fatalf("sign-in calls = %d, want 1", signInCalls)
+	}
 	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use local primary, got %q", editor.ranModel)
 	}
@@ -3028,7 +3062,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	}
 }
 
-func TestLaunchIntegration_EditorConfigureUpgradeCancelledReturnsToModelSelector(t *testing.T) {
+func TestLaunchIntegration_EditorConfigurePaymentDeclinedReturnsToModelSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -3056,12 +3090,13 @@ func TestLaunchIntegration_EditorConfigureUpgradeCancelledReturnsToModelSelector
 			return nil, nil
 		}
 	}
-	DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		return "", ErrCancelled
-	}
+	withInteractiveSession(t, true)
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
+		}
+		if options.NoLabel == "Choose another model" {
+			return false, ErrCancelled
 		}
 		t.Fatalf("unexpected prompt: %q", prompt)
 		return false, nil
@@ -4432,4 +4467,64 @@ func compareStringSlices(got, want [][]string) string {
 		}
 	}
 	return ""
+}
+
+func TestResolveSingleIntegrationTargetPaymentGuidance(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		current     string
+		mode        LaunchConfirmMode
+		proceed     bool
+		wantModel   string
+		wantPrompts int
+		wantError   string
+	}{
+		{name: "new selection continues with free plan", mode: LaunchConfirmPrompt, proceed: true, wantModel: "paid:cloud", wantPrompts: 1},
+		{name: "saved selection skips payment prompt", current: "paid:cloud", mode: LaunchConfirmPrompt, wantModel: "paid:cloud"},
+		{name: "yes approves payment guidance", mode: LaunchConfirmAutoApprove, wantModel: "paid:cloud"},
+		{name: "headless requires yes", mode: LaunchConfirmRequireYes, wantError: "Continue with paid:cloud; re-run with --yes to continue"},
+		{name: "decline returns to picker", mode: LaunchConfirmPrompt, wantModel: "local-model", wantPrompts: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			withLauncherHooks(t)
+			DefaultSingleSelectorWithUpdates = nil
+			DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) { return "local-model", nil }
+			prompts := 0
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) {
+				prompts++
+				return tt.proceed, nil
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/me":
+					fmt.Fprint(w, `{"name":"test-user","plan":"free"}`)
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"local-model"}]}`)
+				case "/api/show":
+					fmt.Fprint(w, `{"remote_model":"paid"}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("OLLAMA_HOST", srv.URL)
+			client, err := newLauncherClient(LaunchPolicy{Confirm: tt.mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.recommendationsLoaded = true
+			client.recommendationItems = []ModelItem{{Name: "paid:cloud", RequiredPlan: "pro"}}
+			model, _, err := client.resolveSingleIntegrationTarget(context.Background(), "claude", &Claude{}, tt.current, IntegrationLaunchRequest{ModelOverride: "paid:cloud"})
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+					t.Fatalf("error = %v, want %q", err, tt.wantError)
+				}
+			} else if err != nil || model != tt.wantModel {
+				t.Fatalf("model = %q, error = %v; want %q", model, err, tt.wantModel)
+			}
+			if prompts != tt.wantPrompts {
+				t.Fatalf("payment prompts = %d, want %d", prompts, tt.wantPrompts)
+			}
+		})
+	}
 }

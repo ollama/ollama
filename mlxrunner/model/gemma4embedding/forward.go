@@ -29,7 +29,7 @@ type preparedAudio struct {
 // unused aux). The returned hidden is [B, L, embedding_dim]: final RMSNorm
 // followed by the per-token embedding_projection. Pooling and L2
 // normalization are the runner pipeline's job.
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -240,8 +240,8 @@ func (m *Model) scatterMedia(h *mlx.Array, b *batch.Batch) (*mlx.Array, error) {
 		if item.Features == nil {
 			continue
 		}
-		if item.Seq != 0 {
-			return h, fmt.Errorf("media item %d: seq %d, embed pipeline sends exactly one row", i, item.Seq)
+		if item.Seq < 0 || item.Seq >= len(b.SeqQueryLens) {
+			return h, fmt.Errorf("media item %d: seq %d outside the input batch", i, item.Seq)
 		}
 		var rows int
 		switch p := item.Opaque.(type) {
@@ -255,56 +255,24 @@ func (m *Model) scatterMedia(h *mlx.Array, b *batch.Batch) (*mlx.Array, error) {
 		if got := item.Features.Dim(0); got != rows {
 			return h, fmt.Errorf("media item %d: features rows %d, want %d", i, got, rows)
 		}
-		if item.Pos+rows > int(b.SeqQueryLens[0]) {
-			return h, fmt.Errorf("media item %d: [%d,%d) runs past the query tail %d", i, item.Pos, item.Pos+rows, b.SeqQueryLens[0])
+		if item.Pos < 0 || item.Pos+rows > int(b.SeqQueryLens[item.Seq]) {
+			return h, fmt.Errorf("media item %d: [%d,%d) runs past the query tail %d", i, item.Pos, item.Pos+rows, b.SeqQueryLens[item.Seq])
 		}
 		feat := mlx.Reshape(item.Features.AsType(h.DType()), 1, int32(rows), m.Cfg.HiddenSize)
-		h = h.SliceUpdate(feat, mlx.Slice(0, 1), mlx.Slice(item.Pos, item.Pos+rows), mlx.Slice())
+		h = h.SliceUpdate(feat, mlx.Slice(item.Seq, item.Seq+1), mlx.Slice(item.Pos, item.Pos+rows), mlx.Slice())
 	}
 	return h, nil
 }
 
-// encodePreparedItem runs the right tower over one PreparedItem's
-// preprocessed data. Called from the runner before Forward so the tower
-// graph is built while the request-goroutine's preprocess values are still
-// in scope; the array stays lazy until the text forward pulls it.
-func (m *Model) encodePreparedItem(item *model.PreparedItem, data *mlx.Array) (*mlx.Array, error) {
+// EncodeMedia builds one tower's lazy graph. PrepareMedia has already checked
+// the media kind and tower availability.
+func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	switch p := item.Opaque.(type) {
 	case preparedImage:
-		if m.VisionTower == nil {
-			return nil, fmt.Errorf("model has no vision tower")
-		}
-		return m.VisionTower.Encode(data, p.positions, p.geom, m.Cfg.VisionConfig, m.EmbedVision), nil
+		return m.VisionTower.Encode(data, p.positions, p.geom, m.Cfg.VisionConfig, m.EmbedVision)
 	case preparedAudio:
-		if m.AudioTower == nil {
-			return nil, fmt.Errorf("model has no audio tower")
-		}
-		return m.AudioTower.Encode(data, m.Cfg.AudioConfig, m.EmbedAudio), nil
+		return m.AudioTower.Encode(data, m.Cfg.AudioConfig, m.EmbedAudio)
+	default:
+		panic(fmt.Sprintf("unknown prepared media opaque %T", item.Opaque))
 	}
-	return nil, fmt.Errorf("unknown prepared media opaque %T", item.Opaque)
-}
-
-// EncodeMedia is the runner's single entry point after PrepareMedia: walk
-// the prepared items, run each through its tower, and attach the lazy
-// feature arrays to the batch. Kept separate from scatterMedia so the batch
-// stays a pure description of token positions.
-func (m *Model) EncodeMedia(prepared *model.PreparedRequest) ([]batch.MediaItem, error) {
-	if len(prepared.Items) == 0 {
-		return nil, nil
-	}
-	items := make([]batch.MediaItem, len(prepared.Items))
-	for i, item := range prepared.Items {
-		data := mlx.FromValues(item.MediaData, item.Dims...)
-		feat, err := m.encodePreparedItem(&item, data)
-		if err != nil {
-			return nil, fmt.Errorf("media item %d: %w", i, err)
-		}
-		items[i] = batch.MediaItem{
-			Seq:      0,
-			Pos:      item.Range[0],
-			Features: feat,
-			Opaque:   item.Opaque,
-		}
-	}
-	return items, nil
 }

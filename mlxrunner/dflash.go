@@ -5,11 +5,16 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/sample"
 )
 
 // dflashPendingFlushTokens bounds the held feature rows between flushes.
 const dflashPendingFlushTokens = 256
+
+// DFlash2's learned selector uses seven proposals per round.
+const dflash2Depth = 7
 
 // dflashDrafter drafts with a block-diffusion draft model (DFlash): one
 // forward proposes a whole block. A context-cache entry depends only on its
@@ -133,7 +138,7 @@ func (d *dflashDraftSession) flush() {
 			SeqOffsets: []int32{int32(offset)},
 			Hidden:     d.takePending(),
 			Layout:     d.layout,
-		}, spec.targets, spec.draftKV)
+		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 		state := make([]*mlx.Array, 0, 2*len(spec.draftKV))
 		for _, c := range spec.draftKV {
 			state = append(state, c.State()...)
@@ -146,7 +151,6 @@ func (d *dflashDraftSession) flush() {
 // forward filling every mask position.
 func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandidates {
 	spec := d.drafter.spec
-	r := spec.r
 	blockSize := d.drafter.blockSize
 
 	n := min(maxTokens, blockSize-1)
@@ -155,12 +159,15 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 	}
 	d.commitBlock()
 
-	// Send only the anchor and the rows being sampled, not the full trained
-	// block. Exact for causal layers, and measured as free for bidirectional
-	// ones.
+	// Changing the mask count changes a bidirectional draft's predictions.
+	// An adaptive selector consumes a prefix after the full draft forward.
+	rows := n
+	if spec.depth.block {
+		rows = blockSize - 1
+	}
 	var candidates *draftCandidates
 	mlx.ScopedArrays(func() []*mlx.Array {
-		masks := make([]int32, n)
+		masks := make([]int32, rows)
 		for i := range masks {
 			masks[i] = d.drafter.maskToken
 		}
@@ -175,22 +182,42 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 		hidden, _ := spec.draft.Forward(&batch.Batch{
 			InputIDs:     block,
 			SeqOffsets:   []int32{int32(offset)},
-			SeqQueryLens: []int32{int32(n + 1)},
+			SeqQueryLens: []int32{int32(rows + 1)},
 			Hidden:       features,
 			Layout:       d.layout,
-		}, spec.targets, spec.draftKV)
-
-		// Row i predicts the token at its own position, so the anchor row is
-		// unused. Rows 1..n are sampled from one batched distribution; penalties
-		// see only the committed history, not the other rows of the block.
-		logits := spec.draft.Unembed(hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice()))
-		dist := r.Sampler.Distribution(pipelineSlot, logits, nil)
-		tokens := r.Sampler.SampleDistribution(pipelineSlot, dist)
-		candidates = &draftCandidates{
-			tokens: tokens.ExpandDims(0),
-			dist:   dist,
-		}
+		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
+		candidates = d.selectBlock(hidden, current, n)
 		return candidates.Arrays()
 	})
 	return candidates
+}
+
+// selectBlock samples the proposal from a draft forward's block rows.
+func (d *dflashDraftSession) selectBlock(hidden, current *mlx.Array, n int) *draftCandidates {
+	spec := d.drafter.spec
+	r := spec.r
+
+	// Row i predicts the token at its own position; the anchor row is unused.
+	// An adaptive selector consumes only the first n rows, so only they are
+	// projected onto the vocabulary.
+	hidden = hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice())
+	logits := spec.draft.Unembed(hidden)
+	if selector, ok := spec.draft.(model.BlockSelector); ok {
+		tokens, ids, probs := selector.Select(hidden, logits, current, func(ids, scores *mlx.Array) (*mlx.Array, *mlx.Array) {
+			tokens, dist := r.Sampler.SampleCandidates(spec.slotID, ids, scores)
+			return tokens, dist.Probs
+		})
+		if ids != nil {
+			ids = ids.Squeeze(0)
+		}
+		return &draftCandidates{tokens: tokens, dist: sample.Distribution{IDs: ids, Probs: probs.Squeeze(0)}}
+	}
+	// Independent DFlash rows see the committed history, without the other
+	// rows of the block contributing to penalties.
+	dist := r.Sampler.Distribution(spec.slotID, logits, nil)
+	tokens := r.Sampler.SampleDistribution(spec.slotID, dist)
+	return &draftCandidates{
+		tokens: tokens.ExpandDims(0),
+		dist:   dist,
+	}
 }

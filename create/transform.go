@@ -19,8 +19,8 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 		}
 		return sources[0].WithName(ts.Name), nil
 
-	case TransformRepackFP4, TransformRelabelU8:
-		// Both relabel the header (dtype, and for the fp4 repack the last
+	case TransformRepackFP4, TransformRepackFP8, TransformRelabelU8:
+		// These relabel the header (dtype, and for packed weights the last
 		// dimension); the bytes are unchanged, so the reader is reused.
 		if len(sources) != 1 {
 			return nil, fmt.Errorf("transform %s expects 1 source, got %d", ts.Transform, len(sources))
@@ -40,11 +40,17 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 		}
 		return validateScalarFloat32TensorData(sources[0], ts.Name)
 
+	case TransformF32:
+		if len(sources) != 1 {
+			return nil, fmt.Errorf("transform f32 expects 1 source, got %d", len(sources))
+		}
+		return validateFloat32TensorData(sources[0], ts.Name)
+
 	case TransformReciprocalF32:
 		if len(sources) != 1 {
 			return nil, fmt.Errorf("transform reciprocal_f32 expects 1 source, got %d", len(sources))
 		}
-		return invertScalarFloat32TensorData(sources[0], ts.Name)
+		return invertFloat32TensorData(sources[0], ts.Name)
 
 	case TransformStackExperts:
 		return stackExpertTensors(ts.Name, ts.OutDtype, ts.OutShape, sources)

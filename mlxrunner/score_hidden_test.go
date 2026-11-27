@@ -77,7 +77,7 @@ func TestPrefillPreservesHiddenStates(t *testing.T) {
 						h, _ := m.Model.Forward(&batch.Batch{InputIDs: ids, SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(n)}}, nil)
 						return []*mlx.Array{h}
 					})[0]
-					r := &Runner{Model: m}
+					r := newScoreTestRunner(m)
 					defer func() { r.scoreCache.close() }()
 					got, _, err := r.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: tokens}, nil)
 					if err != nil {
@@ -123,7 +123,7 @@ func TestPrefillCancellation(t *testing.T) {
 			embedding := &cancellingEmbedding{EmbeddingLayer: m.EmbedTokens}
 			m.EmbedTokens = embedding
 			prepared := &model.PreparedRequest{Tokens: make([]int32, 4097)}
-			r := &Runner{Model: m}
+			r := newScoreTestRunner(m)
 			defer func() { r.scoreCache.close() }()
 			want, _, err := r.scoreHiddenRow(context.Background(), prepared, nil)
 			if err != nil {
@@ -166,14 +166,14 @@ func TestPrefillCancellation(t *testing.T) {
 func TestScoreHiddenPrefixReuse(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		m := prefillTestModel()
-		r := &Runner{Model: m}
+		r := newScoreTestRunner(m)
 		defer func() { r.scoreCache.close() }()
 		original := slices.Repeat([]int32{1, 2, 3, 4}, 520)
 		branch := slices.Clone(original)
 		branch[1024] = 5
 		rows := [][]int32{original, branch, original[:1024], branch, original}
 		for _, tokens := range rows {
-			cold := &Runner{Model: m}
+			cold := newScoreTestRunner(m)
 			want, _, err := cold.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: tokens}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -193,6 +193,42 @@ func TestScoreHiddenPrefixReuse(t *testing.T) {
 						t.Fatalf("cached hidden[%d]=%g, cold=%g", i, v, wantValues[i])
 					}
 				}
+			}
+		}
+	})
+}
+
+func TestScoreHiddenSharedStateSnapshot(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m := prefillTestModel()
+		first := slices.Repeat([]int32{1, 2, 3, 4}, 520)
+		second := slices.Clone(first)
+		const shared = 1024
+		second[shared] = 5
+
+		cold := newScoreTestRunner(m)
+		want, _, err := cold.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: second}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantValues := want.Floats()
+		cold.scoreCache.close()
+
+		r := newScoreTestRunner(m)
+		defer func() { r.scoreCache.close() }()
+		if _, _, err := r.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: first, ScorePrefix: shared}, nil); err != nil {
+			t.Fatal(err)
+		}
+		got, cached, err := r.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: second, ScorePrefix: shared}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cached != shared {
+			t.Fatalf("shared state reused %d/%d tokens", cached, shared)
+		}
+		for i, v := range got.Floats() {
+			if math.IsNaN(float64(v)) || math.Abs(float64(v-wantValues[i])) > 1e-3*(1+math.Abs(float64(wantValues[i]))) {
+				t.Fatalf("cached hidden[%d]=%g, cold=%g", i, v, wantValues[i])
 			}
 		}
 	})

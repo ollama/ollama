@@ -204,7 +204,7 @@ func TestEmbeddingHandlersUseRunnerSelection(t *testing.T) {
 		ModelFormat:  manifest.FormatSafetensors,
 		Capabilities: []string{string(model.CapabilityEmbedding)},
 	}, nil)
-	writeManifestListFixture(t, "embed-list",
+	writeManifestListFixture(t, "Embed-List",
 		manifestListFixtureChild{name: "embed-ggml", runner: manifest.RunnerGGML, format: manifest.FormatGGUF},
 		manifestListFixtureChild{name: "embed-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
 	)
@@ -586,6 +586,24 @@ func TestChatHandlerHarmonyPreservesStructuralTokens(t *testing.T) {
 	}
 }
 
+func TestParserNameForModelDoesNotChangeConfig(t *testing.T) {
+	tmpl, err := ollamatemplate.Parse("<|start|><|end|>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Model{Config: model.ConfigV2{ModelFamily: "gptoss"}, Template: tmpl}
+	if got := parserNameForModel(m); got != "harmony" {
+		t.Fatalf("parser = %q, want harmony", got)
+	}
+	if m.Config.Parser != "" {
+		t.Fatalf("model parser changed to %q", m.Config.Parser)
+	}
+	m.Config.Parser = "gemma4"
+	if got := parserNameForModel(m); got != "gemma4" {
+		t.Fatalf("explicit parser = %q, want gemma4", got)
+	}
+}
+
 func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
@@ -778,6 +796,31 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			t.Fatalf("second image media = %#v", mock.CompletionRequest.Media[1])
 		}
 	})
+}
+
+func TestGenerateInklingImageAfterContext(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	const name = "inkling-generate"
+	const prefix = "prior 🖼\x00<|content_image|>[img-0]<|end_message|>"
+	mock := mockRunner{
+		DetokenizeFn:       func(context.Context, []int) (string, error) { return prefix, nil },
+		CompletionResponse: llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createSafetensorsTestModel(t, name, model.ConfigV2{
+		ModelFormat: "safetensors", Renderer: "inkling2", Capabilities: []string{"completion", "vision"},
+	}, nil)
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model: name, Prompt: "look[img]", Images: []api.ImageData{{1}}, Context: []int{1}, Stream: new(false),
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("generate status %d: %s", w.Code, w.Body)
+	}
+	got := mock.CompletionRequest
+	want := strings.LastIndex(got.Prompt, "[img-0]")
+	if !strings.HasPrefix(got.Prompt, prefix) || want < len(prefix) || len(got.Media) != 1 || !slices.Equal(got.Media[0].TagOffsets, []int{want}) {
+		t.Fatalf("generate prompt %q, media %+v; want attachment only at %d", got.Prompt, got.Media, want)
+	}
 }
 
 func TestGenerateChatRemote(t *testing.T) {

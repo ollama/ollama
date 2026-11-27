@@ -39,7 +39,7 @@ cmake -B build . -DOLLAMA_LLAMA_BACKENDS="cuda_v13;vulkan"
 cmake --build build --parallel 8
 ```
 
-Supported backend values are `cuda_v12`, `cuda_v13`, `rocm_v7_1`, `rocm_v7_2`, `vulkan`, `cuda_jetpack5`, and `cuda_jetpack6`.
+Supported backend values are `cuda_v12`, `cuda_v13`, `rocm_v7_1`, `rocm_v7_2`, `vulkan`, and `cuda_jetpack6`.
 
 Use standard CMake architecture overrides to narrow GPU builds for local hardware:
 

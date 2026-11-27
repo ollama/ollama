@@ -221,11 +221,6 @@ func TestGatedDeltaSegmentEquivalence(t *testing.T) {
 		prior := mlx.Zeros(mlx.DTypeFloat32, B, Hv, Dv, Dk)
 		full := &batch.Batch{SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(T)}}
 
-		refOut, refStates := GatedDelta(full, packed, ba, dtBias, aExp, WithRecurrentState(nil, prior))
-		if len(refStates) != 1 {
-			t.Fatalf("unsegmented call returned %d states, want 1", len(refStates))
-		}
-
 		cases := []struct {
 			name   string
 			splits []int
@@ -233,21 +228,36 @@ func TestGatedDeltaSegmentEquivalence(t *testing.T) {
 			{"perToken", []int{1, 2, 3, 4}},
 			{"sparse", []int{2}},
 		}
-		for _, tc := range cases {
-			segOut, segStates := GatedDelta(full, packed, ba, dtBias, aExp,
-				WithRecurrentState(nil, prior), WithSnapshotSplits(tc.splits))
-			mlx.Eval(refOut, segOut)
-			floatsClose(t, tc.name+" out", segOut.Floats(), refOut.Floats(), 1e-4)
-			if len(segStates) != len(tc.splits)+1 {
-				t.Fatalf("%s: got %d boundary states, want %d", tc.name, len(segStates), len(tc.splits)+1)
+		for _, precise := range []bool{false, true} {
+			mode := "default"
+			opts := []RecurrentOption{WithRecurrentState(nil, prior)}
+			run := mlx.GatedDelta
+			if precise {
+				mode = "precise"
+				opts = append(opts, WithPreciseGatedDeltaDecay())
+				run = mlx.GatedDeltaPrecise
 			}
-			boundaries := append(append([]int{}, tc.splits...), T)
-			for i, n := range boundaries {
-				_, want, _ := mlx.GatedDelta(
-					slicePrefix(packed, 0, 1, int32(n)), slicePrefix(ba, 0, 1, int32(n)),
-					dtBias, aExp, prior, nil, false)
-				mlx.Eval(segStates[i], want)
-				floatsClose(t, tc.name+" boundary delta", segStates[i].Floats(), want.Floats(), 1e-4)
+			refOut, refStates := GatedDelta(full, packed, ba, dtBias, aExp, opts...)
+			if len(refStates) != 1 {
+				t.Fatalf("%s unsegmented call returned %d states, want 1", mode, len(refStates))
+			}
+
+			for _, tc := range cases {
+				segOpts := append(append([]RecurrentOption{}, opts...), WithSnapshotSplits(tc.splits))
+				segOut, segStates := GatedDelta(full, packed, ba, dtBias, aExp, segOpts...)
+				mlx.Eval(refOut, segOut)
+				floatsClose(t, mode+"/"+tc.name+" out", segOut.Floats(), refOut.Floats(), 1e-4)
+				if len(segStates) != len(tc.splits)+1 {
+					t.Fatalf("%s/%s: got %d boundary states, want %d", mode, tc.name, len(segStates), len(tc.splits)+1)
+				}
+				boundaries := append(append([]int{}, tc.splits...), T)
+				for i, n := range boundaries {
+					_, want, _ := run(
+						slicePrefix(packed, 0, 1, int32(n)), slicePrefix(ba, 0, 1, int32(n)),
+						dtBias, aExp, prior, nil, false)
+					mlx.Eval(segStates[i], want)
+					floatsClose(t, mode+"/"+tc.name+" boundary delta", segStates[i].Floats(), want.Floats(), 1e-4)
+				}
 			}
 		}
 	})

@@ -88,6 +88,10 @@ func TestDecodeWAVFloat32(t *testing.T) {
 	requireSamples(t, wavBytes(3, 1, 44100, 32, pcm.Bytes()), 44100, want, 0)
 }
 
+func TestDecodeWAVMaxSampleRate(t *testing.T) {
+	requireSamples(t, wavBytes(1, 1, maxSampleRate, 8, []byte{128}), maxSampleRate, []float32{0}, 0)
+}
+
 func TestDecodeWAVStereoDownmix(t *testing.T) {
 	var pcm bytes.Buffer
 	for _, v := range []float32{1, 0, -0.5, 0.5} {
@@ -130,6 +134,7 @@ func TestDecodeErrors(t *testing.T) {
 	noData := wavBytes(1, 1, 16000, 16, nil)
 	noData = noData[:len(noData)-8]
 	zeroChannels := wavBytes(1, 0, 16000, 16, make([]byte, 4))
+	highRate := wavBytes(1, 1, maxSampleRate+1, 16, make([]byte, 4))
 	// A tiny file whose declared 1 Hz rate makes it run for over 10 minutes.
 	tooLong := wavBytes(1, 1, 1, 8, make([]byte, maxAudioSeconds+1))
 
@@ -146,6 +151,7 @@ func TestDecodeErrors(t *testing.T) {
 		{"no data chunk", noData, "no data chunk"},
 		{"adpcm", adpcm, "unsupported format 2"},
 		{"zero channels", zeroChannels, "invalid fmt"},
+		{"implausible sample rate", highRate, "unsupported sample rate 384001 Hz"},
 		{"longer than the duration cap", tooLong, "audio longer"},
 	}
 	for _, tt := range cases {
@@ -289,4 +295,31 @@ func TestSplitLimits(t *testing.T) {
 	// A limit shorter than the search span still yields chunks within it.
 	s := tone(5*rate + 1)
 	requireChunks(t, s, Split(s, rate, 1), rate)
+}
+
+func TestDecodeLimit(t *testing.T) {
+	clip := wavBytes(1, 1, 1, 8, make([]byte, maxAudioSeconds+1))
+	if _, _, err := DecodeLimit(clip, maxAudioSeconds+1); err != nil {
+		t.Fatalf("clip within a raised cap: %v", err)
+	}
+	if _, _, err := DecodeLimit(clip, maxAudioSeconds); err == nil || !strings.Contains(err.Error(), "audio longer") {
+		t.Fatalf("error %v, want the duration cap", err)
+	}
+}
+
+func TestEncodeWAVRoundTrip(t *testing.T) {
+	in := []float32{0, 0.5, -0.5, 1, -1, 2, -2}
+	samples, rate, err := Decode(EncodeWAV(in, 22050))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rate != 22050 || len(samples) != len(in) {
+		t.Fatalf("got %d samples at %d Hz", len(samples), rate)
+	}
+	for i, want := range in {
+		want = max(-1, min(1, want))
+		if math.Abs(float64(samples[i]-want)) > 1e-4 {
+			t.Errorf("sample %d = %v, want %v", i, samples[i], want)
+		}
+	}
 }

@@ -6,12 +6,14 @@ export function IntegrationConnectButton({
   busy,
   progress,
   label,
+  idleLabel,
   ...props
 }: Pick<ComponentProps<"button">, "onClick" | "disabled" | "title"> & {
   connected: boolean;
   label: string;
   busy: boolean;
   progress?: string | null;
+  idleLabel?: string;
 }) {
   return (
     <button
@@ -29,10 +31,8 @@ export function IntegrationConnectButton({
             {progress ?? "Checking…"}
           </span>
         </>
-      ) : connected ? (
-        "Disconnect"
       ) : (
-        "Connect"
+        (idleLabel ?? (connected ? "Disconnect" : "Connect"))
       )}
     </button>
   );

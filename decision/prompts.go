@@ -1,7 +1,6 @@
 package decision
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,7 +8,7 @@ import (
 	"github.com/ollama/ollama/model/renderers"
 )
 
-func decisionPrompts(context string, fields []compiledField, renderer string) ([]string, error) {
+func decisionPrompts(state json.RawMessage, context string, fields []compiledField, renderer string) ([]string, error) {
 	var prompts []string
 	if renderer == "tev1" {
 		for _, f := range fields {
@@ -24,16 +23,27 @@ func decisionPrompts(context string, fields []compiledField, renderer string) ([
 			var options []option
 			for _, c := range f.Choices {
 				description, ok := c.Description.(string)
+				if c.Description == nil {
+					// Tev1 describes every option: noul as No/Yes, bare choices by key.
+					description, ok = fmt.Sprint(c.Value), true
+					switch c.Value {
+					case false:
+						description = "No"
+					case true:
+						description = "Yes"
+					}
+				}
 				if !ok || strings.TrimSpace(description) == "" {
 					return nil, fmt.Errorf("question %q: Tev1 requires nonempty candidate descriptions", f.Name)
 				}
 				options = append(options, option{c.Code, fmt.Sprint(c.Value), description})
 			}
-			prompt, err := promptJSON(struct {
-				State    string   `json:"state"`
-				Question string   `json:"question"`
-				Options  []option `json:"options"`
-			}{context, f.Description, options})
+			// Tev1 was trained with object states nested in the payload.
+			prompt, err := renderers.PythonJSON(struct {
+				State    json.RawMessage `json:"state"`
+				Question string          `json:"question"`
+				Options  []option        `json:"options"`
+			}{state, f.Description, options}, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -42,53 +52,21 @@ func decisionPrompts(context string, fields []compiledField, renderer string) ([
 		return prompts, nil
 	}
 
-	data, err := promptJSON(struct {
+	data, err := renderers.PythonJSON(struct {
 		Context string          `json:"context"`
 		Schema  []compiledField `json:"schema"`
-	}{context, fields})
+	}{context, fields}, 0)
 	if err != nil {
 		return nil, err
 	}
 	// Nimble escapes chat delimiters in both the schema and the requested name.
 	escape := strings.NewReplacer("<", `\u003c`, ">", `\u003e`)
 	for _, f := range fields {
-		name, err := promptJSON(f.Name)
+		name, err := renderers.PythonJSON(f.Name, 0)
 		if err != nil {
 			return nil, err
 		}
 		prompts = append(prompts, escape.Replace(data)+"\n\nRequested field: "+escape.Replace(name))
 	}
 	return prompts, nil
-}
-
-// Both publishers serialize prompts with Python's json.dumps(ensure_ascii=False).
-func promptJSON(v any) (string, error) {
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return "", err
-	}
-	data := renderers.AddJSONSpaces(bytes.TrimSuffix(b.Bytes(), []byte{'\n'}))
-	var out strings.Builder
-	for i := 0; i < len(data); i++ {
-		// encoding/json always escapes these two runes. Leave literal backslash
-		// sequences alone by consuming each escape as a unit.
-		if data[i] == '\\' && i+1 < len(data) {
-			if bytes.HasPrefix(data[i:], []byte(`\u2028`)) {
-				out.WriteRune('\u2028')
-				i += 5
-				continue
-			}
-			if bytes.HasPrefix(data[i:], []byte(`\u2029`)) {
-				out.WriteRune('\u2029')
-				i += 5
-				continue
-			}
-			out.WriteByte(data[i])
-			i++
-		}
-		out.WriteByte(data[i])
-	}
-	return out.String(), nil
 }

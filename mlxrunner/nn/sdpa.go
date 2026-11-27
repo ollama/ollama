@@ -19,6 +19,8 @@ type sdpaConfig struct {
 
 	// Optional model-supplied logical mask.
 	mask AttentionMask
+	// Optional learned logit for each query head in the softmax denominator.
+	sinks *mlx.Array
 }
 
 // WithKVHistory supplies a cache's per-layer view of K and V. The
@@ -31,8 +33,19 @@ func WithKVHistory(h *KVHistory) SDPAOption {
 // WithMLAHistory supplies a cache's per-layer view for absorbed MLA
 // attention, where V is the first valueDim positions of K.
 func WithMLAHistory(h *KVHistory, valueDim int) SDPAOption {
-	v := h.K().Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, valueDim))
-	return WithKVHistory(&KVHistory{k: h.K(), v: v, applier: h.applier})
+	return WithKVHistory(h.withMLAValues(valueDim))
+}
+
+func (h *KVHistory) withMLAValues(valueDim int) *KVHistory {
+	if h.rows != nil {
+		rows := make([]*KVHistory, len(h.rows))
+		for i, row := range h.rows {
+			rows[i] = row.withMLAValues(valueDim)
+		}
+		return NewRowKVHistory(rows)
+	}
+	v := h.k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, valueDim))
+	return NewKVHistory(h.k, v, h.applier)
 }
 
 // WithKV supplies explicit K/V tensors for the no-cache path. kLens
@@ -45,6 +58,12 @@ func WithKV(k, v *mlx.Array, kLens []int32) SDPAOption {
 // WithMask supplies the model's logical-coordinate mask.
 func WithMask(m AttentionMask) SDPAOption {
 	return func(c *sdpaConfig) { c.mask = m }
+}
+
+// WithSinks supplies per-query-head attention sink logits. Sinks change the
+// softmax denominator without adding keys or values to the cache.
+func WithSinks(sinks *mlx.Array) SDPAOption {
+	return func(c *sdpaConfig) { c.sinks = sinks }
 }
 
 // ScaledDotProductAttention runs the fast SDPA kernel against q and
@@ -65,6 +84,19 @@ func ScaledDotProductAttention(b *batch.Batch, q *mlx.Array, scale float32, opts
 	if !haveKV && !haveHistory {
 		panic("nn.ScaledDotProductAttention: no keys/values supplied (use WithKV or WithKVHistory)")
 	}
+	if haveHistory && cfg.history.rows != nil {
+		if len(cfg.history.rows) != q.Dim(0) {
+			panic("nn.ScaledDotProductAttention: history row count does not match queries")
+		}
+		output := make([]*mlx.Array, len(cfg.history.rows))
+		for i, history := range cfg.history.rows {
+			output[i] = ScaledDotProductAttention(b.Row(i), q.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()), scale,
+				WithKVHistory(history), WithMask(cfg.mask.row(b, i)), WithSinks(cfg.sinks))
+		}
+		// Only the attention outputs are joined. Histories retain their
+		// request's length and storage layout without full-history packing.
+		return mlx.Concatenate(output, 0)
+	}
 
 	k, v := cfg.k, cfg.v
 	var applier MaskApplier
@@ -84,13 +116,12 @@ func ScaledDotProductAttention(b *batch.Batch, q *mlx.Array, scale float32, opts
 	}
 
 	if cached, ok := b.Memo.Get(inputs); ok {
-		d := cached.(sdpaDispatch)
-		return mlx.FastScaledDotProductAttention(q, k, v, scale, d.mode, d.arr)
+		return cached.(sdpaDispatch).run(q, k, v, scale, cfg.sinks)
 	}
 
 	d := inputs.resolve()
 	b.Memo.Put(inputs, d)
-	return mlx.FastScaledDotProductAttention(q, k, v, scale, d.mode, d.arr)
+	return d.run(q, k, v, scale, cfg.sinks)
 }
 
 // sdpaDispatch is the resolved kernel call for a given SDPA key —
@@ -98,8 +129,34 @@ func ScaledDotProductAttention(b *batch.Batch, q *mlx.Array, scale float32, opts
 // array-mode call with a materialized tensor. Memoized on b.Memo so
 // sibling layers skip applier composition, padding build, and AsArray.
 type sdpaDispatch struct {
-	mode string
-	arr  *mlx.Array
+	mode       string
+	arr        *mlx.Array
+	queryValid *mlx.Array
+	// window is the kernel-enforced sliding-window size; zero means full
+	// context, translated to the kernel's window_size convention at run.
+	window int
+}
+
+// run dispatches the resolved kernel call with optional attention sinks.
+// The C binding requires -1 for "no window" while the dispatch's zero value
+// means the same, so translate here.
+func (d sdpaDispatch) run(q, k, v *mlx.Array, scale float32, sinks *mlx.Array) *mlx.Array {
+	window := d.window
+	if window == 0 {
+		window = mlx.FastSDPANoWindow
+	}
+	var out *mlx.Array
+	if sinks == nil {
+		out = mlx.FastScaledDotProductAttention(q, k, v, scale, window, d.mode, d.arr)
+	} else {
+		out = mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, window, d.mode, d.arr, sinks)
+	}
+	if d.queryValid != nil {
+		// A fully masked query may produce NaNs. Select zero (not multiply)
+		// before another layer can use padded outputs as keys or values.
+		out = mlx.Where(d.queryValid, out, mlx.FromValue(float32(0)).AsType(out.DType()))
+	}
+	return out
 }
 
 // dispatchInputs bundles every value resolve reads and doubles as
@@ -165,9 +222,21 @@ func (k kLensKey) Int32s() []int32 {
 // WithKV path kLens describes the direct K tensor, which shares
 // logical K space with QPaddingMask.
 func (inputs dispatchInputs) resolve() sdpaDispatch {
-	mask := inputs.mask.Intersect(QPaddingMask(inputs.batch, inputs.dtype))
+	padding := QPaddingMask(inputs.batch, inputs.dtype)
+	mask := inputs.mask.Intersect(padding)
 
 	if inputs.applier != nil {
+		// Native sliding-window dispatch: when the composed mask is pure
+		// causal, the kernel enforces the cache's sliding restriction
+		// itself — no materialized [B,1,L,K] tensor. The L>1 guard keeps
+		// decode on the ring-storage fast path, where the window is
+		// already enforced by storage and a kernel window would only
+		// force the slow general kernel. Any other contribution
+		// (relaxations, padding, tensors) keeps the array path.
+		if w := inputs.applier.NativeWindow(); w > 0 && mask.IsCausal() &&
+			inputs.batch.InputIDs.Dim(1) > 1 {
+			return sdpaDispatch{mode: "causal", window: w}
+		}
 		mask = inputs.applier.ApplyMask(mask)
 	} else if inputs.kLens != "" {
 		mask = mask.Intersect(KPaddingMask(inputs.batch, inputs.K, inputs.kLens.Int32s(), inputs.dtype))
@@ -185,7 +254,11 @@ func (inputs dispatchInputs) resolve() sdpaDispatch {
 			return sdpaDispatch{mode: "causal"}
 		}
 	default:
-		return sdpaDispatch{mode: "array", arr: mask.AsArray(inputs.batch, inputs.K, inputs.dtype)}
+		d := sdpaDispatch{mode: "array", arr: mask.AsArray(inputs.batch, inputs.K, inputs.dtype)}
+		if padding.array != nil {
+			d.queryValid = padding.array.Equal(mlx.FromValue(float32(0)))
+		}
+		return d
 	}
 }
 
@@ -204,6 +277,15 @@ func (inputs dispatchInputs) resolve() sdpaDispatch {
 // contribution".
 type MaskApplier interface {
 	ApplyMask(logical AttentionMask) AttentionMask
+
+	// NativeWindow reports the sliding-window size the SDPA kernel can
+	// enforce itself — via its window_size parameter — in place of this
+	// applier's mask contribution, or a value <= 0 when the applier's
+	// storage restriction has no native equivalent for this call shape.
+	// SDPA only honors the hint when every other composed contribution
+	// is pure causal at L>1: with relaxations, padding, tensors, or a
+	// single-token query, ApplyMask's materialized path stands.
+	NativeWindow() int
 }
 
 // KVHistory is the per-forward view a KV cache hands to SDPA:
@@ -212,6 +294,7 @@ type MaskApplier interface {
 type KVHistory struct {
 	k, v    *mlx.Array
 	applier MaskApplier
+	rows    []*KVHistory
 }
 
 // NewKVHistory constructs a KVHistory. Intended for
@@ -221,13 +304,36 @@ func NewKVHistory(k, v *mlx.Array, applier MaskApplier) *KVHistory {
 	return &KVHistory{k: k, v: v, applier: applier}
 }
 
+// NewRowKVHistory borrows independent single-row histories for one forward.
+// SDPA dispatches each row against its own history, then joins the outputs.
+// Callers must not modify rows after construction.
+func NewRowKVHistory(rows []*KVHistory) *KVHistory {
+	return &KVHistory{rows: rows}
+}
+
+// AsType returns a single sequence's keys and values in dtype for an attention
+// operation. It preserves the cache mask and leaves its backing storage intact.
+func (h *KVHistory) AsType(dtype mlx.DType) *KVHistory {
+	return NewKVHistory(h.K().AsType(dtype), h.V().AsType(dtype), h.applier)
+}
+
+// Rows returns the borrowed single-request histories, or nil for a shared
+// rectangular history. Custom attention paths must dispatch these separately;
+// the histories may have different lengths. Callers must not modify the slice.
+func (h *KVHistory) Rows() []*KVHistory { return h.rows }
+
 // K returns the post-Update keys tensor.
 //
 // Last-resort escape hatch for custom attention paths — may force a
 // slow materialization to canonical form depending on the cache's
 // internal storage. Prefer ScaledDotProductAttention via
 // WithKVHistory.
-func (h *KVHistory) K() *mlx.Array { return h.k }
+func (h *KVHistory) K() *mlx.Array {
+	if h.rows != nil {
+		panic("nn.KVHistory.K: independent row histories require ScaledDotProductAttention")
+	}
+	return h.k
+}
 
 // V returns the post-Update values tensor.
 //
@@ -235,7 +341,12 @@ func (h *KVHistory) K() *mlx.Array { return h.k }
 // slow materialization to canonical form depending on the cache's
 // internal storage. Prefer ScaledDotProductAttention via
 // WithKVHistory.
-func (h *KVHistory) V() *mlx.Array { return h.v }
+func (h *KVHistory) V() *mlx.Array {
+	if h.rows != nil {
+		panic("nn.KVHistory.V: independent row histories require ScaledDotProductAttention")
+	}
+	return h.v
+}
 
 // Mask returns the final AttentionMask for this layer's SDPA —
 // cache storage restrictions composed onto the caller's fully-
@@ -246,6 +357,9 @@ func (h *KVHistory) V() *mlx.Array { return h.v }
 // internal storage. Prefer ScaledDotProductAttention via
 // WithKVHistory.
 func (h *KVHistory) Mask(logical AttentionMask) AttentionMask {
+	if h.rows != nil {
+		panic("nn.KVHistory.Mask: independent row histories require ScaledDotProductAttention")
+	}
 	if h.applier == nil {
 		return logical
 	}
@@ -269,9 +383,40 @@ func (h *KVHistory) Mask(logical AttentionMask) AttentionMask {
 // All fields are comparable, so AttentionMask values compare with ==
 // by full identity — SDPA uses this directly as a dispatch-cache key.
 type AttentionMask struct {
-	causal      bool
-	relaxations *relaxNode
-	array       *mlx.Array
+	causal       bool
+	deviceCausal bool
+	relaxations  *relaxNode
+	array        *mlx.Array
+}
+
+type maskRowKey struct {
+	mask AttentionMask
+	row  int
+}
+
+// row keeps logical sequence coordinates while selecting a single request.
+// Memoization preserves the selected mask's identity across layers.
+func (m AttentionMask) row(b *batch.Batch, i int) AttentionMask {
+	if m.relaxations == nil && (m.array == nil || m.array.NumDims() != 4 || m.array.Dim(0) <= 1) {
+		return m
+	}
+	key := maskRowKey{mask: m, row: i}
+	if cached, ok := b.Memo.Get(key); ok {
+		return cached.(AttentionMask)
+	}
+	out := AttentionMask{causal: m.causal, deviceCausal: m.deviceCausal, array: m.array}
+	if out.array != nil && out.array.NumDims() == 4 && out.array.Dim(0) > 1 {
+		out.array = out.array.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+	}
+	for node := m.relaxations; node != nil; node = node.next {
+		if node.rect.seq == i {
+			r := node.rect
+			r.seq = 0
+			out.relaxations = &relaxNode{rect: r, next: out.relaxations}
+		}
+	}
+	b.Memo.Put(key, out)
+	return out
 }
 
 type relaxRect struct {
@@ -292,6 +437,12 @@ type relaxNode struct {
 // onto it; then SDPA materializes via AsArray.
 func CausalMask() AttentionMask {
 	return AttentionMask{causal: true}
+}
+
+// DeviceCausalMask preserves causal semantics while materializing composed
+// masks on the device. Models opt in when long sliding prefills need it.
+func DeviceCausalMask() AttentionMask {
+	return AttentionMask{causal: true, deviceCausal: true}
 }
 
 // ArrayMask wraps an explicit additive tensor broadcast-compatible
@@ -362,7 +513,8 @@ func (m AttentionMask) Intersect(other AttentionMask) AttentionMask {
 	}
 
 	result := AttentionMask{
-		causal: m.causal || other.causal,
+		causal:       m.causal || other.causal,
+		deviceCausal: m.deviceCausal || other.deviceCausal,
 	}
 
 	// Relax requires causal, so relaxations != nil implies causal.
@@ -430,6 +582,17 @@ func (m AttentionMask) AsArray(b *batch.Batch, K int, dtype mlx.DType) *mlx.Arra
 		}
 		return m.array.AsType(dtype)
 	}
+	if m.causal && m.deviceCausal && m.relaxations == nil {
+		q, k := attentionPositions(b, K)
+		out := mlx.ExpandDims(mlx.Where(q.Less(k), mlx.FromValue(float32(math.Inf(-1))), mlx.FromValue(float32(0))), 1)
+		if m.array != nil {
+			out = mlx.Add(out, m.array)
+		}
+		if dtype != mlx.DTypeFloat32 {
+			out = out.AsType(dtype)
+		}
+		return out
+	}
 
 	B := len(b.SeqOffsets)
 	L := b.InputIDs.Dim(1)
@@ -481,6 +644,26 @@ func (m AttentionMask) AsArray(b *batch.Batch, K int, dtype mlx.DType) *mlx.Arra
 		out = out.AsType(dtype)
 	}
 	return out
+}
+
+// attentionPositions builds broadcastable logical Q and K coordinates. Only
+// per-sequence offsets cross from the host; L-by-K comparisons stay on device.
+func attentionPositions(b *batch.Batch, K int) (q, k *mlx.Array) {
+	B := len(b.SeqOffsets)
+	L := b.InputIDs.Dim(1)
+	oldest := make([]int32, B)
+	for i, off := range b.SeqOffsets {
+		oldest[i] = int32(max(0, int(off)+L-K))
+	}
+	q = mlx.Add(
+		mlx.Reshape(mlx.FromValues(b.SeqOffsets, B), int32(B), 1, 1),
+		mlx.Reshape(mlx.Arange(0, float64(L), 1, mlx.DTypeInt32), 1, int32(L), 1),
+	)
+	k = mlx.Add(
+		mlx.Reshape(mlx.FromValues(oldest, B), int32(B), 1, 1),
+		mlx.Reshape(mlx.Arange(0, float64(K), 1, mlx.DTypeInt32), 1, 1, int32(K)),
+	)
+	return q, k
 }
 
 // QPaddingMask returns an additive [B, 1, L, 1] mask that blocks
@@ -541,6 +724,43 @@ func SlidingWindowMask(b *batch.Batch, K, window int, dtype mlx.DType) Attention
 		return AttentionMask{}
 	}
 	out := mlx.FromValues(vals, B, 1, L, K)
+	if dtype != mlx.DTypeFloat32 {
+		out = out.AsType(dtype)
+	}
+	return ArrayMask(out)
+}
+
+// IntersectSlidingWindow adds the cache's sliding-window restriction using
+// the mask construction policy selected by the model. Long prefills opt in to
+// device construction through DeviceCausalMask; other models keep their
+// existing host construction path.
+func (m AttentionMask) IntersectSlidingWindow(b *batch.Batch, K, window int, dtype mlx.DType) AttentionMask {
+	if m.deviceCausal {
+		return m.Intersect(SlidingWindowMaskDevice(b, K, window, dtype))
+	}
+	return m.Intersect(SlidingWindowMask(b, K, window, dtype))
+}
+
+// SlidingWindowMaskDevice computes the same logical restriction as
+// SlidingWindowMask without uploading a token-by-key host tensor.
+func SlidingWindowMaskDevice(b *batch.Batch, K, window int, dtype mlx.DType) AttentionMask {
+	if window <= 0 {
+		return AttentionMask{}
+	}
+	L := b.InputIDs.Dim(1)
+	needed := false
+	for _, offset := range b.SeqOffsets {
+		if int(offset)+L-window > max(0, int(offset)+L-K) {
+			needed = true
+			break
+		}
+	}
+	if !needed {
+		return AttentionMask{}
+	}
+	q, k := attentionPositions(b, K)
+	minKey := mlx.Sub(q, mlx.FromValue(window-1))
+	out := mlx.ExpandDims(mlx.Where(k.Less(minKey), mlx.FromValue(float32(math.Inf(-1))), mlx.FromValue(float32(0))), 1)
 	if dtype != mlx.DTypeFloat32 {
 		out = out.AsType(dtype)
 	}

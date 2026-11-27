@@ -54,6 +54,79 @@ func TestRecurrentCacheRestoreExactOffset(t *testing.T) {
 	})
 }
 
+func TestRecurrentCacheCompactsRestoredState(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		c := NewRecurrentCache(3, 12, 4, 8, 8)
+		defer c.Free()
+		b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 3), SeqQueryLens: []int32{3}}
+		c.Get(b, mlx.DTypeFloat16)
+		state := c.State()
+		c.Put(b, []*mlx.Array{state[0]}, []*mlx.Array{state[1]})
+		if got := c.PrepareCompaction(); got != nil {
+			t.Fatal("normal Put should not require compaction")
+		}
+
+		compactSnap := c.Snapshot(0)
+		if !c.Restore(compactSnap, 3) {
+			t.Fatal("compact snapshot restore failed")
+		}
+		compactSnap.Close()
+		if got := c.PrepareCompaction(); got != nil {
+			t.Fatal("restoring a normal snapshot should not copy it")
+		}
+
+		c.PrepareSnapshots([]int{3, 4, 5})
+		shared := mlx.Zeros(mlx.DTypeFloat32, 2, 1, 4, 8, 8)
+		interior := make([]*mlx.Array, 2)
+		for i := range interior {
+			interior[i] = mlx.SliceStartStop(shared,
+				[]int32{int32(i), 0, 0, 0, 0},
+				[]int32{int32(i + 1), 1, 4, 8, 8}).Reshape(1, 4, 8, 8)
+		}
+		conv := []*mlx.Array{
+			mlx.Zeros(mlx.DTypeFloat16, 1, 3, 12),
+			mlx.Zeros(mlx.DTypeFloat16, 1, 3, 12),
+			mlx.Zeros(mlx.DTypeFloat16, 1, 3, 12),
+		}
+		delta := []*mlx.Array{interior[0], interior[1], mlx.Zeros(mlx.DTypeFloat32, 1, 4, 8, 8)}
+		c.Put(b, conv, delta)
+		snaps := c.TakeSnapshots()
+		if got := c.PrepareCompaction(); got != nil {
+			t.Fatal("the final kernel state should not require compaction")
+		}
+		if !c.Restore(snaps[1], 4) {
+			t.Fatal("interior snapshot restore failed")
+		}
+		mlx.Scoped(func() {
+			compact := c.PrepareCompaction()
+			if compact == nil {
+				t.Fatal("restored state was not compacted")
+			}
+			mlx.Eval(compact)
+			c.CommitCompaction(compact)
+			if got := c.PrepareCompaction(); got != nil {
+				t.Fatal("state was compacted twice")
+			}
+		})
+		if got := c.Offset(); got != 4 {
+			t.Fatalf("offset after compaction = %d, want 4", got)
+		}
+		if !c.Restore(snaps[1], 4) {
+			t.Fatal("second restore failed")
+		}
+		state = c.State()
+		c.Put(b, []*mlx.Array{state[0]}, []*mlx.Array{state[1]})
+		if got := c.PrepareCompaction(); got != nil {
+			t.Fatal("Put should replace the restored state without compaction")
+		}
+		for _, snap := range snaps {
+			if snap != nil {
+				snap.Close()
+			}
+		}
+	})
+}
+
 func TestRecurrentCacheGetLazyInit(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		c := NewRecurrentCache(3, 4, 2, 4, 4)

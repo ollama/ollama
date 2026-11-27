@@ -1253,6 +1253,11 @@ func IsCodexDesktopConnected() C.bool {
 	return C._Bool(codexDesktop.OllamaConfigured())
 }
 
+//export IsCodexDesktopDisconnectPending
+func IsCodexDesktopDisconnectPending() C.bool {
+	return C._Bool(!codexDesktop.OllamaConfigured() && codexDesktop.RestorePending())
+}
+
 //export IsCodexDesktopRunning
 func IsCodexDesktopRunning() C.bool {
 	return C._Bool(codexDesktop.Running())
@@ -1267,11 +1272,8 @@ func CodexDesktopRequestCount() C.ulonglong {
 func SetCodexDesktopConnected(connected, restartConfirmed C.bool) C.bool {
 	shouldConnect := connected != C._Bool(false)
 	confirmed := restartConfirmed != C._Bool(false)
-	if err := setCodexDesktopConnection(shouldConnect, confirmed); err != nil {
-		slog.Warn("failed to change ChatGPT integration", "connected", shouldConnect, "error", err)
-		return C._Bool(false)
-	}
-	return C._Bool(true)
+	result := changeCodexDesktopConnection(shouldConnect, confirmed)
+	return C._Bool(result.Error == "")
 }
 
 //export IsClaudeGatewayConfigured

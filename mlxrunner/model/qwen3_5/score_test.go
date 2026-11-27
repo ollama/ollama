@@ -44,32 +44,35 @@ func TestUnembedCandidates(t *testing.T) {
 }
 
 func TestUnembedQuantizedCandidates(t *testing.T) {
-	for _, mode := range []string{"affine", "nvfp4"} {
-		mlxtest.RunSubtest(t, mode, func(t *mlxtest.T) {
+	for _, tc := range []struct {
+		mode            string
+		groupSize, bits int
+	}{{"affine", 64, 4}, {"mxfp8", 32, 8}, {"nvfp4", 16, 4}} {
+		mlxtest.RunSubtest(t, tc.mode, func(t *mlxtest.T) {
 			mlx.Scoped(func() {
 				values := make([]float32, 32*64)
 				for i := range values {
 					values[i] = float32(math.Sin(float64(i)))
 				}
 				weight := mlx.FromValues(values, 32, 64).AsType(mlx.DTypeBFloat16)
-				groupSize := 64
-				if mode == "nvfp4" {
-					groupSize = 16
-				}
 				bias := mlx.FromValues(values[:32], 32).AsType(mlx.DTypeBFloat16)
-				head := nn.NewQuantizedLinear(weight, bias, groupSize, 4, mode)
-				if mode == "nvfp4" {
+				head := nn.NewQuantizedLinear(weight, bias, tc.groupSize, tc.bits, tc.mode)
+				if tc.mode == "nvfp4" {
 					head.GlobalScale = mlx.FromValues([]float32{0.5}, 1)
 				}
 				m := &Model{LMHead: head}
 				hidden := mlx.FromValues(values[:64], 1, 1, 64).AsType(mlx.DTypeBFloat16)
 				ids := mlx.FromValues([]int32{31, 2, 0}, 3)
-				got := m.UnembedCandidates(hidden, ids).AsType(mlx.DTypeFloat32)
-				want := m.Unembed(hidden).Reshape(-1).TakeAxis(ids, 0).AsType(mlx.DTypeFloat32)
+				got := m.UnembedCandidates(hidden, ids)
+				dense := mlx.Dequantize(head.Weight, head.Scales, head.QBiases, tc.groupSize, tc.bits, tc.mode, head.GlobalScale).AsType(mlx.DTypeFloat32)
+				want := hidden.AsType(mlx.DTypeFloat32).Matmul(dense.Transpose(1, 0)).Reshape(-1).Add(bias.AsType(mlx.DTypeFloat32)).TakeAxis(ids, 0)
 				mlx.Eval(got, want)
+				if got.DType() != mlx.DTypeFloat32 || got.Dim(0) != 3 {
+					t.Fatal("quantized candidate logits must be FP32")
+				}
 				actual, expected := got.Floats(), want.Floats()
 				for i, v := range actual {
-					if v != expected[i] {
+					if math.Abs(float64(v-expected[i])) > 1e-4 {
 						t.Fatalf("candidate %d: selected=%g full=%g", i, v, expected[i])
 					}
 				}

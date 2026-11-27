@@ -2,6 +2,7 @@ package decision
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -13,11 +14,12 @@ func TestPublisherPrompts(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"model":"decision","state":"Paid €20 & <tag>. Literal \\u2028, quote \" and colon: comma,","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	// Publisher contracts: Together's examples/decide.py payload() and Bespoke's
-	// parallel_schema.prepare_prompts(), with false/true mapped to No/Yes.
+	// Publisher contracts: Together's examples/decide.py payload(), with
+	// false/true described as No/Yes, and Bespoke's native_schema(), which
+	// describes only the choices the request describes.
 	for _, tc := range []struct{ renderer, want string }{
 		{"tev1", `{"state": "Paid €20 & <tag>. Literal \\u2028, quote \" and colon: comma,", "question": "Refund requested?", "options": [{"label": "A", "key": "false", "description": "No"}, {"label": "B", "key": "true", "description": "Yes"}]}`},
-		{"", `{"context": "Paid €20 & \u003ctag\u003e. Literal \\u2028, quote \" and colon: comma,", "schema": [{"name": "refund", "description": "Refund requested?", "choices": [{"code": "A", "value": false, "description": "No"}, {"code": "B", "value": true, "description": "Yes"}]}]}` + "\n\nRequested field: \"refund\""},
+		{"", `{"context": "Paid €20 & \u003ctag\u003e. Literal \\u2028, quote \" and colon: comma,", "schema": [{"name": "refund", "description": "Refund requested?", "choices": [{"code": "A", "value": false}, {"code": "B", "value": true}]}]}` + "\n\nRequested field: \"refund\""},
 	} {
 		t.Run(tc.renderer, func(t *testing.T) {
 			compiled, err := Compile(req, tc.renderer)
@@ -32,10 +34,6 @@ func TestPublisherPrompts(t *testing.T) {
 			}
 		})
 	}
-	got, err := promptJSON("\u2028\u2029\\u2028\\u2029")
-	if want := "\"\u2028\u2029\\\\u2028\\\\u2029\""; err != nil || got != want {
-		t.Fatalf("Unicode escaping = %q, %v; want %q", got, err, want)
-	}
 }
 
 func TestTevQuestions(t *testing.T) {
@@ -48,9 +46,10 @@ func TestTevQuestions(t *testing.T) {
 	if err := compiled.Render(func(messages []api.Message) (string, error) { return messages[0].Content, nil }); err != nil {
 		t.Fatal(err)
 	}
+	descriptions := [][]string{{"Charges and refunds", "technical"}, {"No", "Yes"}, {"Routine", "Urgent", "Emergency"}}
 	for i, row := range compiled.Request.Rows {
 		var payload struct {
-			State    string
+			State    json.RawMessage
 			Question string
 			Options  []struct{ Label, Key, Description string }
 		}
@@ -58,19 +57,23 @@ func TestTevQuestions(t *testing.T) {
 			t.Fatal(err)
 		}
 		f := compiled.fields[i]
-		if payload.State != `{"frames":["first","second"]}` || payload.Question != f.Description || len(payload.Options) != len(f.Choices) {
+		if string(payload.State) != `{"frames": ["first", "second"]}` || payload.Question != f.Description || len(payload.Options) != len(f.Choices) {
 			t.Fatalf("question %d was not compiled independently: %s", i, row.Prompt)
 		}
 		for j, option := range payload.Options {
-			if option.Label != row.Candidates[j] || option.Description != f.Choices[j].Description || option.Key == "" {
+			if option.Label != row.Candidates[j] || option.Description != descriptions[i][j] || option.Key == "" {
 				t.Fatalf("question %d option %d: %+v", i, j, option)
 			}
 		}
 	}
 	for _, count := range []int{24, 25, 26} {
-		q, _ := req.Questions.Get("urgency")
-		q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, count-1) + `]`)
-		req.Questions.Set("urgency", q)
+		q, _ := req.Questions.Get("department")
+		criteria := make([]string, count)
+		for i := range criteria {
+			criteria[i] = fmt.Sprintf(`"%d":"x"`, i)
+		}
+		q.Criteria = json.RawMessage(`{` + strings.Join(criteria, ",") + `}`)
+		req.Questions.Set("department", q)
 		_, err := Compile(req, "tev1")
 		if (err == nil) != (count == 24) {
 			t.Errorf("Tev1 accepted %d candidates: %v", count, err)

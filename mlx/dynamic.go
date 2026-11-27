@@ -7,10 +7,10 @@ import "C"
 
 import (
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -46,16 +46,27 @@ func LoadedLibraryPath() (string, error) {
 	return "", fmt.Errorf("MLX dynamic library not loaded")
 }
 
-// tryLoadFromDir searches a directory for the mlxc shared library and loads it.
-func tryLoadFromDir(dir string) bool {
+// mlxLibraryCandidates returns the mlxc shared library in dir, if present.
+func mlxLibraryCandidates(dir string) []string {
 	// On Windows, MSVC produces mlxc.dll (no lib prefix)
 	// On Unix, it's libmlxc.so or libmlxc.dylib
-	pattern := "libmlxc.*"
-	if runtime.GOOS == "windows" {
-		pattern = "mlxc.*"
+	name := "libmlxc.so"
+	switch runtime.GOOS {
+	case "windows":
+		name = "mlxc.dll"
+	case "darwin":
+		name = "libmlxc.dylib"
 	}
-	matches, err := fs.Glob(os.DirFS(dir), pattern)
-	if err != nil || len(matches) == 0 {
+	if !fileExists(filepath.Join(dir, name)) {
+		return nil
+	}
+	return []string{name}
+}
+
+// tryLoadFromDir searches a directory for the mlxc shared library and loads it.
+func tryLoadFromDir(dir string) bool {
+	matches := mlxLibraryCandidates(dir)
+	if len(matches) == 0 {
 		return false
 	}
 	for _, match := range matches {
@@ -167,24 +178,128 @@ func repoBuildDirs() []string {
 	return dirs
 }
 
-// prependLibraryPath prepends dir to the platform's dynamic library search
-// path so the linker finds colocated libmlx before any stale copies.
-// Called once after successful library load.
-func prependLibraryPath(dir string) {
-	var envVar string
+func libraryPathEnvVar() string {
 	switch runtime.GOOS {
+	case "windows":
+		return "PATH"
 	case "darwin":
-		envVar = "DYLD_LIBRARY_PATH"
+		return "DYLD_LIBRARY_PATH"
 	case "linux":
-		envVar = "LD_LIBRARY_PATH"
+		return "LD_LIBRARY_PATH"
 	default:
-		return
+		return ""
+	}
+}
+
+// prependLibraryPaths prepends dirs to the platform's dynamic library search
+// path so MLX and any shared sibling backend dependencies resolve before stale
+// system copies. It returns a restore function for failed speculative loads.
+func prependLibraryPaths(dirs ...string) func() {
+	envVar := libraryPathEnvVar()
+	if envVar == "" {
+		return func() {}
+	}
+	oldValue, hadValue := os.LookupEnv(envVar)
+
+	var paths []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		if !seen[path] {
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+	for _, dir := range dirs {
+		add(dir)
 	}
 	if existing := os.Getenv(envVar); existing != "" {
-		os.Setenv(envVar, dir+string(filepath.ListSeparator)+existing)
-	} else {
-		os.Setenv(envVar, dir)
+		for _, dir := range filepath.SplitList(existing) {
+			add(dir)
+		}
 	}
+	if len(paths) == 0 {
+		return func() {}
+	}
+	os.Setenv(envVar, strings.Join(paths, string(filepath.ListSeparator)))
+	return func() {
+		if hadValue {
+			os.Setenv(envVar, oldValue)
+		} else {
+			os.Unsetenv(envVar)
+		}
+	}
+}
+
+func mlxLibraryPathsForDir(dir string) []string {
+	paths := []string{dir}
+	if depDir, ok := dependencyDir(dir); ok {
+		paths = append(paths, depDir)
+	}
+	return paths
+}
+
+func tryLoadFromMLXDir(dir string) bool {
+	restore := prependLibraryPaths(mlxLibraryPathsForDir(dir)...)
+	preloadDependencies(dir)
+	if tryLoadFromDir(dir) {
+		return true
+	}
+	restore()
+	return false
+}
+
+// preloadDependencies loads, by full path, the libraries the MLX library in
+// dir needs from the variant's dependency directory. On Linux the loader reads
+// the library search path only at process start, so prependLibraryPaths
+// reaches child processes alone. A bundled library whose runpath is only its
+// own directory would otherwise resolve these through the system loader
+// cache, which may hold a mismatched copy of the same soname; once loaded,
+// later lookups by soname bind to the bundled copies, so the handles stay open
+// for the life of the process. A failure here surfaces as the MLX library's
+// own load error.
+func preloadDependencies(dir string) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	depDir, ok := dependencyDir(dir)
+	if !ok {
+		return
+	}
+	for _, lib := range mlxLibraryCandidates(dir) {
+		for _, path := range sharedDependencies(filepath.Join(dir, lib), depDir) {
+			cPath := C.CString(path)
+			var handle C.mlx_dynamic_handle
+			C.mlx_dynamic_load(&handle, cPath)
+			C.free(unsafe.Pointer(cPath))
+		}
+	}
+}
+
+func prependLoadedLibraryPath() {
+	if initLoadedPath == "" {
+		return
+	}
+	dir := filepath.Dir(initLoadedPath)
+	if strings.HasPrefix(filepath.Base(dir), "mlx_") {
+		prependLibraryPaths(mlxLibraryPathsForDir(dir)...)
+		setBundledCUDAToolkitPath(dir)
+	} else {
+		prependLibraryPaths(dir)
+	}
+}
+
+func setBundledCUDAToolkitPath(dir string) {
+	cudaPath, ok := cudaToolkitDirForMLXDir(dir)
+	if !ok {
+		return
+	}
+	os.Setenv("CUDA_PATH", cudaPath)
+	os.Setenv("CUDA_HOME", cudaPath)
+	slog.Debug("MLX CUDA headers", "CUDA_PATH", cudaPath)
 }
 
 func init() {
@@ -208,13 +323,13 @@ func init() {
 		return
 	}
 
-	prependLibraryPath(filepath.Dir(initLoadedPath))
+	prependLoadedLibraryPath()
 }
 
 func findMLXLibrary(forcedVariant string) bool {
 	for _, root := range libOllamaRoots() {
 		if forcedVariant != "" {
-			if tryLoadFromDir(filepath.Join(root, forcedVariant)) {
+			if tryLoadFromMLXDir(filepath.Join(root, forcedVariant)) {
 				return true
 			}
 		} else {
@@ -229,6 +344,10 @@ func findMLXLibrary(forcedVariant string) bool {
 	return false
 }
 
+// mlxVariantPattern matches the variant directory names we ship, e.g.
+// mlx_metal_v4, mlx_cuda_v13.
+var mlxVariantPattern = regexp.MustCompile(`^mlx_(metal|cuda)_v\d+$`)
+
 // tryLoadFromMLXSubdirs globs for mlx_* subdirs within dir, filters out
 // incompatible variants, tries the remainder in reverse sorted order (so
 // higher-versioned variants are preferred), and returns true on first
@@ -241,11 +360,15 @@ func tryLoadFromMLXSubdirs(dir string) bool {
 	// Reverse sort: mlx_metal_v4 before mlx_metal_v3, mlx_cuda_v13 before v12
 	sort.Sort(sort.Reverse(sort.StringSlice(mlxDirs)))
 	for _, mlxDir := range mlxDirs {
+		if !mlxVariantPattern.MatchString(filepath.Base(mlxDir)) {
+			slog.Debug("skipping unrecognized MLX variant", "dir", mlxDir)
+			continue
+		}
 		if !isCompatibleMLXVariant(filepath.Base(mlxDir)) {
 			slog.Debug("skipping incompatible MLX variant", "dir", mlxDir)
 			continue
 		}
-		if tryLoadFromDir(mlxDir) {
+		if tryLoadFromMLXDir(mlxDir) {
 			return true
 		}
 	}

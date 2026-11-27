@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
@@ -71,12 +72,13 @@ func TestPiThinkingDiscoveryTimeout(t *testing.T) {
 	client.inventory = newModelInventory(client.apiClient)
 	client.inventory.loaded = true
 	thinking := &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}
-	client.inventory.models = []LaunchModel{{Name: "custom-local", Thinking: thinking}}
-	models := client.resolveRunModels(t.Context(), "pi", []string{"custom-local"})
-	if len(models) != 1 || transport.calls != 1 {
-		t.Fatalf("models=%v show calls=%d", models, transport.calls)
+	client.inventory.models = []LaunchModel{{Name: "custom-local", Thinking: thinking, ContextLength: 32768, Capabilities: []model.Capability{model.CapabilityCompletion}}}
+	budget := 5 * time.Second
+	selected, _, err := client.piTargetModel(t.Context(), "custom-local", &budget, nil, true)
+	if err != nil || transport.calls != 1 {
+		t.Fatalf("model=%v show calls=%d err=%v", selected, transport.calls, err)
 	}
-	if diff := cmp.Diff(thinking, models[0].Thinking); diff != "" {
+	if diff := cmp.Diff(thinking, selected.Thinking); diff != "" {
 		t.Fatalf("failed discovery lost existing metadata:\n%s", diff)
 	}
 }
@@ -140,7 +142,7 @@ func TestPiEditRefreshesThinkingControls(t *testing.T) {
 		if len(entries) != 2 {
 			t.Fatalf("model count=%d, want 2", len(entries))
 		}
-		managed := entries[0].(map[string]any)
+		managed := entries[1].(map[string]any)
 		want := createConfig(models[0])["thinkingLevelMap"]
 		if want == nil {
 			t.Fatal("expected thinking controls")
@@ -153,7 +155,7 @@ func TestPiEditRefreshesThinkingControls(t *testing.T) {
 		}
 		oldProviders := before["providers"].(map[string]any)
 		oldManual := oldProviders["ollama"].(map[string]any)["models"].([]any)[1]
-		if diff := cmp.Diff(oldManual, entries[1]); diff != "" {
+		if diff := cmp.Diff(oldManual, entries[0]); diff != "" {
 			t.Errorf("manual entry changed:\n%s", diff)
 		}
 		if diff := cmp.Diff(oldProviders["other"], providers["other"]); diff != "" {

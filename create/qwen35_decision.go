@@ -14,7 +14,7 @@ func newQwen35DecisionImportTransform(json.RawMessage) (quantizePolicy, error) {
 func (qwen35DecisionImportTransform) quantizationType(name string, shape []int32, requested string) string {
 	// Only backbone tensors are quantized. Decision heads and any
 	// lexical output embeddings retain source precision.
-	if !strings.HasPrefix(name, "model.") {
+	if !strings.HasPrefix(name, "model.") && !strings.HasPrefix(name, "layers.") {
 		return ""
 	}
 	return qwen35ImportTransform{}.quantizationType(name, shape, requested)

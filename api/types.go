@@ -1,13 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -428,6 +431,30 @@ type ToolProperty struct {
 	Enum        []any              `json:"enum,omitempty"`
 	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
 	Required    []string           `json:"required,omitempty"`
+
+	Extra map[string]any `json:"-"`
+}
+
+var toolPropertyKeys = []string{"anyOf", "type", "items", "description", "enum", "properties", "required"}
+
+func (tp *ToolProperty) UnmarshalJSON(data []byte) error {
+	type plain ToolProperty
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	extra, err := unmodeledSchemaKeys(data, toolPropertyKeys)
+	if err != nil {
+		return err
+	}
+	p.Extra = extra
+	*tp = ToolProperty(p)
+	return nil
+}
+
+func (tp ToolProperty) MarshalJSON() ([]byte, error) {
+	type plain ToolProperty
+	return marshalWithExtra(plain(tp), tp.Extra, toolPropertyKeys)
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string
@@ -481,6 +508,100 @@ type ToolFunctionParameters struct {
 	Items      any                `json:"items,omitempty"`
 	Required   []string           `json:"required,omitempty"`
 	Properties *ToolPropertiesMap `json:"properties"`
+
+	Extra map[string]any `json:"-"`
+}
+
+var toolFunctionParametersKeys = []string{"type", "$defs", "items", "required", "properties"}
+
+func (t *ToolFunctionParameters) UnmarshalJSON(data []byte) error {
+	type plain ToolFunctionParameters
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	extra, err := unmodeledSchemaKeys(data, toolFunctionParametersKeys)
+	if err != nil {
+		return err
+	}
+	p.Extra = extra
+	*t = ToolFunctionParameters(p)
+	return nil
+}
+
+func (t ToolFunctionParameters) MarshalJSON() ([]byte, error) {
+	type plain ToolFunctionParameters
+	return marshalWithExtra(plain(t), t.Extra, toolFunctionParametersKeys)
+}
+
+// TODO(jberg5): once go.mod is on Go 1.27, replace isModeledKey,
+// unmodeledSchemaKeys and marshalWithExtra with an encoding/json/v2
+// `json:",embed"` jsontext.Value field, which also keeps the client's key order.
+func isModeledKey(key string, known []string) bool {
+	return slices.ContainsFunc(known, func(k string) bool { return strings.EqualFold(k, key) })
+}
+
+func unmodeledSchemaKeys(data []byte, known []string) (map[string]any, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	var extra map[string]any
+	for k, v := range raw {
+		if isModeledKey(k, known) {
+			continue
+		}
+		dec := json.NewDecoder(bytes.NewReader(v))
+		dec.UseNumber()
+		var val any
+		if err := dec.Decode(&val); err != nil {
+			return nil, err
+		}
+		if extra == nil {
+			extra = make(map[string]any)
+		}
+		extra[k] = val
+	}
+	return extra, nil
+}
+
+func marshalWithExtra(v any, extra map[string]any, known []string) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	out := bytes.TrimRight(buf.Bytes(), "\n")
+	if len(extra) == 0 {
+		return out, nil
+	}
+	if len(out) < 2 || out[len(out)-1] != '}' {
+		return nil, fmt.Errorf("marshalWithExtra: %T did not marshal to a JSON object", v)
+	}
+	res := bytes.NewBuffer(append([]byte(nil), out[:len(out)-1]...))
+	empty := len(out) == 2
+	for _, k := range slices.Sorted(maps.Keys(extra)) {
+		if isModeledKey(k, known) {
+			continue
+		}
+		var vb bytes.Buffer
+		ve := json.NewEncoder(&vb)
+		ve.SetEscapeHTML(false)
+		if err := ve.Encode(extra[k]); err != nil {
+			return nil, fmt.Errorf("marshal schema keyword %q: %w", k, err)
+		}
+		kb, _ := json.Marshal(k)
+		if !empty {
+			res.WriteByte(',')
+		}
+		empty = false
+		res.Write(kb)
+		res.WriteByte(':')
+		res.Write(bytes.TrimRight(vb.Bytes(), "\n"))
+	}
+	res.WriteByte('}')
+	return res.Bytes(), nil
 }
 
 func (t *ToolFunctionParameters) String() string {
@@ -599,6 +720,48 @@ type Runner struct {
 	UseMMap         *bool `json:"use_mmap,omitempty"`
 	NumThread       int   `json:"num_thread,omitempty"`
 	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
+}
+
+// SystemOneRequest is the request passed to [Client.SystemOne]. It asks a
+// decision model typed questions about a state.
+type SystemOneRequest struct {
+	Model     string              `json:"model"`
+	Runner    string              `json:"runner,omitempty"`
+	State     json.RawMessage     `json:"state"`
+	Images    []ImageData         `json:"images,omitempty"`
+	Videos    []json.RawMessage   `json:"videos,omitempty"`
+	Questions *SystemOneQuestions `json:"questions"`
+	KeepAlive *Duration           `json:"keep_alive,omitempty"`
+}
+
+// SystemOneQuestions keeps questions in request order, which is the order of
+// the answers.
+type SystemOneQuestions = orderedmap.Map[string, SystemOneQuestion]
+
+// SystemOneQuestion is a noul (yes/no), choice, or score question. Criteria is
+// an object for noul and choice questions and an ordered array for score.
+type SystemOneQuestion struct {
+	Type         string          `json:"type"`
+	Instructions json.RawMessage `json:"instructions"`
+	Criteria     json.RawMessage `json:"criteria,omitempty"`
+}
+
+// SystemOneResponse is the response returned by [Client.SystemOne]. Each
+// answer's type field says which answer fields it has.
+type SystemOneResponse struct {
+	Model                 string            `json:"model"`
+	Answers               *SystemOneAnswers `json:"answers"`
+	Usage                 SystemOneUsage    `json:"usage"`
+	PromptEvalCachedCount *int              `json:"prompt_eval_cached_count,omitempty"`
+}
+
+// SystemOneAnswers keeps answers in request order.
+type SystemOneAnswers = orderedmap.Map[string, json.RawMessage]
+
+// SystemOneUsage counts the tokens evaluated and generated to answer.
+type SystemOneUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -762,25 +925,27 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	Thinking      *model.Thinking    `json:"thinking,omitempty"`
-	License       string             `json:"license,omitempty"`
-	Modelfile     string             `json:"modelfile,omitempty"`
-	Parameters    string             `json:"parameters,omitempty"`
-	Template      string             `json:"template,omitempty"`
-	System        string             `json:"system,omitempty"`
-	Renderer      string             `json:"renderer,omitempty"`
-	Parser        string             `json:"parser,omitempty"`
-	Details       ModelDetails       `json:"details,omitempty"`
-	Messages      []Message          `json:"messages,omitempty"`
-	RemoteModel   string             `json:"remote_model,omitempty"`
-	RemoteHost    string             `json:"remote_host,omitempty"`
-	ModelInfo     map[string]any     `json:"model_info"`
-	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
-	Tensors       []Tensor           `json:"tensors,omitempty"`
-	Capabilities  []model.Capability `json:"capabilities,omitempty"`
-	Manifests     []ManifestSummary  `json:"manifests,omitempty"`
-	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
-	Requires      string             `json:"requires,omitempty"`
+	Thinking       *model.Thinking    `json:"thinking,omitempty"`
+	License        string             `json:"license,omitempty"`
+	Modelfile      string             `json:"modelfile,omitempty"`
+	Parameters     string             `json:"parameters,omitempty"`
+	Template       string             `json:"template,omitempty"`
+	System         string             `json:"system,omitempty"`
+	Renderer       string             `json:"renderer,omitempty"`
+	Parser         string             `json:"parser,omitempty"`
+	TemplateSource string             `json:"template_source,omitempty"`
+	Details        ModelDetails       `json:"details,omitempty"`
+	Messages       []Message          `json:"messages,omitempty"`
+	RemoteModel    string             `json:"remote_model,omitempty"`
+	RemoteHost     string             `json:"remote_host,omitempty"`
+	ModelInfo      map[string]any     `json:"model_info"`
+	ProjectorInfo  map[string]any     `json:"projector_info,omitempty"`
+	Tensors        []Tensor           `json:"tensors,omitempty"`
+	Capabilities   []model.Capability `json:"capabilities,omitempty"`
+	Voices         []string           `json:"voices,omitempty"`
+	Manifests      []ManifestSummary  `json:"manifests,omitempty"`
+	ModifiedAt     time.Time          `json:"modified_at,omitempty"`
+	Requires       string             `json:"requires,omitempty"`
 }
 
 // ManifestSummary describes one child manifest available through a model tag.
