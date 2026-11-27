@@ -7,7 +7,7 @@ concurrency:
   # For non-PR pushes, concurrency.group needs to be unique for every distinct
   # CI run we want to have happen. Use run_id, which in practice means all
   # non-PR CI runs will be allowed to run without preempting each other.
-  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 on:
