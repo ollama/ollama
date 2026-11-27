@@ -20,6 +20,9 @@ type encodeChunk struct {
 }
 
 func (t *Tokenizer) normalize(s string) string {
+	for _, stage := range t.normalizerStages {
+		s = stage.apply(s)
+	}
 	if t.normalizeNFC {
 		s = norm.NFC.String(s)
 	}
@@ -29,7 +32,7 @@ func (t *Tokenizer) normalize(s string) string {
 	return s
 }
 
-func (t *Tokenizer) forEachPartChunk(part string, fn func(encodeChunk)) {
+func (t *Tokenizer) forEachPartChunk(part string, atStart bool, fn func(encodeChunk)) {
 	if t.pretokenizer == nil {
 		if t.metaspace != nil && t.metaspace.Split {
 			start := 0
@@ -49,8 +52,16 @@ func (t *Tokenizer) forEachPartChunk(part string, fn func(encodeChunk)) {
 	parts := []string{part}
 	for _, stage := range t.pretokenizer {
 		var next []string
-		for _, text := range parts {
-			next = append(next, stage.split(text)...)
+		for i, text := range parts {
+			if stage.metaspace != nil {
+				text = strings.ReplaceAll(text, " ", "▁")
+				if atStart && i == 0 && !strings.HasPrefix(text, "▁") {
+					text = "▁" + text
+				}
+				next = append(next, text)
+			} else {
+				next = append(next, stage.split(text)...)
+			}
 		}
 		parts = next
 	}
@@ -109,12 +120,12 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 	// Fast path: encode sequentially without materializing chunk slices.
 	if len(s) < encodeParallelMinInputBytes || runtime.GOMAXPROCS(0) == 1 {
 		var ids []int32
-		for _, part := range parts {
+		for i, part := range parts {
 			if part.isSpecial {
 				ids = t.appendEncodedChunk(ids, part)
 				continue
 			}
-			t.forEachPartChunk(part.text, func(c encodeChunk) {
+			t.forEachPartChunk(part.text, i == 0, func(c encodeChunk) {
 				ids = t.appendEncodedChunk(ids, c)
 			})
 		}
@@ -127,12 +138,12 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 
 	// For large inputs collect chunks to enable parallel processing.
 	var allChunks []encodeChunk
-	for _, part := range parts {
+	for i, part := range parts {
 		if part.isSpecial {
 			allChunks = append(allChunks, part)
 			continue
 		}
-		t.forEachPartChunk(part.text, func(c encodeChunk) {
+		t.forEachPartChunk(part.text, i == 0, func(c encodeChunk) {
 			allChunks = append(allChunks, c)
 		})
 	}

@@ -6,10 +6,15 @@ import (
 )
 
 // Decode converts token IDs back to text
-func (t *Tokenizer) Decode(ids []int32) string {
+func (t *Tokenizer) Decode(ids []int32) string { return t.decode(ids, true) }
+
+// DecodeRaw retains the space prefixes needed after the first generated token.
+func (t *Tokenizer) DecodeRaw(ids []int32) string { return t.decode(ids, false) }
+
+func (t *Tokenizer) decode(ids []int32, trimFirst bool) string {
 	var sb strings.Builder
 
-	for _, id := range ids {
+	for index, id := range ids {
 		if int(id) >= len(t.vocab.Values) {
 			continue
 		}
@@ -19,7 +24,11 @@ func (t *Tokenizer) Decode(ids []int32) string {
 		switch t.typ {
 		case TokenizerSentencePiece:
 			// SentencePiece style: replace ▁ with space, decode byte tokens
-			token = strings.ReplaceAll(token, "▁", " ")
+			if trimFirst && index == 0 && t.pipelineMetaspace != nil {
+				token = strings.ReplaceAll(token, "▁", "")
+			} else {
+				token = strings.ReplaceAll(token, "▁", " ")
+			}
 			// Handle byte fallback tokens like <0x0D>
 			if len(token) == 6 && token[0] == '<' && token[1] == '0' && token[2] == 'x' && token[5] == '>' {
 				if v, err := strconv.ParseUint(token[3:5], 16, 8); err == nil {
