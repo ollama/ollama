@@ -362,7 +362,7 @@ func TestQwenParserStreaming(t *testing.T) {
 
 			for i, step := range tc.steps {
 				parser.acc.WriteString(step.input)
-				gotEvents := parser.parseEvents()
+				gotEvents := parser.parseEvents(false)
 
 				if len(gotEvents) == 0 && len(step.wantEvents) == 0 {
 					// avoid deep equal on empty vs. nil slices
