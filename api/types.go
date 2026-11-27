@@ -239,7 +239,8 @@ type ToolCallFunction struct {
 
 // ToolCallFunctionArguments holds tool call arguments in insertion order.
 type ToolCallFunctionArguments struct {
-	om *orderedmap.Map[string, any]
+	om    *orderedmap.Map[string, any]
+	order *argumentOrder
 }
 
 // NewToolCallFunctionArguments creates a new empty ToolCallFunctionArguments.
@@ -261,7 +262,7 @@ func (t *ToolCallFunctionArguments) Set(key string, value any) {
 		return
 	}
 	if t.om == nil {
-		t.om = orderedmap.New[string, any]()
+		*t = NewToolCallFunctionArguments()
 	}
 	t.om.Set(key, value)
 }
@@ -294,20 +295,23 @@ func (t *ToolCallFunctionArguments) String() string {
 	if t == nil || t.om == nil {
 		return "{}"
 	}
-	bts, _ := json.Marshal(t.om)
+	bts, _ := t.MarshalJSON()
 	return string(bts)
 }
 
 func (t *ToolCallFunctionArguments) UnmarshalJSON(data []byte) error {
-	t.om = orderedmap.New[string, any]()
-	return json.Unmarshal(data, t.om)
+	*t = NewToolCallFunctionArguments()
+	return t.decode(data)
 }
 
 func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
 	if t.om == nil {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(t.om)
+	if t.order == nil {
+		return json.Marshal(t.om)
+	}
+	return t.encode()
 }
 
 type Tool struct {

@@ -574,3 +574,63 @@ func (r *failingReader) Read(p []byte) (int, error) {
 	}
 	return 0, r.err
 }
+
+func TestClientReplaysNestedToolArguments(t *testing.T) {
+	const source = `{"rows":[{"z":1,"a":2}]}`
+	const edited = `{"rows":[{"z":1,"a":"edited","new":3}]}`
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			captured := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Messages []struct {
+						ToolCalls []struct {
+							Function struct{ Arguments json.RawMessage }
+						} `json:"tool_calls"`
+					}
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if len(request.Messages) > 0 && len(request.Messages[0].ToolCalls) > 0 {
+					captured <- string(request.Messages[0].ToolCalls[0].Function.Arguments)
+				}
+				fmt.Fprintln(w, `{"message":{"role":"assistant","tool_calls":[{"function":{"name":"edit","arguments":`+source+`}}]},"done":true}`)
+			}))
+			defer server.Close()
+			base, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := NewClient(base, server.Client())
+			request := &ChatRequest{Model: "tool-test", Stream: &stream}
+			err = client.Chat(t.Context(), request, func(resp ChatResponse) error {
+				args := resp.Message.ToolCalls[0].Function.Arguments
+				if args.String() != source {
+					return fmt.Errorf("received arguments %s, want %s", args.String(), source)
+				}
+				rows, _ := args.Get("rows")
+				obj := rows.([]any)[0].(map[string]any)
+				obj["a"] = "edited"
+				obj["new"] = 3
+				request.Messages = []Message{resp.Message}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Chat(t.Context(), request, func(ChatResponse) error { return nil }); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case got := <-captured:
+				if got != edited {
+					t.Fatalf("replayed %s, want %s", got, edited)
+				}
+			default:
+				t.Fatal("second request omitted the tool call")
+			}
+		})
+	}
+}

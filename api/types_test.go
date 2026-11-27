@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"math"
 	"reflect"
 	"strings"
@@ -1146,5 +1147,121 @@ func TestToolPropertyExtraMarshalling(t *testing.T) {
 		enc.SetEscapeHTML(false)
 		require.NoError(t, enc.Encode(p))
 		assert.Equal(t, `{"description":"a < b","default":"<x>&"}`+"\n", buf.String())
+	})
+}
+
+func TestToolCallNestedArgumentEdits(t *testing.T) {
+	const input = `{"rows":[{"z":1,"a":2},{"y":3,"b":4}],"opts":{"z":1,"a":2,"drop":0}}`
+	for _, access := range []string{"Get", "All", "ToMap"} {
+		t.Run(access, func(t *testing.T) {
+			var args ToolCallFunctionArguments
+			require.NoError(t, json.Unmarshal([]byte(input), &args))
+			assert.Equal(t, input, args.String())
+			values := make(map[string]any)
+			switch access {
+			case "Get":
+				values["rows"], _ = args.Get("rows")
+				values["opts"], _ = args.Get("opts")
+			case "All":
+				values = maps.Collect(args.All())
+			case "ToMap":
+				values = args.ToMap()
+			}
+			rows := values["rows"].([]any)
+			rows[0], rows[1] = rows[1], rows[0]
+			first := rows[0].(map[string]any)
+			first["b"] = "changed"
+			opts := values["opts"].(map[string]any)
+			delete(opts, "drop")
+			opts["extra"], opts["c"] = 5, 6
+			args.Set("rows", append(rows, map[string]any{"y": 8, "b": 7}))
+			want := `{"rows":[{"y":3,"b":"changed"},{"z":1,"a":2},{"b":7,"y":8}],"opts":{"z":1,"a":2,"c":6,"extra":5}}`
+			assert.Equal(t, want, args.String())
+			wire, err := json.Marshal(args)
+			require.NoError(t, err)
+			assert.Equal(t, want, string(wire))
+			require.NoError(t, json.Unmarshal(wire, &args))
+			assert.Equal(t, want, args.String())
+		})
+	}
+}
+
+func TestToolCallNestedArgumentTypes(t *testing.T) {
+	var args ToolCallFunctionArguments
+	require.NoError(t, json.Unmarshal([]byte(`{"meta":{"z":9007199254740993,"a":1.0,"z":9007199254740995,"e\u0064it":"<&>"},"nothing":null,"empty":[]}`), &args))
+	meta, _ := args.Get("meta")
+	object := meta.(map[string]any)
+	assert.IsType(t, float64(0), object["z"])
+	assert.Equal(t, `{"meta":{"z":9007199254740996,"a":1,"edit":"\u003c\u0026\u003e"},"nothing":null,"empty":[]}`, args.String())
+	object["z"] = json.Number("9007199254740995")
+	assert.Contains(t, args.String(), `"z":9007199254740995`)
+	object["cycle"] = object
+	_, err := json.Marshal(args)
+	var unsupported *json.UnsupportedValueError
+	require.ErrorAs(t, err, &unsupported)
+}
+
+func TestToolCallNestedArgumentJSONKeys(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{`{"z":{"\ud800":1,"a":2},"b":3}`, `{"z":{"�":1,"a":2},"b":3}`},
+		{"{\"z\":{\"\xff\":1,\"a\":2},\"b\":3}", `{"z":{"�":1,"a":2},"b":3}`},
+		{`{"rows":[{"old":0,"gone":1}],"next":1,"rows":[{"z":3,"a":2}]}`, `{"rows":[{"z":3,"a":2}],"next":1}`},
+		{`{"rows":[{"z":{"old":1},"a":2,"z":{"y":3,"b":4}}]}`, `{"rows":[{"z":{"y":3,"b":4},"a":2}]}`},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			var args ToolCallFunctionArguments
+			require.NoError(t, json.Unmarshal([]byte(tc.input), &args))
+			assert.Equal(t, tc.want, args.String())
+		})
+	}
+}
+
+func TestToolCallArgumentDecodeResetsOrder(t *testing.T) {
+	var args ToolCallFunctionArguments
+	require.NoError(t, args.UnmarshalJSON([]byte(`{"one":{"z":1,"a":2},"two":[{"b":3,"a":4}]}`)))
+	require.Len(t, *args.order, 2)
+	for range 10 {
+		args.Set("one", map[string]any{"y": 8, "b": 7})
+	}
+	require.Len(t, *args.order, 2)
+	require.NoError(t, args.UnmarshalJSON([]byte(`{"one":{"w":1,"c":2}}`)))
+	require.Len(t, *args.order, 1)
+	assert.Equal(t, `{"one":{"w":1,"c":2}}`, args.String())
+	for _, input := range []string{"{}", "null"} {
+		t.Run(input, func(t *testing.T) {
+			require.NoError(t, args.UnmarshalJSON([]byte(input)))
+			assert.Nil(t, args.order)
+			wire, err := json.Marshal(args)
+			require.NoError(t, err)
+			assert.Equal(t, input, string(wire))
+		})
+	}
+
+	for _, input := range []string{
+		`{"\ud800":{"a":1}}`,
+		"{\"\xff\":{\"a\":1}}",
+		`{"n":1e999,"n":{"z":1}}`,
+		`{"n":{"z":1}}true`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			assert.Error(t, args.UnmarshalJSON([]byte(input)), "input %q", input)
+		})
+	}
+}
+
+func FuzzToolCallFunctionArgumentsReplay(f *testing.F) {
+	for _, seed := range []string{`{"x":{"z":1,"a":[{"w":true,"b":null}]}}`, `{"a":1,"a":{"z":2}}`, `{"x":{"\ud800":"<&>"}}`, "null"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		var args ToolCallFunctionArguments
+		if err := json.Unmarshal([]byte(input), &args); err != nil {
+			return
+		}
+		wire, err := json.Marshal(args)
+		require.NoError(t, err)
+		var replay ToolCallFunctionArguments
+		require.NoError(t, json.Unmarshal(wire, &replay))
+		assert.Equal(t, string(wire), replay.String())
 	})
 }
