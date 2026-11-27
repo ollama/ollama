@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -207,6 +209,30 @@ func TestNewSafetensorsManifestWriterDefaultsMinimumVersion(t *testing.T) {
 
 	if got := readSafetensorsManifestConfig(t, "test-min-version").Requires; got != "0.19.0" {
 		t.Fatalf("requires = %q, want 0.19.0", got)
+	}
+}
+
+func TestNewSafetensorsManifestWriterExplicitCapabilities(t *testing.T) {
+	for _, capabilities := range [][]string{nil, {"decision"}, {"completion", "decision", "decision"}} {
+		t.Run(fmt.Sprint(capabilities), func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			base := model.ConfigV2{Capabilities: []string{"completion", "vision", "tools"}}
+			writeManifest := NewSafetensorsManifestWriter(SafetensorsManifestOptions{Capabilities: capabilities})
+			if err := writeManifest(t.Context(), "capabilities", ManifestInfo{ModelConfig: base}); err != nil {
+				t.Fatal(err)
+			}
+			got := readSafetensorsManifestConfig(t, "capabilities")
+			want := base.Capabilities
+			if len(capabilities) > 0 {
+				want = slices.Compact(slices.Clone(capabilities))
+			}
+			if diff := cmp.Diff(want, got.Capabilities); diff != "" {
+				t.Fatalf("capabilities mismatch (-want +got):\n%s", diff)
+			}
+			if got.CapabilitiesExplicit != (len(capabilities) > 0) {
+				t.Fatalf("explicit = %t, declarations = %v", got.CapabilitiesExplicit, capabilities)
+			}
+		})
 	}
 }
 
