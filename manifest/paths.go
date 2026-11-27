@@ -273,11 +273,16 @@ func parseStoredManifestFilepath(s string) model.Name {
 }
 
 func encodeV2ManifestHost(host string) string {
-	return strings.ReplaceAll(host, ":", "%3A")
+	// Escape "%" first so a host that already contains an encoded sequence
+	// round-trips: without this, "reg:5000" and "reg%3A5000" both encode to
+	// "reg%3A5000" and collide under manifests-v2/. See #19834.
+	return strings.ReplaceAll(strings.ReplaceAll(host, "%", "%25"), ":", "%3A")
 }
 
 func decodeV2ManifestHost(host string) string {
-	return strings.NewReplacer("%3A", ":", "%3a", ":").Replace(host)
+	// "%25" is restored last so a literal "%3A" in the original host survives
+	// its own round trip.
+	return strings.NewReplacer("%3A", ":", "%3a", ":", "%25", "%").Replace(host)
 }
 
 func legacyNameCandidates(n model.Name) []model.Name {
