@@ -174,7 +174,25 @@ func resolveContextShift(shift *bool, m *Model) bool {
 		return *shift
 	}
 
+	// An operator can turn shifting off for the whole server. Without this, every client
+	// has to remember to send "shift": false, and one that forgets gets an answer built
+	// from part of its prompt with nothing to say so.
+	if !envconfig.ContextShift(true) {
+		return false
+	}
+
 	return supportsContextShift(m)
+}
+
+// requestContextShift is the per-request shift setting passed to llm: an explicit
+// "shift" wins, otherwise the server default from OLLAMA_CONTEXT_SHIFT applies. A
+// runner launched with shift for another client must still refuse an unset request
+// when the operator has turned shifting off.
+func requestContextShift(shift *bool) bool {
+	if shift != nil {
+		return *shift
+	}
+	return envconfig.ContextShift(true)
 }
 
 // launchContextShift ignores shift:false so that clients with different
