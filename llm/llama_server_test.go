@@ -1990,6 +1990,65 @@ func TestLlamaServerBatch(t *testing.T) {
 	}
 }
 
+func TestLlamaServerBatchNonCausalDecision(t *testing.T) {
+	tests := []struct {
+		name       string
+		kv         gguftest.KV
+		wantBatch  int
+		wantMemory uint64
+	}{
+		{
+			name: "non-causal decision model uses the context",
+			kv: gguftest.KV{
+				"general.architecture":  "lfm3",
+				"lfm3.context_length":   uint64(128000),
+				"lfm3.attention.causal": false,
+				"lfm3.decision.type":    "lfm3-d1",
+			},
+			wantBatch:  4096,
+			wantMemory: 2 << 30,
+		},
+		{
+			name: "causal decision model keeps its batch",
+			kv: gguftest.KV{
+				"general.architecture":  "qwen35",
+				"qwen35.context_length": uint64(262144),
+				"qwen35.decision.type":  "h2o-lightning",
+			},
+			wantBatch: 512,
+		},
+		{
+			name: "explicitly causal decision model keeps its batch",
+			kv: gguftest.KV{
+				"general.architecture":  "lfm3",
+				"lfm3.context_length":   uint64(128000),
+				"lfm3.attention.causal": true,
+				"lfm3.decision.type":    "lfm3-d1",
+			},
+			wantBatch: 512,
+		},
+		{
+			name: "non-causal model without a decision type keeps its batch",
+			kv: gguftest.KV{
+				"general.architecture":  "bert",
+				"bert.context_length":   uint64(512),
+				"bert.attention.causal": false,
+			},
+			wantBatch: 512,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := loadTestGGUF(t, tt.kv)
+			opts := api.Options{Runner: api.Runner{NumCtx: 4096, NumBatch: 512}}
+			batch, memory := LlamaServerBatch(f, opts, false)
+			if batch != tt.wantBatch || memory != tt.wantMemory {
+				t.Fatalf("batch=%d memory=%d, want batch=%d memory=%d", batch, memory, tt.wantBatch, tt.wantMemory)
+			}
+		})
+	}
+}
+
 func TestAppendBatchArgs(t *testing.T) {
 	tests := []struct {
 		name        string
