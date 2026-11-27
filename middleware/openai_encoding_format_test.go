@@ -13,6 +13,37 @@ import (
 	"github.com/ollama/ollama/openai"
 )
 
+func TestEmbeddingsMiddlewareEmptyResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name       string
+		embeddings [][]float32
+	}{
+		{name: "nil"},
+		{name: "empty", embeddings: [][]float32{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(EmbeddingsMiddleware())
+			router.POST("/v1/embeddings", func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.EmbedResponse{Embeddings: tc.embeddings})
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"input":"test","model":"test-model"}`))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+			}
+			const want = `{"object":"list","data":[],"model":"test-model","usage":{"prompt_tokens":0,"total_tokens":0}}`
+			if got := strings.TrimSpace(resp.Body.String()); got != want {
+				t.Errorf("got %s, want %s", got, want)
+			}
+		})
+	}
+}
+
 func TestEmbeddingsMiddleware_EncodingFormats(t *testing.T) {
 	testCases := []struct {
 		name           string
