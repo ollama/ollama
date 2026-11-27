@@ -17,6 +17,47 @@ import (
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
+// firstFittingStart returns the smallest start index i in [0, last] whose
+// context length fits in numCtx, or last if no start index fits (so the
+// caller still keeps at least the last message). It checks i == 0 first —
+// the common case where everything fits — and then binary-searches the
+// remainder, so truncating a long history costs O(log N) render/tokenize
+// evaluations instead of one per dropped message (see #19942).
+//
+// ctxLen must be non-increasing in i: dropping messages from the front must
+// not grow the rendered prompt. Chat templates render each message's content
+// once plus fixed per-message separators, so this holds; a template that
+// renders more text for fewer messages would get a valid cut that is not
+// necessarily the earliest fitting one.
+func firstFittingStart(ctxLen func(i int) (int, error), last, numCtx int) (int, error) {
+	if last <= 0 {
+		return 0, nil
+	}
+	if n, err := ctxLen(0); err != nil {
+		return 0, err
+	} else if n <= numCtx {
+		return 0, nil
+	}
+	best := -1
+	for lo, hi := 1, last; lo <= hi; {
+		mid := (lo + hi) / 2
+		n, err := ctxLen(mid)
+		if err != nil {
+			return 0, err
+		}
+		if n <= numCtx {
+			best = mid
+			hi = mid - 1
+		} else {
+			lo = mid + 1
+		}
+	}
+	if best == -1 {
+		return last, nil
+	}
+	return best, nil
+}
+
 // chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
@@ -33,42 +74,48 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	currMsgIdx := 0
 
 	if truncate {
-		// Start with all messages and remove from the front until it fits in context
-		for i := 0; i <= lastMsgIdx; i++ {
+		// Find the earliest start index whose rendered prompt fits in
+		// context, binary-searching the cut point instead of
+		// re-rendering and re-tokenizing the whole remaining history
+		// once per dropped message (see #19942).
+		ctxLen := func(i int) (int, error) {
 			// Collect system messages from the portion we're about to skip
-			system = make([]api.Message, 0)
+			sys := make([]api.Message, 0)
 			for j := range i {
 				if msgs[j].Role == "system" {
-					system = append(system, msgs[j])
+					sys = append(sys, msgs[j])
 				}
 			}
 
-			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+			p, err := renderPrompt(m, append(sys, msgs[i:]...), tools, think)
 			if err != nil {
-				return "", nil, err
+				return 0, err
 			}
 
 			s, err := tokenize(ctx, p)
 			if err != nil {
-				return "", nil, err
+				return 0, err
 			}
 
-			ctxLen := len(s)
+			n := len(s)
 			if m.ProjectorPaths != nil {
 				for _, msg := range msgs[i:] {
-					ctxLen += imageNumTokens * len(msg.Images)
+					n += imageNumTokens * len(msg.Images)
 				}
 			}
+			return n, nil
+		}
 
-			if ctxLen <= opts.NumCtx {
-				currMsgIdx = i
-				break
-			}
+		idx, err := firstFittingStart(ctxLen, lastMsgIdx, opts.NumCtx)
+		if err != nil {
+			return "", nil, err
+		}
+		currMsgIdx = idx
 
-			// Must always include at least the last message
-			if i == lastMsgIdx {
-				currMsgIdx = lastMsgIdx
-				break
+		system = make([]api.Message, 0)
+		for j := range currMsgIdx {
+			if msgs[j].Role == "system" {
+				system = append(system, msgs[j])
 			}
 		}
 	}

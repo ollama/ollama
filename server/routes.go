@@ -3474,11 +3474,13 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 	}
 
 	lastMsgIdx := len(req.Messages) - 1
-	currMsgIdx := 0
-	var system []api.Message
 
-	for i := 0; i <= lastMsgIdx; i++ {
-		system = system[:0]
+	// Find the earliest start index whose rendered prompt fits in
+	// context, binary-searching the cut point instead of re-rendering
+	// and re-tokenizing the whole remaining history once per dropped
+	// message (see #19942).
+	ctxLen := func(i int) (int, error) {
+		var system []api.Message
 		for j := range i {
 			if req.Messages[j].Role == "system" {
 				system = append(system, req.Messages[j])
@@ -3489,36 +3491,33 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 		renderReq.Messages = append(slices.Clone(system), req.Messages[i:]...)
 		prompt, err := r.ApplyChatTemplate(ctx, renderReq)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 
 		tokens, err := r.Tokenize(ctx, prompt)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 
-		ctxLen := len(tokens)
+		n := len(tokens)
 		if m != nil && m.ProjectorPaths != nil {
 			for _, msg := range renderReq.Messages {
-				ctxLen += 768 * len(msg.Images)
+				n += 768 * len(msg.Images)
 			}
 		}
+		return n, nil
+	}
 
-		if ctxLen <= opts.NumCtx {
-			currMsgIdx = i
-			break
-		}
-		if i == lastMsgIdx {
-			currMsgIdx = lastMsgIdx
-			break
-		}
+	currMsgIdx, err := firstFittingStart(ctxLen, lastMsgIdx, opts.NumCtx)
+	if err != nil {
+		return nil, err
 	}
 
 	if currMsgIdx > 0 {
 		slog.Debug("truncating native chat messages which exceed context length", "truncated", currMsgIdx)
 	}
 
-	system = system[:0]
+	var system []api.Message
 	for j := range currMsgIdx {
 		if req.Messages[j].Role == "system" {
 			system = append(system, req.Messages[j])
