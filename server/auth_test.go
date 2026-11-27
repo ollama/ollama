@@ -111,3 +111,26 @@ func TestRegistryChallengeURLInvalid(t *testing.T) {
 		t.Error("expected error for invalid URL")
 	}
 }
+
+func TestRealmHostAllowed(t *testing.T) {
+	cases := []struct {
+		name         string
+		originalHost string
+		realmHost    string
+		wantAllowed  bool
+	}{
+		{"same host", "registry.example.com", "registry.example.com", true},
+		{"hf.co alias to huggingface.co", "hf.co", "huggingface.co", true},
+		{"reverse alias rejected", "huggingface.co", "hf.co", false},
+		{"different host rejected", "registry.example.com", "evil.example.com", false},
+		{"empty original rejected", "", "huggingface.co", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := realmHostAllowed(tc.originalHost, tc.realmHost)
+			if got != tc.wantAllowed {
+				t.Errorf("realmHostAllowed(%q, %q) = %v, want %v", tc.originalHost, tc.realmHost, got, tc.wantAllowed)
+			}
+		})
+	}
+}
