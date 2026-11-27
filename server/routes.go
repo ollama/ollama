@@ -132,6 +132,12 @@ func init() {
 
 var errRequired = errors.New("is required")
 
+// errInvalidOption marks an error caused by a wrong-typed request option so
+// scheduleError can report it as a client error instead of a 500.
+type errInvalidOption struct {
+	error
+}
+
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	return s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, shouldApplyEmbeddingBatchDefault(model, requestOpts))
 }
@@ -158,7 +164,7 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 
 	warnDeprecatedOptions(requestOpts)
 	if err := opts.FromMap(requestOpts); err != nil {
-		return api.Options{}, err
+		return api.Options{}, errInvalidOption{err}
 	}
 
 	if applyEmbeddingBatchDefault {
@@ -3665,6 +3671,8 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 func scheduleError(name string, err error) (int, string) {
 	switch {
 	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, manifest.ErrNoCompatibleManifest):
+		return http.StatusBadRequest, err.Error()
+	case errors.As(err, new(errInvalidOption)):
 		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, context.Canceled):
 		return 499, "request canceled"

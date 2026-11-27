@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/ollama/ollama/llm"
@@ -318,5 +319,47 @@ func TestUsesAutomaticNumBatch(t *testing.T) {
 				t.Fatalf("usesAutomaticNumBatch = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestModelOptionsInvalidRequestOptionType(t *testing.T) {
+	s := &Server{}
+	model := &Model{}
+
+	// A wrong-typed request option is marked as a client error.
+	_, err := s.modelOptions(model, map[string]any{"temperature": "hot"})
+	if err == nil {
+		t.Fatal("expected error for wrong-typed temperature option")
+	}
+	var invalidOpt errInvalidOption
+	if !errors.As(err, &invalidOpt) {
+		t.Fatalf("expected errInvalidOption, got %T: %v", err, err)
+	}
+
+	// The same error from model options is a server-side problem, not marked.
+	badModel := &Model{Options: map[string]any{"temperature": "hot"}}
+	_, err = s.modelOptions(badModel, nil)
+	if err == nil {
+		t.Fatal("expected error for wrong-typed model option")
+	}
+	if errors.As(err, &invalidOpt) {
+		t.Fatalf("model option error should not be errInvalidOption, got %T: %v", err, err)
+	}
+}
+
+func TestScheduleErrorInvalidOption(t *testing.T) {
+	inner := errors.New(`option "temperature" must be of type float32`)
+
+	status, message := scheduleError("model", errInvalidOption{inner})
+	if status != 400 {
+		t.Fatalf("expected status 400, got %d", status)
+	}
+	if message != inner.Error() {
+		t.Fatalf("expected message %q, got %q", inner.Error(), message)
+	}
+
+	status, _ = scheduleError("model", inner)
+	if status != 500 {
+		t.Fatalf("expected status 500 for unmarked error, got %d", status)
 	}
 }
