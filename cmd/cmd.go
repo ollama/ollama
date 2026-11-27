@@ -2582,6 +2582,15 @@ func NewCLI() *cobra.Command {
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
 	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
+	rootCmd.PersistentFlags().Bool("no-animation", false, "Don't show loading animations")
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		noAnimation, err := cmd.Flags().GetBool("no-animation")
+		if err != nil {
+			return err
+		}
+		progress.SetEnabled(!noAnimation)
+		return nil
+	}
 
 	createCmd := &cobra.Command{
 		Use:   "create MODEL",
