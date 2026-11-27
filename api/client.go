@@ -266,22 +266,46 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	return nil
 }
 
+// streamInference delivers each decoded response before checking whether the
+// stream ended with a partial response. Read and callback errors take priority.
+func streamInference[T any](ctx context.Context, c *Client, path string, req any, fn func(T) error, isPartial func(*T) bool) error {
+	var partial bool
+	err := c.stream(ctx, http.MethodPost, path, req, func(data []byte) error {
+		var resp T
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return err
+		}
+
+		partial = isPartial(&resp)
+		return fn(resp)
+	})
+	if err != nil || !partial {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return io.ErrUnexpectedEOF
+}
+
+// Render-only requests return a single JSON response even when stream is unset.
+func expectsInferenceDone(stream *bool, renderOnly bool) bool {
+	return !renderOnly && (stream == nil || *stream)
+}
+
 // GenerateResponseFunc is a function that [Client.Generate] invokes every time
 // a response is received from the service. If this function returns an error,
 // [Client.Generate] will stop generating and return this error.
 type GenerateResponseFunc func(GenerateResponse) error
 
 // Generate generates a response for a given prompt. The req parameter should
-// be populated with prompt details. fn is called for each response (there may
-// be multiple responses, e.g. in case streaming is enabled).
+// be populated with prompt details. fn is called for each response. If a
+// streaming response ends cleanly after a partial chunk, Generate returns
+// [io.ErrUnexpectedEOF].
 func (c *Client) Generate(ctx context.Context, req *GenerateRequest, fn GenerateResponseFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/generate", req, func(bts []byte) error {
-		var resp GenerateResponse
-		if err := json.Unmarshal(bts, &resp); err != nil {
-			return err
-		}
-
-		return fn(resp)
+	expectDone := req != nil && expectsInferenceDone(req.Stream, req.DebugRenderOnly)
+	return streamInference(ctx, c, "/api/generate", req, fn, func(resp *GenerateResponse) bool {
+		return expectDone && !resp.Done
 	})
 }
 
@@ -292,16 +316,12 @@ type ChatResponseFunc func(ChatResponse) error
 
 // Chat generates the next message in a chat. [ChatRequest] may contain a
 // sequence of messages which can be used to maintain chat history with a model.
-// fn is called for each response (there may be multiple responses, e.g. if case
-// streaming is enabled).
+// fn is called for each response. If a streaming response ends cleanly
+// after a partial chunk, Chat returns [io.ErrUnexpectedEOF].
 func (c *Client) Chat(ctx context.Context, req *ChatRequest, fn ChatResponseFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/chat", req, func(bts []byte) error {
-		var resp ChatResponse
-		if err := json.Unmarshal(bts, &resp); err != nil {
-			return err
-		}
-
-		return fn(resp)
+	expectDone := req != nil && expectsInferenceDone(req.Stream, req.DebugRenderOnly)
+	return streamInference(ctx, c, "/api/chat", req, fn, func(resp *ChatResponse) bool {
+		return expectDone && !resp.Done
 	})
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -220,6 +221,63 @@ func TestClientStreamReportsReadErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), io.ErrUnexpectedEOF.Error()) {
 		t.Fatalf("expected unexpected EOF, got %v", err)
+	}
+}
+
+func TestClientInferenceStreamEnding(t *testing.T) {
+	const partialChat = `{"message":{"content":"one"},"done":false}` + "\n"
+	const partialGenerate = `{"response":"one","done":false}` + "\n"
+	const finalChat = `{"message":{"content":"two"},"done":true}`
+	stop := errors.New("stop reading")
+	for _, tt := range []struct {
+		name        string
+		generate    bool
+		stream      *bool
+		renderOnly  bool
+		body        string
+		callbackErr error
+		cancel      bool
+		wantContent string
+		wantErr     error
+	}{
+		{name: "incomplete chat", body: partialChat, wantContent: "one", wantErr: io.ErrUnexpectedEOF},
+		{name: "incomplete generate", generate: true, stream: new(true), body: partialGenerate, wantContent: "one", wantErr: io.ErrUnexpectedEOF},
+		{name: "final chat chunk", body: partialChat + finalChat, wantContent: "onetwo"},
+		{name: "callback stops chat", body: partialChat + finalChat, callbackErr: stop, wantContent: "one", wantErr: stop},
+		{name: "canceled at EOF", body: partialChat, cancel: true, wantContent: "one", wantErr: context.Canceled},
+		{name: "render only", generate: true, renderOnly: true, body: `{"_debug_info":{"rendered_template":"test"},"done":false}`},
+		{name: "single JSON response", stream: new(false), body: partialChat, wantContent: "one"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := NewClient(&url.URL{Scheme: "http", Host: "example.com"}, &http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(tt.body))}, nil
+				}),
+			})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var content string
+			record := func(chunk string) error {
+				content += chunk
+				if tt.cancel {
+					cancel()
+				}
+				return tt.callbackErr
+			}
+			var err error
+			if tt.generate {
+				err = client.Generate(ctx, &GenerateRequest{Model: "test", Stream: tt.stream, DebugRenderOnly: tt.renderOnly}, func(resp GenerateResponse) error {
+					return record(resp.Response)
+				})
+			} else {
+				err = client.Chat(ctx, &ChatRequest{Model: "test", Stream: tt.stream, DebugRenderOnly: tt.renderOnly}, func(resp ChatResponse) error {
+					return record(resp.Message.Content)
+				})
+			}
+			if !errors.Is(err, tt.wantErr) || content != tt.wantContent {
+				t.Errorf("got content %q, err %v; want %q, %v", content, err, tt.wantContent, tt.wantErr)
+			}
+		})
 	}
 }
 

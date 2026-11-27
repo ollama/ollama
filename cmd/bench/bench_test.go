@@ -317,15 +317,8 @@ func TestBenchmarkModel_Timeout(t *testing.T) {
 func TestBenchmarkModel_NoMetrics(t *testing.T) {
 	fOpt := createTestFlagOptions()
 
-	server := createMockOllamaServer(t, mockServerOptions{
-		chatResponses: []api.ChatResponse{
-			{
-				Model:   "test-model",
-				Message: api.Message{Role: "assistant", Content: "test response"},
-				Done:    false, // Never sends Done=true
-			},
-		},
-	})
+	// An empty response leaves the benchmark without a metrics sample.
+	server := createMockOllamaServer(t, mockServerOptions{})
 	defer server.Close()
 
 	t.Setenv("OLLAMA_HOST", server.URL)
