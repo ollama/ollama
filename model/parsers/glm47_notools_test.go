@@ -45,8 +45,8 @@ func TestGLM47ParserKeepsToolMarkupWithoutTools(t *testing.T) {
 				content.WriteString(part)
 				calls = append(calls, parsedCalls...)
 			}
-			if !strings.Contains(content.String(), markup) {
-				t.Fatalf("tool markup was consumed instead of returned as content: %q", content.String())
+			if got, want := content.String(), "Answer"+markup; got != want {
+				t.Fatalf("tool markup was not preserved verbatim: got %q, want %q", got, want)
 			}
 			if len(calls) != 0 {
 				t.Fatalf("expected no calls without declared tools, got %d: %#v", len(calls), calls)
