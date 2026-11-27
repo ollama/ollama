@@ -32,10 +32,10 @@ var lfm3TemplateFixtures = []struct {
 	// knownDifferences names API cases whose output intentionally differs (see lfm3AudioToolMedia).
 	knownDifferences map[string]bool
 }{
-	{name: "text", path: "testdata/lfm3_chat_template.jinja2", pythonEnv: "LFM3_TEXT_JINJA_PYTHON", sha256: "f45005c50cd2a97329722bf3a2dee9f16c04cdf825a589b280fb7e99e6827818", media: map[string]string{"image": lfm3Image}},
-	{name: "vl", path: "testdata/lfm3_chat_template.jinja2", pythonEnv: "LFM3_VL_JINJA_PYTHON", sha256: "f45005c50cd2a97329722bf3a2dee9f16c04cdf825a589b280fb7e99e6827818", media: map[string]string{"image": lfm3Image}},
-	{name: "omni", path: "testdata/lfm3_omni_chat_template.jinja2", pythonEnv: "LFM3_VL_JINJA_PYTHON", sha256: "ea74cc1d14319ed436dc0f37632893004d436913113e7605267f2b01694d65e4", renderer: LFM3Renderer{noThinking: true}, media: map[string]string{"image": lfm3Image, "audio": "<|vision_start|><|audio|><|vision_end|>"}},
-	{name: "audio", path: "testdata/lfm3_audio_chat_template.jinja2", pythonEnv: "LFM3_VL_JINJA_PYTHON", sha256: "8769fc2ac03684665a009b1908fee359e418329019dd83dbc57152167e448099", renderer: LFM3Renderer{audio: true}, media: map[string]string{"audio": "<|audio|>"}, knownDifferences: lfm3AudioToolMedia},
+	{name: "text", path: "testdata/lfm3_chat_template.jinja2", pythonEnv: "LFM3_TEXT_JINJA_PYTHON", sha256: "ac144fe385f9fc68a421ea0e2fe3c4e0edfd757960666a70247cca6225eb25ae", media: map[string]string{"image": lfm3Image}},
+	{name: "vl", path: "testdata/lfm3_chat_template.jinja2", pythonEnv: "LFM3_VL_JINJA_PYTHON", sha256: "ac144fe385f9fc68a421ea0e2fe3c4e0edfd757960666a70247cca6225eb25ae", media: map[string]string{"image": lfm3Image}},
+	{name: "omni", path: "testdata/lfm3_omni_chat_template.jinja2", pythonEnv: "LFM3_VL_JINJA_PYTHON", sha256: "c1ee1665d1bb4a7adc5a77dec2193ccdac5d8cd6b0d3cf80933bf2d397c01cf3", renderer: LFM3Renderer{noThinking: true}, media: map[string]string{"image": lfm3Image, "audio": "<|vision_start|><|audio|><|vision_end|>"}},
+	{name: "audio", path: "testdata/lfm3_audio_chat_template.jinja2", pythonEnv: "LFM3_VL_JINJA_PYTHON", sha256: "57f4c2c96f0c854440f991663980390c712d34c5d3ffd5d86aaf744bdcf57919", renderer: LFM3Renderer{audio: true}, media: map[string]string{"audio": "<|audio|>"}, knownDifferences: lfm3AudioToolMedia},
 }
 
 // The Audio template JSON-encodes each item of a list-valued tool result, so a

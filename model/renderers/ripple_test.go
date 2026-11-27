@@ -13,7 +13,7 @@ import (
 const rippleTemplate = "testdata/ripple_chat_template.jinja"
 
 func TestRipplePublisherTemplate(t *testing.T) {
-	verifyLFM3TemplateFixture(t, rippleTemplate, "877c2dbf365243dda14738ca250b31398059b35ffd91d4ed0ec68be45ca6ebd3")
+	verifyLFM3TemplateFixture(t, rippleTemplate, "57880cfff05daad1fcad20a68c38809d9382922be0e6c046efd2ca621e30491d")
 }
 
 func TestRippleRendererTools(t *testing.T) {
