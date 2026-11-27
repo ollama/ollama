@@ -288,6 +288,7 @@ console.log(response.message.content);
 - [LangBot](https://github.com/RockChinQ/LangBot) - Multi-platform messaging bots with agents and RAG
 - [AstrBot](https://github.com/AstrBotDevs/AstrBot/) - Multi-platform chatbot with RAG and plugins
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) - TypeScript Discord bot
+- [BOLBOT](https://github.com/ManveerAnand/BOLBOT) - Discord bot that translates every message into each member's language, both ways
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram) - Telegram bot
 - [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) - Telegram bot for roleplay
 
