@@ -1478,6 +1478,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt, nil)
 	if err != nil {
 		s.sched.expireRunnersForRuntimeOOM(m, err)
+		var serr api.StatusError
+		if errors.As(err, &serr) {
+			c.AbortWithStatusJSON(serr.StatusCode, gin.H{"error": strings.TrimSpace(serr.ErrorMessage)})
+			return
+		}
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
@@ -3669,7 +3674,7 @@ func scheduleError(name string, err error) (int, string) {
 	case errors.Is(err, context.Canceled):
 		return 499, "request canceled"
 	case errors.Is(err, ErrMaxQueue):
-		return http.StatusServiceUnavailable, err.Error()
+		return http.StatusTooManyRequests, err.Error()
 	case errors.Is(err, os.ErrNotExist):
 		return http.StatusNotFound, fmt.Sprintf("model %q not found, try pulling it first", name)
 	default:

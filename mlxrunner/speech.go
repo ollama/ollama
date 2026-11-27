@@ -47,11 +47,8 @@ func (r *Runner) speechHandler(w http.ResponseWriter, req *http.Request) {
 	defer func() { queue.close(); <-written }()
 
 	speech := &speechRequest{ctx: ctx, input: input, queue: queue, done: make(chan error, 1)}
-	var err error
-	select {
-	case <-ctx.Done():
-		err = ctx.Err()
-	case r.Requests <- speech:
+	err := r.enqueue(ctx, speech)
+	if err == nil {
 		// The worker must release request state before the handler exits.
 		err = <-speech.done
 	}

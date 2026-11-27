@@ -18,8 +18,10 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/ollama/ollama/fs/gguf"
@@ -4256,4 +4258,98 @@ func TestLlamaServerShiftDisabledOnShiftRunner(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestQueueTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := &llamaServerRunner{sem: semaphore.NewWeighted(1)}
+		if err := s.acquire(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		err := s.acquire(t.Context())
+		var status api.StatusError
+		if !errors.As(err, &status) || status.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("full runner: got %v, want 429", err)
+		}
+		if elapsed := time.Since(start); elapsed != 5*time.Minute {
+			t.Fatalf("queue wait took %s, want 5 minutes", elapsed)
+		}
+		// The failed waiter must neither consume nor release the occupied slot.
+		if s.sem.TryAcquire(1) {
+			t.Fatal("timeout released another request's slot")
+		}
+		s.sem.Release(1)
+		if err := s.acquire(t.Context()); err != nil {
+			t.Fatalf("slot unavailable after previous request finished: %v", err)
+		}
+		s.sem.Release(1)
+	})
+}
+
+func TestSerialQueueWaitsForCapacity(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := &llamaServerRunner{sem: semaphore.NewWeighted(1)}
+		if err := s.acquire(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		admitted := make(chan error, 3)
+		var finished sync.WaitGroup
+		for range 3 {
+			finished.Add(1)
+			go func() {
+				defer finished.Done()
+				err := s.acquire(t.Context())
+				admitted <- err
+				if err == nil {
+					time.Sleep(90 * time.Second)
+					s.sem.Release(1)
+				}
+			}()
+		}
+		synctest.Wait()
+		time.Sleep(90 * time.Second)
+		s.sem.Release(1)
+		for range 3 {
+			if err := <-admitted; err != nil {
+				t.Fatalf("normal serial queue rejected a request: %v", err)
+			}
+		}
+		finished.Wait()
+	})
+}
+
+func TestQueueCancellation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := &llamaServerRunner{sem: semaphore.NewWeighted(1)}
+		if err := s.acquire(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		defer s.sem.Release(1)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		result := make(chan error, 1)
+		go func() { result <- s.acquire(ctx) }()
+		synctest.Wait()
+		cancel()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled waiter: got %v, want context.Canceled", err)
+		}
+	})
+}
+
+func TestAcquiredRequestOutlivesQueueTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := &llamaServerRunner{sem: semaphore.NewWeighted(1)}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		if err := s.acquire(ctx); err != nil {
+			t.Fatal(err)
+		}
+		defer s.sem.Release(1)
+		time.Sleep(6 * time.Minute)
+		if ctx.Err() != nil {
+			t.Fatal("queue timeout cancelled active work")
+		}
+	})
 }

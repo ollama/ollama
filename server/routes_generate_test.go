@@ -3160,3 +3160,36 @@ func TestImageGenerateUnsupported(t *testing.T) {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
 	}
 }
+
+func TestEmbeddingQueueTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	writeShowManifestVariant(t, "queued-embedding", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		ContextLen:   4096,
+		Capabilities: []string{string(model.CapabilityEmbedding)},
+	}, nil)
+	s := &Server{sched: InitScheduler(t.Context())}
+	s.sched.getGpuFn = func(context.Context, []ml.FilteredRunnerDiscovery) []ml.DeviceInfo { return nil }
+	s.sched.getSystemInfoFn = func() ml.SystemInfo { return ml.SystemInfo{} }
+	s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+		req.successCh <- &runnerRef{llama: &mockLlm{contextLength: 4096, embeddingRespErr: api.StatusError{StatusCode: http.StatusTooManyRequests, ErrorMessage: "server busy, request queue timeout exceeded; please try again"}}}
+		return false
+	}
+	s.sched.Run(t.Context())
+	for _, tc := range []struct {
+		name    string
+		handler gin.HandlerFunc
+		request any
+	}{
+		{"legacy", s.EmbeddingsHandler, api.EmbeddingRequest{Model: "queued-embedding", Prompt: "hello"}},
+		{"embed", s.EmbedHandler, api.EmbedRequest{Model: "queued-embedding", Input: "hello"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := createRequest(t, tc.handler, tc.request)
+			if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "request queue timeout") {
+				t.Fatalf("queue timeout: HTTP %d body %s, want 429 with timeout error", w.Code, w.Body.String())
+			}
+		})
+	}
+}

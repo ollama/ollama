@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -100,6 +101,26 @@ type queuedRequest interface {
 	context() context.Context
 	// reject releases a request that has not acquired a slot.
 	reject(error)
+}
+
+// enqueue waits only until the scheduler has a slot. The request itself keeps
+// its original context, so a queue deadline never cancels an admitted forward.
+func (r *Runner) enqueue(ctx context.Context, request queuedRequest) error {
+	// Allow serial requests to wait behind long generations before asking clients to retry.
+	wait, cancel := context.WithTimeoutCause(ctx, 5*time.Minute, api.StatusError{
+		StatusCode:   http.StatusTooManyRequests,
+		ErrorMessage: "server busy, request queue timeout exceeded; please try again",
+	})
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-wait.Done():
+		return context.Cause(wait)
+	case r.Requests <- request:
+		return nil
+	}
 }
 
 type Runner struct {

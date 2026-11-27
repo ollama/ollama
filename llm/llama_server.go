@@ -1713,6 +1713,20 @@ type llamaServerTokenProb struct {
 	TopProbs    []llamaServerTokenProb `json:"top_probs"`
 }
 
+// acquire bounds the wait for a slot without limiting execution on the caller's context.
+func (s *llamaServerRunner) acquire(ctx context.Context) error {
+	// Allow serial requests to wait behind long generations before asking clients to retry.
+	wait, cancel := context.WithTimeoutCause(ctx, 5*time.Minute, api.StatusError{
+		StatusCode:   http.StatusTooManyRequests,
+		ErrorMessage: "server busy, request queue timeout exceeded; please try again",
+	})
+	defer cancel()
+	if err := s.sem.Acquire(wait, 1); err != nil {
+		return context.Cause(wait)
+	}
+	return nil
+}
+
 func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
 	slog.Debug("llama-server completion request", "media", len(req.Media), "prompt_len", len(req.Prompt))
 
@@ -1721,7 +1735,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		req.Options = &opts
 	}
 
-	if err := s.sem.Acquire(ctx, 1); err != nil {
+	if err := s.acquire(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			slog.Info("aborting completion request due to client closing the connection")
 		}
@@ -2092,7 +2106,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		req.Options = &opts
 	}
 
-	if err := s.sem.Acquire(ctx, 1); err != nil {
+	if err := s.acquire(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			slog.Info("aborting chat request due to client closing the connection")
 		}
@@ -2554,7 +2568,7 @@ func llamaServerChatResponseFormat(format json.RawMessage) (map[string]any, erro
 }
 
 func (s *llamaServerRunner) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
-	if err := s.sem.Acquire(ctx, 1); err != nil {
+	if err := s.acquire(ctx); err != nil {
 		return nil, 0, err
 	}
 	defer s.sem.Release(1)
