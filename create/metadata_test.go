@@ -245,6 +245,14 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantRenderer: "nemotron-3-nano",
 		},
 		{
+			name:         "nemotron fine-tune with own template",
+			config:       `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`,
+			chatTemplate: "{%- if tools %}<|im_start|>system{%- endif %}",
+			standalone:   true,
+			wantParser:   "",
+			wantRenderer: "",
+		},
+		{
 			name:         "nemotron 3.5 template",
 			config:       `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`,
 			chatTemplate: "{reasoning effort: efficient}",
