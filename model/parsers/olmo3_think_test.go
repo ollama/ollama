@@ -157,6 +157,18 @@ func TestOlmo3ThinkParser_StreamingEdgeCases(t *testing.T) {
 			expectedThinking: "This is thinking content",
 		},
 		{
+			name: "whitespace_after_thinking_in_own_chunks",
+			chunks: []string{
+				"This is thinking content",
+				"</think>",
+				"\n\n",
+				" ",
+				"This is content.",
+			},
+			expectedContent:  "This is content.",
+			expectedThinking: "This is thinking content",
+		},
+		{
 			name: "thinking_tag_split_mid_token",
 			chunks: []string{
 				"Thinking?</",

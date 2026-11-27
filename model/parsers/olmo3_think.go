@@ -24,6 +24,9 @@ const (
 type Olmo3ThinkParser struct {
 	state  olmo3ThinkParserState
 	buffer strings.Builder
+	// set after </think> until content starts, so whitespace that arrives in
+	// later chunks is dropped like whitespace in the same chunk as the tag
+	skipLeadingWhitespace bool
 }
 
 func (p *Olmo3ThinkParser) HasToolSupport() bool {
@@ -82,6 +85,10 @@ func (olmo3EventThinkContent) isOlmo3Event() {}
 func (olmo3EventContent) isOlmo3Event()      {}
 
 func (p *Olmo3ThinkParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
+	if p.skipLeadingWhitespace {
+		s = strings.TrimLeftFunc(s, unicode.IsSpace)
+		p.skipLeadingWhitespace = s == ""
+	}
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
 
@@ -136,6 +143,7 @@ func (p *Olmo3ThinkParser) eat() ([]olmo3Event, bool) {
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = olmo3CollectingContent
+			p.skipLeadingWhitespace = remaining == ""
 
 			if len(thinking) > 0 {
 				events = append(events, olmo3EventThinkContent{content: thinking})
