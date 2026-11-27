@@ -132,6 +132,13 @@ func init() {
 
 var errRequired = errors.New("is required")
 
+// invalidOptionError marks an error caused by a malformed "options" value
+// supplied by the client. It is reported as a 400, not a server failure.
+type invalidOptionError struct{ err error }
+
+func (e invalidOptionError) Error() string { return e.err.Error() }
+func (e invalidOptionError) Unwrap() error { return e.err }
+
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	return s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, shouldApplyEmbeddingBatchDefault(model, requestOpts))
 }
@@ -158,7 +165,7 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 
 	warnDeprecatedOptions(requestOpts)
 	if err := opts.FromMap(requestOpts); err != nil {
-		return api.Options{}, err
+		return api.Options{}, invalidOptionError{err}
 	}
 
 	if applyEmbeddingBatchDefault {
@@ -3663,8 +3670,9 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 // scheduleError keeps native and OpenAI-compatible endpoints consistent while
 // allowing each to use its own error response format.
 func scheduleError(name string, err error) (int, string) {
+	var invalidOption invalidOptionError
 	switch {
-	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, manifest.ErrNoCompatibleManifest):
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, manifest.ErrNoCompatibleManifest), errors.As(err, &invalidOption):
 		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, context.Canceled):
 		return 499, "request canceled"
