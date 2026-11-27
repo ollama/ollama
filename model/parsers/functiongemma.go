@@ -108,6 +108,32 @@ func (p *FunctionGemmaParser) emitWithPartialCheck(bufStr, tag string) (unambigu
 	return bufStr, ""
 }
 
+// findFunctionGemmaClose returns the index of the first <end_function_call>
+// marker that is not inside an <escape>...</escape> quoted string, or -1 if
+// no such marker is present yet. <escape> toggles the quoted state, matching
+// splitArguments, so a close marker embedded in a quoted argument value is
+// skipped. A marker split across chunks is not matched, so the parser keeps
+// waiting for more input.
+func findFunctionGemmaClose(s string) int {
+	inEscape := false
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], "<escape>") {
+			inEscape = !inEscape
+			i += len("<escape>")
+			continue
+		}
+		if strings.HasPrefix(s[i:], functionGemmaFunctionCallClose) {
+			if !inEscape {
+				return i
+			}
+			i += len(functionGemmaFunctionCallClose)
+			continue
+		}
+		i++
+	}
+	return -1
+}
+
 func (p *FunctionGemmaParser) eat() ([]functionGemmaEvent, bool) {
 	bufStr := p.buffer.String()
 	if bufStr == "" {
@@ -136,14 +162,13 @@ func (p *FunctionGemmaParser) eat() ([]functionGemmaEvent, bool) {
 		return nil, false
 
 	case FunctionGemmaCollectingToolCalls:
-		if strings.Contains(bufStr, functionGemmaFunctionCallClose) {
-			split := strings.SplitN(bufStr, functionGemmaFunctionCallClose, 2)
-			remaining := split[1]
+		if idx := findFunctionGemmaClose(bufStr); idx >= 0 {
+			remaining := bufStr[idx+len(functionGemmaFunctionCallClose):]
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 
 			var events []functionGemmaEvent
-			if tc, err := p.parseToolCall(split[0]); err == nil {
+			if tc, err := p.parseToolCall(bufStr[:idx]); err == nil {
 				events = append(events, functionGemmaEventToolCall{toolCall: tc})
 			}
 

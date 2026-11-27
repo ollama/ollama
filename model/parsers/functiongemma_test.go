@@ -391,6 +391,94 @@ func TestFunctionGemmaParser(t *testing.T) {
 			},
 			expectedText: "Some text here",
 		},
+		{
+			name: "close_marker_inside_escape_quoted_string",
+			chunks: []string{
+				"<start_function_call>call:say{text:<escape>before <end_function_call> after<escape>}<end_function_call>",
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name: "say",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: testPropsMap(map[string]api.ToolProperty{
+								"text": {Type: api.PropertyType{"string"}},
+							}),
+						},
+					},
+				},
+			},
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "say",
+						Arguments: testArgs(map[string]any{"text": "before <end_function_call> after"}),
+					},
+				},
+			},
+			expectedText: "",
+		},
+		{
+			name: "close_marker_inside_escape_quoted_string_chunked",
+			chunks: []string{
+				"<start_function_call>call:say{text:<escape>before <end",
+				"_function_call> after<escape>}<end_function_call>",
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name: "say",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: testPropsMap(map[string]api.ToolProperty{
+								"text": {Type: api.PropertyType{"string"}},
+							}),
+						},
+					},
+				},
+			},
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "say",
+						Arguments: testArgs(map[string]any{"text": "before <end_function_call> after"}),
+					},
+				},
+			},
+			expectedText: "",
+		},
+		{
+			name: "close_marker_inside_escape_quoted_string_trailing_content",
+			chunks: []string{
+				"<start_function_call>call:say{text:<escape>before <end_function_call> after<escape>}<end_function_call> done.",
+			},
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name: "say",
+						Parameters: api.ToolFunctionParameters{
+							Type: "object",
+							Properties: testPropsMap(map[string]api.ToolProperty{
+								"text": {Type: api.PropertyType{"string"}},
+							}),
+						},
+					},
+				},
+			},
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "say",
+						Arguments: testArgs(map[string]any{"text": "before <end_function_call> after"}),
+					},
+				},
+			},
+			expectedText: " done.",
+		},
 	}
 
 	for _, tt := range tests {
