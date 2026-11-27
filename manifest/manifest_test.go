@@ -1516,6 +1516,47 @@ func TestManifests(t *testing.T) {
 	}
 }
 
+func TestModelsPathWithGlobCharacters(t *testing.T) {
+	for _, dir := range []string{"models [a]", "models [a"} {
+		t.Run(dir, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", filepath.Join(t.TempDir(), dir))
+
+			config, err := NewLayer(strings.NewReader(`{"model_type":"test"}`), MediaTypeImageConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			weights, err := NewLayer(strings.NewReader("weights"), MediaTypeImageModel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteManifest(model.ParseName("example"), config, []Layer{weights}); err != nil {
+				t.Fatal(err)
+			}
+
+			ms, err := Manifests(true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ms) != 1 {
+				t.Errorf("Manifests() found %d models, want 1", len(ms))
+			}
+
+			removed, err := RemoveUnreferencedBlobs(config.Digest, weights.Digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(removed) != 0 {
+				t.Errorf("removed blobs %v that are still in use", removed)
+			}
+
+			digest, ok, err := ResolveDigestReference(weights.Digest[7:19])
+			if err != nil || !ok || digest != weights.Digest {
+				t.Errorf("ResolveDigestReference() = %q, %v, %v; want %q, true, nil", digest, ok, err, weights.Digest)
+			}
+		})
+	}
+}
+
 func TestTensorLayers(t *testing.T) {
 	m := &Manifest{Layers: []Layer{
 		{MediaType: MediaTypeImageTensor, Size: 1000},
