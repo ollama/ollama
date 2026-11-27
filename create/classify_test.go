@@ -91,6 +91,14 @@ func TestClassify(t *testing.T) {
 			wantKind:  SourceBlockFP8,
 			wantQuant: "mxfp8",
 		},
+		{
+			// mlx-lm omits the mode for its default, affine.
+			name:      "mlx prequantized without mode",
+			cfg:       sourceModelConfig{Quantization: sourceQuantization{Bits: 4, GroupSize: 64}},
+			tensors:   map[string]string{"model.layers.0.weight": "U32", "model.layers.0.scales": "BF16"},
+			wantKind:  SourcePrequantized,
+			wantQuant: "int4",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
