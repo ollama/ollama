@@ -88,6 +88,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	}
 	pick := req.ForceConfigure || req.ConfigureOnly || target == ""
 	picked := false
+	discoverThinking := false
 	var models []LaunchModel
 	for {
 		if pick {
@@ -103,7 +104,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 		}
 		// The regular launch already refreshes the catalog. Only setup or an
 		// explicit model selection should incur a lookup just for thinking controls.
-		discoverThinking := picked || req.ModelOverride != ""
+		discoverThinking = picked || req.ModelOverride != ""
 		remaining := piModelDiscoveryTimeout
 		model, retryAfterAuth, err := c.piTargetModel(discoveryCtx, target, &remaining, nil, discoverThinking)
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
@@ -194,7 +195,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 		break
 	}
 
-	configured, err := pi.writeConfig(models, discoveryCtx.Err() != nil)
+	configured, err := pi.writeConfigModels(models, discoveryCtx.Err() != nil, !discoverThinking)
 	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -355,9 +356,7 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 	thinkingByModel := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
 	for _, rec := range recommendations {
 		key := launchModelRecommendationKey(rec.Name)
-		// Do not replace a saved /show result with a recommendation on a
-		// regular launch that skips thinking discovery.
-		if discoverThinking && rec.Thinking.Valid() {
+		if rec.Thinking.Valid() {
 			thinkingByModel[key] = rec.Thinking
 		}
 		if seen[key] || cloudDisabled || !isCloudModelName(rec.Name) || isDeprecatedLaunchModel(rec.Name) {
@@ -382,13 +381,15 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 		wg.Go(func() {
 			for i := range jobs {
 				model := &models[i]
-				if model.ContextLength > 0 && len(model.Capabilities) > 0 {
+				metadataComplete := model.ContextLength > 0 && len(model.Capabilities) > 0
+				needsThinking := discoverThinking && !model.Thinking.Valid() && model.HasCapability("thinking")
+				if metadataComplete && !needsThinking {
 					continue
 				}
 				show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: model.Name})
 				if err != nil {
 					var status api.StatusError
-					if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+					if !metadataComplete && errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
 						model.Name = ""
 					}
 					continue
@@ -944,6 +945,10 @@ func (p *Pi) Edit(models []LaunchModel) error {
 }
 
 func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, error) {
+	return p.writeConfigModels(models, preserveCatalog, false)
+}
+
+func (p *Pi) writeConfigModels(models []LaunchModel, preserveCatalog, preserveThinking bool) (string, error) {
 	if len(models) == 0 {
 		return "", nil
 	}
@@ -1048,8 +1053,12 @@ func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, er
 			if input, ok := old["input"]; ok && len(model.Capabilities) == 0 {
 				entry["input"] = input
 			}
-			if _, refreshed := entry["thinkingLevelMap"]; !refreshed {
-				levels, known := old["thinkingLevelMap"]
+			// A failed or skipped lookup must not erase previously known controls,
+			// and a regular launch must not downgrade saved /show controls with a
+			// weaker recommendation while still backfilling legacy entries.
+			levels, known := old["thinkingLevelMap"]
+			_, refreshed := entry["thinkingLevelMap"]
+			if !refreshed || (preserveThinking && known) {
 				if known {
 					entry["thinkingLevelMap"] = levels
 				}

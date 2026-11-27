@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -136,4 +137,167 @@ func testPiThinkingLaunch(t *testing.T, existing bool) map[string]any {
 		}
 	}
 	return cfg
+}
+
+func TestLaunchIntegrationPiThinkingCatalogAndUpgrade(t *testing.T) {
+	t.Run("explicit config discovers thinking catalog models only", func(t *testing.T) {
+		home := t.TempDir()
+		setLaunchTestHome(t, home)
+		withLauncherHooks(t)
+		withInteractiveSession(t, true)
+		DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+		DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) {
+			return "primary:latest", nil
+		}
+
+		var (
+			mu    sync.Mutex
+			shown []string
+		)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/experimental/model-recommendations":
+				fmt.Fprint(w, `{"recommendations":[]}`)
+			case "/api/tags":
+				fmt.Fprint(w, `{"models":[
+					{"name":"primary:latest","capabilities":["completion","thinking"],"details":{"context_length":32768}},
+					{"name":"secondary:latest","capabilities":["completion","thinking"],"details":{"context_length":32768}},
+					{"name":"plain:latest","capabilities":["completion","tools"],"details":{"context_length":32768}}
+				]}`)
+			case "/api/status":
+				fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
+			case "/api/show":
+				var req struct {
+					Model string `json:"model"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+					mu.Lock()
+					shown = append(shown, req.Model)
+					mu.Unlock()
+				}
+				fmt.Fprint(w, `{"capabilities":["completion","thinking"],"thinking":{"values":[false,"low","high","max"],"default":"max"}}`)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+
+		if err := LaunchIntegration(t.Context(), IntegrationLaunchRequest{Name: "pi", ForceConfigure: true, ConfigureOnly: true}); err != nil {
+			t.Fatal(err)
+		}
+		if len(shown) != 2 {
+			t.Fatalf("/api/show called for %v, want only primary:latest and secondary:latest", shown)
+		}
+		cfg, err := fileutil.ReadJSON(filepath.Join(home, ".pi", "agent", "models.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries := cfg["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
+		byID := make(map[string]map[string]any, len(entries))
+		for _, entry := range entries {
+			m := entry.(map[string]any)
+			byID[m["id"].(string)] = m
+		}
+		for _, id := range []string{"primary:latest", "secondary:latest"} {
+			levels, _ := byID[id]["thinkingLevelMap"].(map[string]any)
+			if levels["max"] != "max" {
+				t.Fatalf("%s thinkingLevelMap = %v, want max", id, levels)
+			}
+		}
+		if _, ok := byID["plain:latest"]["thinkingLevelMap"]; ok {
+			t.Fatalf("plain:latest unexpectedly got thinkingLevelMap: %v", byID["plain:latest"])
+		}
+	})
+
+	t.Run("regular launch fills legacy recommended entry without show", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("requires shell stubs")
+		}
+		home := t.TempDir()
+		setLaunchTestHome(t, home)
+		withLauncherHooks(t)
+		withInteractiveSession(t, true)
+		DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return false, nil }
+		DefaultSingleSelector = func(string, []SelectionItem, string) (string, error) {
+			t.Fatal("regular launch unexpectedly opened model selection")
+			return "", nil
+		}
+
+		dir := filepath.Join(home, ".pi", "agent")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		modelsPath := filepath.Join(dir, "models.json")
+		initial := `{"providers":{"ollama":{"models":[
+			{"id":"legacy-rec:latest","_launch":true,"contextWindow":32768,"reasoning":true},
+			{"id":"saved-show:latest","_launch":true,"contextWindow":32768,"reasoning":true,"thinkingLevelMap":{"off":"none","minimal":null,"low":"low","medium":null,"high":"high","xhigh":null,"max":"max"}}
+		]}}}`
+		if err := os.WriteFile(modelsPath, []byte(initial), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"defaultProvider":"ollama","defaultModel":"legacy-rec:latest"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		bin := t.TempDir()
+		for name, data := range map[string]string{
+			"pi":           "#!/bin/sh\nexit 0\n",
+			"npm":          "#!/bin/sh\nexit 1\n",
+			"package.json": `{"name":"@earendil-works/pi-coding-agent"}`,
+		} {
+			if err := os.WriteFile(filepath.Join(bin, name), []byte(data), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("PATH", bin)
+
+		var shows atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/experimental/model-recommendations":
+				fmt.Fprint(w, `{"recommendations":[
+					{"model":"legacy-rec:latest","thinking":{"values":["low","high","max"],"default":"max"}},
+					{"model":"saved-show:latest","thinking":{"values":[false,true],"default":true}}
+				]}`)
+			case "/api/tags":
+				fmt.Fprint(w, `{"models":[
+					{"name":"legacy-rec:latest","capabilities":["completion","thinking"],"details":{"context_length":32768}},
+					{"name":"saved-show:latest","capabilities":["completion","thinking"],"details":{"context_length":32768}}
+				]}`)
+			case "/api/status":
+				fmt.Fprint(w, `{"cloud":{"disabled":true}}`)
+			case "/api/show":
+				shows.Add(1)
+				http.Error(w, "unexpected /api/show on regular launch", http.StatusInternalServerError)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+
+		if err := LaunchIntegration(t.Context(), IntegrationLaunchRequest{Name: "pi"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := shows.Load(); got != 0 {
+			t.Fatalf("regular launch made %d /api/show calls, want 0", got)
+		}
+		cfg, err := fileutil.ReadJSON(modelsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries := cfg["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
+		byID := make(map[string]map[string]any, len(entries))
+		for _, entry := range entries {
+			m := entry.(map[string]any)
+			byID[m["id"].(string)] = m
+		}
+		if got := byID["legacy-rec:latest"]["thinkingLevelMap"].(map[string]any)["max"]; got != "max" {
+			t.Fatalf("legacy-rec:latest thinkingLevelMap = %v, want max", byID["legacy-rec:latest"]["thinkingLevelMap"])
+		}
+		if got := byID["saved-show:latest"]["thinkingLevelMap"].(map[string]any)["max"]; got != "max" {
+			t.Fatalf("saved-show:latest lost saved thinkingLevelMap: %v", byID["saved-show:latest"]["thinkingLevelMap"])
+		}
+	})
 }
