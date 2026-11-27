@@ -496,6 +496,9 @@ func (c *messageConverter) convertMessage(msg MessageParam) ([]api.Message, erro
 				textContent.WriteString(*block.Text)
 			}
 
+		case "document":
+			return nil, errors.New("document content blocks are not supported; send plain text in a text block")
+
 		case "image":
 			imageBlocks++
 			if block.Source == nil {

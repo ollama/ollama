@@ -434,6 +434,57 @@ func TestAnthropicMessagesMiddleware_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestAnthropicMessagesMiddleware_RejectsUnsupportedDocuments(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const text = `{"type":"text","text":"Summarize the attachment."}`
+	tests := []struct {
+		name   string
+		blocks string
+		status int
+	}{
+		{"text only", text, http.StatusOK},
+		{"plain text document", `{"type":"document","source":{"type":"text","media_type":"text/plain","data":"Example."}},` + text, http.StatusBadRequest},
+		{"PDF document", `{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"JVBERg=="}},` + text, http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			called := false
+			router.POST("/v1/messages", AnthropicMessagesMiddleware(), func(c *gin.Context) {
+				called = true
+				var req api.ChatRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					t.Errorf("decode converted request: %v", err)
+				} else if len(req.Messages) != 1 || req.Messages[0].Content != "Summarize the attachment." {
+					t.Errorf("unexpected converted messages: %#v", req.Messages)
+				}
+				c.Status(http.StatusOK)
+			})
+
+			body := `{"model":"test-model","max_tokens":24,"messages":[{"role":"user","content":[` + tt.blocks + `]}]}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != tt.status || called != (tt.status == http.StatusOK) {
+				t.Fatalf("status = %d, downstream called = %v; want status %d; body = %s", resp.Code, called, tt.status, resp.Body)
+			}
+			if tt.status == http.StatusBadRequest {
+				var got anthropic.ErrorResponse
+				if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.Type != "error" || got.Error.Type != "invalid_request_error" || !strings.Contains(got.Error.Message, "document") {
+					t.Errorf("unexpected error response: %#v", got)
+				}
+			}
+		})
+	}
+}
+
 func TestAnthropicWriter_NonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

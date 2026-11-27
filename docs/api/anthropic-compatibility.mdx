@@ -393,7 +393,7 @@ The following Anthropic API features are not currently supported:
 | Prompt caching | `cache_control` blocks for caching prefixes |
 | Batches API | `/v1/messages/batches` for async batch processing |
 | Citations | `citations` content blocks |
-| PDF support | `document` content blocks with PDF files |
+| Documents | `document` content blocks return HTTP 400. Send plain text in a `text` block instead. |
 | Server-sent errors | `error` events during streaming (errors return HTTP status) |
 
 ### Partial support
