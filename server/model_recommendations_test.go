@@ -593,6 +593,31 @@ func TestModelRecommendationsGetSWRRetriesAfterReadRefreshCooldown(t *testing.T)
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+func TestModelRecommendationsGetFreshDetachesAndThrottles(t *testing.T) {
+	setupModelRecommendationsTestEnv(t, "")
+	withModelRecommendationsReadRefreshCooldown(t, time.Hour)
+
+	cache := newModelRecommendationsCache()
+	var calls atomic.Int32
+	cache.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
+		return jsonHTTPResponse(http.StatusOK, `{"recommendations":[{"model":"fresh","description":"ok"}]}`), nil
+	})}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got := cache.GetFresh(ctx); len(got) != 1 || got[0].Model != "fresh" {
+		t.Fatalf("GetFresh with canceled request context = %#v, want refreshed recommendations", got)
+	}
+	cache.GetFresh(t.Context())
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("fetches = %d, want 1 within the read refresh cooldown", got)
+	}
+}
+
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
