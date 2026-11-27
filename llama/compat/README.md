@@ -27,13 +27,31 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/mtmd-model.cpp`
   (the file upstream refactored and renamed from `tools/mtmd/clip.cpp`, first
   seen at b12257, upstream #31865).
+- `002-kv-shift-yarn-attn-factor.patch` - temporary numerical fix, not part of
+  the loading layer. A context shift re-ropes keys that are already roped, and
+  `build_rope_shift` was passing the forward-pass YaRN amplitude through again,
+  so every shift rescaled all cached keys (including the `--keep` prefix) and
+  degraded long sessions until the model was reloaded (ollama#19457). The patch
+  makes the shift amplitude-neutral. Remove it once the pinned llama.cpp carries
+  an equivalent upstream fix; a version bump on its own is not the trigger.
+- `tests/` - regression tests for the patches above. They are built when
+  `OLLAMA_COMPAT_TESTS=ON` and run from the `patches` CI job, against the pinned
+  llama.cpp with the patches applied. `tests/kv-shift-rope-test.cpp` synthesizes
+  small models, forces YaRN scaling on them, drives a real context shift through
+  `llama_memory_seq_add()` and asserts the cached keys keep their magnitude. It
+  fails against an unpatched tree, so it also guards against dropping `002`
+  before upstream has the fix. One scenario uses a two-layer `gemma2` fixture
+  (SWA layer 0, dense layer 1) to pin down the per-layer part of the fix: the
+  dense layer reproduces the bug, while the SWA layer must stay amplitude-neutral
+  even though the context-level `rope_freq_scale` is 0.25.
 - `compat.cmake` - CMake glue that invokes the shared
   `cmake/apply-git-patches.cmake` idempotent applier (used by
   `llama/server/CMakeLists.txt`) for every `*.patch` under
   this directory by numeric filename order.
 
 The compatibility source files stay in this directory and are linked into the
-fetched llama.cpp targets. The patch file only adds call sites.
+fetched llama.cpp targets. The hook patch only adds call sites; any other patch
+here is a temporary, self-contained fix to the pinned llama.cpp source.
 
 ## Load-Time Hooks
 

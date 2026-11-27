@@ -292,6 +292,33 @@ if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
     endif()
 endif()
 
+# Regression tests for the temporary llama/compat patches.
+#
+# Off by default so a normal build is untouched. The `patches` CI job turns this
+# on and runs the tests against the pinned llama.cpp, so a compat patch that is
+# supposed to change behaviour cannot silently stop working (or get carried past
+# the point where upstream fixed it).
+option(OLLAMA_COMPAT_TESTS "Build the llama/compat regression tests" OFF)
+if(OLLAMA_COMPAT_TESTS)
+    enable_testing()
+    file(GLOB _ollama_compat_tests CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/../compat/tests/*-test.cpp")
+    foreach(_ollama_compat_test_src IN LISTS _ollama_compat_tests)
+        get_filename_component(_ollama_compat_test_name "${_ollama_compat_test_src}" NAME_WE)
+        add_executable(ollama-compat-${_ollama_compat_test_name} "${_ollama_compat_test_src}")
+        target_link_libraries(ollama-compat-${_ollama_compat_test_name} PRIVATE llama)
+        # The test loads a backend module from its own directory when
+        # GGML_BACKEND_DL is on, so keep it next to the ggml modules.
+        set_target_properties(ollama-compat-${_ollama_compat_test_name} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+        add_test(NAME compat.${_ollama_compat_test_name}
+                 COMMAND ollama-compat-${_ollama_compat_test_name})
+        set_tests_properties(compat.${_ollama_compat_test_name} PROPERTIES
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+    endforeach()
+    unset(_ollama_compat_tests)
+endif()
+
 # Find GPU toolkits for runtime dependency bundling.
 # The llama.cpp build finds these internally, but we need the
 # variables (CUDAToolkit_LIBRARY_DIR, etc.) in our install scope.

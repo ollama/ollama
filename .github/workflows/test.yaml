@@ -25,6 +25,7 @@ jobs:
       app_changed: ${{ steps.changes.outputs.app_changed }}
       go_mod_changed: ${{ steps.changes.outputs.go_mod_changed }}
       enginehash: ${{ steps.changes.outputs.enginehash }}
+      compat_changed: ${{ steps.changes.outputs.compat_changed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,8 +59,19 @@ jobs:
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo go_mod_changed=$(changed 'go.mod') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
+          # Whether the pinned llama.cpp or anything layered on top of it changed.
+          # Gates the compat regression tests so they only pay for a llama.cpp
+          # build when they can actually say something about it.
+          echo compat_changed=$(changed \
+            'LLAMA_CPP_VERSION' \
+            'llama/compat/*' \
+            'llama/compat/*/*' \
+            'llama/compat/**/*' \
+            'llama/server/*' \
+            'llama/server/**/*') | tee -a $GITHUB_OUTPUT
 
   patches:
+    needs: [changes]
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -76,7 +88,18 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF \
             -DGGML_CPU_ALL_VARIANTS=ON \
+            -DOLLAMA_COMPAT_TESTS=ON \
             -DOLLAMA_RUNNER_DIR=
+      - name: Build and run compat regression tests
+        # The patches are pure llama.cpp C++ and the kernels are shared across
+        # platforms, so one build is enough to prove the behaviour.
+        if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.compat_changed == 'True'
+        shell: bash
+        run: |
+          cmake --build "$RUNNER_TEMP/llama-server-patch-check" \
+            --target ollama-compat-kv-shift-rope-test --config Release --parallel 4
+          ctest --test-dir "$RUNNER_TEMP/llama-server-patch-check" \
+            -R '^compat\.' --output-on-failure -C Release
 
   linux:
     needs: [changes]
