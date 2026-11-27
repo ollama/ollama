@@ -292,7 +292,7 @@ console.log(response.message.content);
 - [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) - Telegram bot for roleplay
 
 ### Terminal & CLI
-
+- [Kunji](https://github.com/testwithsuraj/kunji) - Terminal chat app for multiple AI providers with cost tracking, budgets and chat history
 - [aichat](https://github.com/sigoden/aichat) - All-in-one LLM CLI with Shell Assistant, RAG, and AI tools
 - [oterm](https://github.com/ggozad/oterm) - Terminal client for Ollama
 - [gollama](https://github.com/sammcj/gollama) - Go-based model manager for Ollama
