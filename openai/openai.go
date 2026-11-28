@@ -52,6 +52,35 @@ type ChoiceLogprobs struct {
 	Content []api.Logprob `json:"content"`
 }
 
+type tokenLogprob struct {
+	Token   string  `json:"token"`
+	Logprob float64 `json:"logprob"`
+	Bytes   []int   `json:"bytes"`
+}
+
+// MarshalJSON writes every field OpenAI requires on a logprob entry, which
+// api.Logprob omits when empty: bytes may be null and top_logprobs is [] when
+// no alternatives were requested.
+func (l ChoiceLogprobs) MarshalJSON() ([]byte, error) {
+	type entry struct {
+		tokenLogprob
+		TopLogprobs []tokenLogprob `json:"top_logprobs"`
+	}
+	content := make([]entry, len(l.Content))
+	for i, lp := range l.Content {
+		content[i] = entry{
+			tokenLogprob: tokenLogprob(lp.TokenLogprob),
+			TopLogprobs:  make([]tokenLogprob, len(lp.TopLogprobs)),
+		}
+		for j, top := range lp.TopLogprobs {
+			content[i].TopLogprobs[j] = tokenLogprob(top)
+		}
+	}
+	return json.Marshal(struct {
+		Content []entry `json:"content"`
+	}{content})
+}
+
 type Choice struct {
 	Index        int             `json:"index"`
 	Message      Message         `json:"message"`
