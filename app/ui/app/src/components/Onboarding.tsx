@@ -1050,7 +1050,7 @@ export function ConnectAppsScreen({
         <LaunchCommandIcon id={claudeIntegration.id} />
         <div className="min-w-0">
           <p className="text-base font-medium text-neutral-950 dark:text-neutral-100">
-            Claude Code
+            Claude
           </p>
           <p
             role={claudeGuidance ? "alert" : undefined}
@@ -1071,7 +1071,7 @@ export function ConnectAppsScreen({
                           ? "Restoring Claude’s usual connection…"
                           : !claudeInstalled
                             ? "We’ll download Claude and connect it to Ollama."
-                            : "Use Ollama models in your Claude Code.")}
+                            : "Use Ollama models in Claude Desktop.")}
           </p>
         </div>
       </div>

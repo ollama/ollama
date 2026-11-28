@@ -1273,4 +1273,46 @@ describe("ConnectAppsScreen interactions", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("labels Claude Desktop as Claude separately from the Claude Code launcher", async () => {
+    stubAppsWindow({
+      getClaudeDesktopConnectionSummary: vi
+        .fn()
+        .mockResolvedValue(DISCONNECTED_CLAUDE),
+    });
+
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen
+            initialClaudeStatus={DISCONNECTED_CLAUDE}
+            initialIntegrations={appsIntegrations(true)}
+          />,
+        );
+        await settle();
+      });
+
+      const desktopRow = renderer!.root.findByProps({
+        id: "integration-claude-desktop",
+      });
+      const desktopText = desktopRow
+        .findAll((node) => typeof node.children?.[0] === "string")
+        .map((node) => node.children.join(""));
+      expect(desktopText).toContain("Claude");
+      expect(desktopText).toContain("Use Ollama models in Claude Desktop.");
+      expect(desktopText).not.toContain("Claude Code");
+
+      const cliLauncher = renderer!.root.findByProps({
+        id: "integration-claude",
+      });
+      const cliText = cliLauncher
+        .findAll((node) => typeof node.children?.[0] === "string")
+        .map((node) => node.children.join(""));
+      expect(cliText).toContain("Claude Code");
+    } finally {
+      if (renderer) act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
 });
