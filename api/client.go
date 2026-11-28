@@ -70,10 +70,11 @@ func checkError(resp *http.Response, body []byte) error {
 //	<scheme>://<host>:<port>
 //
 // If the variable is not specified, a default ollama host and port will be
-// used.
+// used. IPv4 and IPv6 wildcard addresses are mapped to their respective
+// loopback addresses for client connections.
 func ClientFromEnvironment() (*Client, error) {
 	return &Client{
-		base: envconfig.Host(),
+		base: envconfig.ConnectableHost(),
 		http: http.DefaultClient,
 	}, nil
 }
