@@ -836,3 +836,42 @@ func TestAdmissionPrefersRestorablePrefillWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestImmediateShortfallDoesNotEvictLazyHistory(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.GPUIsAvailable() {
+			t.Skip("GPU allocator counters required")
+		}
+		c := nativeRetentionHistory()
+		defer c.close()
+		pending := pendingHistoryBytes([]*prefixCache{c})
+		if pending == 0 || c.activePath[1].snapshotBytes() == 0 {
+			t.Fatal("fixture needs both lazy pending bytes and materialized checkpoint bytes")
+		}
+		mlx.ClearCache()
+		immediate := int64(-1)
+		memory := discover.MemoryHeadroom{
+			AvailableRAM:          pending + int64(c.liveBytes()) + 1024,
+			FreeMemoryAboveTarget: &immediate,
+		}
+		trimHistory([]*prefixCache{c}, []*prefixCache{c}, nil, memory, 0)
+		if c.minCacheOffset() != 12 {
+			t.Fatalf("evicted lazy frontier (minCacheOffset=%d, want 12) on 1-byte immediate shortfall", c.minCacheOffset())
+		}
+	})
+}
+
+func TestSnapshotWorkspaceExcludesPersistentGrowth(t *testing.T) {
+	var s batchScheduler
+	// Persistent growth (before=100, after=180) is already in ActiveMemory/liveBytes;
+	// only transient peak above max(before, after) should be reserved.
+	s.updateSnapshotWorkspace(100, 210, 180)
+	if s.snapshotWorkspace != 30 {
+		t.Fatalf("snapshotWorkspace=%d, want 30", s.snapshotWorkspace)
+	}
+	// Smaller subsequent steps preserve the high-water mark and clamp against before.
+	s.updateSnapshotWorkspace(180, 190, 150)
+	if s.snapshotWorkspace != 30 {
+		t.Fatalf("snapshotWorkspace=%d, want 30", s.snapshotWorkspace)
+	}
+}

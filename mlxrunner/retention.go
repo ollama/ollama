@@ -168,8 +168,13 @@ func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memor
 		// Evicting an idle slot's last history also releases its live buffers.
 		// Stop reserving room to copy those buffers before choosing another victim.
 		copyBytes = idleCopyBytes(idle)
+		ramTarget := max(1, storageBefore+memory.AvailableRAM-(reserve+copyBytes))
 		target = physicalHistoryLimit(memory, storageBefore, active, pool, reserve+copyBytes)
-		if int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) <= target || !evictColdHistory(caches, idle, preferred) {
+		aboveRAM := int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) > ramTarget
+		// Lazy pendingHistoryBytes are not currently allocated; only active
+		// memory counts toward an immediate OS free-page shortfall.
+		aboveImmediate := target < ramTarget && int64(mlx.ActiveMemory()) > target
+		if (!aboveRAM && !aboveImmediate) || !evictColdHistory(caches, idle, preferred) {
 			break
 		}
 		changed = true
@@ -203,4 +208,8 @@ func physicalHistoryLimit(memory discover.MemoryHeadroom, before, active, reusab
 		}
 	}
 	return target
+}
+
+func (s *batchScheduler) updateSnapshotWorkspace(before, peak, after int) {
+	s.snapshotWorkspace = max(s.snapshotWorkspace, int64(max(0, peak-max(before, after))))
 }
