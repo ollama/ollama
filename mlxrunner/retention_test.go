@@ -43,7 +43,7 @@ func TestAdmissionReclaimsIdleHistory(t *testing.T) {
 				slot.cache.close()
 			}
 		}()
-		for round := range 2 {
+		for round, tokens := range [][]int32{{1, 1, 1}, {1, 1, 1}, {2, 2, 2}} {
 			if round == 1 {
 				if s.slots[0].cache.minCacheOffset() < 3 {
 					t.Fatal("first request did not retain its prefix")
@@ -53,15 +53,21 @@ func TestAdmissionReclaimsIdleHistory(t *testing.T) {
 				s.snapshotWorkspace = math.MaxInt64 / 2
 			}
 			req := request{
-				Ctx: ctx, Tokens: []int32{1, 1, 1}, Responses: make(chan CompletionResponse, 8),
+				Ctx: ctx, Tokens: tokens, Responses: make(chan CompletionResponse, 8),
 				CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 2}},
 			}
 			mlx.Scoped(func() { s.admit(req) })
 			if s.snapshotTimer == nil || s.memory == nil {
 				t.Fatal("admission did not initialize memory observation")
 			}
-			if offset := s.slots[0].cache.minCacheOffset(); offset != 0 {
-				t.Fatalf("round %d: admission retained %d tokens, want a cold start", round, offset)
+			// Discarding the history a request resumes from would not lower its
+			// peak, so only the unrelated third request finds it released.
+			reused := round == 1
+			if offset := s.slots[0].cache.minCacheOffset(); (offset != 0) != reused {
+				t.Fatalf("round %d: admission retained %d tokens", round, offset)
+			}
+			if round == 2 && len(s.slots[0].cache.root.children) != 0 {
+				t.Fatal("admission kept unrelated history despite the reserve")
 			}
 			for i := 0; i < 20 && s.slots[0].request != nil; i++ {
 				mlx.Scoped(func() { s.step() })
@@ -70,14 +76,20 @@ func TestAdmissionReclaimsIdleHistory(t *testing.T) {
 				t.Fatalf("round %d: request did not finish", round)
 			}
 			text, final := collectResponses(req.Responses)
-			if want := strings.Repeat(tok.Decode([]int32{1}), 2); text != want || !final.Done || final.EvalCount != 2 {
+			if want := strings.Repeat(tok.Decode(tokens[:1]), 2); text != want || !final.Done || final.EvalCount != 2 {
 				t.Fatalf("round %d: output %q (%+v), want %q", round, text, final, want)
 			}
-			if final.PromptEvalCachedCount == nil || *final.PromptEvalCachedCount != 0 || final.PromptEvalCount != 3 {
-				t.Fatalf("round %d: expected recomputation of all three tokens, got %+v", round, final)
+			if final.PromptEvalCachedCount == nil || (*final.PromptEvalCachedCount != 0) != reused || final.PromptEvalCount != 3 {
+				t.Fatalf("round %d: unexpected prompt reuse %+v", round, final)
 			}
 		}
 	})
+}
+
+// physicalShortfall reports no free memory above the host's target.
+func physicalShortfall() discover.MemoryHeadroom {
+	margin := int64(math.MinInt64 / 2)
+	return discover.MemoryHeadroom{FreeMemoryAboveTarget: &margin}
 }
 
 func TestPressureEvictionPreservesSharedPrefix(t *testing.T) {
@@ -89,7 +101,7 @@ func TestPressureEvictionPreservesSharedPrefix(t *testing.T) {
 		simulateRequest(t, pc, hot, []int32{24, 25}, 5)
 		frontier := pc.activePath[len(pc.activePath)-1]
 		before := frontier.endOffset
-		for evictColdHistory([]*prefixCache{pc}, nil, nil) {
+		for evictColdHistory([]*prefixCache{pc}, nil, nil, evictShortfall) {
 			checkTrieInvariants(t, pc.root)
 		}
 		if pc.activePath[len(pc.activePath)-1] != frontier || frontier.endOffset != before {
@@ -114,10 +126,10 @@ func TestPressureEvictionCanReleaseIdleFrontier(t *testing.T) {
 		pc := env.pc
 		prompt := []int32{1, 2, 3, 4, 5, 6, 7, 8}
 		simulateRequest(t, pc, prompt, []int32{9, 10}, 5)
-		if evictColdHistory([]*prefixCache{pc}, nil, nil) {
+		if evictColdHistory([]*prefixCache{pc}, nil, nil, evictShortfall) {
 			t.Fatal("a busy frontier must not be evicted")
 		}
-		if !evictColdHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil) {
+		if !evictColdHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil, evictShortfall) {
 			t.Fatal("an idle frontier should yield to pressure")
 		}
 		frontier := pc.activePath[len(pc.activePath)-1]
@@ -130,7 +142,7 @@ func TestPressureEvictionCanReleaseIdleFrontier(t *testing.T) {
 			t.Fatal("remaining prefix is no longer reusable")
 		}
 		env.assertAllTokens(t, "retained prefix", prompt[:frontier.endOffset])
-		for evictColdHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil) {
+		for evictColdHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil, evictShortfall) {
 		}
 		if pc.minCacheOffset() != 0 || pc.pagedOutBytes != 0 || len(pc.root.children) != 0 {
 			t.Fatal("empty idle history retained live state")
@@ -152,7 +164,7 @@ func TestPressureEvictionOrdersColdLeavesAcrossSlots(t *testing.T) {
 	}
 	old.pc.root.children[0].lastUsed = time.Unix(1, 0)
 	recent.pc.root.children[0].lastUsed = time.Unix(2, 0)
-	if !evictColdHistory([]*prefixCache{recent.pc, old.pc}, nil, nil) {
+	if !evictColdHistory([]*prefixCache{recent.pc, old.pc}, nil, nil, evictShortfall) {
 		t.Fatal("no cold history evicted")
 	}
 	if len(old.pc.root.children) != 1 || len(recent.pc.root.children) != 2 {
@@ -183,11 +195,14 @@ func TestRetainedHistoryPressureReleasesLazyBacking(t *testing.T) {
 		if pc.pagedOutBytes != 0 || pending == 0 {
 			t.Fatal("test requires a lazy snapshot with future copy cost")
 		}
-		trimHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil, discover.MemoryHeadroom{AvailableRAM: int64(pending + pc.liveBytes())}, 0)
+		// An unrelated request copies out the saved history before rewriting the
+		// live buffers, which hold the same tokens: room for one copy keeps it.
+		mlx.ClearCache()
+		trimHistory([]*prefixCache{pc}, []*prefixCache{pc}, map[*trieNode]int{}, discover.MemoryHeadroom{AvailableRAM: int64(pc.liveBytes())}, 0)
 		if len(pc.root.children) != 1 {
 			t.Fatal("history evicted despite sufficient headroom")
 		}
-		trimHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil, discover.MemoryHeadroom{}, math.MaxInt64/2)
+		trimHistory([]*prefixCache{pc}, []*prefixCache{pc}, nil, physicalShortfall(), math.MaxInt64/2)
 		mlx.DefaultStream().Synchronize()
 		if len(pc.root.children) != 0 || kv.Offset() != 0 {
 			t.Fatal("idle history did not yield under pressure")
@@ -242,7 +257,7 @@ func TestCompletedSlowReaderSurvivesHistoryEviction(t *testing.T) {
 	if scheduler.step() {
 		t.Fatal("full reader buffer unexpectedly advanced")
 	}
-	if slot.activeCache() != nil || !evictColdHistory([]*prefixCache{env.pc}, []*prefixCache{env.pc}, nil) {
+	if slot.activeCache() != nil || !evictColdHistory([]*prefixCache{env.pc}, []*prefixCache{env.pc}, nil, evictShortfall) {
 		t.Fatal("completed slow reader pinned its history")
 	}
 	if first := <-responses; first.Content != "first" {
@@ -281,7 +296,12 @@ func feedNativeRetention(c *prefixCache, tokens []int32) {
 }
 
 func nativeRetentionHistory() *prefixCache {
-	c := newPrefixCache([]cache.Cache{cache.NewKVCache(), cache.NewRotatingKVCache(4)})
+	return nativeHistory(cache.NewKVCache(), cache.NewRotatingKVCache(4))
+}
+
+// nativeHistory saves three 4-token checkpoints; the last is the frontier.
+func nativeHistory(caches ...cache.Cache) *prefixCache {
+	c := newPrefixCache(caches)
 	c.ensureRoot()
 	for start := 0; start < 12; start += 4 {
 		tokens := []int32{int32(start + 1), int32(start + 2), int32(start + 3), int32(start + 4)}
@@ -307,17 +327,10 @@ func TestPressureCompactsOldCheckpointsWithoutLosingLatestPrefix(t *testing.T) {
 		if saved == 0 {
 			t.Fatal("fixture needs an independently owned old sliding state")
 		}
-		var pending int64
-		walkNodes(c.root, func(n *trieNode) bool {
-			for _, snap := range n.snapshots {
-				pending += int64(cache.PendingCopyBytes(snap))
-			}
-			return true
-		})
 		before, retained := mlx.ActiveMemory(), c.pagedOutBytes
-		t.Logf("before active=%d retained=%d pending=%d old=%d", before, retained, pending, saved)
+		t.Logf("before active=%d retained=%d old=%d", before, retained, saved)
 		mlx.ResetPeakMemory()
-		trimHistory([]*prefixCache{c}, nil, nil, discover.MemoryHeadroom{AvailableRAM: pending}, int64(mlx.CacheMemory())+saved)
+		trimHistory([]*prefixCache{c}, nil, nil, discover.MemoryHeadroom{}, int64(mlx.CacheMemory())+saved)
 		if got := mlx.PeakMemory(); got > before {
 			t.Fatalf("pressure compaction allocated: peak %d > %d", got, before)
 		}
@@ -356,7 +369,7 @@ func TestRetainedHistoryStopsAfterMeetingLimit(t *testing.T) {
 		// One eviction releases more than this shortfall. Another checkpoint is
 		// eligible, but must survive once current usage meets the fixed limit.
 		storageBefore := int64(before + mlx.CacheMemory())
-		memory := discover.MemoryHeadroom{AvailableRAM: pendingHistoryBytes([]*prefixCache{c})}
+		memory := discover.MemoryHeadroom{}
 		reserve := int64(mlx.CacheMemory()) + 1
 		trimHistory([]*prefixCache{c}, nil, nil, memory, reserve)
 		if freed := int64(before - mlx.ActiveMemory()); freed < old {
@@ -406,9 +419,7 @@ func TestRetentionUpdatesIdleCopyReserve(t *testing.T) {
 			}
 			mlx.ClearCache()
 			caches := []*prefixCache{large, small}
-			memory := discover.MemoryHeadroom{
-				AvailableRAM: int64(large.liveBytes()) + pendingHistoryBytes([]*prefixCache{small}),
-			}
+			memory := discover.MemoryHeadroom{AvailableRAM: int64(large.liveBytes())}
 			// With the old copy reserve, the target remains one byte below the
 			// smaller cache's usage even after all of the larger cache is freed.
 			// Dropping the obsolete reserve must let that smaller history survive.
@@ -419,7 +430,8 @@ func TestRetentionUpdatesIdleCopyReserve(t *testing.T) {
 				immediate := -largeBytes - 1
 				memory.FreeMemoryAboveTarget = &immediate
 			}
-			trimHistory(caches, caches, nil, memory, reserve)
+			// An unrelated request is arriving.
+			trimHistory(caches, caches, map[*trieNode]int{}, memory, reserve)
 			if large.minCacheOffset() != 0 {
 				t.Fatal("oldest, larger history was not released")
 			}
@@ -453,7 +465,7 @@ func TestPressureNeverMergesFrontierPastPendingCapture(t *testing.T) {
 		frontier := c.activePath[len(c.activePath)-1]
 		frontier.lastUsed = time.Time{} // Eligible first if the frontier guard is removed.
 		session.schedulePrefillSnapshots([]int{6, 8})
-		if !evictColdHistory([]*prefixCache{c}, nil, nil) {
+		if !evictColdHistory([]*prefixCache{c}, nil, nil, evictShortfall) {
 			t.Fatal("old inactive history was not eligible")
 		}
 		if frontier.endOffset != 4 || c.activePath[len(c.activePath)-1] != frontier {
@@ -488,6 +500,21 @@ func TestCompressionReclaimsOwnedHistory(t *testing.T) {
 		}
 		if c.activePath[len(c.activePath)-1] != frontier {
 			t.Fatal("pressure discarded current frontier")
+		}
+		// A next turn that re-renders the reply resumes at the checkpoint before
+		// the frontier, so compression keeps it however much it asks for.
+		reclaimColdHistory([]*prefixCache{c}, nil, math.MaxInt64, nil)
+		session := c.beginScore([]int32{1, 2, 3, 4, 5, 6, 7, 8, 21, 22}, nil)
+		defer session.close()
+		if len(session.remaining) != 2 {
+			t.Fatalf("resumed with %d tokens left, want 2", len(session.remaining))
+		}
+
+		// Merging checkpoints that only index the live buffers releases nothing.
+		lazy := nativeHistory(cache.NewKVCache())
+		defer lazy.close()
+		if got := reclaimColdHistory([]*prefixCache{lazy}, nil, math.MaxInt64, nil); got != 0 || len(lazy.activePath) != 4 {
+			t.Fatal("compression merged checkpoints that own no storage")
 		}
 	})
 }
@@ -529,7 +556,7 @@ func TestAdmissionPrefersMatchingHistory(t *testing.T) {
 		s := &batchScheduler{slots: []*batchSlot{{cache: pc}}}
 		preferred := s.matchingHistory(request{Tokens: incoming}, 0)
 		before, matched := findBestMatch(pc.root, pc.key(effectiveKeyTokens(incoming, nil)))
-		if !evictColdHistory([]*prefixCache{pc}, []*prefixCache{pc}, preferred) {
+		if !evictColdHistory([]*prefixCache{pc}, []*prefixCache{pc}, preferred, evictShortfall) {
 			t.Fatal("did not reclaim unrelated history")
 		}
 		after, remaining := findBestMatch(pc.root, pc.key(effectiveKeyTokens(incoming, nil)))
@@ -566,7 +593,7 @@ func TestAdmissionPrefersPeerHistory(t *testing.T) {
 			preferred := s.matchingHistory(req, 1)
 			// The donor is older, but the unrelated idle frontier should go first.
 			caches := []*prefixCache{donor.pc, idle.pc}
-			if !evictColdHistory(caches, caches, preferred) || idle.pc.minCacheOffset() != 0 {
+			if !evictColdHistory(caches, caches, preferred, evictShortfall) || idle.pc.minCacheOffset() != 0 {
 				t.Fatal("did not evict the unrelated idle frontier")
 			}
 			var session *cacheSession
@@ -581,7 +608,7 @@ func TestAdmissionPrefersPeerHistory(t *testing.T) {
 			idle.assertAllTokens(t, "peer history", incoming[:4])
 			session.close()
 			// Preference must not become an exemption from severe pressure.
-			for evictColdHistory(caches, caches, preferred) {
+			for evictColdHistory(caches, caches, preferred, evictShortfall) {
 			}
 			if donor.pc.minCacheOffset() != 0 || idle.pc.minCacheOffset() != 0 {
 				t.Fatal("incoming prefix prevented pressure reclamation")
@@ -634,7 +661,7 @@ func TestAdmissionDoesNotPreferUnrestorablePeerMatch(t *testing.T) {
 					}
 					preferred := s.matchingHistory(req, destination)
 					caches := []*prefixCache{donor.pc, local.pc}
-					if !evictColdHistory(caches, caches, preferred) {
+					if !evictColdHistory(caches, caches, preferred, evictShortfall) {
 						t.Fatal("no idle history was evicted")
 					}
 					var session *cacheSession
@@ -720,7 +747,7 @@ func TestPressureReclamationWithPendingWork(t *testing.T) {
 		mlx.AsyncEval(outputs...)
 		// Force reclamation without stressing the host. Submitted consumers must
 		// finish before all idle snapshots and live cache buffers are discarded.
-		trimHistory([]*prefixCache{c}, []*prefixCache{c}, nil, discover.MemoryHeadroom{}, math.MaxInt64/2)
+		trimHistory([]*prefixCache{c}, []*prefixCache{c}, nil, physicalShortfall(), math.MaxInt64/2)
 		if c.minCacheOffset() != 0 || c.pagedOutBytes != 0 {
 			t.Fatal("pressure did not release idle history")
 		}
@@ -780,7 +807,7 @@ func TestCompressionPreservesIdleFrontier(t *testing.T) {
 		if freed := reclaimColdHistory([]*prefixCache{unrelated}, []*prefixCache{unrelated}, 1, nil); freed != 0 {
 			t.Fatalf("idle compression check reclaimed the last restore point: %d bytes", freed)
 		}
-		memory := discover.MemoryHeadroom{AvailableRAM: pendingHistoryBytes(caches) + idleCopyBytes(caches)}
+		memory := discover.MemoryHeadroom{AvailableRAM: idleCopyBytes(caches)}
 		trimHistory(caches, caches, preferred, memory, int64(mlx.CacheMemory())+1)
 		if !slices.Equal(before, incoming.activePath) || unrelated.minCacheOffset() != 0 {
 			t.Fatal("physical shortfall did not reclaim the unrelated idle frontier first")

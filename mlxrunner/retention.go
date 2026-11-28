@@ -65,7 +65,7 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 			mlx.DefaultStream().Synchronize()
 			preferred := s.matchingHistory(incoming, destination)
 			for _, c := range caches {
-				for c.pagedOutBytes > c.limitBytes && evictColdHistory([]*prefixCache{c}, nil, preferred) {
+				for c.pagedOutBytes > c.limitBytes && evictColdHistory([]*prefixCache{c}, nil, preferred, evictShortfall) {
 				}
 			}
 			mlx.ClearCache()
@@ -144,8 +144,14 @@ func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memor
 	copyBytes := idleCopyBytes(idle)
 	target := physicalHistoryLimit(memory, storageBefore, active, pool, reserve+copyBytes)
 	shortfall := memory.FreeMemoryAboveTarget != nil && *memory.FreeMemoryAboveTarget < 0
-	if memory.ReclaimBytes == 0 && !shortfall && active+pendingHistoryBytes(caches) <= target {
-		return
+	if memory.ReclaimBytes == 0 && !shortfall {
+		if active <= target {
+			return
+		}
+		// Do not stall the GPU when the reserve has nothing it may take.
+		if _, n, _ := oldestColdHistory(caches, idle, preferred, evictReserve); n == nil {
+			return
+		}
 	}
 	// The scheduler serializes host operations, but GPU work can still be in
 	// flight. Finish submitted work before dropping storage or reading allocator
@@ -163,13 +169,19 @@ func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memor
 	active, pool = int64(mlx.ActiveMemory()), int64(mlx.CacheMemory())
 	// Keep this physical-headroom baseline fixed: evicted buffers enter the
 	// allocator pool until ClearCache below. Only usage and the copy reserve vary.
+	short := shortfallLimit(memory, storageBefore, active, pool)
 	changed := false
 	for {
 		// Evicting an idle slot's last history also releases its live buffers.
 		// Stop reserving room to copy those buffers before choosing another victim.
 		copyBytes = idleCopyBytes(idle)
 		target = physicalHistoryLimit(memory, storageBefore, active, pool, reserve+copyBytes)
-		if int64(mlx.ActiveMemory())+pendingHistoryBytes(caches) <= target || !evictColdHistory(caches, idle, preferred) {
+		usage := int64(mlx.ActiveMemory())
+		mode := evictReserve
+		if usage > short {
+			mode = evictShortfall
+		}
+		if usage <= target || !evictColdHistory(caches, idle, preferred, mode) {
 			break
 		}
 		changed = true
@@ -182,10 +194,13 @@ func trimHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, memor
 }
 
 // Allow one idle row to restore history or copy shared buffers on admission.
+// Rewriting a row copies out the saved history that still indexes its buffers,
+// after which the buffers are written in place. Reserve the larger copy, not
+// both: they hold the same tokens.
 func idleCopyBytes(idle []*prefixCache) int64 {
 	var bytes int64
 	for _, c := range idle {
-		bytes = max(bytes, int64(c.liveBytes()))
+		bytes = max(bytes, int64(c.liveBytes()), pendingHistoryBytes(c))
 	}
 	return bytes
 }
@@ -195,12 +210,16 @@ func idleCopyBytes(idle []*prefixCache) int64 {
 // Re-reading Mach counters can return a cached sample
 // and charge a physical shortfall twice, unnecessarily discarding the frontier.
 func physicalHistoryLimit(memory discover.MemoryHeadroom, before, active, reusable, reserve int64) int64 {
-	released := before - active - reusable
-	target := max(1, before+memory.AvailableRAM-reserve)
+	return min(max(1, before+memory.AvailableRAM-reserve), shortfallLimit(memory, before, active, reusable))
+}
+
+// shortfallLimit is the usage that leaves free memory at the host's target, or
+// MaxInt64 when there is no shortfall.
+func shortfallLimit(memory discover.MemoryHeadroom, before, active, reusable int64) int64 {
 	if memory.FreeMemoryAboveTarget != nil {
-		if immediate := *memory.FreeMemoryAboveTarget + released; immediate < 0 {
-			target = min(target, max(1, active+immediate))
+		if immediate := *memory.FreeMemoryAboveTarget + before - active - reusable; immediate < 0 {
+			return max(1, active+immediate)
 		}
 	}
-	return target
+	return math.MaxInt64
 }

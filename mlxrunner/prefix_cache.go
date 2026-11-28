@@ -750,7 +750,7 @@ func reclaimColdHistory(caches, idle []*prefixCache, bytes int64, preferred map[
 	before := mlx.ActiveMemory()
 	changed := false
 	for int64(before-mlx.ActiveMemory()) < bytes {
-		owner, node, frontier := oldestColdHistory(caches, idle, preferred)
+		owner, node, frontier := oldestColdHistory(caches, idle, preferred, evictCompression)
 		// Compression feedback yields checkpoints, but only the physical
 		// headroom target may discard an idle slot's final restore point.
 		// Do not skip that frontier to evict a better incoming match instead.
@@ -766,18 +766,16 @@ func reclaimColdHistory(caches, idle []*prefixCache, bytes int64, preferred map[
 	return int64(before - mlx.ActiveMemory())
 }
 
-func pendingHistoryBytes(caches []*prefixCache) int64 {
+func pendingHistoryBytes(c *prefixCache) int64 {
 	var bytes int64
-	for _, c := range caches {
-		walkNodes(c.root, func(n *trieNode) bool {
-			for _, snap := range n.snapshots {
-				if snap != nil {
-					bytes += int64(cache.PendingCopyBytes(snap))
-				}
+	walkNodes(c.root, func(n *trieNode) bool {
+		for _, snap := range n.snapshots {
+			if snap != nil {
+				bytes += int64(cache.PendingCopyBytes(snap))
 			}
-			return true
-		})
-	}
+		}
+		return true
+	})
 	return bytes
 }
 
@@ -785,14 +783,32 @@ func pendingHistoryBytes(caches []*prefixCache) int64 {
 // Checkpoint merges must preserve the child's state without allocating. Only
 // after candidates with the same match length are exhausted may an idle slot
 // give up its frontier.
-// Prefer shorter incoming-prefix matches, then older history, without pinning
-// any idle state against pressure.
-func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) (*prefixCache, *trieNode, bool) {
+// Prefer shorter incoming-prefix matches, then older history. Only a physical
+// shortfall may discard what the next request resumes from (see evictionMode).
+func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, mode evictionMode) (*prefixCache, *trieNode, bool) {
+	// Between requests, a next turn resumes at a slot's frontier or, when it
+	// re-renders the reply differently, at the checkpoint before it.
+	restorePoint := func(c *prefixCache, n *trieNode) bool {
+		last := len(c.activePath) - 1
+		return n == c.activePath[last] || last > 0 && n == c.activePath[last-1]
+	}
+	keep := func(c *prefixCache, n *trieNode) bool {
+		switch mode {
+		case evictReserve:
+			if preferred != nil {
+				return preferred[n] > 0
+			}
+			return restorePoint(c, n)
+		case evictCompression:
+			return restorePoint(c, n) || n.snapshotBytes() == 0
+		}
+		return false
+	}
 	var owner *prefixCache
 	var oldest *trieNode
 	for _, c := range caches {
 		walkNodes(c.root, func(n *trieNode) bool {
-			if n.parent == nil || len(n.children) > 1 || len(c.activePath) == 0 || n == c.activePath[len(c.activePath)-1] {
+			if n.parent == nil || len(n.children) > 1 || len(c.activePath) == 0 || n == c.activePath[len(c.activePath)-1] || keep(c, n) {
 				return true
 			}
 			if len(n.children) == 1 {
@@ -824,7 +840,8 @@ func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int)
 			continue
 		}
 		n := c.activePath[len(c.activePath)-1]
-		if len(n.children) != 0 {
+		// Compression ranks idle frontiers too, but stops at them.
+		if len(n.children) != 0 || mode == evictReserve && keep(c, n) {
 			continue
 		}
 		if oldest != nil {
@@ -840,8 +857,19 @@ func oldestColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int)
 	return owner, oldest, idleSelected
 }
 
-func evictColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int) bool {
-	owner, oldest, _ := oldestColdHistory(caches, idle, preferred)
+// evictionMode limits the history that pressure may discard. Discarding what
+// the next request resumes from does not lower that request's peak, since it
+// rebuilds the same cache, so only a physical shortfall takes it.
+type evictionMode int
+
+const (
+	evictShortfall   evictionMode = iota // any cold history
+	evictReserve                         // keep what the next request resumes from
+	evictCompression                     // stored checkpoints, keeping restore points
+)
+
+func evictColdHistory(caches, idle []*prefixCache, preferred map[*trieNode]int, mode evictionMode) bool {
+	owner, oldest, _ := oldestColdHistory(caches, idle, preferred, mode)
 	if oldest == nil {
 		return false
 	}
