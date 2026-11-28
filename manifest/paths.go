@@ -121,7 +121,7 @@ func resolveManifestPath(n model.Name) (string, string, error) {
 	}
 	// Resolve Windows links explicitly, preserving fallback for dangling links.
 	if runtime.GOOS == "windows" {
-		_, err = filepath.EvalSymlinks(v2Path)
+		_, err = resolveLinks(v2Path)
 	} else {
 		_, err = os.Stat(v2Path)
 	}
