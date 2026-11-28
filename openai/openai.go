@@ -486,10 +486,18 @@ func ToCompletion(id string, r api.GenerateResponse) Completion {
 
 // ToCompleteChunk converts an api.GenerateResponse to CompletionChunk
 func ToCompleteChunk(id string, r api.GenerateResponse) CompletionChunk {
+	// Stamp the chunk with the response's timestamp; OpenAI reuses one created
+	// value across a stream. Fall back to now when the response carries none
+	// (e.g. synthetic responses).
+	created := r.CreatedAt.Unix()
+	if r.CreatedAt.IsZero() {
+		created = time.Now().Unix()
+	}
+
 	return CompletionChunk{
 		Id:                id,
 		Object:            "text_completion",
-		Created:           time.Now().Unix(),
+		Created:           created,
 		Model:             r.Model,
 		SystemFingerprint: "fp_ollama",
 		Choices: []CompleteChunkChoice{{
