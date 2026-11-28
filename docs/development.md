@@ -119,7 +119,7 @@ Additional prerequisites:
 
 ## MLX Engine (Optional)
 
-The MLX engine enables running safetensor based models. On macOS arm64, MLX is enabled by default. On other platforms, MLX backends are selected with `OLLAMA_MLX_BACKENDS`.
+The MLX engine enables running safetensor-based models. On macOS arm64, MLX is enabled by default. On other platforms, MLX backends are selected with `OLLAMA_MLX_BACKENDS`.
 
 ### CUDA
 
