@@ -494,16 +494,25 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	if req.Restore {
 		return restoreIntegration(name, runner, req)
 	}
+	if pi, ok := runner.(*Pi); ok && !req.ForceConfigure && !req.ConfigureOnly {
+		native := piHasModelArgs(req.ExtraArgs) || (req.ModelOverride == "" && piControlsLaunch(req.ExtraArgs))
+		if !native && req.ModelOverride == "" && !isInteractiveSession() {
+			settings, _ := piModelSettings()
+			provider, _ := settings["defaultProvider"].(string)
+			_, scoped := settings["enabledModels"]
+			native = scoped || (provider != "" && provider != "ollama")
+		}
+		if native {
+			if err := EnsureIntegrationInstalled(name, runner); err != nil {
+				return err
+			}
+			return runIntegration(pi, "", nil, req.ExtraArgs)
+		}
+	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
 		if _, ok := runner.(ManagedAutodiscoveryIntegration); !ok {
 			return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
 		}
-	}
-	if pi, ok := runner.(*Pi); ok && !req.ForceConfigure && !req.ConfigureOnly && piHasModelArgs(req.ExtraArgs) {
-		if err := EnsureIntegrationInstalled(name, runner); err != nil {
-			return err
-		}
-		return runIntegration(pi, "", nil, req.ExtraArgs)
 	}
 
 	launchClient, saved, err := prepareIntegrationLaunch(name, policy)
