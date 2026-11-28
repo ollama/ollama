@@ -330,6 +330,7 @@ console.log(response.message.content);
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) - Open source LLM observability
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) - AI observability and evaluation for agents
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) - Open source LLM observability
+- [AI Meter](https://github.com/dichiara19/ai-meter) - Windows 11 taskbar meter for loaded models, VRAM and context in use, also inside WSL
 
 ### Database & Embeddings
 
