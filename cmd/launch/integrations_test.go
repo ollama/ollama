@@ -131,7 +131,7 @@ func TestChatGPTMigratesLegacyCodexAppLaunchConfig(t *testing.T) {
 func TestHiddenIntegrationsExcludedFromVisibleLists(t *testing.T) {
 	for _, info := range ListIntegrationInfos() {
 		switch info.Name {
-		case "claude-desktop", "vscode", "kimi", "muse":
+		case "vscode", "kimi", "muse":
 			t.Fatalf("hidden integration %q should not appear in ListIntegrationInfos", info.Name)
 		}
 	}
@@ -1903,6 +1903,9 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 
 		want := append([]string(nil), integrationOrder...)
+		if claudeDesktopSupported() != nil {
+			want = slices.DeleteFunc(want, func(name string) bool { return name == "claude-desktop" })
+		}
 		if poolsideGOOS == "windows" {
 			filtered := make([]string, 0, len(want))
 			for _, name := range want {
@@ -1932,7 +1935,10 @@ func TestListIntegrationInfos(t *testing.T) {
 		for _, info := range infos {
 			got = append(got, info.Name)
 		}
-		wantPrefix := []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+		wantPrefix := []string{"claude", "claude-desktop", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp"}
+		if claudeDesktopSupported() != nil {
+			wantPrefix = slices.DeleteFunc(wantPrefix, func(name string) bool { return name == "claude-desktop" })
+		}
 		if codexAppSupported() != nil {
 			wantPrefix = slices.DeleteFunc(wantPrefix, func(name string) bool { return name == "chatgpt" })
 		}

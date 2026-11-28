@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "claude-desktop", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -56,7 +56,6 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "claude-desktop",
 		Runner:      &ClaudeDesktop{},
 		Aliases:     []string{"claude-app"},
-		Hidden:      true,
 		Description: "Use Ollama models in Claude Desktop",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
