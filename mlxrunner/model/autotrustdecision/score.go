@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -63,14 +64,17 @@ func (m *Model) prompt(input llm.ScoreRequest, q *llm.ScoreQuestion) (string, st
 		if len(q.Options) != 2 {
 			return "", "", nil, nil, fmt.Errorf("AutoTrust decision noul requires two options")
 		}
-		options = []string{"false", "true"}
+		options = []string{"false: " + q.Options[0], "true: " + q.Options[1]}
 		ids = m.head.VerbalizerIDs[:2]
 		bias = m.head.Bias[:2]
 	case "score":
 		if len(q.Options) != 6 {
 			return "", "", nil, nil, fmt.Errorf("AutoTrust decision score requires six levels")
 		}
-		options = []string{"0", "1", "2", "3", "4", "5"}
+		options = make([]string, 6)
+		for i, level := range q.Options {
+			options[i] = strconv.Itoa(i) + ": " + level
+		}
 		ids = m.head.VerbalizerIDs[2:8]
 		bias = m.head.Bias[2:8]
 	case "choice":
