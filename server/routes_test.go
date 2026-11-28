@@ -34,9 +34,18 @@ import (
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/telemetry"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel/metric/noop"
 )
+
+// newTestMetrics returns a Metrics backed by a no-op meter so handlers can
+// record metrics in tests without initialization.
+func newTestMetrics() *telemetry.Metrics {
+	return telemetry.NewMetrics(noop.NewMeterProvider().Meter("test"))
+}
 
 func TestGetExistingName(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -827,7 +836,8 @@ func TestRoutes(t *testing.T) {
 		Expected func(t *testing.T, resp *http.Response)
 	}
 
-	s := &Server{}
+	s := &Server{modelCaches: newModelCaches(), metrics: newTestMetrics()}
+	s.modelCaches.Start(context.Background())
 
 	createTestModel := func(t *testing.T, name string) {
 		t.Helper()
@@ -1216,6 +1226,20 @@ func TestRoutes(t *testing.T) {
 				}
 			},
 		},
+		{
+			Name:   "Metrics Handler",
+			Method: http.MethodGet,
+			Path:   "/metrics",
+			Setup: func(t *testing.T, req *http.Request) {
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "text/plain; version=0.0.4; charset=utf-8; escaping=values")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+				assert.Contains(t, string(body), "http_requests_total")
+			},
+		},
 	}
 
 	router, err := s.GenerateRoutes()
@@ -1321,7 +1345,7 @@ func TestGetModelInfoSafetensorsTensorInfoRequiresVerbose(t *testing.T) {
 func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, gguftest.KV{
+	_, digest := createBinFile(t, map[string]any{
 		"general.architecture": "llama",
 		"general.file_type":    uint32(gguf.FileTypeQ4_K_M),
 	}, nil)
@@ -1646,8 +1670,8 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
-	_, digest1 := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
-	_, digest2 := createBinFile(t, gguftest.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
+	_, digest1 := createBinFile(t, map[string]any{"general.architecture": "test"}, nil)
+	_, digest2 := createBinFile(t, map[string]any{"general.type": "projector", "general.architecture": "clip"}, nil)
 
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:  "show-model",
@@ -1682,7 +1706,7 @@ func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
 
 	chatTemplate := "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}"
 	goTemplate := "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}"
-	_, digest := createBinFile(t, gguftest.KV{
+	_, digest := createBinFile(t, map[string]any{
 		"general.architecture":    "llama",
 		"tokenizer.chat_template": chatTemplate,
 	}, nil)
@@ -2416,6 +2440,30 @@ func TestWaitForStream(t *testing.T) {
 			if diff := cmp.Diff(w.Body.String(), tt.expectBody); diff != "" {
 				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
+		})
+	}
+}
+
+func TestRouteToAction(t *testing.T) {
+	tests := []struct {
+		name           string
+		route          string
+		expectedAction string
+	}{
+		{"Chat completion v1", "/v1/chat/completions", "chat"},
+		{"Chat API", "/api/chat", "chat"},
+		{"Embed v1", "/v1/embeddings", "embed"},
+		{"Embed API", "/api/embed", "embed"},
+		{"Pull API", "/api/pull", "pull"},
+		{"Push API", "/api/push", "push"},
+		{"Root path", "/", "head"},
+		{"Anyother path", "/api/anyother", "anyother"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action := routeToAction(tt.route)
+			assert.Equal(t, tt.expectedAction, action)
 		})
 	}
 }

@@ -27,7 +27,7 @@ func TestStatusHandler(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
 
-	s := Server{}
+	s := Server{metrics: newTestMetrics()}
 	w := createRequest(t, s.StatusHandler, nil)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", w.Code)
@@ -51,7 +51,7 @@ func TestCloudDisabledBlocksRemoteOperations(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
 
-	s := Server{}
+	s := Server{metrics: newTestMetrics()}
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:      "test-cloud",
@@ -109,7 +109,7 @@ func TestDeleteHandlerNormalizesExplicitSourceSuffixes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
-	s := Server{}
+	s := Server{metrics: newTestMetrics()}
 
 	tests := []string{
 		"gpt-oss:20b:local",
@@ -172,7 +172,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -227,7 +227,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -276,7 +276,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -319,7 +319,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -362,7 +362,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -409,7 +409,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -468,7 +468,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -524,7 +524,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -575,7 +575,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -626,7 +626,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -693,7 +693,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -740,7 +740,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -786,7 +786,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		cloudProxyBaseURL = upstream.URL
 		t.Cleanup(func() { cloudProxyBaseURL = original })
 
-		s := &Server{}
+		s := &Server{metrics: newTestMetrics()}
 		router, err := s.GenerateRoutes()
 		if err != nil {
 			t.Fatal(err)
@@ -852,7 +852,7 @@ func TestCloudResponsesWebSearchUsesLocalOrchestration(t *testing.T) {
 		cloudProxySignRequest = originalSignRequest
 	})
 
-	s := &Server{}
+	s := &Server{metrics: newTestMetrics()}
 	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
@@ -975,7 +975,7 @@ func TestCloudDisabledBlocksExplicitCloudPassthrough(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
 
-	s := &Server{}
+	s := &Server{metrics: newTestMetrics()}
 	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
@@ -1036,7 +1036,7 @@ func TestCloudPassthroughStreamsPromptly(t *testing.T) {
 	cloudProxyBaseURL = upstream.URL
 	t.Cleanup(func() { cloudProxyBaseURL = original })
 
-	s := &Server{}
+	s := &Server{metrics: newTestMetrics()}
 	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
@@ -1374,7 +1374,7 @@ func TestCloudPassthroughSigningFailureReturnsUnauthorized(t *testing.T) {
 		cloudProxySigninURL = origSigninURL
 	})
 
-	s := &Server{}
+	s := &Server{metrics: newTestMetrics()}
 	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
@@ -1432,7 +1432,7 @@ func TestCloudPassthroughSigningFailureWithoutSigninURL(t *testing.T) {
 		cloudProxySigninURL = origSigninURL
 	})
 
-	s := &Server{}
+	s := &Server{metrics: newTestMetrics()}
 	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
