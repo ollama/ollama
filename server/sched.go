@@ -54,7 +54,13 @@ type LlmRequest struct {
 	// explicitly requested.
 	useMMapAuto bool
 
-	shift *bool
+	shift        *bool
+	contextShift bool
+
+	// lastLoadGpus are the GPUs the most recent load attempt was placed on.
+	// When that attempt asks for an eviction, only runners on these GPUs can
+	// free memory for it.
+	lastLoadGpus []ml.DeviceInfo
 }
 
 type Scheduler struct {
@@ -374,7 +380,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						continue
 					}
 
-					runnerToExpire = s.findRunnerToUnload()
+					runnerToExpire = s.findRunnerToUnloadOn(pending.lastLoadGpus)
 				}
 
 				if runnerToExpire == nil {
@@ -576,8 +582,43 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			}
 
 			predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-			predicted := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
+			predicted := predictLlamaServerVRAM(req, f, req.opts, gpus, numParallel).Total()
+			if p, ok := s.fitAutoNumCtxToSingleGPU(req, f, systemInfo, gpus, numParallel, predicted); ok {
+				predicted = p
+				predictedCtx = effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
+			}
 			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
+
+			// Clamp an out-of-range NumGPU (e.g. a manifest pinning 99 on a 66-layer
+			// model) to the maximum offloadable layer count for the launch only.
+			// req.opts must stay as requested: it becomes the runner's stored
+			// options, and reloadReason compares those against each new request's
+			// options. Clamping req.opts made every later request look like an
+			// options change and reload the runner.
+			if launchOpts.NumGPU > 0 {
+				maxLayers := int(f.KV().BlockCount()) + 1
+				if launchOpts.NumGPU > maxLayers {
+					slog.Info("clamping num_gpu to layer count", "model", req.model.ModelPath,
+						"requested", launchOpts.NumGPU, "clamped", maxLayers)
+					launchOpts.NumGPU = maxLayers
+				}
+			}
+
+			// PR5: Evict instead of splitting a model that fits one GPU.
+			// If the placement spans more than one GPU, check if a single GPU
+			// would fit after evicting its resident models. This also covers a
+			// pinned full offload (num_gpu >= layer count, e.g. a manifest's 99
+			// clamped above), which must never be spread just because the
+			// free-memory snapshot looked full.
+			if len(loadGpus) > 1 && launchOpts.MainGPU == nil && launchOpts.NumGPU != 0 &&
+				!explicitPartialGPUOffload(launchOpts, f) && !envconfig.SchedSpread() {
+				if g, effective, ok := s.singleGPUAfterEviction(gpus, predicted); ok {
+					slog.Info("evicting instead of splitting: model fits on single GPU after eviction",
+						"gpu", g.ID, "effective", format.HumanBytes2(effective), "predicted", format.HumanBytes2(predicted),
+						"loaded_runners", len(s.loaded))
+					loadGpus, launchOpts = singleLlamaServerGPUPlacement(g, launchOpts)
+				}
+			}
 			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
 			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
 			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
@@ -585,14 +626,18 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			var batchMemory uint64
 			launchOpts.NumBatch, batchMemory = llm.LlamaServerBatch(f, launchOpts, completion)
 			predictedForLoad := predicted + batchMemory
+			req.lastLoadGpus = loadGpus
 
 			// Pre-flight check: estimate whether the model fits in remaining memory.
 			// llama-server auto-detects layers based on available VRAM, so if
 			// we predict it won't fit, evict before spawning.
 			if requireFull && !explicitPartialGPUOffload(launchOpts, f) && len(s.loaded) > 0 && len(loadGpus) > 0 {
 				freeMemory, gpuFreeMemory, systemLimited := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
-				// Use 80% of free memory as threshold to leave headroom.
-				if predictedForLoad > freeMemory*80/100 {
+				// The prediction already includes llama.cpp's fit target (the
+				// free memory it keeps on each device) and the projector, so it
+				// is compared against all of the free memory. An extra 80%
+				// margin on top refused loads that fit.
+				if predictedForLoad > freeMemory {
 					slog.Info("llama-server model predicted to exceed available memory, evicting",
 						"predicted", format.HumanBytes2(predictedForLoad),
 						"predicted_num_ctx", predictedCtx,
@@ -614,7 +659,51 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 					"system_limited", systemLimited)
 			}
 
-			launchOpts = s.applyLlamaServerMmapDefaults(req, launchOpts, systemInfo, loadGpus, f, numParallel)
+			// PR4: Fail fast when pinned num_gpu can't fit.
+			if launchOpts.NumGPU > 0 && uint64(launchOpts.NumGPU) >= f.KV().BlockCount() {
+				pred := predictLlamaServerVRAM(req, f, launchOpts, loadGpus, numParallel)
+				if minTotal := pred.MinTotal(); minTotal > 0 && len(loadGpus) > 0 {
+					maxAvailable := uint64(0)
+					for _, g := range loadGpus {
+						maxAvailable += g.FreeMemory
+					}
+					for _, r := range s.loaded {
+						if r == nil || r.llama == nil {
+							continue
+						}
+						_, vram := r.llama.MemorySize()
+						maxAvailable += vram
+					}
+					if minTotal > maxAvailable {
+						// FreeMemory can be stale when the GPU discovery refresh
+						// timed out ("unable to refresh free memory, using old
+						// values"), e.g. after other runners were evicted. In that
+						// case the check below re-reads live per-device free memory;
+						// only refuse when the fresh reading also confirms no fit.
+						if !s.liveVRAMConfirmsNoFit(req.ctx, loadGpus, minTotal) {
+							slog.Warn("pinned num_gpu pre-flight failed but live VRAM reading is inconclusive, proceeding with load",
+								"model", req.model.ModelPath,
+								"num_gpu", launchOpts.NumGPU,
+								"needs", format.HumanBytes2(minTotal),
+								"stale_available", format.HumanBytes2(maxAvailable))
+							s.loadedMu.Unlock()
+							return false
+						}
+						s.loadedMu.Unlock()
+						s.activeLoading.Close()
+						s.activeLoading = nil
+						err := fmt.Errorf(
+							"model does not fit in GPU memory with all layers on GPU: needs at least %s for %d layers at num_ctx %d (num_gpu %d), but at most %s can be made available on %d GPU(s); lower num_gpu to let llama.cpp keep some layers on CPU, or lower num_ctx",
+							format.HumanBytes2(minTotal), f.KV().BlockCount(), req.opts.NumCtx, launchOpts.NumGPU,
+							format.HumanBytes2(maxAvailable), len(loadGpus))
+						slog.Error("llama-server load refused: pinned num_gpu cannot fit", "error", err)
+						req.errCh <- err
+						return false
+					}
+				}
+			}
+
+			req.contextShift = resolveContextShift(req.shift, req.model)
 
 			config := llamaServerConfigForModel(req.model)
 			config.ContextShift = launchContextShift(req.shift, req.model)
@@ -670,11 +759,13 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	gpuIDs, err := llama.Load(req.ctx, systemInfo, loadGpus, requireFull)
 	if err != nil {
 		if errors.Is(err, llm.ErrLoadRequiredFull) {
+			// Close the runner: llama-server fixes its placement at startup,
+			// so a retry after eviction must respawn it.
+			s.activeLoading.Close()
+			s.activeLoading = nil
 			if !requireFull {
 				// No other models loaded, yet we still don't fit, so report an error
 				slog.Info("model is too large for system memory", "requireFull", requireFull)
-				s.activeLoading.Close()
-				s.activeLoading = nil
 				req.errCh <- err
 				return false
 			}
@@ -761,6 +852,7 @@ iGPUScan:
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.model.ModelPath != "" && launchContextShift(req.shift, req.model),
 		trainContext:    trainContext,
+		blockCount:      int(f.KV().BlockCount()),
 	}
 	runner.model.Store(req.model)
 	runner.numParallel = numParallel
@@ -805,6 +897,78 @@ iGPUScan:
 	return false
 }
 
+// liveVRAMConfirmsNoFit re-reads live free memory for the given devices after
+// the scheduler's FreeMemory snapshot indicated a pinned num_gpu cannot fit.
+//
+// The snapshot can be stale: the discovery refresh may have timed out
+// ("unable to refresh free memory, using old values") after other runners
+// were evicted, leaving FreeMemory at the pre-eviction value. In that case
+// the pre-flight must not fail the request, because the actual load (and
+// llama-server's --fit) will see the real VRAM. This helper returns true only
+// when a fresh live reading also confirms there is no fit, so fail-fast
+// remains authoritative for genuine OOMs while tolerating stale snapshots.
+//
+// Callers must hold s.loadedMu.
+func (s *Scheduler) liveVRAMConfirmsNoFit(ctx context.Context, loadGpus []ml.DeviceInfo, minTotal uint64) bool {
+	runnersSnapshot := make([]ml.FilteredRunnerDiscovery, 0, len(s.loaded))
+	for _, r := range s.loaded {
+		if r != nil && r.llama != nil {
+			runnersSnapshot = append(runnersSnapshot, r)
+		}
+	}
+
+	queried := false
+	maxAvailable := uint64(0)
+	// First try the existing runners (fast, no process spawn)
+	for _, runner := range runnersSnapshot {
+		infos := runner.GetDeviceInfos(ctx)
+		for _, info := range infos {
+			for _, g := range loadGpus {
+				if info.DeviceID == g.DeviceID {
+					maxAvailable += info.FreeMemory
+					queried = true
+					break
+				}
+			}
+		}
+	}
+	// Fall back to a full discovery refresh (may spawn a bootstrap probe)
+	if !queried {
+		if gpus := s.getGpuFn(ctx, runnersSnapshot); len(gpus) > 0 {
+			queried = true
+			for _, g := range gpus {
+				for _, lg := range loadGpus {
+					if g.DeviceID == lg.DeviceID {
+						maxAvailable += g.FreeMemory
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Add resident runner VRAM: it can be evicted before this load
+	for _, r := range s.loaded {
+		if r == nil || r.llama == nil {
+			continue
+		}
+		_, vram := r.llama.MemorySize()
+		maxAvailable += vram
+	}
+
+	if !queried {
+		// Couldn't get any live reading; don't trust the stale snapshot
+		slog.Warn("live VRAM confirmation unavailable, deferring to actual load", "model", loadGpus)
+		return false
+	}
+
+	slog.Info("live VRAM confirmation for pinned num_gpu",
+		"min_total", format.HumanBytes2(minTotal),
+		"live_available", format.HumanBytes2(maxAvailable),
+		"fits", maxAvailable >= minTotal)
+	return maxAvailable < minTotal
+}
+
 func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *gguf.Model, numParallel int, completion bool, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, launchOpts api.Options) (oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch int, ok bool) {
 	if !req.numCtxAuto {
 		return 0, 0, 0, 0, 0, false
@@ -826,11 +990,67 @@ func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *gguf.Model, numParallel int
 
 	req.opts.NumCtx = newNumCtx
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
+	predictedVRAM := predictLlamaServerVRAM(req, f, launchOpts, gpus, numParallel).Total()
 	available, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
 	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available, llm.LlamaServerFlashAttention(gpus), gpus)
 	newNumBatch = req.opts.NumBatch
 	return oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, true
+}
+
+// minAutoNumCtxSingleGPU is the smallest automatic context
+// fitAutoNumCtxToSingleGPU will pick to keep a model on one GPU; below it the
+// model is split instead.
+const minAutoNumCtxSingleGPU = 4096
+
+// fitAutoNumCtxToSingleGPU halves an automatic context until the model fits on
+// one GPU. The automatic context tier is chosen from the VRAM of all GPUs
+// combined (2x24 GiB selects 256k), which makes dense models need more than any
+// single card and get split. Without OLLAMA_SCHED_SPREAD a smaller context on
+// one card is preferred over a split. A GPU's capacity includes the VRAM of the
+// runners on it, since those can be evicted. It changes req.opts.NumCtx and
+// returns the new prediction when it lowers the context; an explicit num_ctx,
+// main_gpu or num_gpu is never changed.
+func (s *Scheduler) fitAutoNumCtxToSingleGPU(req *LlmRequest, f *gguf.Model, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, numParallel int, predicted uint64) (uint64, bool) {
+	if !req.numCtxAuto || envconfig.SchedSpread() || len(gpus) < 2 || f == nil ||
+		req.opts.MainGPU != nil || req.opts.NumGPU == 0 {
+		return predicted, false
+	}
+
+	var capacity uint64
+	for _, g := range gpus {
+		c := availableMemoryForGPU(systemInfo, g)
+		for _, r := range s.loaded {
+			if r == nil || r.llama == nil || !runnerUsesAnyGPU(r, []ml.DeviceInfo{g}) {
+				continue
+			}
+			r.refMu.Lock()
+			n := max(len(r.gpus), 1)
+			r.refMu.Unlock()
+			_, vram := r.llama.MemorySize()
+			c += vram / uint64(n)
+		}
+		capacity = max(capacity, c)
+	}
+	if predicted <= capacity {
+		return predicted, false
+	}
+
+	oldNumCtx := req.opts.NumCtx
+	for numCtx := effectiveModelContext(oldNumCtx, f) / 2; numCtx >= minAutoNumCtxSingleGPU; numCtx /= 2 {
+		req.opts.NumCtx = numCtx
+		p := predictLlamaServerVRAM(req, f, req.opts, gpus, numParallel).Total()
+		if p <= capacity {
+			slog.Info("lowering automatic context to fit a single GPU",
+				"model", req.model.ModelPath,
+				"old_num_ctx", oldNumCtx, "num_ctx", numCtx,
+				"old_predicted", format.HumanBytes2(predicted),
+				"predicted", format.HumanBytes2(p),
+				"single_gpu_capacity", format.HumanBytes2(capacity))
+			return p, true
+		}
+	}
+	req.opts.NumCtx = oldNumCtx
+	return predicted, false
 }
 
 func explicitPartialGPUOffload(opts api.Options, f *gguf.Model) bool {
@@ -839,6 +1059,21 @@ func explicitPartialGPUOffload(opts api.Options, f *gguf.Model) bool {
 	}
 
 	return uint64(opts.NumGPU) < f.KV().BlockCount()+1
+}
+
+// predictLlamaServerVRAM predicts a llama-server launch of req (at its current
+// req.opts.NumCtx) with launch options opts on a single device of gpus. The
+// predictor sizes the KV cache, recurrent state
+// and compute buffers from the total context and the parallel sequence count,
+// so both must be passed: leaving them unset predicts a zero-length context
+// and one sequence, which under-predicts by the whole KV cache.
+func predictLlamaServerVRAM(req *LlmRequest, f *gguf.Model, opts api.Options, gpus []ml.DeviceInfo, numParallel int) llm.VRAMPrediction {
+	return llm.PredictServerVRAM(req.model.ModelPath, f, req.model.ProjectorPaths, opts, llm.VRAMPredictConfig{
+		NumCtx:         effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel),
+		NumParallel:    max(numParallel, 1),
+		FlashAttention: llm.LlamaServerFlashAttention(gpus),
+		DraftModelPath: req.model.DraftPath,
+	})
 }
 
 func effectiveLlamaServerContext(numCtx int, f *gguf.Model, numParallel int) int {
@@ -1094,7 +1329,10 @@ func bestSingleGPUFit(systemInfo ml.SystemInfo, groups [][]ml.DeviceInfo, predic
 	for _, group := range groups {
 		for _, candidate := range group {
 			candidateAvailable := availableMemoryForGPU(systemInfo, candidate)
-			if predictedVRAM > candidateAvailable*80/100 {
+			// predictedVRAM includes llama.cpp's fit target, so no extra
+			// headroom: an 80% margin here split models that fit one GPU
+			// across both once the prediction counted the KV cache.
+			if predictedVRAM > candidateAvailable {
 				continue
 			}
 			if !ok || betterPlacementGPU(candidate, candidateAvailable, gpu, available) {
@@ -1169,8 +1407,7 @@ func logSelectedGPUGroup(all, selected []ml.DeviceInfo) {
 }
 
 func (s *Scheduler) applyLlamaServerMmapDefaults(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *gguf.Model, numParallel int) api.Options {
-	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
+	predictedVRAM := predictLlamaServerVRAM(req, f, launchOpts, gpus, numParallel).Total()
 	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
 
 	if reason := disableMmapDefaultReason(runtime.GOOS, req.opts, gpus, f.KV().BlockCount(), predictedVRAM, availableVRAM); reason != "" {
@@ -1233,8 +1470,7 @@ func allDevicesLibrary(gpus []ml.DeviceInfo, library string) bool {
 func (s *Scheduler) maybeDisableMmapForHostPressure(req *LlmRequest, launchOpts api.Options, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, f *gguf.Model, numParallel int) {
 	modelSize := modelFileSize(req.model.modelPaths()...)
 	loadedMmapSize := s.loadedMmapModelSizeLocked()
-	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
-	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
+	predictedVRAM := predictLlamaServerVRAM(req, f, launchOpts, gpus, numParallel).Total()
 	availableVRAM, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
 	placementGpus := gpusForPlacement(gpus, launchOpts)
 
@@ -1399,6 +1635,7 @@ type runnerRef struct {
 	useMMapAuto  bool
 	contextShift bool
 	trainContext int
+	blockCount   int // gguf BlockCount, used to clamp num_gpu in reloadReason
 	*api.Options
 }
 
@@ -1452,6 +1689,18 @@ func (runner *runnerRef) reloadReason(ctx context.Context, req *LlmRequest) stri
 	if optsNew.NumGPU < 0 {
 		optsExisting.NumGPU = -1
 		optsNew.NumGPU = -1
+	}
+	// Clamp out-of-range num_gpu to the model's layer count so that
+	// manifest-pinned values (e.g. 99 on a 66-layer model) don't trigger
+	// false "options changed" reloads.
+	if runner.blockCount > 0 {
+		maxLayers := runner.blockCount + 1
+		if optsExisting.NumGPU > maxLayers {
+			optsExisting.NumGPU = maxLayers
+		}
+		if optsNew.NumGPU > maxLayers {
+			optsNew.NumGPU = maxLayers
+		}
 	}
 
 	if req.model.ModelPath != "" && resolveContextShift(req.shift, req.model) && !runner.contextShift {
@@ -1716,12 +1965,47 @@ func (s *Scheduler) expireRunnersForRuntimeOOM(model *Model, err error) {
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
 func (s *Scheduler) findRunnerToUnload() *runnerRef {
+	return s.findRunnerToUnloadOn(nil)
+}
+
+// findRunnerToUnloadOn finds a runner to unload to make room for a model being
+// placed on gpus. Only runners that hold memory on one of those GPUs can make
+// room, so they are the only candidates when any exist; evicting a runner on
+// another GPU would drop a model without helping the load. With no gpus, or
+// no runner on them, every loaded runner is a candidate.
+// runnerUsesAnyGPU reports whether r was loaded onto any of gpus.
+func runnerUsesAnyGPU(r *runnerRef, gpus []ml.DeviceInfo) bool {
+	if r == nil {
+		return false
+	}
+	r.refMu.Lock()
+	defer r.refMu.Unlock()
+	for _, id := range r.gpus {
+		for _, g := range gpus {
+			if id == g.DeviceID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Scheduler) findRunnerToUnloadOn(gpus []ml.DeviceInfo) *runnerRef {
 	s.loadedMu.Lock()
 	runnerList := make([]*runnerRef, 0, len(s.loaded))
+	onTarget := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {
 		runnerList = append(runnerList, r)
+		if runnerUsesAnyGPU(r, gpus) {
+			onTarget = append(onTarget, r)
+		}
 	}
 	s.loadedMu.Unlock()
+	if len(onTarget) > 0 && len(onTarget) < len(runnerList) {
+		slog.Debug("limiting eviction candidates to runners on the target GPUs",
+			"candidates", len(onTarget), "loaded", len(runnerList))
+		runnerList = onTarget
+	}
 	if len(runnerList) == 0 {
 		slog.Debug("no loaded runner to unload")
 		return nil
@@ -1850,4 +2134,57 @@ func (s *Scheduler) loadedModels() []loadedModel {
 		models = append(models, lm)
 	}
 	return models
+}
+
+// singleGPUAfterEviction returns the discrete GPU with the most memory that
+// could be made available for one model: its free memory plus the VRAM of the
+// loaded runners placed on it (all of which can be evicted first).
+//
+// With no runners loaded, Ollama itself holds no VRAM, so a free-memory
+// snapshot showing the GPUs full is stale: the discovery refresh timed out
+// ("unable to refresh free memory, using old values") and kept the values
+// from before the last runners were unloaded. Trusting it spread models that
+// fit one GPU across all of them, so in that case the device's total usable
+// memory is used instead. llama-server's own fit check still sees the real
+// free memory at load time.
+//
+// Callers must hold s.loadedMu.
+func (s *Scheduler) singleGPUAfterEviction(gpus []ml.DeviceInfo, predicted uint64) (best ml.DeviceInfo, bestEffective uint64, ok bool) {
+	if predicted == 0 {
+		return ml.DeviceInfo{}, 0, false
+	}
+	runners := 0
+	for _, r := range s.loaded {
+		if r != nil && r.llama != nil {
+			runners++
+		}
+	}
+	for _, g := range gpus {
+		if g.Integrated {
+			continue
+		}
+		effective := g.FreeMemory
+		if runners == 0 {
+			if reserve := g.MinimumMemory() + envconfig.GpuOverhead(); g.TotalMemory > reserve && g.TotalMemory-reserve > effective {
+				effective = g.TotalMemory - reserve
+			}
+		} else {
+			for _, r := range s.loaded {
+				if r == nil || r.llama == nil || len(r.gpus) == 0 {
+					continue
+				}
+				for _, id := range r.gpus {
+					if id == g.DeviceID {
+						// A split runner frees roughly its share on each GPU.
+						effective += r.vramSize / uint64(len(r.gpus))
+						break
+					}
+				}
+			}
+		}
+		if effective >= predicted && (!ok || effective > bestEffective) {
+			best, bestEffective, ok = g, effective, true
+		}
+	}
+	return best, bestEffective, ok
 }

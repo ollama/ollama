@@ -147,16 +147,21 @@ func llamaServerRepeatLastN(repeatLastN, numCtx int) int {
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
-	port               int
-	cmd                *exec.Cmd
-	done               chan struct{}
-	doneErr            error
-	client             *http.Client
+	port    int
+	cmd     *exec.Cmd
+	done    chan struct{}
+	doneErr error
+	client  *http.Client
+	// memoryMu guards memory estimates, layer counts, per-device maps, and
+	// memoryParsingWriter state after the subprocess starts.
 	memoryMu           sync.RWMutex
-	memTotal           uint64 // actual total buffer size parsed from llama-server logs (bytes)
-	memGPU             uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
+	memTotal           uint64 // logged buffers plus any projector estimate (bytes)
+	memGPU             uint64 // logged GPU buffers plus any GPU projector estimate (bytes)
 	memModelFileBacked uint64 // model weight bytes whose buffers mirror the on-disk file (mmap views + direct device copies); excludes repacked copies like CPU_REPACK
 	memCPUMappedModel  uint64 // model weight bytes in mmap-backed CPU buffers (e.g. CPU_Mapped), parsed from llama-server logs
+	memCPUProjector    uint64 // projector estimate when its loader uses the CPU backend
+	memCPUDraft        uint64 // draft model and context buffers allocated on the CPU
+	memCPUTargetExtras uint64 // target adapter, state, and auxiliary buffers allocated on the CPU
 	gpuLayers          uint64 // model layers loaded on GPU, parsed from llama-server logs
 	gpuLayerOverflow   int    // number of GPU-selected layers partially overflowed to CPU
 	status             *StatusWriter
@@ -177,17 +182,34 @@ type llamaServerRunner struct {
 	// the GPU driver reports accurately). Keys match vramByDevice (e.g., "CUDA0").
 	systemFreeAtLoad map[string]uint64
 
+	// PCI bus ID per device at model load time, parsed from the same
+	// "using device CUDA0 (...) (0000:XX:00.0)" log lines. Used to verify the
+	// child initialized on the physical card the scheduler selected (the
+	// visible-devices filter can remap indices: a filtered CUDA1 logs as
+	// CUDA0, and an unfiltered child sees the full bus).
+	devicePCIAtLoad map[string]string
+
 	// gpus is the list of GPU devices assigned to this runner at creation time,
 	// used to map DeviceIDs to device names for VRAMByGPU lookups.
 	gpus []ml.DeviceInfo
 
-	metadata      *gguf.Model
-	totalLayers   uint64 // maximum offloadable model layers
-	loadStart     time.Time
-	loadActivity  atomic.Int64
-	loadTracking  atomic.Bool
-	rawEmbeddings bool
-	splitDirs     []string
+	// deviceLogNames maps GPUs to llama-server's log names. Filtered devices
+	// are renumbered from zero: CUDA1 alone logs as CUDA0.
+	deviceLogNames map[ml.DeviceID]string
+
+	metadata    *gguf.Model
+	totalLayers uint64 // maximum offloadable model layers
+
+	// Post-load verification of full GPU offload: signs that llama.cpp moved
+	// weights off the GPU despite "offloaded N/N layers".
+	memHostModel      uint64 // model weight bytes in host buffers (CPU_Mapped, CUDA_Host, ...)
+	expectedHostModel uint64 // host weights expected with full offload (token embeddings)
+	fitShortfall      bool   // llama.cpp's --fit could not meet its free-memory target
+	loadStart         time.Time
+	loadActivity      atomic.Int64
+	loadTracking      atomic.Bool
+	rawEmbeddings     bool
+	splitDirs         []string
 
 	sem *semaphore.Weighted
 
@@ -396,6 +418,48 @@ func FindLlamaServer() (string, error) {
 		return "", fmt.Errorf("llama-server binary not found (checked: %s). Run 'cmake -S llama/server --preset cpu && cmake --build --preset cpu' first", strings.Join(candidates, ", "))
 	}
 	return path, nil
+}
+
+// llamaServerArgs builds the CLI args for llama-server from a launch config.
+func llamaServerArgs(launch llamaServerLaunchConfig, port int) []string {
+	params := []string{
+		"--model", launch.modelPath,
+		"--port", strconv.Itoa(port),
+		"--host", "127.0.0.1",
+		"--no-webui",
+		"--offline",
+		"-c", strconv.Itoa(launch.opts.NumCtx * launch.numParallel),
+	}
+	if launch.decision {
+		params = append(params, "-np", "16", "--kv-unified", "--cache-ram", "0")
+	} else {
+		params = append(params, "-np", strconv.Itoa(launch.numParallel))
+	}
+	params = appendLlamaServerLogArgs(params)
+	params = appendJinjaArgs(params, launch.config)
+	params = appendMMProjArgs(params, launch)
+	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
+	params = append(params, qwenVLServerArgs(launch.modelArch)...)
+	for _, adapter := range launch.adapters {
+		params = append(params, "--lora", adapter)
+	}
+	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
+	if launch.kvCacheType != "" {
+		params = append(params, "--cache-type-k", launch.kvCacheType, "--cache-type-v", launch.kvCacheType)
+	}
+	params = appendFlashAttentionArgs(params, launch.gpus)
+	params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
+	if launch.opts.NumGPU > 0 {
+		params = append(params, "-ngl", strconv.Itoa(launch.opts.NumGPU))
+	} else if launch.opts.NumGPU == 0 {
+		params = append(params, "-ngl", "0")
+	}
+	if launch.opts.NumThread > 0 {
+		params = append(params, "-t", strconv.Itoa(launch.opts.NumThread))
+	}
+	params = appendMainGPUArgs(params, launch.opts)
+	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
+	return params
 }
 
 // startLlamaServer spawns the upstream llama-server process with appropriate CLI flags.
@@ -940,6 +1004,94 @@ func hasLegacyQwenMTPDraft(arch string, tensors []gguf.TensorInfo) bool {
 	}
 }
 
+// newLlamaServerLaunch creates the launch config and split model from params.
+func newLlamaServerLaunch(
+	gpus []ml.DeviceInfo,
+	modelPath string,
+	f *gguf.Model,
+	adapters, projectors []string,
+	opts api.Options,
+	numParallel int,
+	kvCacheType string,
+	config LlamaServerConfig,
+) (llamaServerLaunchConfig, splitModelLaunch, map[string]string, error) {
+	arch := f.KV().Architecture()
+	isEmbedding := f.KV().Has("pooling_type")
+	decisionType := f.KV().String("decision.type")
+
+	compatClipArches := map[string]bool{
+		"gemma3":          true,
+		"gemma4":          true,
+		"qwen35":          true,
+		"qwen35moe":       true,
+		"qwen25vl":        true,
+		"qwen3vl":         true,
+		"qwen3vlmoe":      true,
+		"mistral3":        true,
+		"deepseekocr":     true,
+		"glmocr":          true,
+		"llama4":          true,
+		"nemotron_h_omni": true,
+	}
+	if len(projectors) == 0 &&
+		len(f.Tensors().Items("v.")) > 0 &&
+		compatClipArches[arch] {
+		projectors = []string{modelPath}
+	}
+	mmprojMemory, err := mmprojMemoryRequirement(modelPath, f, projectors)
+	if err != nil {
+		return llamaServerLaunchConfig{}, splitModelLaunch{}, nil, err
+	}
+	if config.DraftModelPath == "" && hasMTPDraft(f) {
+		config.EnableMTP = true
+	}
+
+	draftType := ""
+	if config.EnableMTP {
+		draftType = draftTypeMTP
+	}
+	if config.DraftModelPath != "" {
+		draftType, err = externalDraftType(config.DraftModelPath, config.DraftModelShardPaths...)
+		if err != nil {
+			return llamaServerLaunchConfig{}, splitModelLaunch{}, nil, err
+		}
+	}
+	splitModel, err := materializeSplitModels(f.Files(), projectors, config)
+	if err != nil {
+		return llamaServerLaunchConfig{}, splitModelLaunch{}, nil, err
+	}
+	config.DraftModelPath = splitModel.draftModelPath
+
+	gpuLibs := ml.LibraryPaths(gpus)
+	mediaMarker := newLlamaServerMediaMarker()
+	extraEnvs := ml.GetDevicesEnv(gpus)
+	serverEnvs := make(map[string]string, len(extraEnvs)+1)
+	for k, v := range extraEnvs {
+		serverEnvs[k] = v
+	}
+	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
+
+	launch := llamaServerLaunchConfig{
+		modelPath:    splitModel.modelPath,
+		modelArch:    arch,
+		draftType:    draftType,
+		projectors:   slices.Clone(splitModel.projectors),
+		mmprojMemory: mmprojMemory,
+		modelLayers:  f.KV().BlockCount() + 1,
+		adapters:     slices.Clone(adapters),
+		opts:         opts,
+		numParallel:  numParallel,
+		kvCacheType:  kvCacheType,
+		embedding:    isEmbedding,
+		decision:     decisionType != "",
+		config:       config,
+		gpus:         slices.Clone(gpus),
+		gpuLibs:      slices.Clone(gpuLibs),
+		extraEnvs:    serverEnvs,
+	}
+	return launch, splitModel, extraEnvs, nil
+}
+
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
@@ -1043,21 +1195,24 @@ func NewLlamaServerRunner(
 	}
 
 	s := &llamaServerRunner{
-		client:           newLlamaServerHTTPClient(),
-		status:           status,
-		options:          opts,
-		modelPath:        modelPath,
-		splitDirs:        splitModel.dirs,
-		mediaMarker:      mediaMarker,
-		vramByDevice:     make(map[string]uint64),
-		systemFreeAtLoad: make(map[string]uint64),
-		gpus:             gpus,
-		metadata:         f,
-		totalLayers:      f.KV().BlockCount() + 1,
-		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
-		sem:              semaphore.NewWeighted(int64(numParallel)),
-		launch:           launch,
-		output:           memWriter,
+		client:            newLlamaServerHTTPClient(),
+		status:            status,
+		options:           opts,
+		modelPath:         modelPath,
+		splitDirs:         splitModel.dirs,
+		mediaMarker:       mediaMarker,
+		vramByDevice:      make(map[string]uint64),
+		systemFreeAtLoad:  make(map[string]uint64),
+		devicePCIAtLoad:   make(map[string]string),
+		gpus:              gpus,
+		deviceLogNames:    runnerDeviceLogNames(gpus, extraEnvs),
+		expectedHostModel: hostResidentWeights(f),
+		metadata:          f,
+		totalLayers:       f.KV().BlockCount() + 1,
+		rawEmbeddings:     legacyEmbeddingsWereRaw(f.KV()),
+		sem:               semaphore.NewWeighted(int64(numParallel)),
+		launch:            launch,
+		output:            memWriter,
 	}
 	// Point the memory parsing writer at this runner so values are updated as logs stream in
 	memWriter.runner = s
@@ -1143,7 +1298,7 @@ func qwenVLServerArgs(modelArch string) []string {
 // the model at startup and auto-detects GPU layers, so this just waits for
 // health to report ready. The scheduler handles full-fit preflight for
 // llama-server before this point.
-func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, _ bool) ([]ml.DeviceID, error) {
+func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	slog.Info("loading model via llama-server", "model", s.modelPath)
 
 	if err := s.WaitUntilRunning(ctx); err != nil {
@@ -1160,6 +1315,22 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 	}
 	if err := s.removeSplitDirs(); err != nil {
 		slog.Debug("split GGUF alias cleanup deferred until runner shutdown", "error", err)
+	}
+
+	if requireFull {
+		if reason := s.incompleteGPUOffload(); reason != "" {
+			slog.Warn("llama-server did not fully offload to GPU", "model", s.modelPath, "reason", reason)
+			return nil, ErrLoadRequiredFull
+		}
+		// Verify the child initialized on the physical card the scheduler
+		// selected. The visible-devices filter can remap device indices, so a
+		// mismatch means the model landed on a different physical GPU than the
+		// placement decision (e.g. a sibling runner's card) — treat it as a
+		// full-load failure so the scheduler can evict and re-place.
+		if reason := s.deviceIdentityMismatch(gpus); reason != "" {
+			slog.Warn("llama-server initialized on the wrong physical GPU", "model", s.modelPath, "reason", reason)
+			return nil, ErrLoadRequiredFull
+		}
 	}
 
 	// Verify that buffer size parsing captured GPU allocations.
@@ -1222,18 +1393,29 @@ func (s *llamaServerRunner) shouldRetryMMProjCPUOffload(err error) bool {
 func (s *llamaServerRunner) resetLoadAccounting() {
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
+	if s.output != nil {
+		s.output.resetLocked()
+	}
 
 	s.memTotal = 0
 	s.memGPU = 0
 	s.memModelFileBacked = 0
 	s.memCPUMappedModel = 0
+	s.memCPUProjector = 0
+	s.memCPUDraft = 0
+	s.memCPUTargetExtras = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
+	s.memHostModel = 0
+	s.fitShortfall = false
 	for k := range s.vramByDevice {
 		delete(s.vramByDevice, k)
 	}
 	for k := range s.systemFreeAtLoad {
 		delete(s.systemFreeAtLoad, k)
+	}
+	for k := range s.devicePCIAtLoad {
+		delete(s.devicePCIAtLoad, k)
 	}
 	if s.status != nil {
 		s.status.SetLastError("")
@@ -2844,7 +3026,8 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 	infos := make([]ml.DeviceInfo, len(s.gpus))
 	for i, gpu := range s.gpus {
 		infos[i] = gpu
-		used := s.vramByDevice[gpu.Name]
+		name := s.deviceLogName(gpu)
+		used := s.vramByDevice[name]
 
 		// Our accounting: total minus what we allocated
 		var accountedFree uint64
@@ -2856,7 +3039,7 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 		// we've allocated since. This captures external consumers on platforms
 		// where the driver reports accurately.
 		systemFree := accountedFree // default to our accounting
-		if sysFree, ok := s.systemFreeAtLoad[gpu.Name]; ok {
+		if sysFree, ok := s.systemFreeAtLoad[name]; ok {
 			if used < sysFree {
 				systemFree = sysFree - used
 			} else {
@@ -2870,14 +3053,83 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 	return infos
 }
 
+// incompleteGPUOffload returns why the loaded model is not fully on GPU, or
+// "" when the load log shows a full offload (or nothing was parsed).
+func (s *llamaServerRunner) incompleteGPUOffload() string {
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
+	if s.totalLayers == 0 && s.memHostModel == 0 && !s.fitShortfall {
+		return ""
+	}
+
+	switch {
+	case s.totalLayers > 0 && s.gpuLayers < s.totalLayers && s.gpuLayers > 0 && (s.options.NumGPU <= 0 || s.options.NumGPU >= int(s.totalLayers)):
+		return fmt.Sprintf("%d/%d layers offloaded", s.gpuLayers, s.totalLayers)
+	case s.gpuLayerOverflow > 0:
+		return fmt.Sprintf("%d layers overflowing", s.gpuLayerOverflow)
+	case s.memHostModel > s.expectedHostModel+hostModelSlack:
+		return fmt.Sprintf("weights on host: %d MiB (expected ≤ %d MiB)",
+			s.memHostModel>>20, s.expectedHostModel>>20)
+	case s.fitShortfall:
+		return "fit shortfall: llama.cpp could not meet its free-memory target"
+	}
+	return ""
+}
+
+// deviceIdentityMismatch returns why the child initialized on a different
+// physical GPU than the scheduler selected, or "" when the load log confirms
+// the selection (or carries no PCI identity to check).
+//
+// The child may see a filtered device set (CUDA_VISIBLE_DEVICES) that renumbers
+// indices, or the full bus when the filter is not applied. Either way the
+// PCI bus ID from the "using device ... (0000:XX:00.0)" log line is the only
+// stable identity: compare it against the selected device's PCIID.
+func (s *llamaServerRunner) deviceIdentityMismatch(gpus []ml.DeviceInfo) string {
+	s.memoryMu.RLock()
+	defer s.memoryMu.RUnlock()
+
+	// Only meaningful for a single-GPU placement: with multi-GPU splits there
+	// is no single "selected" card to verify against.
+	if len(gpus) != 1 {
+		return ""
+	}
+	selected := gpus[0]
+	if strings.TrimSpace(selected.PCIID) == "" {
+		// No stable identity on the scheduler side; nothing to verify.
+		return ""
+	}
+	selectedPCI := strings.ToLower(strings.TrimSpace(selected.PCIID))
+
+	name := s.deviceLogName(selected)
+	got, ok := s.devicePCIAtLoad[name]
+	if !ok {
+		// No PCI identity captured from the child (e.g. integrated GPU, or a
+		// log format that omits it). Do not block on missing evidence.
+		return ""
+	}
+	if strings.EqualFold(got, selectedPCI) {
+		return ""
+	}
+	return fmt.Sprintf("selected %s (PCI %s) but llama-server initialized on PCI %s",
+		selected.Name, selectedPCI, got)
+}
+
+// hostModelSlack tolerates small host-side weight buffers (e.g. norms).
+const hostModelSlack = 256 << 20
+
 // MemorySize returns total and GPU memory usage parsed from llama-server's
-// post-load log output. Full model-layer offload is reported as 100% GPU.
+// post-load log output. Full text-layer offload can still leave CPU draft,
+// projector, adapter, state, or auxiliary buffers.
 func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	s.memoryMu.RLock()
 	memTotal := s.memTotal
 	memGPU := s.memGPU
 	memModelFileBacked := s.memModelFileBacked
 	memCPUMappedModel := s.memCPUMappedModel
+	memCPUProjector := s.memCPUProjector
+	memCPUDraft := s.memCPUDraft
+	memCPUTargetExtras := s.memCPUTargetExtras
 	totalLayers := s.totalLayers
 	gpuLayers := s.gpuLayers
 	gpuLayerOverflow := s.gpuLayerOverflow
@@ -2898,8 +3150,10 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 				total -= min(memCPUMappedModel, memModelFileBacked-modelSize)
 			}
 		}
-		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
-			total = vram
+		weightsMoved := s.memHostModel > s.expectedHostModel+hostModelSlack
+		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 && !weightsMoved {
+			// Full target offload does not cover other live CPU components.
+			total = vram + memCPUProjector + memCPUDraft + memCPUTargetExtras
 		}
 		return total, vram
 	}
@@ -2910,27 +3164,6 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 		vram = total
 	}
 	return total, vram
-}
-
-// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
-	weights := modelFileSize(modelPath, f)
-
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
-
-	return weights + kvCache
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output
@@ -2947,14 +3180,28 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	ROCm0 model buffer size =  1918.35 MiB
 //	llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)
 //	init_rotation:         CUDA0 rotation buffer size =    23.04 MiB
-//	main: CUDA0 h_nextn buffer size =    32.00 MiB  (b12257: emitted as h_nextn_dev_alloc: MTL0 ... = 16.01 MiB)
+//	h_nextn_dev_alloc: MTL0 h_nextn buffer size =    16.01 MiB
 type memoryParsingWriter struct {
-	inner   io.Writer
-	runner  *llamaServerRunner
-	buffers map[memoryBufferKey]memoryBuffer
+	inner           io.Writer
+	runner          *llamaServerRunner
+	buffers         map[memoryBufferKey]memoryBuffer
+	line            []byte
+	discardLine     bool
+	projectorDevice string
+
+	// currentModel attributes buffer lines to the target or speculative
+	// draft being loaded; the projector estimate is keyed separately.
+	currentModel string
+
+	// draftFullOffload is true once the draft reports all of its layers
+	// on the GPU. Its mmap-backed host buffer is then only the token
+	// embeddings llama.cpp keeps on the CPU, as for a fully offloaded
+	// target, and is not counted as CPU use.
+	draftFullOffload bool
 }
 
 type memoryBufferKey struct {
+	model     string // owning model: target, draft, projector
 	component string
 	backend   string
 	kind      string
@@ -2964,20 +3211,48 @@ type memoryBuffer struct {
 	bytes uint64
 }
 
+// Model attribution for buffers parsed from the subprocess stream.
+const (
+	memoryModelTarget    = "target"
+	memoryModelDraft     = "draft"
+	memoryModelProjector = "projector"
+
+	// memoryBackendProjector marks the projector's estimate, which names
+	// no device; the loader's backend lines determine GPU attribution.
+	memoryBackendProjector = "(projector)"
+	// Bound memory retained from a malformed or unterminated native log line.
+	// Ordinary llama-server diagnostics are much shorter than 64 KiB.
+	maxMemoryLogLine = 64 << 10
+)
+
+// mmprojMemoryRegex matches the projector's worst-case memory estimate:
+//
+//	srv  load_model: [mtmd] estimated worst-case memory usage of mmproj is 1700.98 MiB (took 36.34 ms)
+var mmprojMemoryRegex = regexp.MustCompile(`^srv\s+load_model:\s+\[mtmd\] estimated worst-case memory usage of mmproj is ([\d.]+)\s*MiB`)
+
+var mmprojBackendRegex = regexp.MustCompile(`^(?:clip_ctx: CLIP|mtmd_subcontext:) using (\S+) backend`)
+
+// llama-server can log request text after startup. Only loader events may
+// change which model owns subsequent buffer lines.
+var serverLoadModelEventRegex = regexp.MustCompile(`^srv\s+load_model:\s+(.+)$`)
+
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
 //
 //	using device CUDA0 (NVIDIA GeForce RTX 4060 Ti) (0000:01:00.0) - 15221 MiB free
 //	using device MTL0 (Apple M5 Max) (unknown id) - 110100 MiB free
 //	using device ROCm0 (AMD Radeon RX 6800) (0000:06:00.0) - 16196 MiB free
-var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+)\s+MiB free`)
+var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*?\)\s+\(([^)]*)\)\s+-\s+(\d+)\s+MiB free`)
 
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
-var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(layer input|rotation|h_nextn|model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+// DSV4 state and LoRA are separate live allocations; the projector estimate
+// already includes CLIP compute buffers.
+var bufferSizeRegex = regexp.MustCompile(`^(llama_[A-Za-z0-9_]+|llm_load_tensors|load_tensors|sched_reserve|alloc_compute_meta|reserve_compute_meta|init_rotation|h_nextn_dev_alloc):\s+(\S+)\s+(layer input|rotation|h_nextn|model|KV|compute|output|RS|LoRA|DSV4 \S+ state)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
 var (
-	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
-	fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+	offloadedLayersRegex      = regexp.MustCompile(`^(?:llm_)?load_tensors: offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
+	fitOverflowingLayersRegex = regexp.MustCompile(`^common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+	fitShortfallRegex         = regexp.MustCompile(`^common_params_fit_impl:\s+cannot meet free memory target of`)
 )
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
@@ -3012,56 +3287,236 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			w.runner.noteLoadActivity(time.Now())
 		}
 
-		func() {
-			w.runner.memoryMu.Lock()
-			defer w.runner.memoryMu.Unlock()
-
-			if match := deviceFreeRegex.FindSubmatch(b); match != nil {
-				devName := string(match[1])
-				if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
-					w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
-				}
-			}
-			for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
-				loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
-				total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
-				if loadedErr == nil && totalErr == nil {
-					w.runner.gpuLayers = loaded
-					w.runner.totalLayers = total
-				}
-			}
-			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
-				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
-				if err == nil && overflowing > 0 {
-					w.runner.gpuLayerOverflow += int(overflowing)
-				}
-			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
-				backendName := string(match[2])
-				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
-					if w.buffers == nil {
-						w.buffers = make(map[memoryBufferKey]memoryBuffer)
-					}
-					w.buffers[memoryBufferKey{
-						component: string(match[1]),
-						backend:   backendName,
-						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
-					w.updateRunnerMemoryLocked()
-				}
-			}
-		}()
+		w.runner.memoryMu.Lock()
+		w.parseChunkLocked(b)
+		w.runner.memoryMu.Unlock()
 	}
 	return w.inner.Write(b)
 }
 
+// parseChunkLocked keeps incomplete lines across writes. os/exec forwards
+// arbitrary chunks, including ones that split model attribution markers.
+func (w *memoryParsingWriter) parseChunkLocked(b []byte) {
+	for len(b) > 0 {
+		i := bytes.IndexByte(b, '\n')
+		if i < 0 {
+			if !w.discardLine && len(w.line)+len(b) <= maxMemoryLogLine {
+				w.line = append(w.line, b...)
+			} else {
+				w.line = w.line[:0]
+				w.discardLine = true
+			}
+			return
+		}
+		if !w.discardLine && len(w.line)+i <= maxMemoryLogLine {
+			w.line = append(w.line, b[:i]...)
+			w.parseLineLocked(w.line)
+		}
+		w.line = w.line[:0]
+		w.discardLine = false
+		b = b[i+1:]
+	}
+}
+
+// resetLocked discards allocations from a failed subprocess before an offload
+// retry starts another subprocess with the same writer.
+func (w *memoryParsingWriter) resetLocked() {
+	w.buffers = nil
+	w.line = w.line[:0]
+	w.discardLine = false
+	w.currentModel = ""
+	w.draftFullOffload = false
+	w.projectorDevice = ""
+}
+
+// discardDraftLocked removes allocations released when speculative setup fails.
+// Caller holds runner.memoryMu.
+func (w *memoryParsingWriter) discardDraftLocked() {
+	for key := range w.buffers {
+		if key.model == memoryModelDraft {
+			delete(w.buffers, key)
+		}
+	}
+	w.currentModel = memoryModelTarget
+	w.draftFullOffload = false
+	w.updateRunnerMemoryLocked()
+}
+
+// parseLineLocked parses a single llama-server log line for memory tracking.
+// Caller holds runner.memoryMu.
+func (w *memoryParsingWriter) parseLineLocked(line []byte) {
+	if event := serverLoadModelEventRegex.FindSubmatch(line); event != nil {
+		if bytes.HasPrefix(event[1], []byte("failed to initialize speculative decoding context")) ||
+			bytes.HasPrefix(event[1], []byte("speculative decoding not supported by this context")) {
+			w.discardDraftLocked()
+			return
+		}
+		if bytes.HasPrefix(event[1], []byte("speculative decoding context initialized")) {
+			w.currentModel = memoryModelTarget
+			return
+		}
+	}
+	if bytes.HasPrefix(line, []byte("common_speculative_init_result: loading draft model")) ||
+		bytes.HasPrefix(line, []byte("common_speculative_init_result: creating MTP draft context")) {
+		w.currentModel = memoryModelDraft
+		return
+	}
+	if bytes.HasPrefix(line, []byte("sched_reserve: reserving")) {
+		for key := range w.buffers {
+			if key.model == w.model() && key.component == "sched_reserve" {
+				delete(w.buffers, key)
+			}
+		}
+		w.updateRunnerMemoryLocked()
+		return
+	}
+	if bytes.HasPrefix(line, []byte("load_tensors: loading model tensors")) {
+		// A new tensor-load pass supersedes the current model's previous
+		// buffers (e.g. a fit probe); other models' buffers are kept.
+		for key := range w.buffers {
+			if key.model == w.model() {
+				delete(w.buffers, key)
+			}
+		}
+		w.updateRunnerMemoryLocked()
+		return
+	}
+
+	if match := deviceFreeRegex.FindSubmatch(line); match != nil {
+		devName := string(match[1])
+		// Only the first report per device is the pre-load free memory and
+		// the target's own placement; a draft model logs its device again
+		// with the target already resident.
+		if w.runner.devicePCIAtLoad == nil {
+			w.runner.devicePCIAtLoad = make(map[string]string)
+		}
+		if _, ok := w.runner.devicePCIAtLoad[devName]; !ok {
+			if pci := strings.ToLower(strings.TrimSpace(string(match[2]))); pci != "" && !strings.Contains(pci, "unknown") {
+				w.runner.devicePCIAtLoad[devName] = pci
+			}
+		}
+		if mib, err := strconv.ParseUint(string(match[3]), 10, 64); err == nil {
+			if w.runner.systemFreeAtLoad == nil {
+				w.runner.systemFreeAtLoad = make(map[string]uint64)
+			}
+			if _, ok := w.runner.systemFreeAtLoad[devName]; !ok {
+				w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
+			}
+		}
+	}
+	if fitShortfallRegex.Match(line) {
+		w.runner.fitShortfall = true
+	}
+	if match := mmprojBackendRegex.FindSubmatch(line); match != nil {
+		if backend := string(match[1]); isGPUBuffer(backend) {
+			w.projectorDevice = deviceName(backend)
+			w.updateRunnerMemoryLocked()
+		}
+	}
+	if match := offloadedLayersRegex.FindSubmatch(line); match != nil {
+		// Only the target's counts drive offload status; the draft
+		// prints its own (e.g. "offloaded 6/6").
+		loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
+		total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
+		if loadedErr == nil && totalErr == nil {
+			switch w.model() {
+			case memoryModelTarget:
+				w.runner.gpuLayers = loaded
+				w.runner.totalLayers = total
+			case memoryModelDraft:
+				w.draftFullOffload = total > 0 && loaded >= total
+			}
+		}
+	}
+	if match := fitOverflowingLayersRegex.FindSubmatch(line); match != nil {
+		overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
+		if w.model() == memoryModelTarget && err == nil && overflowing > 0 {
+			w.runner.gpuLayerOverflow += int(overflowing)
+		}
+	}
+	if match := mmprojMemoryRegex.FindSubmatch(line); match != nil {
+		if mib, err := strconv.ParseFloat(string(match[1]), 64); err == nil {
+			for _, proj := range w.runner.launch.projectors {
+				recordMMProjUsage(proj, mib)
+			}
+			w.setBufferLocked(memoryBufferKey{
+				model:     memoryModelProjector,
+				component: "mtmd",
+				backend:   memoryBackendProjector,
+				kind:      "model",
+			}, uint64(mib*1024*1024), false)
+		}
+	}
+	if match := bufferSizeRegex.FindSubmatch(line); match != nil {
+		if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+			component := string(match[1])
+			if component == "reserve_compute_meta" {
+				// The mtmd estimate already includes its compute buffers.
+				if _, ok := w.buffers[memoryBufferKey{model: memoryModelProjector, component: "mtmd", backend: memoryBackendProjector, kind: "model"}]; ok {
+					return
+				}
+			}
+			model := w.model()
+			if component == "reserve_compute_meta" {
+				model = memoryModelProjector
+			}
+			// Model and KV lines can name several live same-key buffers.
+			// Each scheduler reservation replaces the preceding reservation.
+			accumulate := component != "sched_reserve"
+			w.setBufferLocked(memoryBufferKey{
+				model:     model,
+				component: component,
+				backend:   string(match[2]),
+				kind:      string(match[3]),
+			}, uint64(mib*1024*1024), accumulate)
+		}
+	}
+}
+
+// model returns the model currently being loaded in the subprocess stream.
+func (w *memoryParsingWriter) model() string {
+	if w.currentModel == "" {
+		return memoryModelTarget
+	}
+	return w.currentModel
+}
+
+func (w *memoryParsingWriter) setBufferLocked(key memoryBufferKey, bytes uint64, accumulate bool) {
+	if w.buffers == nil {
+		w.buffers = make(map[memoryBufferKey]memoryBuffer)
+	}
+	if accumulate {
+		bytes += w.buffers[key].bytes
+	}
+	w.buffers[key] = memoryBuffer{bytes: bytes}
+	w.updateRunnerMemoryLocked()
+}
+
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu, modelFileBacked, cpuMappedModel uint64
-	byDevice := make(map[string]uint64)
+	var total, gpu, modelFileBacked, cpuMappedModel, projector, cpuDraft, cpuTargetExtras uint64
+	byDevice := w.runner.vramByDevice
+	if byDevice == nil {
+		byDevice = make(map[string]uint64)
+	}
+	clear(byDevice)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
-		if key.kind == "model" {
+		if key.backend == memoryBackendProjector {
+			projector += buffer.bytes
+			continue
+		}
+		if key.model == memoryModelDraft && !isGPUBuffer(key.backend) && !strings.HasSuffix(key.backend, "_Host") {
+			if !(w.draftFullOffload && key.kind == "model" && strings.HasSuffix(key.backend, "_Mapped")) {
+				cpuDraft += buffer.bytes
+			}
+		}
+		if key.model == memoryModelTarget && !isGPUBuffer(key.backend) && !strings.HasSuffix(key.backend, "_Host") &&
+			(key.kind == "LoRA" || key.kind == "layer input" || key.kind == "rotation" || key.kind == "h_nextn" ||
+				strings.HasPrefix(key.kind, "DSV4 ")) {
+			cpuTargetExtras += buffer.bytes
+		}
+		if key.kind == "model" && key.model == memoryModelTarget {
 			onGPU := isGPUBuffer(key.backend)
 			mmapBacked := strings.HasSuffix(key.backend, "_Mapped")
 			// Device copies and mmap views mirror the on-disk weights, so their
@@ -3081,11 +3536,78 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 		}
 	}
 
+	if projector > 0 && w.projectorDevice != "" {
+		// The estimate includes projector weights and compute memory.
+		// Attribute it only after the loader reports a GPU backend; CPU
+		// projector offload must not inflate GPU usage. If modalities use
+		// different backends, charge the full estimate to the observed GPU
+		// as a conservative bound: the estimate has no per-device breakdown.
+		gpu += projector
+		byDevice[w.projectorDevice] += projector
+	}
+
 	w.runner.memTotal = total
 	w.runner.memGPU = gpu
 	w.runner.memModelFileBacked = modelFileBacked
 	w.runner.memCPUMappedModel = cpuMappedModel
+	w.runner.memCPUDraft = cpuDraft
+	w.runner.memCPUTargetExtras = cpuTargetExtras
+	if w.projectorDevice == "" {
+		w.runner.memCPUProjector = projector
+	} else {
+		w.runner.memCPUProjector = 0
+	}
 	w.runner.vramByDevice = byDevice
+
+	// Track the target's host model weight bytes for offload verification.
+	// A speculative draft's host weights (e.g. its token embeddings) are not
+	// target weights that fell back to the CPU.
+	var hostModel uint64
+	for key, buffer := range w.buffers {
+		if key.model == memoryModelTarget && key.kind == "model" && !isGPUBuffer(key.backend) {
+			hostModel += buffer.bytes
+		}
+	}
+	w.runner.memHostModel = hostModel
+}
+
+// deviceLogName returns llama-server's log name for gpu.
+func (s *llamaServerRunner) deviceLogName(gpu ml.DeviceInfo) string {
+	if name, ok := s.deviceLogNames[gpu.DeviceID]; ok {
+		return name
+	}
+	return gpu.Name
+}
+
+// visibleDevicesEnvVars: per library, env vars that renumber child devices.
+var visibleDevicesEnvVars = map[string][]string{
+	"CUDA":   {"CUDA_VISIBLE_DEVICES"},
+	"ROCm":   {"ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL"},
+	"Vulkan": {"GGML_VK_VISIBLE_DEVICES"},
+}
+
+// runnerDeviceLogNames maps GPUs to log names: filtered libraries renumber
+// from zero in order; unfiltered keep discovery names.
+func runnerDeviceLogNames(gpus []ml.DeviceInfo, env map[string]string) map[ml.DeviceID]string {
+	names := make(map[ml.DeviceID]string, len(gpus))
+	ordinals := map[string]int{}
+	for _, gpu := range gpus {
+		prefix := strings.TrimRight(gpu.Name, "0123456789")
+		filtered := false
+		for _, key := range visibleDevicesEnvVars[gpu.Library] {
+			if env[key] != "" {
+				filtered = true
+				break
+			}
+		}
+		if !filtered || prefix == "" || prefix == gpu.Name {
+			names[gpu.DeviceID] = gpu.Name
+			continue
+		}
+		names[gpu.DeviceID] = prefix + strconv.Itoa(ordinals[prefix])
+		ordinals[prefix]++
+	}
+	return names
 }
 
 // VRAMByGPU returns the VRAM used by this runner on the specified device.
@@ -3100,7 +3622,7 @@ func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
 	// --list-devices stdout, which matches the buffer log prefix.
 	for _, gpu := range s.gpus {
 		if gpu.DeviceID == id {
-			return s.vramByDevice[gpu.Name]
+			return s.vramByDevice[s.deviceLogName(gpu)]
 		}
 	}
 	return 0
