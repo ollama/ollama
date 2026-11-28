@@ -64,6 +64,7 @@ var (
 	codexAppCodexExecutable = defaultCodexAppCodexExecutable
 	codexAppRunDebugModels  = defaultCodexAppRunDebugModels
 	codexAppRouterHealth    = defaultCodexAppRouterHealth
+	codexAppStopDaemon      = defaultCodexAppStopManagedDaemon
 
 	codexAppProfileApplication = defaultCodexAppOllamaProfileApplication
 	codexAppProfileExecutable  = defaultCodexAppOllamaProfileExecutable
@@ -752,6 +753,11 @@ func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []Launch
 		return err
 	}
 	return codexAppApplyProfileChange(ctx, func() error {
+		if restartConfirmed {
+			if err := codexAppStopDaemon(); err != nil {
+				return err
+			}
+		}
 		if err := resetCodexAppRegularProfileRequestCount(); err != nil {
 			return err
 		}
@@ -856,7 +862,14 @@ func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 	if !c.OllamaConfigured() {
 		return errors.New("ChatGPT is not configured to use Ollama")
 	}
-	return codexAppApplyProfileChange(ctx, repairCodexAppCatalogAuthVisibility, true, restartConfirmed)
+	return codexAppApplyProfileChange(ctx, func() error {
+		if restartConfirmed {
+			if err := codexAppStopDaemon(); err != nil {
+				return err
+			}
+		}
+		return repairCodexAppCatalogAuthVisibility()
+	}, true, restartConfirmed)
 }
 
 func (c *CodexApp) OllamaRequestCount() uint64 {
@@ -1671,10 +1684,15 @@ func defaultCodexAppCodexExecutable() (string, error) {
 	if appPath != "" {
 		switch codexAppGOOS {
 		case "darwin":
-			candidates = append(candidates, filepath.Join(appPath, "Contents", "Resources", "codex"))
+			candidates = append(candidates,
+				filepath.Join(appPath, "Contents", "Resources", "codex-cli", "bin", "codex"),
+				filepath.Join(appPath, "Contents", "Resources", "codex"),
+			)
 		case "windows":
 			appDir := filepath.Dir(appPath)
 			candidates = append(candidates,
+				filepath.Join(appDir, "resources", "codex-cli", "bin", "codex.exe"),
+				filepath.Join(appDir, "Resources", "codex-cli", "bin", "codex.exe"),
 				filepath.Join(appDir, "resources", "codex.exe"),
 				filepath.Join(appDir, "Resources", "codex.exe"),
 			)
@@ -1688,7 +1706,7 @@ func defaultCodexAppCodexExecutable() (string, error) {
 	if path, err := exec.LookPath("codex"); err == nil {
 		return path, nil
 	}
-	return "", fmt.Errorf("could not find the Codex executable used by the desktop app")
+	return "", fmt.Errorf("could not find the Codex executable used by the desktop app: %w", exec.ErrNotFound)
 }
 
 func defaultCodexAppRunDebugModels(executable, codexHome string, bundled bool) ([]byte, error) {
