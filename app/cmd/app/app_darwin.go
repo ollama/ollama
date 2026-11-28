@@ -512,6 +512,10 @@ func UpdateAvailable(ver string) error {
 	// TODO (jmorganca): find a better check for development mode than checking the bundle path
 	if updater.BundlePath != "" {
 		C.updateAvailable()
+		if updater.UpdateDownloadedRecently {
+			C.Restart()
+			updater.UpdateDownloadedRecently = false
+		}
 	}
 	return nil
 }

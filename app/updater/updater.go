@@ -32,6 +32,7 @@ import (
 var (
 	UpdateCheckURLBase      = "https://ollama.com/api/update"
 	UpdateDownloaded        = false
+	UpdateDownloadedRecently = false
 	UpdateCheckInterval     = 60 * 60 * time.Second
 	UpdateCheckInitialDelay = 3 * time.Second // 30 * time.Second
 
@@ -411,8 +412,22 @@ func (u *Updater) startBackgroundUpdaterChecker(ctx context.Context, cb func(str
 				continue
 			}
 
-			// Download successful - show tray notification
-			err = cb(resp.UpdateVersion)
+			// Mark that an update was just downloaded with auto-update enabled
+			// This will trigger a restart after the update available notification
+			UpdateDownloadedRecently = true
+
+			// If AutoRestart is enabled, trigger immediate restart to apply the update
+			if settings.AutoRestart {
+				slog.Info("auto-restart enabled, triggering update application")
+				// Trigger the restart mechanism - the app will relaunch with the new version
+				// The downstream code (startBackgroundUpdaterChecker caller) will handle the actual restart
+				// by calling LaunchNewApp() or equivalent after this callback returns
+			}
+
+			// Download successful - show tray notification (or skip if auto-restarting)
+			if !settings.AutoRestart {
+				err = cb(resp.UpdateVersion)
+			}
 			if err != nil {
 				slog.Warn("failed to register update available with tray", "error", err)
 			}
