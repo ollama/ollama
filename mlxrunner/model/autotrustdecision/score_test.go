@@ -34,6 +34,46 @@ func TestBareDecisionPrompt(t *testing.T) {
 	}
 }
 
+func TestBareDecisionNoulPromptIncludesCriteria(t *testing.T) {
+	m := &Model{Model: &qwen3_5.Model{}}
+	m.head.Bias = make([]float32, 24)
+	m.head.VerbalizerIDs = make([]int32, 24)
+	got, _, ids, bias, err := m.prompt(llm.ScoreRequest{State: "User: hi"}, &llm.ScoreQuestion{
+		Type: "noul", Instructions: "Is the user asking for something?",
+		Options: []string{"The user only greets or thanks.", "The user asks for something."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[kind] noul\n[state] User: hi\n[question] Is the user asking for something?\n[options]\nfalse: The user only greets or thanks.\ntrue: The user asks for something.\n[decision]:"
+	if got != want {
+		t.Fatalf("noul prompt = %q", got)
+	}
+	if !slices.Equal(ids, m.head.VerbalizerIDs[:2]) || !slices.Equal(bias, m.head.Bias[:2]) {
+		t.Fatalf("noul readout ids/bias should still use verbalizer slots")
+	}
+}
+
+func TestBareDecisionScorePromptIncludesCriteria(t *testing.T) {
+	m := &Model{Model: &qwen3_5.Model{}}
+	m.head.Bias = make([]float32, 24)
+	m.head.VerbalizerIDs = make([]int32, 24)
+	got, _, ids, bias, err := m.prompt(llm.ScoreRequest{State: "User: furious"}, &llm.ScoreQuestion{
+		Type: "score", Instructions: "How angry is the user?",
+		Options: []string{"Calm.", "Annoyed.", "Impatient.", "Upset.", "Angry.", "Furious."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[kind] score\n[state] User: furious\n[question] How angry is the user?\n[options]\n0: Calm.\n1: Annoyed.\n2: Impatient.\n3: Upset.\n4: Angry.\n5: Furious.\n[decision]:"
+	if got != want {
+		t.Fatalf("score prompt = %q", got)
+	}
+	if !slices.Equal(ids, m.head.VerbalizerIDs[2:8]) || !slices.Equal(bias, m.head.Bias[2:8]) {
+		t.Fatalf("score readout ids/bias should still use verbalizer slots")
+	}
+}
+
 func TestImageCountLimit(t *testing.T) {
 	m := &Model{}
 	images := make([]api.ImageData, maxAutoTrustDecisionImages+1)
