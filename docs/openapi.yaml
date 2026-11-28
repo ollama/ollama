@@ -50,11 +50,9 @@ components:
           format: float
           description: Minimum probability threshold for token selection
         stop:
-          oneOf:
-            - type: string
-            - type: array
-              items:
-                type: string
+          type: array
+          items:
+            type: string
           description: Stop sequences that will halt generation
 
         # Runtime Options
