@@ -764,7 +764,7 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 
 // mapStopReason converts Ollama done_reason to Anthropic stop_reason
 func mapStopReason(reason string, hasToolCalls bool) string {
-	if hasToolCalls {
+	if hasToolCalls && reason != "length" {
 		return "tool_use"
 	}
 

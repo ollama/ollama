@@ -1068,6 +1068,7 @@ func TestMapStopReason(t *testing.T) {
 		{"stop", false, "end_turn"},
 		{"length", false, "max_tokens"},
 		{"stop", true, "tool_use"},
+		{"length", true, "max_tokens"},
 		{"other", false, "stop_sequence"},
 		{"", false, ""},
 	}
