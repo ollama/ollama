@@ -41,14 +41,24 @@ var scaleAndCast = Compile2(
 // Quantization operations
 
 func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array) {
+	return QuantizeWithGlobalScale(w, groupSize, bits, mode, nil)
+}
+
+// QuantizeWithGlobalScale uses a scalar global scale in MLX's representation.
+// For NVFP4, the absolute maximum weight maps the block scales into E4M3's
+// available range. Store globalScale/Nvfp4MaxProduct alongside the result.
+func QuantizeWithGlobalScale(w *Array, groupSize, bits int, mode string, globalScale *Array) (weights, scales, biases *Array) {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 	res := mlxCheck(C.mlx_vector_array_new())
 	defer freeVectorArray(res)
-	var globalScale C.mlx_array
-	mlxCheck(C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx))
+	var gs C.mlx_array
+	if globalScale != nil {
+		gs = globalScale.ctx
+	}
+	mlxCheck(C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, gs, DefaultStream().ctx))
 
 	vecSize := int(mlxCheck(C.mlx_vector_array_size(res)))
 	w0 := New("QUANTIZE_W")
