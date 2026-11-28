@@ -435,7 +435,21 @@ void menu_handle_selection(char *item);
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
+// Without NOMINMAX, <windows.h> defines min/max macros that break the
+// std::min/std::max calls below with "illegal token on right side of '::'".
+// Defining it before <windows.h> is not always enough, because a translation
+// unit may include <windows.h> first and then this header; so also undefine
+// the macros here when they are already defined.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+#if defined(min)
+#undef min
+#endif
+#if defined(max)
+#undef max
+#endif
 #else
 #include <dlfcn.h>
 #endif
