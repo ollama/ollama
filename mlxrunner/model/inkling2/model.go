@@ -24,11 +24,11 @@ type targetModel struct {
 	Vision    *visionEncoder
 	draftTaps []int
 
-	Embed       *nn.Embedding
+	Embed       nn.EmbeddingLayer
 	EmbedNorm   *mlx.Array
 	OutputNorm  *mlx.Array
 	OutputQuery *mlx.Array
-	Output      *nn.Linear
+	Output      nn.LinearLayer
 	ShortOutput *nn.Linear
 	fp32Output  bool
 	Layers      []decoderLayer
@@ -132,6 +132,15 @@ func newModel(root *model.Root) (model.Model, error) {
 
 func (m *targetModel) MaxContextLength() int           { return m.config.Context }
 func (m *targetModel) Tokenizer() *tokenizer.Tokenizer { return m.tok }
+
+// outputWeightMatrix returns the raw weight matrix of the output projection.
+// Returns nil when the output is quantized (no raw BF16 weight materialized).
+func (m *targetModel) outputWeightMatrix() *mlx.Array {
+	if lin, ok := m.Output.(*nn.Linear); ok {
+		return lin.Weight
+	}
+	return nil
+}
 
 // Routed low-precision experts can make different choices when the same rows
 // are processed in a different size of token batch.
@@ -260,7 +269,10 @@ func (m *targetModel) Unembed(hidden *mlx.Array) *mlx.Array {
 	if m.fp32Output {
 		hidden = hidden.AsType(mlx.DTypeFloat32)
 	}
-	return softcap(projectTarget(m.Output, hidden).AsType(mlx.DTypeFloat32), m.config.LogitCap)
+	if lin, ok := m.Output.(*nn.Linear); ok {
+		return softcap(projectTarget(lin, hidden).AsType(mlx.DTypeFloat32), m.config.LogitCap)
+	}
+	return softcap(m.Output.Forward(hidden).AsType(mlx.DTypeFloat32), m.config.LogitCap)
 }
 
 func modelRMS(x, weight *mlx.Array, epsilon float32) *mlx.Array {

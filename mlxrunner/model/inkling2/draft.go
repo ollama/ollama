@@ -196,11 +196,11 @@ func (d *draft) loadWeights(tensors map[string]*mlx.Array, bits, vocabularyBits 
 
 	// Fold the latent projection into the shared target head once. Both source
 	// matrices retain their original BF16 values, with FP32 accumulation.
-	output := d.target.Output.Weight.AsType(mlx.DTypeFloat32)
+	output := d.target.outputWeightMatrix().AsType(mlx.DTypeFloat32)
 	d.Folded = newDraftProjection(bits, output.Matmul(latent.Weight.AsType(mlx.DTypeFloat32)).AsType(mlx.DTypeBFloat16))
 	d.FoldedBias = output.Matmul(latent.Bias.AsType(mlx.DTypeFloat32)).AsType(mlx.DTypeBFloat16)
 	if vocabularyBits > 0 {
-		head := d.target.Output.Weight
+		head := d.target.outputWeightMatrix()
 		if d.target.ShortOutput != nil {
 			head = d.target.ShortOutput.Weight
 		}
@@ -422,7 +422,7 @@ func (d *draft) Unembed(h *mlx.Array) *mlx.Array {
 	if logits := d.target.shortVocabularyProjection(hidden); logits != nil {
 		return logits.AsType(mlx.DTypeBFloat16)
 	}
-	return hidden.AsType(mlx.DTypeFloat32).Matmul(d.target.Output.Weight.AsType(mlx.DTypeFloat32).Transpose(1, 0)).AsType(mlx.DTypeBFloat16)
+	return hidden.AsType(mlx.DTypeFloat32).Matmul(d.target.outputWeightMatrix().AsType(mlx.DTypeFloat32).Transpose(1, 0)).AsType(mlx.DTypeBFloat16)
 }
 
 func (d *draft) Select(h, logits, anchor *mlx.Array, choose func(ids, scores *mlx.Array) (tokens, probs *mlx.Array)) (tokens, ids, probs *mlx.Array) {
