@@ -128,6 +128,177 @@ func TestBoundedNumPredict(t *testing.T) {
 	}
 }
 
+// zeroNumPredictTestServer returns a runner backed by a fake llama-server
+// that records whether a generation request was made. The fake server
+// answers /completion with a single token and /v1/chat/completions with
+// one content chunk, like a real llama-server would for a 1-token budget.
+func zeroNumPredictTestServer(t *testing.T) (*llamaServerRunner, *bool) {
+	t.Helper()
+
+	generated := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/apply-template":
+			fmt.Fprint(w, `{"prompt":"rendered chat"}`)
+		case "/tokenize":
+			json.NewEncoder(w).Encode(map[string][]int{"tokens": {1, 2, 3}})
+		case "/completion":
+			var req llamaServerCompletionRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			generated = true
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		case "/v1/chat/completions":
+			generated = true
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	return &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}, &generated
+}
+
+// TestLlamaServerZeroNumPredict is a regression test for ollama/ollama#19965:
+// a zero token budget must return an empty completion instead of
+// generating. llama-server samples one token before it checks n_predict,
+// and the completion request drops n_predict: 0 via
+// `json:"n_predict,omitempty"`, so a zero budget is answered in the
+// runner instead of being sent to llama-server.
+func TestLlamaServerZeroNumPredict(t *testing.T) {
+	t.Run("completion returns an empty response without generating", func(t *testing.T) {
+		runner, generated := zeroNumPredictTestServer(t)
+		opts := api.DefaultOptions()
+		opts.NumPredict = 0
+
+		var got []CompletionResponse
+		err := runner.Completion(t.Context(), CompletionRequest{Prompt: "hi", Options: &opts}, func(r CompletionResponse) {
+			got = append(got, r)
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if *generated {
+			t.Fatal("zero token budget sent a generation request to llama-server")
+		}
+		if len(got) != 1 {
+			t.Fatalf("got %d callbacks, want exactly one done callback", len(got))
+		}
+		if resp := got[0]; !resp.Done || resp.DoneReason != DoneReasonLength {
+			t.Fatalf("got done=%v reason=%v, want done=true reason=length", resp.Done, resp.DoneReason)
+		}
+		if got[0].Content != "" {
+			t.Fatalf("got content %q, want empty", got[0].Content)
+		}
+		if got[0].EvalCount != 0 {
+			t.Fatalf("got eval_count=%d, want 0", got[0].EvalCount)
+		}
+	})
+
+	t.Run("chat returns an empty response without generating", func(t *testing.T) {
+		runner, generated := zeroNumPredictTestServer(t)
+		opts := api.DefaultOptions()
+		opts.NumPredict = 0
+
+		var got []ChatResponse
+		err := runner.Chat(t.Context(), ChatRequest{Messages: []api.Message{{Role: "user", Content: "hi"}}, Options: &opts}, func(r ChatResponse) {
+			got = append(got, r)
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if *generated {
+			t.Fatal("zero token budget sent a generation request to llama-server")
+		}
+		if len(got) != 1 {
+			t.Fatalf("got %d callbacks, want exactly one done callback", len(got))
+		}
+		if resp := got[0]; !resp.Done || resp.DoneReason != DoneReasonLength {
+			t.Fatalf("got done=%v reason=%v, want done=true reason=length", resp.Done, resp.DoneReason)
+		}
+		if got[0].Message.Content != "" {
+			t.Fatalf("got content %q, want empty", got[0].Message.Content)
+		}
+		if got[0].EvalCount != 0 {
+			t.Fatalf("got eval_count=%d, want 0", got[0].EvalCount)
+		}
+	})
+
+	t.Run("zero budget survives the options round-trip", func(t *testing.T) {
+		// /v1/completions maps max_tokens: 0 to options["num_predict"]=0;
+		// the zero must reach the runner as NumPredict 0, not the default.
+		// The map passes through JSON, so numbers arrive as float64.
+		raw, err := json.Marshal(map[string]any{"num_predict": 0})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		opts := api.DefaultOptions()
+		if err := opts.FromMap(m); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if opts.NumPredict != 0 {
+			t.Fatalf("got NumPredict=%d, want 0", opts.NumPredict)
+		}
+
+		runner, generated := zeroNumPredictTestServer(t)
+		var got []CompletionResponse
+		err = runner.Completion(t.Context(), CompletionRequest{Prompt: "hi", Options: &opts}, func(r CompletionResponse) {
+			got = append(got, r)
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if *generated {
+			t.Fatal("zero token budget sent a generation request to llama-server")
+		}
+		if len(got) != 1 || !got[0].Done || got[0].DoneReason != DoneReasonLength || got[0].Content != "" {
+			t.Fatalf("got %+v, want one empty done callback with reason=length", got)
+		}
+	})
+
+	t.Run("control: a one-token budget still generates", func(t *testing.T) {
+		runner, generated := zeroNumPredictTestServer(t)
+		opts := api.DefaultOptions()
+		opts.NumPredict = 1
+
+		var content string
+		err := runner.Completion(t.Context(), CompletionRequest{Prompt: "hi", Options: &opts}, func(r CompletionResponse) {
+			content += r.Content
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !*generated {
+			t.Fatal("one-token budget did not reach llama-server")
+		}
+		if content != "ok" {
+			t.Fatalf("got content %q, want %q", content, "ok")
+		}
+	})
+}
+
 func TestContextShiftPromptLimit(t *testing.T) {
 	tests := []struct {
 		name    string

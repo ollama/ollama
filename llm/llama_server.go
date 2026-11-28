@@ -1638,6 +1638,14 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
 
+	// llama-server samples one token before it checks n_predict, and a
+	// zero budget is dropped by `json:"n_predict,omitempty"` before it
+	// gets there, so answer a zero budget here instead of generating.
+	if req.Options.NumPredict == 0 {
+		fn(CompletionResponse{Done: true, DoneReason: DoneReasonLength})
+		return nil
+	}
+
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
 		return err
@@ -2005,6 +2013,13 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 	defer s.sem.Release(1)
 
 	req.Options.NumPredict = boundedNumPredict(req.Options.NumPredict, s.options.NumCtx)
+
+	// llama-server samples one token before it checks n_predict, so a
+	// zero budget is answered here instead of being sent.
+	if req.Options.NumPredict == 0 {
+		fn(ChatResponse{Message: api.Message{Role: "assistant"}, Done: true, DoneReason: DoneReasonLength})
+		return nil
+	}
 
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
