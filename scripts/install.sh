@@ -93,7 +93,7 @@ if [ "$OS" = "Darwin" ]; then
 
     if [ -z "${OLLAMA_NO_START:-}" ]; then
         status "Starting Ollama..."
-        open -a Ollama --args hidden
+        open "/Applications/Ollama.app" --args hidden
     fi
 
     status "Install complete. You can now run 'ollama'."
