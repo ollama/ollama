@@ -1096,6 +1096,14 @@ func TestGenerateChat(t *testing.T) {
 		if actual.DoneReason != "load" {
 			t.Errorf("expected done reason load, got %s", actual.DoneReason)
 		}
+
+		if actual.TotalDuration == 0 {
+			t.Error("expected non-zero total duration for load")
+		}
+
+		if actual.LoadDuration == 0 {
+			t.Error("expected non-zero load duration for load")
+		}
 	})
 
 	checkChatResponse := func(t *testing.T, body io.Reader, model, content string) {
@@ -1810,6 +1818,14 @@ func TestGenerate(t *testing.T) {
 
 		if actual.DoneReason != "load" {
 			t.Errorf("expected done reason load, got %s", actual.DoneReason)
+		}
+
+		if actual.TotalDuration == 0 {
+			t.Error("expected non-zero total duration for load")
+		}
+
+		if actual.LoadDuration == 0 {
+			t.Error("expected non-zero load duration for load")
 		}
 	})
 
