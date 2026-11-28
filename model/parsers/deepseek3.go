@@ -112,7 +112,7 @@ func (deepseekEventToolCall) isDeepSeekEvent()        {}
 
 func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-	events := p.parseEvents()
+	events := p.parseEvents(done)
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -136,13 +136,13 @@ func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking str
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
-func (p *DeepSeek3Parser) parseEvents() []deepseekEvent {
+func (p *DeepSeek3Parser) parseEvents(done bool) []deepseekEvent {
 	var all []deepseekEvent
 
 	keepLooping := true
 	for keepLooping {
 		var events []deepseekEvent
-		events, keepLooping = p.eat()
+		events, keepLooping = p.eat(done)
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -151,7 +151,7 @@ func (p *DeepSeek3Parser) parseEvents() []deepseekEvent {
 	return all
 }
 
-func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
+func (p *DeepSeek3Parser) eat(done bool) ([]deepseekEvent, bool) {
 	var events []deepseekEvent
 	bufStr := p.buffer.String()
 	if bufStr == "" {
@@ -207,7 +207,7 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 		switch {
 		case strings.Contains(bufStr, deepseekToolCallsBeginTag): // content[<｜tool▁calls▁begin｜>] -> tool calls
 			split := strings.SplitN(bufStr, deepseekToolCallsBeginTag, 2)
-			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
+			contentBefore := split[0] // Don't trim whitespace - preserve spaces
 			remaining := split[1]
 
 			p.buffer.Reset()
@@ -231,10 +231,38 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 				events = append(events, deepseekEventContent{content: contentBefore})
 			}
 			return events, true
-		default: // otherwise its content
+		case !done && strings.TrimSpace(bufStr) != "" && longestOverlap(bufStr, deepseekToolCallsBeginTag, deepseekToolOutputBeginTag) > 0: // partial tag, hold back
+			overlapLen := longestOverlap(bufStr, deepseekToolCallsBeginTag, deepseekToolOutputBeginTag)
+			beforePartialTag := bufStr[:len(bufStr)-overlapLen]
+			trailingLen := trailingWhitespaceLen(beforePartialTag)
+			ambiguousStart := len(beforePartialTag) - trailingLen
+
+			unambiguous := bufStr[:ambiguousStart]
+			ambiguous := bufStr[ambiguousStart:]
 			p.buffer.Reset()
-			if len(bufStr) > 0 {
-				events = append(events, deepseekEventContent{content: bufStr})
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, deepseekEventContent{content: unambiguous})
+			}
+			return events, false
+		default: // otherwise its content
+			// On the final chunk there is no ambiguity left: emit everything.
+			if done {
+				if len(bufStr) > 0 {
+					events = append(events, deepseekEventContent{content: bufStr})
+				}
+				p.buffer.Reset()
+				return events, false
+			}
+			whitespaceLen := trailingWhitespaceLen(bufStr)
+			ambiguousStart := len(bufStr) - whitespaceLen
+
+			unambiguous := bufStr[:ambiguousStart]
+			ambiguous := bufStr[ambiguousStart:]
+			p.buffer.Reset()
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, deepseekEventContent{content: unambiguous})
 			}
 			return events, false
 		}
@@ -247,7 +275,7 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 
 				if toolCall, err := p.parseToolCallContent(toolCallContent); err == nil {
 					remaining := bufStr[startIdx+endIdx+len(deepseekToolCallEndTag):]
-					remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+					// Don't trim whitespace - preserve spaces after tool call tags
 
 					p.buffer.Reset()
 					p.buffer.WriteString(remaining)
@@ -262,7 +290,7 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 
 		if idx := strings.Index(bufStr, deepseekToolCallsEndTag); idx != -1 {
 			remaining := bufStr[idx+len(deepseekToolCallsEndTag):]
-			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
+			// Don't trim whitespace - preserve spaces after tool call tags
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)

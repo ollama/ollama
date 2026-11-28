@@ -123,19 +123,7 @@ func (lfm2EventToolCall) isLFM2Event()        {}
 
 func (p *LFM2Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-
-	// On the final chunk a partial "<think>" prefix can never complete, so commit
-	// the buffered output as a direct answer rather than withholding it.
-	if done && p.state == LFM2LookingForThinking {
-		trimmed := strings.TrimLeftFunc(p.buffer.String(), unicode.IsSpace)
-		if !strings.HasPrefix(trimmed, lfm2ThinkingOpenTag) {
-			p.buffer.Reset()
-			p.buffer.WriteString(trimmed)
-			p.state = LFM2CollectingContent
-		}
-	}
-
-	events := p.parseEvents()
+	events := p.parseEvents(done)
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -183,13 +171,13 @@ func (p *LFM2Parser) toolCallsAllowed(calls []api.ToolCall) bool {
 	return true
 }
 
-func (p *LFM2Parser) parseEvents() []lfm2Event {
+func (p *LFM2Parser) parseEvents(done bool) []lfm2Event {
 	var all []lfm2Event
 
 	keepLooping := true
 	for keepLooping {
 		var events []lfm2Event
-		events, keepLooping = p.eat()
+		events, keepLooping = p.eat(done)
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -198,7 +186,7 @@ func (p *LFM2Parser) parseEvents() []lfm2Event {
 	return all
 }
 
-func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
+func (p *LFM2Parser) eat(done bool) ([]lfm2Event, bool) {
 	var events []lfm2Event
 	bufStr := p.buffer.String()
 	if bufStr == "" {
@@ -220,6 +208,8 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 		}
 		if trimmed == "" || strings.HasPrefix(lfm2ThinkingOpenTag, trimmed) {
 			// Only whitespace so far, or a partial "<think>" prefix; wait for more.
+			p.buffer.Reset()
+			p.buffer.WriteString(trimmed)
 			return events, false
 		}
 		// Direct answer: no thinking block.
@@ -310,10 +300,9 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 			}
 		}
 
-		if strings.Contains(bufStr, lfm2ToolCallStartTag) { // content[<|tool_call_start|>] -> tool calls
-			split := strings.SplitN(bufStr, lfm2ToolCallStartTag, 2)
-			contentBefore := strings.TrimRightFunc(split[0], unicode.IsSpace)
-			remaining := split[1]
+		if idx := strings.Index(bufStr, lfm2ToolCallStartTag); idx != -1 { // content[<|tool_call_start|>] -> tool calls
+			contentBefore := strings.TrimRightFunc(bufStr[:idx], unicode.IsSpace)
+			remaining := bufStr[idx+len(lfm2ToolCallStartTag):]
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
@@ -323,13 +312,45 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 				events = append(events, lfm2EventContent{content: contentBefore})
 			}
 			return events, true
-		} else { // otherwise its content
-			p.buffer.Reset()
+		}
+		if overlapLen := longestOverlap(bufStr, lfm2ToolCallStartTag); overlapLen > 0 { // partial tag, hold back
+			// Hold back the partial tag and any trailing whitespace that might
+			// belong to it, but keep whitespace when the buffer is nothing but
+			// whitespace so a whitespace-only answer is still emitted.
+			beforePartialTag := bufStr[:len(bufStr)-overlapLen]
+			if strings.TrimSpace(bufStr) != "" {
+				trailingLen := trailingWhitespaceLen(beforePartialTag)
+				ambiguousStart := len(beforePartialTag) - trailingLen
+
+				unambiguous := bufStr[:ambiguousStart]
+				ambiguous := bufStr[ambiguousStart:]
+				p.buffer.Reset()
+				p.buffer.WriteString(ambiguous)
+				if len(unambiguous) > 0 {
+					events = append(events, lfm2EventContent{content: unambiguous})
+				}
+				return events, false
+			}
+		}
+		// Otherwise its content
+		if done {
 			if len(bufStr) > 0 {
 				events = append(events, lfm2EventContent{content: bufStr})
 			}
+			p.buffer.Reset()
 			return events, false
 		}
+		whitespaceLen := trailingWhitespaceLen(bufStr)
+		ambiguousStart := len(bufStr) - whitespaceLen
+
+		unambiguous := bufStr[:ambiguousStart]
+		ambiguous := bufStr[ambiguousStart:]
+		p.buffer.Reset()
+		p.buffer.WriteString(ambiguous)
+		if len(unambiguous) > 0 {
+			events = append(events, lfm2EventContent{content: unambiguous})
+		}
+		return events, false
 
 	case LFM2CollectingToolCalls:
 		// Look for complete tool call JSON between tags
