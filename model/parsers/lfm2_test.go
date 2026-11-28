@@ -887,7 +887,7 @@ func TestLFM2Parser_parseToolCallsContent(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Name: "bash",
 						Arguments: testArgs(map[string]any{
-							"command": `echo \'hello\'`,
+							"command": `echo 'hello'`,
 						}),
 					},
 				},
@@ -989,7 +989,37 @@ func TestLFM2Parser_parseToolCallsContent(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Name: "write_file",
 						Arguments: testArgs(map[string]any{
-							"content": "line1\\nline2\\nline3",
+							"content": "line1\nline2\nline3",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "escapes_in_string_arg",
+			content: `note(text='it\'s a "test"\tdone\\', title="say \"hi\"")`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "note",
+						Arguments: testArgs(map[string]any{
+							"text":  "it's a \"test\"\tdone\\",
+							"title": `say "hi"`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "string_and_list_args_unescape_alike",
+			content: `f(a="x\ny", b=["x\ny"])`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "f",
+						Arguments: testArgs(map[string]any{
+							"a": "x\ny",
+							"b": []any{"x\ny"},
 						}),
 					},
 				},
