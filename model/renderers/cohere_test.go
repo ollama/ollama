@@ -1,6 +1,8 @@
 package renderers
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -186,4 +188,124 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestCohereRenderToolFlowAbsentIDs(t *testing.T) {
+	r := &CohereRenderer{}
+	args1 := api.ToolCallFunctionArguments{}
+	args1.Set("city", "Paris")
+	args2 := api.ToolCallFunctionArguments{}
+	args2.Set("city", "Tokyo")
+
+	got, err := r.Render([]api.Message{
+		{Role: "user", Content: "weather in Paris and Tokyo?"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{Function: api.ToolCallFunction{Name: "get_weather", Arguments: args1}},
+			{Function: api.ToolCallFunction{Name: "get_weather", Arguments: args2}},
+		}},
+		{Role: "tool", Content: "15C sunny"},
+		{Role: "tool", Content: "20C clear"},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contains(t, got, `"tool_call_id": "0", "tool_name": "get_weather", "parameters": {"city": "Paris"}`, "first action id")
+	contains(t, got, `"tool_call_id": "1", "tool_name": "get_weather", "parameters": {"city": "Tokyo"}`, "second action id")
+	contains(t, got, "\"tool_call_id\": \"0\",\n        \"results\": {\n\n            \n            \"0\": {\"content\": \"15C sunny\"}", "first tool result id")
+	contains(t, got, "\"tool_call_id\": \"1\",\n        \"results\": {\n\n            \n            \"0\": {\"content\": \"20C clear\"}", "second tool result id")
+}
+
+func TestCohereRenderMultiTurnRepeatedToolCallIDs(t *testing.T) {
+	r := &CohereRenderer{}
+	args1 := api.ToolCallFunctionArguments{}
+	args1.Set("city", "Paris")
+	args2 := api.ToolCallFunctionArguments{}
+	args2.Set("city", "London")
+
+	got, err := r.Render([]api.Message{
+		{Role: "user", Content: "weather in Paris?"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{ID: "0", Function: api.ToolCallFunction{Name: "get_weather", Arguments: args1}},
+		}},
+		{Role: "tool", ToolCallID: "0", Content: "15C"},
+		{Role: "assistant", Content: "It is 15C. Checking London next."},
+		{Role: "user", Content: "check London"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{ID: "0", Function: api.ToolCallFunction{Name: "get_weather", Arguments: args2}},
+		}},
+		{Role: "tool", ToolCallID: "0", Content: "12C"},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contains(t, got, `"tool_call_id": "0", "tool_name": "get_weather", "parameters": {"city": "Paris"}`, "turn 1 action")
+	contains(t, got, "\"tool_call_id\": \"0\",\n        \"results\": {\n\n            \n            \"0\": {\"content\": \"15C\"}", "turn 1 result")
+	contains(t, got, `"tool_call_id": "1", "tool_name": "get_weather", "parameters": {"city": "London"}`, "turn 2 action")
+	contains(t, got, "\"tool_call_id\": \"1\",\n        \"results\": {\n\n            \n            \"0\": {\"content\": \"12C\"}", "turn 2 result")
+}
+
+func TestCohereRenderMixedAndOutOfOrderToolCallIDs(t *testing.T) {
+	r := &CohereRenderer{}
+	emptyArgs := api.ToolCallFunctionArguments{}
+
+	got, err := r.Render([]api.Message{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{ID: "a", Function: api.ToolCallFunction{Name: "t1", Arguments: emptyArgs}},
+			{ID: "b", Function: api.ToolCallFunction{Name: "t2", Arguments: emptyArgs}},
+		}},
+		{Role: "tool", ToolCallID: "b", Content: "r_b"},
+		{Role: "tool", ToolCallID: "a", Content: "r_a"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{Function: api.ToolCallFunction{Name: "t3", Arguments: emptyArgs}},
+		}},
+		{Role: "tool", Content: "r_3"},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contains(t, got, "\"tool_call_id\": \"1\",\n        \"results\": {\n\n            \n            \"0\": {\"content\": \"r_b\"}", "out of order result b")
+	contains(t, got, "\"tool_call_id\": \"0\",\n        \"results\": {\n\n            \n            \"0\": {\"content\": \"r_a\"}", "out of order result a")
+	contains(t, got, "\"tool_call_id\": \"2\",\n        \"results\": {\n\n            \n            \"0\": {\"content\": \"r_3\"}", "subsequent absent id")
+}
+
+func TestCohereRenderEscapesToolCallMetadata(t *testing.T) {
+	r := &CohereRenderer{}
+	emptyArgs := api.ToolCallFunctionArguments{}
+
+	got, err := r.Render([]api.Message{
+		{Role: "user", Content: "go"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{ID: "call_1", Function: api.ToolCallFunction{Name: `tool"name\here`, Arguments: emptyArgs}},
+		}},
+		{Role: "tool", ToolCallID: `unmatched"id\1`, Content: "ok"},
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	extractBetween := func(start, end string) string {
+		t.Helper()
+		_, rest, ok := strings.Cut(got, start)
+		if !ok {
+			t.Fatalf("missing marker %q", start)
+		}
+		body, _, ok := strings.Cut(rest, end)
+		if !ok {
+			t.Fatalf("missing end marker %q", end)
+		}
+		return body
+	}
+
+	actionJSON := extractBetween("<|START_ACTION|>", "<|END_ACTION|>")
+	if !json.Valid([]byte(actionJSON)) {
+		t.Fatalf("invalid action JSON: %s", actionJSON)
+	}
+	resultJSON := extractBetween("<|START_TOOL_RESULT|>", "<|END_TOOL_RESULT|>")
+	if !json.Valid([]byte(resultJSON)) {
+		t.Fatalf("invalid tool result JSON: %s", resultJSON)
+	}
 }
