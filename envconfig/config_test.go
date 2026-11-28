@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"runtime"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/logutil"
@@ -288,6 +289,35 @@ func TestLoadTimeout(t *testing.T) {
 			t.Setenv("OLLAMA_LOAD_TIMEOUT", tt)
 			if actual := LoadTimeout(); actual != expect {
 				t.Errorf("%s: expected %s, got %s", tt, expect, actual)
+			}
+		})
+	}
+}
+
+func TestGPUDiscoverTimeout(t *testing.T) {
+	defaultTimeout := 30 * time.Second
+	if runtime.GOOS == "windows" {
+		defaultTimeout = 90 * time.Second
+	}
+	cases := map[string]time.Duration{
+		"":       defaultTimeout,
+		"1s":     time.Second,
+		"1m":     time.Minute,
+		"1h":     time.Hour,
+		"60":     60 * time.Second,
+		"120":    2 * time.Minute,
+		"0":      time.Duration(math.MaxInt64),
+		"-1":     time.Duration(math.MaxInt64),
+		"-1m":    time.Duration(math.MaxInt64),
+		"???":    defaultTimeout,
+		"1d":     defaultTimeout,
+	}
+
+	for value, expected := range cases {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("OLLAMA_GPUDISCOVER_TIMEOUT", value)
+			if actual := GPUDiscoverTimeout(); actual != expected {
+				t.Errorf("%s: expected %s, got %s", value, expected, actual)
 			}
 		})
 	}
