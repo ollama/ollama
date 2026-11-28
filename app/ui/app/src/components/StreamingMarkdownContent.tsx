@@ -7,7 +7,11 @@ import {
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
-import { highlighter } from "@/lib/highlighter";
+import {
+  getLoadedHighlighter,
+  loadHighlighter,
+  subscribeHighlighter,
+} from "@/lib/highlighter";
 
 interface StreamingMarkdownContentProps {
   content: string;
@@ -46,9 +50,21 @@ const CodeBlock = React.memo(
       codeElement.props.className?.replace(/language-/, "") || "";
     const codeText = extractText(codeElement.props.children);
 
-    // Synchronously highlight code using the pre-loaded highlighter
+    const highlighter = React.useSyncExternalStore(
+      subscribeHighlighter,
+      getLoadedHighlighter,
+      () => null,
+    );
+
+    React.useEffect(() => {
+      if (!language) return;
+      void loadHighlighter().catch((error) => {
+        console.error("Failed to initialize syntax highlighting:", error);
+      });
+    }, [language]);
+
     const tokens = React.useMemo(() => {
-      if (!highlighter) return null;
+      if (!highlighter || !language) return null;
 
       try {
         return {
@@ -65,7 +81,7 @@ const CodeBlock = React.memo(
         console.error("Failed to highlight code:", error);
         return null;
       }
-    }, [codeText, language]);
+    }, [codeText, language, highlighter]);
 
     return (
       <div className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
