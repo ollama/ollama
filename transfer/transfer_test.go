@@ -198,28 +198,38 @@ func TestDownloadWithRedirect(t *testing.T) {
 	}))
 	defer cdn.Close()
 
-	// Registry server (redirects to CDN)
-	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Redirect to CDN
-		cdnURL := cdn.URL + r.URL.Path
-		http.Redirect(w, r, cdnURL, http.StatusTemporaryRedirect)
-	}))
-	defer registry.Close()
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		for _, sameHost := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%d/same_host=%t", status, sameHost), func(t *testing.T) {
+				registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/blob" {
+						w.Write(data)
+						return
+					}
+					location := cdn.URL + r.URL.Path
+					if sameHost {
+						location = "/blob"
+					}
+					http.Redirect(w, r, location, status)
+				}))
+				defer registry.Close()
 
-	clientDir := t.TempDir()
+				clientDir := t.TempDir()
+				err := Download(t.Context(), DownloadOptions{
+					Blobs:   []Blob{blob},
+					BaseURL: registry.URL,
+					DestDir: clientDir,
+					// httptest servers are loopback; opt in as a trusted local registry.
+					AllowPrivateHosts: true,
+				})
+				if err != nil {
+					t.Fatalf("Download with redirect failed: %v", err)
+				}
 
-	err := Download(context.Background(), DownloadOptions{
-		Blobs:   []Blob{blob},
-		BaseURL: registry.URL,
-		DestDir: clientDir,
-		// httptest servers are loopback; opt in as a trusted local registry.
-		AllowPrivateHosts: true,
-	})
-	if err != nil {
-		t.Fatalf("Download with redirect failed: %v", err)
+				verifyBlob(t, clientDir, blob, data)
+			})
+		}
 	}
-
-	verifyBlob(t, clientDir, blob, data)
 }
 
 func TestDownloadWithRetry(t *testing.T) {
