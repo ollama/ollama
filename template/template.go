@@ -333,8 +333,12 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		return cut
 	})
 
+	tmpl, err := t.Template.Clone()
+	if err != nil {
+		return err
+	}
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
-	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
+	if err := template.Must(tmpl.AddParseTree("", &tree)).Execute(&b, map[string]any{
 		"System":     system,
 		"Prompt":     prompt,
 		"Response":   response,
