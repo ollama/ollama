@@ -1005,6 +1005,24 @@ func TestCreateRequestFileGlobNoMatchUsesModelName(t *testing.T) {
 	}
 }
 
+func TestCreateRequestMissingLocalPath(t *testing.T) {
+	for _, from := range []string{"./missing.gguf", "../missing.gguf", "/missing/model.gguf", "~/missing.gguf", "./model-*.gguf"} {
+		t.Run(from, func(t *testing.T) {
+			modelfile, err := ParseFile(strings.NewReader("FROM " + from + "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = modelfile.CreateRequest(t.TempDir())
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("CreateRequest() error = %v, want %v", err, os.ErrNotExist)
+			}
+			if !strings.Contains(err.Error(), from) {
+				t.Errorf("error %q does not mention %q", err, from)
+			}
+		})
+	}
+}
+
 func TestCreateRequestFileGlobRejectsBadPattern(t *testing.T) {
 	modelfile, err := ParseFile(strings.NewReader("FROM [\n"))
 	if err != nil {
