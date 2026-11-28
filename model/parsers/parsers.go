@@ -28,6 +28,50 @@ type Parser interface {
 	HasThinkingSupport() bool
 }
 
+// ThinkingTagger is implemented by parsers that delimit thinking with literal
+// tags. The tags let a runner cap how many tokens are spent inside a thinking
+// block and force the block closed once the budget is exhausted.
+type ThinkingTagger interface {
+	// ThinkingTags returns the opening and closing delimiters of the thinking
+	// block, or empty strings when the parser has no such block.
+	ThinkingTags() (start, end string)
+}
+
+// ThinkingTagsForParser returns the thinking delimiters of a parser, if it
+// exposes any.
+func ThinkingTagsForParser(p Parser) (start, end string) {
+	if p == nil || !p.HasThinkingSupport() {
+		return "", ""
+	}
+	tagger, ok := p.(ThinkingTagger)
+	if !ok {
+		return "", ""
+	}
+	return tagger.ThinkingTags()
+}
+
+// ThinkingTagsAsText is implemented by a parser whose thinking tags are
+// ordinary text in its model's vocabulary rather than special tokens: each tag
+// is several tokens, and the token after it can merge with the tag's last
+// byte ("<th" "ink" ">\n"). A runner that matches a tag as one exact token
+// sequence never sees such a tag, so the budget must not be armed on it: it
+// would be reported as applied and not hold, and in the rare case the opening
+// did match, the forced close would land in the answer.
+type ThinkingTagsAsText interface {
+	ThinkingTagsAreText() bool
+}
+
+// ThinkingTagsAreTextForParser reports whether a parser's thinking tags are
+// ordinary text (see ThinkingTagsAsText). A parser that does not say so has
+// special-token tags, which every runner matches.
+func ThinkingTagsAreTextForParser(p Parser) bool {
+	if p == nil {
+		return false
+	}
+	t, ok := p.(ThinkingTagsAsText)
+	return ok && t.ThinkingTagsAreText()
+}
+
 type ParserConstructor func() Parser
 
 type ParserRegistry struct {

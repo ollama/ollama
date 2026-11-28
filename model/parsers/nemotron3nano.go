@@ -39,6 +39,12 @@ func (p *Nemotron3NanoParser) ThinkingClose() []string {
 	return nil
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *Nemotron3NanoParser) ThinkingTags() (string, string) {
+	return nemotronThinkOpen, nemotronThinkClose
+}
+
 func (p *Nemotron3NanoParser) PreservedTokens() []string {
 	return []string{
 		nemotronThinkOpen,

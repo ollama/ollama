@@ -194,6 +194,13 @@ type llamaServerRunner struct {
 	launch                  llamaServerLaunchConfig
 	output                  *memoryParsingWriter
 	mmprojOffloadOOMRetried bool
+
+	// tagTextKnown and tagText remember whether the engine matches reasoning
+	// tags on the decoded text (reasoningTagsTextFeature in GET /props), once
+	// it has answered. Guarded by tagTextMu.
+	tagTextMu    sync.Mutex
+	tagTextKnown bool
+	tagText      bool
 }
 
 type llamaServerLaunchConfig struct {
@@ -1518,6 +1525,18 @@ type llamaServerCompletionRequest struct {
 	NProbs          int             `json:"n_probs,omitempty"`
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
 	TimingsPerToken bool            `json:"timings_per_token,omitempty"`
+
+	// Reasoning budget sampler. llama-server activates it once it sees
+	// ReasoningBudgetStartTag generated (or present in GenerationPrompt), then
+	// forces ReasoningBudgetEndTag after ReasoningBudgetTokens tokens.
+	ReasoningBudgetTokens   int    `json:"reasoning_budget_tokens,omitempty"`
+	ReasoningBudgetStartTag string `json:"reasoning_budget_start_tag,omitempty"`
+	ReasoningBudgetEndTag   string `json:"reasoning_budget_end_tag,omitempty"`
+	// ReasoningBudgetMessage must be sent even when empty: llama-server builds
+	// the sequence it forces from message+end_tag, and only does so when this
+	// field is present. A pointer keeps the empty string on the wire.
+	ReasoningBudgetMessage *string `json:"reasoning_budget_message,omitempty"`
+	GenerationPrompt       string  `json:"generation_prompt,omitempty"`
 }
 
 // schemaGrammars caches the grammars llama-server derives from JSON schemas,
@@ -1599,6 +1618,58 @@ func (s *llamaServerRunner) schemaGrammar(ctx context.Context, schema json.RawMe
 	return lsRes.Grammar, nil
 }
 
+// reasoningTagsTextFeature is the GET /props feature row of an engine whose
+// reasoning-budget sampler matches a tag on the decoded text, so a tag that is
+// several ordinary tokens is seen however the model's output tokenizes it
+// (opencoti c14 r17 on). Stock llama-server reports no feature list.
+const reasoningTagsTextFeature = "reasoning_tags_text_v1"
+
+// matchesReasoningTagsAsText reports whether the engine declares
+// reasoningTagsTextFeature. The answer is read from GET /props the first time
+// it is needed and kept for the runner's life; a read that fails is not an
+// answer and is tried again on the next request.
+func (s *llamaServerRunner) matchesReasoningTagsAsText(ctx context.Context) bool {
+	s.tagTextMu.Lock()
+	defer s.tagTextMu.Unlock()
+	if s.tagTextKnown {
+		return s.tagText
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/props", s.port), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := s.httpClient().Do(req)
+	if err != nil {
+		slog.Debug("reading engine features", "error", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		// An engine without /props has no features to declare.
+	case resp.StatusCode != http.StatusOK:
+		slog.Debug("reading engine features", "status", resp.StatusCode)
+		return false
+	default:
+		var props struct {
+			Features []string `json:"features"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&props); err != nil {
+			slog.Debug("reading engine features", "error", err)
+			return false
+		}
+		s.tagText = slices.Contains(props.Features, reasoningTagsTextFeature)
+	}
+	s.tagTextKnown = true
+	if !s.tagText {
+		slog.Info("engine matches reasoning tags only as token sequences; a thinking budget is left off for models whose tags are text",
+			"feature", reasoningTagsTextFeature)
+	}
+	return s.tagText
+}
+
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
 	tokens := append([]string{}, parserTokens...)
 	tokens = append(tokens, llamaServerPreservedTokensForToolTag(toolCallTag)...)
@@ -1641,6 +1712,41 @@ func leadingSpecialTokenCandidate(tag string) string {
 	}
 
 	return tag[:end+1]
+}
+
+// maxThinkingGenerationPrompt bounds how much of the prompt is replayed into
+// the budget sampler. Every renderer that primes thinking does so with the
+// opening tag and at most a channel name, so a longer run means the tag came
+// from message content rather than the template: replaying that would activate
+// the budget against text the model never generated.
+const maxThinkingGenerationPrompt = 64
+
+// thinkingGenerationPrompt returns the part of the prompt that already sits
+// inside an unclosed thinking block, for llama-server to replay into the
+// reasoning-budget sampler before decoding.
+//
+// The sampler leaves its idle state only when the opening tag passes through
+// it, so a template that primes thinking — by ending the prompt with the tag,
+// or with the tag plus a channel name, as gemma4 does after a tool response —
+// otherwise leaves the budget silently inert for the whole turn. Matching the
+// unclosed opening rather than the exact suffix keeps that from depending on
+// how much a renderer writes after the tag.
+func thinkingGenerationPrompt(prompt, startTag, endTag string) string {
+	if startTag == "" || endTag == "" {
+		return ""
+	}
+
+	start := strings.LastIndex(prompt, startTag)
+	if start == -1 {
+		return ""
+	}
+
+	tail := prompt[start:]
+	if strings.Contains(tail[len(startTag):], endTag) || len(tail) > maxThinkingGenerationPrompt {
+		return ""
+	}
+
+	return tail
 }
 
 // llamaServerMultimodalPrompt is used when images are present.
@@ -1766,6 +1872,42 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 	if req.Logprobs {
 		lsReq.NProbs = max(req.TopLogprobs, 1)
+	}
+
+	// Cap thinking. llama-server's reasoning budget sampler needs both
+	// delimiters: it starts counting at the opening tag and forces the closing
+	// tag once the budget runs out.
+	armBudget := req.ThinkBudget > 0 && req.ThinkingStartTag != "" && req.ThinkingEndTag != ""
+
+	// Tags that are ordinary text (several tokens, the last merging with the
+	// newline after it) are invisible to a sampler that matches one exact
+	// token sequence: the budget would be reported and never hold, and if the
+	// opening did match by chance the end would be missed and the forced close
+	// written into the answer. Only an engine that matches tags on the decoded
+	// text gets them; anywhere else thinking is left unbounded, as it was
+	// before the parser named its tags.
+	if armBudget && req.ThinkingTagsText && !s.matchesReasoningTagsAsText(ctx) {
+		slog.Debug("thinking budget left off: the tags are text and the engine matches only token sequences",
+			"start", req.ThinkingStartTag, "end", req.ThinkingEndTag, "feature", reasoningTagsTextFeature)
+		armBudget = false
+	}
+
+	if armBudget {
+		lsReq.ReasoningBudgetTokens = req.ThinkBudget
+		lsReq.ReasoningBudgetStartTag = req.ThinkingStartTag
+		lsReq.ReasoningBudgetEndTag = req.ThinkingEndTag
+		// Sent even when empty. llama-server builds the sequence it forces
+		// from message+end_tag, and on the pinned runtime it builds it in this
+		// field's handler, so an absent field is a handler that never runs:
+		// the budget expires with nothing to force, the sampler logs its usual
+		// states, and the thinking block is left open.
+		lsReq.ReasoningBudgetMessage = &req.ThinkBudgetMessage
+
+		// The sampler only sees tokens the model generates, so a template that
+		// primes thinking by ending the prompt inside a thinking block would
+		// never activate it. Hand that opening over as the generation prompt
+		// instead: llama-server replays it into the sampler before decoding.
+		lsReq.GenerationPrompt = thinkingGenerationPrompt(req.Prompt, req.ThinkingStartTag, req.ThinkingEndTag)
 	}
 
 	// Handle format: pass JSON schema directly to llama-server, or use grammar
@@ -2394,6 +2536,21 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	}
 	if kwargs := llamaServerChatTemplateKwargs(req.Think); kwargs != nil {
 		body["chat_template_kwargs"] = kwargs
+	}
+	// llama-server owns the chat template on this path, so it already knows the
+	// thinking delimiters and only needs the budget.
+	window := api.ThinkBudgetWindow(s.ContextLength(), req.Options.NumPredict)
+	// Only think_budget bounds thinking. A level in think is the model's
+	// control and went into the template kwargs above.
+	budget := 0
+	if req.Think == nil || req.Think.Bool() {
+		budget = req.Options.ThinkBudget.Tokens(window)
+	}
+	if budget > 0 {
+		body["thinking_budget_tokens"] = budget
+		// llama-server reads this from the chat body too, and needs it present
+		// to build the sequence it forces
+		body["reasoning_budget_message"] = req.Options.ThinkBudgetMessage
 	}
 	if format, err := llamaServerChatResponseFormat(req.Format); err != nil {
 		return nil, err

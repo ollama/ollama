@@ -221,6 +221,21 @@ type CompletionRequest struct {
 	ThinkingClose []string
 	FormatFrames  *model.StructuredOutputFrames // MLX framed structured output, when the parser supplies it
 
+	// ThinkBudget caps the number of tokens the model may spend inside a
+	// thinking block. Zero leaves thinking unrestricted. Enforcing it requires
+	// the thinking delimiters below; runners without a reasoning-budget sampler
+	// ignore all three.
+	ThinkBudget        int
+	ThinkBudgetMessage string
+	ThinkingStartTag   string
+	ThinkingEndTag     string
+	// ThinkingTagsText says the two tags are ordinary text in the model's
+	// vocabulary (several tokens that merge with their neighbours), not
+	// special tokens. A runner arms the budget on such tags only when its
+	// engine matches tags on the decoded text; otherwise the budget is left
+	// off rather than reported and not held.
+	ThinkingTagsText bool
+
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
 
