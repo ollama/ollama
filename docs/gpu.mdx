@@ -137,6 +137,29 @@ accessing the AMD GPU devices. On the host system you can run
 
 Ollama supports GPU acceleration on Apple devices via the Metal API.
 
+### GPU memory limit on Apple Silicon
+
+Apple Silicon shares memory between the CPU and GPU, but macOS only lets the GPU
+use part of it, roughly two-thirds to three-quarters of RAM depending on the Mac.
+The [server log](./troubleshooting.mdx) shows it as `recommendedMaxWorkingSetSize`. If a model plus
+its context doesn't fit under the limit, `ollama ps` shows a split such as
+`23%/77% CPU/GPU` even when the Mac has free memory, and generation is much slower.
+
+To fit a model entirely on the GPU, reduce what it needs first: use a smaller
+quantization, lower the [context length](./context-length.mdx), or quantize the
+[K/V cache](./faq.mdx#how-can-i-set-the-quantization-type-for-the-kv-cache).
+
+On macOS 14 (Sonoma) and later you can also raise the limit. For example, to allow
+20 GB on a 24 GB Mac:
+
+```shell
+sudo sysctl iogpu.wired_limit_mb=20480
+```
+
+Leave several GB for macOS and other apps, because setting it too high can cause heavy
+swapping. The setting resets at reboot (set it to `0` to restore the default). Unload
+the model (`ollama stop <model>`) or restart Ollama so the next load uses the new limit.
+
 
 ## Vulkan GPU Support
 
