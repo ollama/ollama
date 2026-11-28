@@ -26,13 +26,15 @@ func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 
 	var (
-		modelName   string
-		port        int
-		contextHint int
+		modelName      string
+		manifestDigest string
+		port           int
+		contextHint    int
 	)
 
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
+	flagSet.StringVar(&manifestDigest, "manifest-digest", "", "Expected digest of the selected model manifest")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
 	flagSet.IntVar(&contextHint, "ctx-size", 0, "Context size for automatic parallelism estimation")
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
@@ -72,7 +74,7 @@ func Execute(args []string) error {
 	}
 
 	if err := worker.Do(context.Background(), func() error {
-		return runner.Load(modelName)
+		return runner.load(modelName, manifestDigest)
 	}); err != nil {
 		return err
 	}

@@ -39,7 +39,7 @@ import (
 
 var (
 	errNoFilesProvided        = errors.New("no files provided to convert")
-	errAdaptersUnsupported    = errors.New("LoRA adapters are no longer supported")
+	errAdaptersUnsupported    = errors.New("ADAPTER requires a PEFT safetensors directory and FROM a native MLX model tag")
 	errOnlyGGUFSupported      = errors.New("supplied file was not in GGUF format")
 	errUnknownType            = errors.New("unknown type")
 	errNeitherFromOrFiles     = errors.New("neither 'from' or 'files' was specified")
@@ -105,8 +105,14 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 	if len(r.Adapters) > 0 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errAdaptersUnsupported.Error()})
-		return
+		if r.From == "" || len(r.Files)+len(r.List)+len(r.DraftFiles) > 0 || r.RemoteHost != "" || len(r.Adapters) != 2 || r.Adapters[manifest.AdapterConfigName] == "" || r.Adapters[manifest.AdapterWeightsName] == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errAdaptersUnsupported.Error()})
+			return
+		}
+		if err := validateCreateFiles(r.Adapters); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	if _, err := create.LicenseStrings(r.License); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -272,6 +278,15 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		} else {
 			send(gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest})
 			return
+		}
+
+		if len(r.Adapters) > 0 {
+			layers, err := peftLayers(baseLayers, *config, r.Adapters)
+			if err != nil {
+				send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
+				return
+			}
+			baseLayers = append(baseLayers, layers...)
 		}
 
 		if remote && len(r.DraftFiles) > 0 {

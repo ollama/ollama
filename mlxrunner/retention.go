@@ -19,7 +19,7 @@ const snapshotCheckInterval = time.Second
 // Keep reclamation local to this runner. Revisit cross-runner pruning after
 // disk paging, with headroom for each model's active KV and workspace;
 // fitting both sets of weights alone need not improve throughput.
-func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) {
+func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int, adapterBytes int64) {
 	if !s.hasPrefixCache() || !mlx.MetalIsAvailable() {
 		return
 	}
@@ -78,7 +78,7 @@ func (s *batchScheduler) trimSnapshots(incoming queuedRequest, destination int) 
 	}
 	// Active rows may need a copy before writing shared buffers. The idle-row
 	// allowance is measured during trimming because eviction can release it.
-	trimHistory(caches, idle, s.matchingHistory(incoming, destination), observation, s.snapshotWorkspace+working)
+	trimHistory(caches, idle, s.matchingHistory(incoming, destination), observation, s.snapshotWorkspace+working+adapterBytes)
 }
 
 // Prefer the arriving request's matching paths, including peer-slot donors.
@@ -105,7 +105,7 @@ func (s *batchScheduler) matchingHistory(incoming queuedRequest, destination int
 	}
 	preferred := make(map[*trieNode]int)
 	for i, slot := range s.slots {
-		if slot == nil {
+		if slot == nil || slot.adapterRef() != requestAdapter(incoming) {
 			continue
 		}
 		c := slot.cache

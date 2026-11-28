@@ -20,6 +20,7 @@ type snapshotAlignedPrefill interface {
 }
 
 type batchSlot struct {
+	adapter     *adapterView
 	id          int
 	cache       *prefixCache
 	targets     []cache.Cache
@@ -221,6 +222,7 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 					if slot.scoreCache != nil {
 						slot.scoreCache.close()
 					}
+					slot.releaseAdapter()
 				}
 			})
 			return nil
@@ -279,7 +281,7 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 				// simultaneous timer wake discard it before lookup.
 				admitted = s.admitPending() || admitted
 				if snapshotChanged && !admitted {
-					s.trimSnapshots(nil, -1)
+					s.trimSnapshots(nil, -1, 0)
 				}
 				step := func() {
 					worked := s.step()
@@ -341,7 +343,10 @@ func (s *batchScheduler) admit(pending queuedRequest) bool {
 	// Choose the destination before trimming so retention uses the same local
 	// cache and peer-checkpoint rules as the request that follows.
 	index := s.selectSlot(pending)
-	s.trimSnapshots(pending, index)
+	if err := s.prepareSlot(index, pending); err != nil {
+		pending.reject(err)
+		return false
+	}
 	switch req := pending.(type) {
 	case request:
 		s.admitGeneration(req, index)
@@ -355,7 +360,7 @@ func (s *batchScheduler) admit(pending queuedRequest) bool {
 	// The first prefix cache is created during admission. Seed the observation
 	// before its first forward so that any resulting compression remains visible.
 	if s.snapshotTimer == nil {
-		s.trimSnapshots(pending, index)
+		s.trimSnapshots(pending, index, 0)
 	}
 	return true
 }
@@ -368,13 +373,19 @@ func (s *batchScheduler) selectSlot(pending queuedRequest) int {
 	if generation {
 		keys = effectiveKeyTokens(req.Tokens, req.MediaItems)
 	}
-	best, bestMatch := -1, -1
+	ref := requestAdapter(pending)
+	best, bestMatch := -1, -3
 	for i, slot := range s.slots {
 		if slot != nil && slot.busy() {
 			continue
 		}
 		matched := 0
-		if len(keys) > 0 && slot != nil && slot.cache != nil && slot.cache.root != nil {
+		if slot.adapterRef() != ref {
+			matched = -2
+			if slot == nil {
+				matched = -1
+			}
+		} else if len(keys) > 0 && slot != nil && slot.cache != nil && slot.cache.root != nil {
 			plan := slot.cache.prefillPlan(len(req.Tokens), req.MediaItems)
 			_, matched = findBestMatch(slot.cache.root, plan.tag(slot.cache.key(keys)))
 			matched = plan.restoreOffset(matched)
@@ -397,33 +408,34 @@ func (s *batchScheduler) admitGeneration(request request, best int) {
 		slot = &batchSlot{id: best}
 		s.slots[best] = slot
 	}
+	r := slot.runner(s.r)
 	if slot.cache == nil {
-		targets := s.r.Model.NewCaches()
+		targets := r.Model.NewCaches()
 		var draft []cache.Cache
-		if s.r.spec != nil {
-			draft = newDraftCaches(s.r.spec.draft)
+		if r.spec != nil {
+			draft = newDraftCaches(r.spec.draft)
 		}
 		slot.targets = targets
 		slot.cache = newPrefixCache(slices.Concat(targets, draft))
-		_, slot.cache.alignPrefill = s.r.Model.(snapshotAlignedPrefill)
+		_, slot.cache.alignPrefill = r.Model.(snapshotAlignedPrefill)
 		slot.cache.limitBytes = s.r.snapshotLimit()
-		if s.r.spec != nil {
-			slot.speculation = newSpeculation(s.r, slot.id, s.r.spec.draft, targets, draft)
-			slot.cache.draftLookahead = s.r.cache.draftLookahead
+		if r.spec != nil {
+			slot.speculation = newSpeculation(r, slot.id, r.spec.draft, targets, draft)
+			slot.cache.draftLookahead = r.cache.draftLookahead
 		}
 		s.slots[best] = slot
 	}
 	req := &batchRequest{request: request}
 	var peers []*prefixCache
 	for _, other := range s.slots {
-		if other != nil && other != slot && other.cache != nil {
+		if other != nil && other != slot && other.adapter == slot.adapter && other.cache != nil {
 			peers = append(peers, other.cache)
 		}
 	}
 	req.session = slot.cache.begin(request.Tokens, request.MediaItems, peers...)
-	req.media = s.r.openMedia(request)
+	req.media = r.openMedia(request)
 	req.spec = slot.speculation.open(request, req.media.rowLayout())
-	req.prefill = s.r.newPrefill(req.session, req.spec, req.media)
+	req.prefill = r.newPrefill(req.session, req.spec, req.media)
 	slot.request = req
 }
 
@@ -556,7 +568,7 @@ func (s *batchScheduler) step() bool {
 			if req.spec != nil {
 				req.decoder = req.spec.decoder(seed, req.prefill.position, req.grammar)
 			} else {
-				req.decoder = s.r.pipelinedDecoder(slot.id, nil, slot.targets, seed.ExpandDims(-1), req.prefill.position, req.media.rowLayout(), req.grammar)
+				req.decoder = slot.runner(s.r).pipelinedDecoder(slot.id, nil, slot.targets, seed.ExpandDims(-1), req.prefill.position, req.media.rowLayout(), req.grammar)
 			}
 			req.output = newGenerationOutput(s.r, req.request, req.session, req.promptEval)
 			req.prefill = nil
@@ -582,11 +594,24 @@ func (s *batchScheduler) step() bool {
 		s.drafting.reset()
 		return progressed
 	}
-	if err := s.decode(ready, active); err != nil {
-		// Cache compatibility is checked before a shared forward writes state.
-		// Fail this cohort without leaving an idle HTTP server waiting forever.
-		for _, slot := range ready {
-			s.finish(slot, err)
+	// Adapter factors can use lower-precision matmuls whose rounding changes
+	// with the batch shape. Keep each adapted row on its isolated decode path.
+	base := ready[:0]
+	for _, slot := range ready {
+		if slot.adapter == nil {
+			base = append(base, slot)
+			continue
+		}
+		req := slot.request
+		results, err := req.decoder.next(req.output.limit - req.output.generated)
+		s.emit(slot, results, err)
+	}
+	if len(base) > 0 {
+		if err := s.decode(base, active); err != nil {
+			// Cache compatibility is checked before a shared forward writes state.
+			for _, slot := range base {
+				s.finish(slot, err)
+			}
 		}
 	}
 	return true

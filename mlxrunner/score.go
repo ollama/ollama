@@ -10,6 +10,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/model"
 )
@@ -89,7 +90,7 @@ func (r *Runner) score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRe
 			rows[i].candidates = append(rows[i].candidates, id)
 		}
 	}
-	logits, cached, err := r.scoreRows(ctx, rows, scorePrefixLength(rows))
+	logits, cached, err := r.scoreAdapterRows(ctx, input.Adapter, rows, scorePrefixLength(rows))
 	result.CachedTokens = &cached
 	result.Logits = logits
 	return result, err
@@ -115,25 +116,33 @@ func scorePrefixLength(rows []scoreRow) int {
 }
 
 func (r *Runner) scoreRows(ctx context.Context, rows []scoreRow, prefix int) ([][]float32, int, error) {
+	return r.scoreAdapterRows(ctx, manifest.AdapterRef{}, rows, prefix)
+}
+func (r *Runner) scoreAdapterRows(ctx context.Context, ref manifest.AdapterRef, rows []scoreRow, prefix int) ([][]float32, int, error) {
 	result := make([][]float32, len(rows))
 	cached := 0
 	for i, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, 0, err
 		}
-		restored, err := r.forwardHidden(ctx, &model.PreparedRequest{Tokens: row.tokens, ScorePrefix: prefix}, nil, func(hidden *mlx.Array) error {
-			last := hidden.Slice(mlx.Slice(), mlx.Slice(len(row.tokens)-1, len(row.tokens)), mlx.Slice())
-			ids := mlx.FromValues(row.candidates, len(row.candidates))
-			var selected *mlx.Array
-			if m, ok := r.Model.(candidateUnembedder); ok {
-				selected = m.UnembedCandidates(last, ids)
-			} else {
-				selected = r.Model.Unembed(last).Reshape(-1).TakeAxis(ids, 0)
-			}
-			result[i] = selected.AsType(mlx.DTypeFloat32).Floats()
-			return nil
+		err := r.scheduleAdapterEvaluation(ctx, ref, row.tokens, nil, func(slot *batchSlot, peers []*prefixCache) (*evaluationState, error) {
+			view := slot.runner(r)
+			p := view.openEvaluation(slot, &model.PreparedRequest{Tokens: row.tokens, ScorePrefix: prefix}, nil, func(hidden *mlx.Array) error {
+				last := hidden.Slice(mlx.Slice(), mlx.Slice(len(row.tokens)-1, len(row.tokens)), mlx.Slice())
+				ids := mlx.FromValues(row.candidates, len(row.candidates))
+				var selected *mlx.Array
+				if m, ok := view.Model.(candidateUnembedder); ok {
+					selected = m.UnembedCandidates(last, ids)
+				} else {
+					selected = view.Model.Unembed(last).Reshape(-1).TakeAxis(ids, 0)
+				}
+				result[i] = selected.AsType(mlx.DTypeFloat32).Floats()
+				return nil
+			}, peers...)
+			p.keepScratch = true
+			cached += p.position
+			return p, nil
 		})
-		cached += restored
 		if err != nil {
 			return nil, 0, err
 		}

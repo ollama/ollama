@@ -13,6 +13,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 )
@@ -205,6 +206,7 @@ func MessageFromAPI(msg api.Message) Message {
 }
 
 type CompletionRequest struct {
+	Adapter manifest.AdapterRef `json:"adapter,omitzero"`
 	Prompt  string
 	Format  json.RawMessage
 	Media   []MediaData

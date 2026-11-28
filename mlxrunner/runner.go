@@ -3,6 +3,7 @@ package mlxrunner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"math"
@@ -71,11 +72,12 @@ func completionStatusError(err error) *api.StatusError {
 // An evaluation computes embeddings or decision scores from the supplied input without
 // entering the token decode loop. Its callback runs on the MLX worker.
 type evaluationRequest struct {
-	ctx    context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
-	tokens []int32
-	items  []mediaItem
-	open   func(*batchSlot, []*prefixCache) (*evaluationState, error)
-	done   chan error
+	adapter manifest.AdapterRef
+	ctx     context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
+	tokens  []int32
+	items   []mediaItem
+	open    func(*batchSlot, []*prefixCache) (*evaluationState, error)
+	done    chan error
 }
 
 func (r *evaluationRequest) reject(err error) { r.done <- err }
@@ -106,6 +108,7 @@ type Runner struct {
 	parallel         int
 	parallelContext  int
 	fullContextBytes int64 // Estimated per-client storage at the projected context size.
+	baseManifest     *manifest.Manifest
 	Model            model.Model
 	weights          *mlx.Scope
 	Tokenizer        *tokenizer.Tokenizer
@@ -126,7 +129,10 @@ type Runner struct {
 }
 
 func (r *Runner) Load(modelName string) error {
-	weights, err := r.loadModel(modelName)
+	return r.load(modelName, "")
+}
+func (r *Runner) load(modelName, manifestDigest string) error {
+	weights, err := r.loadModel(modelName, manifestDigest)
 	if err != nil {
 		return err
 	}
@@ -139,7 +145,7 @@ func (r *Runner) Load(modelName string) error {
 	return nil
 }
 
-func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
+func (r *Runner) loadModel(modelName, manifestDigest string) (weights []*mlx.Array, err error) {
 	weights = mlx.ScopedArrays(func() []*mlx.Array {
 		root, e := model.Open(modelName)
 		if e != nil {
@@ -147,11 +153,17 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 			return nil
 		}
 
+		if manifestDigest != "" && root.Manifest.SelectedDigest() != manifestDigest {
+			err = fmt.Errorf("model %q changed before loading. Retry the request", modelName)
+			return nil
+		}
 		m, e := model.New(root)
 		if e != nil {
 			err = e
 			return nil
 		}
+
+		r.baseManifest = root.Manifest
 
 		var skippedTensors []string
 		if s, ok := m.(model.SkippedTensorsModel); ok {

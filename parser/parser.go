@@ -117,7 +117,10 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
+			if req.Adapters != nil {
+				return nil, fmt.Errorf("only one ADAPTER directory is supported")
+			}
+			digestMap, err := adapterDigestMap(path)
 			if err != nil {
 				return nil, err
 			}
@@ -309,6 +312,40 @@ func fileDigestMap(path string) (map[string]string, error) {
 	}
 
 	return fl, nil
+}
+
+// Hash only the two exported PEFT files. As with model directories, a
+// symlink inside an adapter must resolve within the selected directory.
+func adapterDigestMap(dir string) (map[string]string, error) {
+	root, err := canonicalLocalPath(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := make(map[string]string, 2)
+	for _, name := range []string{"adapter_config.json", "adapter_model.safetensors"} {
+		path := filepath.Join(root, name)
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return nil, err
+		}
+		rel, err := filepath.Rel(root, resolved)
+		if err != nil || !filepath.IsLocal(rel) {
+			return nil, fmt.Errorf("insecure adapter path: %s", path)
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("expected a regular adapter file at %s", path)
+		}
+		digest, err := digestForFile(resolved)
+		if err != nil {
+			return nil, err
+		}
+		files[path] = digest
+	}
+	return files, nil
 }
 
 func digestForFile(filename string) (string, error) {

@@ -27,7 +27,7 @@ type Root struct {
 // Open loads a manifest for the given model name and scans tensor blobs for
 // quantization metadata.
 func Open(modelName string) (*Root, error) {
-	m, err := manifest.ParseNamedManifest(modeltypes.ParseName(modelName))
+	m, err := manifest.ParseNamedManifestForRunner(modeltypes.ParseName(modelName), manifest.RunnerMLX)
 	if err != nil {
 		return nil, err
 	}
