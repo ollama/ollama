@@ -1148,3 +1148,27 @@ func TestToolPropertyExtraMarshalling(t *testing.T) {
 		assert.Equal(t, `{"description":"a < b","default":"<x>&"}`+"\n", buf.String())
 	})
 }
+
+// The engines (llama.cpp's llama-server, opencoti) are sent every sampling
+// field on each request, so these defaults replace theirs whenever a model and
+// a request leave a field unset. They must stay llama.cpp's
+// common_params_sampling values.
+func TestDefaultOptionsSamplingMatchesLlamaCpp(t *testing.T) {
+	opts := DefaultOptions()
+	for name, got := range map[string][2]float64{
+		"temperature":       {float64(opts.Temperature), 0.8},
+		"top_k":             {float64(opts.TopK), 40},
+		"top_p":             {float64(opts.TopP), 0.95},
+		"min_p":             {float64(opts.MinP), 0.05},
+		"typical_p":         {float64(opts.TypicalP), 1.0},
+		"repeat_last_n":     {float64(opts.RepeatLastN), 64},
+		"repeat_penalty":    {float64(opts.RepeatPenalty), 1.0},
+		"presence_penalty":  {float64(opts.PresencePenalty), 0},
+		"frequency_penalty": {float64(opts.FrequencyPenalty), 0},
+		"seed":              {float64(opts.Seed), -1},
+	} {
+		if math.Abs(got[0]-got[1]) > 1e-6 {
+			t.Errorf("default %s = %v, llama.cpp's is %v", name, got[0], got[1])
+		}
+	}
+}
