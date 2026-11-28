@@ -270,6 +270,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [Heym](https://github.com/heymrun/heym) - Self-hosted platform for visual agent workflows ([docs](https://heym.run/docs/reference/integrations#llm-providers-openai-google-custom-cohere))
 
 ### RAG & Knowledge Bases
 
