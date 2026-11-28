@@ -126,10 +126,17 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		switch lParam {
 		case WM_MOUSEMOVE, WM_LBUTTONDOWN:
 			// Ignore these...
-		case WM_RBUTTONUP, WM_LBUTTONUP:
+		case WM_RBUTTONUP:
+			// Secondary click keeps the classic context menu.
 			err := t.showMenu()
 			if err != nil {
 				slog.Error(fmt.Sprintf("failed to show menu: %s", err))
+			}
+		case WM_LBUTTONUP:
+			// Primary click opens the window directly, like other assistant
+			// apps: one click on the tray icon brings the UI up front.
+			if t.app != nil {
+				t.app.UIShow()
 			}
 		case 0x405: // TODO - how is this magic value derived for the notification left click
 			if t.pendingUpdate {
