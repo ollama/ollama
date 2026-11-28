@@ -314,6 +314,30 @@ type Tool struct {
 	Type     string       `json:"type"`
 	Items    any          `json:"items,omitempty"`
 	Function ToolFunction `json:"function"`
+
+	Extra map[string]any `json:"-"`
+}
+
+var toolKeys = []string{"type", "items", "function"}
+
+func (t *Tool) UnmarshalJSON(data []byte) error {
+	type plain Tool
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	extra, err := unmodeledSchemaKeys(data, toolKeys)
+	if err != nil {
+		return err
+	}
+	p.Extra = extra
+	*t = Tool(p)
+	return nil
+}
+
+func (t Tool) MarshalJSON() ([]byte, error) {
+	type plain Tool
+	return marshalWithExtra(plain(t), t.Extra, toolKeys)
 }
 
 // PropertyType can be either a string or an array of strings
@@ -613,6 +637,30 @@ type ToolFunction struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	Parameters  ToolFunctionParameters `json:"parameters"`
+
+	Extra map[string]any `json:"-"`
+}
+
+var toolFunctionKeys = []string{"name", "description", "parameters"}
+
+func (t *ToolFunction) UnmarshalJSON(data []byte) error {
+	type plain ToolFunction
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	extra, err := unmodeledSchemaKeys(data, toolFunctionKeys)
+	if err != nil {
+		return err
+	}
+	p.Extra = extra
+	*t = ToolFunction(p)
+	return nil
+}
+
+func (t ToolFunction) MarshalJSON() ([]byte, error) {
+	type plain ToolFunction
+	return marshalWithExtra(plain(t), t.Extra, toolFunctionKeys)
 }
 
 func (t *ToolFunction) String() string {
