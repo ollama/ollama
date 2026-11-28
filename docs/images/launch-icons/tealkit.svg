@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0F3D45"/>
+      <stop offset="100%" stop-color="#072229"/>
+    </linearGradient>
+    <linearGradient id="duck" x1="88" y1="88" x2="432" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5EEAD4"/>
+      <stop offset="55%" stop-color="#14B8A6"/>
+      <stop offset="100%" stop-color="#0D7A72"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Teal duck silhouette -->
+  <path d="M358 104c-34 0-62 28-62 62 0 18 7 34 18 46-12 20-26 36-46 44-42 16-86-8-126-44-22-20-44-46-58-68-4 28 2 58 18 82-12-2-24-6-34-14 4 28 20 56 44 74-10 0-20-2-28-6 14 36 46 66 90 80 34 10 72 14 114 14 82 0 140-44 140-112 0-34-18-62-44-76 6-8 10-16 14-24 22 4 46 2 64-10-18-6-36-18-48-34-12-10-32-14-56-14z" fill="url(#duck)"/>
+  <!-- Wing highlight -->
+  <path d="M108 204c24 24 58 46 98 52M120 250c24 16 54 28 88 30" stroke="#072229" stroke-width="12" stroke-linecap="round" opacity="0.45"/>
+  <!-- Neck ring -->
+  <path d="M312 222c18 4 38 4 56-2" stroke="#F0FDFA" stroke-width="12" stroke-linecap="round"/>
+  <!-- Eye -->
+  <circle cx="366" cy="148" r="10" fill="#F0FDFA"/>
+  <circle cx="368" cy="148" r="4" fill="#072229"/>
+  <!-- Hexagonal toolkit badge -->
+  <polygon points="256,228 332,272 332,360 256,404 180,360 180,272" fill="#0A2C34" stroke="#5EEAD4" stroke-width="12" stroke-linejoin="round"/>
+  <!-- Toolkit briefcase -->
+  <rect x="214" y="294" width="84" height="58" rx="10" fill="#2DD4BF"/>
+  <path d="M238 294v-14a8 8 0 0 1 8-8h20a8 8 0 0 1 8 8v14" stroke="#5EEAD4" stroke-width="10" stroke-linecap="round" fill="none"/>
+  <path d="M214 320h84" stroke="#0A2C34" stroke-width="8"/>
+  <rect x="248" y="312" width="16" height="16" rx="3" fill="#F0FDFA"/>
+</svg>
