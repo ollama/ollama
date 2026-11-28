@@ -55,7 +55,7 @@ type ModelCapabilitiesResponse struct {
 
 // ChatEvent is for regular chat messages and assistant interactions
 type ChatEvent struct {
-	EventName string `json:"eventName" ts_type:"\"chat\" | \"thinking\" | \"assistant_with_tools\" | \"tool_call\" | \"tool\" | \"tool_result\" | \"done\" | \"chat_created\""`
+	EventName string `json:"eventName" ts_type:"\"chat\" | \"thinking\" | \"loading\" | \"assistant_with_tools\" | \"tool_call\" | \"tool\" | \"tool_result\" | \"done\" | \"chat_created\""`
 
 	// Chat/Assistant message fields
 	Content           *string    `json:"content,omitempty"`

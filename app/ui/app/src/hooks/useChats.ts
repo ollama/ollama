@@ -200,7 +200,6 @@ export const useSendMessage = (chatId: string) => {
   const { selectedModel } = useSelectedModel();
   const {
     setStreamingChatIds,
-    loadingChats,
     setLoadingChats,
     setAbortControllers,
     setDownloadProgress,
@@ -208,6 +207,11 @@ export const useSendMessage = (chatId: string) => {
 
   const cleanupStreaming = (id: string) => {
     setStreamingChatIds((prev: Set<string>) => {
+      const newSet = new Set(prev);
+      newSet.delete(id);
+      return newSet;
+    });
+    setLoadingChats((prev: Set<string>) => {
       const newSet = new Set(prev);
       newSet.delete(id);
       return newSet;
@@ -232,6 +236,24 @@ export const useSendMessage = (chatId: string) => {
     onError: (error) => {
       console.error("error mutating sendMessage", error);
       cleanupStreaming(updatableChatId);
+
+      if (
+        error instanceof Error &&
+        (error.name === "AbortError" || error.message === "signal is aborted")
+      ) {
+        return;
+      }
+
+      const message =
+        error instanceof Error ? error.message : "Failed to send message";
+      queryClient.setQueryData(
+        ["chatError", updatableChatId],
+        new ErrorEvent({
+          eventName: "error",
+          error: message,
+          code: "request_failed",
+        }),
+      );
     },
     mutationFn: async ({
       message,
@@ -257,6 +279,11 @@ export const useSendMessage = (chatId: string) => {
         setStreamingChatIds((prev: Set<string>) => {
           const newSet = new Set(prev);
           newSet.add(chatId);
+          return newSet;
+        });
+        setLoadingChats((prev: Set<string>) => {
+          const newSet = new Set(prev);
+          newSet.delete(chatId);
           return newSet;
         });
         queryClient.cancelQueries({ queryKey: ["chat", chatId] });
@@ -354,10 +381,17 @@ export const useSendMessage = (chatId: string) => {
         // reducing it this way
         if (
           event.eventName !== "download" &&
-          !loadingChats.has(currentChatId)
+          event.eventName !== "loading" &&
+          event.eventName !== "chat_created" &&
+          event.eventName !== "done" &&
+          event.eventName !== "error"
         ) {
-          // If this is the first time loading this chat, mark it as loaded
+          // Mark the chat as loaded on the first real stream event.
           setLoadingChats((prev: Set<string>) => {
+            if (prev.has(currentChatId)) {
+              return prev;
+            }
+
             const newSet = new Set(prev);
             newSet.add(currentChatId);
             return newSet;
@@ -365,6 +399,8 @@ export const useSendMessage = (chatId: string) => {
         }
 
         switch (event.eventName) {
+          case "loading":
+            break;
           case "chat": {
             // Update the current chat data with streaming content
             batcher.scheduleBatch((old: { chat: Chat } | undefined) => {
@@ -683,6 +719,12 @@ export const useSendMessage = (chatId: string) => {
                 newMap.set(newId, controller);
               }
               return newMap;
+            });
+            setLoadingChats((prev: Set<string>) => {
+              const newSet = new Set(prev);
+              newSet.delete(chatId);
+              newSet.delete(newId);
+              return newSet;
             });
 
             // Flush current batcher and create new one for the new chat ID
