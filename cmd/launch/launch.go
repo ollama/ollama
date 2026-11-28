@@ -147,6 +147,15 @@ type Runner interface {
 	String() string
 }
 
+// integrationStartError distinguishes a failure before the child starts from
+// an error returned by a running integration.
+type integrationStartError struct {
+	err error
+}
+
+func (e *integrationStartError) Error() string { return e.err.Error() }
+func (e *integrationStartError) Unwrap() error { return e.err }
+
 // Editor can edit config files for integrations that support model configuration.
 type Editor interface {
 	Paths() []string
@@ -769,7 +778,18 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		}
 	}
 
-	return launchAfterConfiguration(name, runner, target, c.resolveRunModels(ctx, name, []string{target}), req)
+	err = launchAfterConfiguration(name, runner, target, c.resolveRunModels(ctx, name, []string{target}), req)
+	var startErr *integrationStartError
+	if name == "claude" && target != current && errors.As(err, &startErr) {
+		var previousModels []string
+		if saved != nil {
+			previousModels = saved.Models
+		}
+		if restoreErr := config.SaveIntegration(name, previousModels); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("failed to restore previous model: %w", restoreErr))
+		}
+	}
+	return err
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -1608,20 +1628,12 @@ func runIntegration(runner Runner, modelName string, models []LaunchModel, args 
 func launchAfterConfiguration(name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
 		if configurable, ok := runner.(ConfigFileIntegration); ok {
-			if err := configurable.ConfigureOnly(model, models); err != nil {
-				return err
-			}
+			return configurable.ConfigureOnly(model, models)
 		}
-		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
-		if err != nil {
-			return err
-		}
-		if !launch {
-			return nil
-		}
+		return nil
 	}
 	if err := EnsureIntegrationInstalled(name, runner); err != nil {
-		return err
+		return &integrationStartError{err: err}
 	}
 	return runIntegration(runner, model, models, req.ExtraArgs)
 }

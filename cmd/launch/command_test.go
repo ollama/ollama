@@ -853,3 +853,44 @@ func TestLaunchCmdHeadlessYes_IntegrationWithoutSavedModelReturnsError(t *testin
 		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)
 	}
 }
+
+func TestLaunchCmdClaudeConfigOnlyDoesNotLaunch(t *testing.T) {
+	for _, installed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("installed=%t", installed), func(t *testing.T) {
+			setLaunchTestHome(t, t.TempDir())
+			withInteractiveSession(t, false)
+			bin := t.TempDir()
+			t.Setenv("PATH", bin)
+			if installed {
+				writeFakeBinary(t, bin, "claude")
+			}
+			runner := &launcherSingleRunner{}
+			withIntegrationOverride(t, "claude", runner)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/experimental/model-recommendations":
+					fmt.Fprint(w, `{"recommendations":[]}`)
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
+				case "/api/show":
+					fmt.Fprint(w, `{"capabilities":["completion","tools"]}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("OLLAMA_HOST", srv.URL)
+			cmd := LaunchCmd(func(*cobra.Command, []string) error { return nil }, func(*cobra.Command) { t.Fatal("unexpected TUI") })
+			cmd.SetArgs([]string{"claude", "--config", "--yes", "--model", "sample-model"})
+			if err := cmd.ExecuteContext(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := config.IntegrationModel("claude"); got != "sample-model" {
+				t.Fatalf("saved model = %q, want sample-model", got)
+			}
+			if runner.ranModel != "" {
+				t.Fatalf("--config launched with model %q", runner.ranModel)
+			}
+		})
+	}
+}

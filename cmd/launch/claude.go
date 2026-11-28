@@ -52,7 +52,7 @@ func (c *Claude) findPath() (string, error) {
 func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	claudePath, err := ensureClaudeInstalled()
 	if err != nil {
-		return err
+		return &integrationStartError{err: err}
 	}
 
 	cmd := exec.Command(claudePath, c.args(model, args)...)
@@ -61,7 +61,10 @@ func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	cmd.Stderr = os.Stderr
 
 	cmd.Env = append(os.Environ(), c.envVars(model, models)...)
-	return cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return &integrationStartError{err: err}
+	}
+	return cmd.Wait()
 }
 
 func (c *Claude) envVars(model string, models []LaunchModel) []string {
