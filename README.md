@@ -165,6 +165,7 @@ console.log(response.message.content);
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) - Cross-platform ChatGPT UI ([docs](https://docs.nextchat.dev/models/ollama))
 - [Perplexica](https://github.com/ItzCrazyKns/Perplexica) - AI-powered search engine, open-source Perplexity alternative
 - [big-AGI](https://github.com/enricoros/big-AGI) - AI suite for professionals
+- [Project David](https://github.com/project-david-ai/platform) - Open-source AI orchestration platform with Assistants API compatibility and built-in tools for Ollama
 - [Lollms WebUI](https://github.com/ParisNeo/lollms-webui) - Multi-model web interface
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) - Chatbot with knowledge bases
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt) - On-premise AI platform
