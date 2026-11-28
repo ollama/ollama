@@ -391,6 +391,36 @@ func TestFunctionGemmaParser(t *testing.T) {
 			},
 			expectedText: "Some text here",
 		},
+		{
+			name: "unterminated_escape_marker",
+			chunks: []string{
+				"<start_function_call>call:get_weather{city:<escape>}<end_function_call>",
+			},
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"city": "<escape>"}),
+					},
+				},
+			},
+			expectedText: "",
+		},
+		{
+			name: "unterminated_escape_marker_in_object",
+			chunks: []string{
+				"<start_function_call>call:get_weather{opts:{city:<escape>}}<end_function_call>",
+			},
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"opts": map[string]any{"city": "<escape>"}}),
+					},
+				},
+			},
+			expectedText: "",
+		},
 	}
 
 	for _, tt := range tests {
