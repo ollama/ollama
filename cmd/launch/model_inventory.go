@@ -270,6 +270,15 @@ func fallbackLaunchModel(name string) LaunchModel {
 	return LaunchModel{Name: name, Remote: isCloudModelName(name)}.WithCloudLimits().WithServerMetadata()
 }
 
+func hasLaunchModel(models []LaunchModel, name string) bool {
+	for _, model := range models {
+		if launchModelMatches(model.Name, name) || launchModelMatches(name, model.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 func findLaunchModel(models []LaunchModel, name string) (LaunchModel, bool) {
 	for _, model := range models {
 		if launchModelMatches(model.Name, name) {

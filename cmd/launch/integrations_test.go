@@ -2094,7 +2094,7 @@ func TestIntegration_Editor(t *testing.T) {
 		want bool
 	}{
 		{"droid", true},
-		{"opencode", true},
+		{"opencode", false},
 		{"openclaw", true},
 		{"claude", false},
 		{"claude-desktop", false},

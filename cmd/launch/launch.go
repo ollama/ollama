@@ -337,7 +337,8 @@ Examples:
 			return checkServerHeartbeat(cmd, args)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			policy := defaultLaunchPolicy(isInteractiveSession(), yesFlag)
+			interactive := isInteractiveSession()
+			policy := defaultLaunchPolicy(interactive, yesFlag)
 			// reset when done to make sure state doesn't leak between launches
 			restoreConfirmPolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
 			defer restoreConfirmPolicy()
@@ -372,38 +373,39 @@ Examples:
 			}
 
 			canonical, _, _ := LookupIntegration(name)
+			req := IntegrationLaunchRequest{
+				Name:          name,
+				ModelOverride: modelFlag,
+				ConfigureOnly: configFlag,
+				Restore:       restoreFlag,
+				ExtraArgs:     passArgs,
+				Policy:        &policy,
+			}
 			piOverride := canonical == "pi" && piHasModelArgs(passArgs)
-			if modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
+			if canonical != "opencode" && modelFlag != "" && isCloudModelName(modelFlag) && !piOverride && !(canonical == "pi" && configFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
 						if canonical == "pi" {
 							return fmt.Errorf("cloud is disabled; enable cloud to use %s", modelFlag)
 						}
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
-						modelFlag = ""
+						req.ModelOverride = ""
 					}
 				}
 			}
 
-			headlessYes := yesFlag && !isInteractiveSession()
-			forceConfigure := configFlag || (modelFlag == "" && !headlessYes)
-			if forceConfigure && !configFlag && modelFlag == "" {
+			headlessYes := yesFlag && !interactive
+			forceConfigure := configFlag || (req.ModelOverride == "" && !headlessYes)
+			if forceConfigure && !configFlag && req.ModelOverride == "" {
 				if _, runner, err := LookupIntegration(name); err == nil {
 					switch runner.(type) {
-					case ManagedAutodiscoveryIntegration, *Pi:
+					case ManagedAutodiscoveryIntegration, *Pi, *OpenCode:
 						forceConfigure = false
 					}
 				}
 			}
-			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{
-				Name:           name,
-				ModelOverride:  modelFlag,
-				ForceConfigure: forceConfigure,
-				ConfigureOnly:  configFlag,
-				Restore:        restoreFlag,
-				ExtraArgs:      passArgs,
-				Policy:         &policy,
-			})
+			req.ForceConfigure = forceConfigure
+			err := LaunchIntegration(cmd.Context(), req)
 			if errors.Is(err, ErrCancelled) {
 				return nil
 			}
@@ -493,6 +495,9 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	policy := launchIntegrationPolicy(req)
 	if req.Restore {
 		return restoreIntegration(name, runner, req)
+	}
+	if openCode, ok := runner.(*OpenCode); ok {
+		return openCode.launch(ctx, req, policy)
 	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
 		if _, ok := runner.(ManagedAutodiscoveryIntegration); !ok {
@@ -618,21 +623,19 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 	}
 	var currentModel string
 	var usable bool
-	if autodiscovery, ok := integration.spec.Runner.(ManagedAutodiscoveryIntegration); ok {
-		currentModel, usable, err = c.launcherManagedAutodiscoveryState(ctx, info.Name, autodiscovery)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
-	} else if managed, ok := integration.spec.Runner.(ManagedSingleModel); ok {
-		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, managed)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
-	} else {
+	changeable := integration.installed || integration.autoInstallable
+	switch runner := integration.spec.Runner.(type) {
+	case *OpenCode:
+		changeable = false // Model selection lives in OpenCode.
+	case ManagedAutodiscoveryIntegration:
+		currentModel, usable, err = c.launcherManagedAutodiscoveryState(ctx, info.Name, runner)
+	case ManagedSingleModel:
+		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, runner)
+	default:
 		currentModel, usable, err = c.launcherModelState(ctx, info.Name, integration.editor)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
+	}
+	if err != nil {
+		return LauncherIntegrationState{}, err
 	}
 
 	return LauncherIntegrationState{
@@ -642,7 +645,7 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 		Installed:       integration.installed,
 		AutoInstallable: integration.autoInstallable,
 		Selectable:      integration.installed || integration.autoInstallable,
-		Changeable:      integration.installed || integration.autoInstallable,
+		Changeable:      changeable,
 		CurrentModel:    currentModel,
 		ModelUsable:     usable,
 		InstallHint:     integration.installHint,
@@ -823,9 +826,6 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		launchModels = c.resolveRunModels(ctx, name, models)
 	}
 
-	if name == "opencode" && len(req.ExtraArgs) == 0 {
-		launchModels = openCodeRuntimeModels(launchModels, c.recommendations(ctx))
-	}
 	return launchAfterConfiguration(name, runner, models[0], launchModels, req)
 }
 
@@ -1567,7 +1567,7 @@ func (c *launcherClient) resolveRunModels(ctx context.Context, integration strin
 			resolved[i].Thinking = thinking.Clone()
 		}
 	}
-	if !slices.Contains([]string{"codex", "opencode", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
+	if !slices.Contains([]string{"codex", chatGPTIntegrationName, codexAppIntegrationName}, integration) {
 		return resolved
 	}
 	showCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

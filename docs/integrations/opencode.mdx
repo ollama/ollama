@@ -4,14 +4,22 @@ title: OpenCode
 
 [OpenCode](https://opencode.ai) is an open-source coding agent that runs in your terminal, reads your project, edits files, and runs commands.
 
-Ollama configures OpenCode to use local and cloud models.
+OpenCode can use local and cloud models from Ollama.
 
 ## Get started
 
-Launch OpenCode with Ollama:
+Start Ollama, then run the launcher.
 
 ```shell
 ollama launch opencode
+```
+
+The launcher installs OpenCode 2 and the Ollama plugin if needed, then opens OpenCode. If you already have OpenCode installed, use version 2.4.1 or newer in the 2.x series.
+
+To start a new chat with a specific model, pass `--model`.
+
+```shell
+ollama launch opencode --model qwen3.8:27b
 ```
 
 ## Capabilities
@@ -86,60 +94,12 @@ Choose a model with enough context for your repository.
 
 ## Manual setup
 
-<p className="manual-step-title">1. Install OpenCode</p>
+Install [OpenCode 2](https://opencode.ai/docs/#cli), then run `opencode`. With Ollama running, open `/models` to choose a local model. For a direct Ollama Cloud connection, choose **Ollama Cloud** in `/connect`.
 
-<CodeGroup>
-
-```shell macOS / Linux
-curl -fsSL https://opencode.ai/install | bash
-```
-
-```powershell Windows
-npm install -g opencode-ai
-```
-
-</CodeGroup>
-
-<p className="manual-step-title">2. Configure Ollama as a provider</p>
-
-Add an Ollama provider to `opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ollama": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "Ollama",
-      "options": {
-        "baseURL": "http://localhost:11434/v1"
-      },
-      "models": {
-        "qwen3.5": {
-          "name": "qwen3.5"
-        }
-      }
-    }
-  }
-}
-```
-
-<p className="manual-step-title">3. Run OpenCode</p>
-
-```shell
-opencode
-```
-
-To configure OpenCode with Ollama without starting an interactive session:
+Use `--config` for setup only.
 
 ```shell
 ollama launch opencode --config
 ```
 
-### Configuration precedence
-
-`ollama launch opencode` starts OpenCode with an inline config for the selected Ollama model. It does not overwrite `~/.config/opencode/opencode.json`; existing OpenCode settings still apply.
-
-Models defined only in `opencode.json` do not appear in the `ollama launch` model picker.
-
-See OpenCode's [config precedence](https://opencode.ai/docs/config/#precedence-order).
+For a custom Ollama host, set `providers.ollama.settings.baseURL` in your [OpenCode provider settings](https://opencode.ai/docs/providers/#ollama).
