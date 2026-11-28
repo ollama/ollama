@@ -175,3 +175,35 @@ func TestReadFileMetadataUsesUnsignedAlignment(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReadFileMetadataGGUFv4Support(t *testing.T) {
+	path := writeMetadataFixture(t, gguftest.KV{
+		"general.architecture":   "openelm",
+		"general.alignment":      uint32(65536),
+		"gguf4.edition":          "NeonMaw-Community-v4.0-64KB-DMA",
+		"gguf4.tokens_byte_span": uint64(14),
+		"tokenizer.ggml.tokens":  []string{"token1", "token2"},
+	}, []*gguftest.Tensor{{
+		Name:  "token_embd.weight",
+		Type:  gguf.TensorTypeF32,
+		Shape: []uint64{4},
+	}})
+
+	metadata, err := gguf.ReadFileMetadata(path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !metadata.IsGGUFv4() {
+		t.Fatalf("expected IsGGUFv4() to be true")
+	}
+	if got := metadata.GGUFEdition(); got != "NeonMaw-Community-v4.0-64KB-DMA" {
+		t.Fatalf("GGUFEdition() = %q, want NeonMaw-Community-v4.0-64KB-DMA", got)
+	}
+	if got := metadata.Uint("general.alignment"); got != 65536 {
+		t.Fatalf("general.alignment = %d, want 65536", got)
+	}
+	if got := metadata.ExactKeyValue("gguf4.tokens_byte_span").Uint(); got != 14 {
+		t.Fatalf("gguf4.tokens_byte_span = %d, want 14", got)
+	}
+}
