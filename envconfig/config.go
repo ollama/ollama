@@ -197,14 +197,20 @@ func Bool(k string) func() bool {
 }
 
 // LogLevel returns the log level for the application.
-// Values are 0 or false INFO (Default), 1 or true DEBUG, 2 TRACE
+// Values are 0 or false INFO (Default), 1 or true DEBUG, 2 TRACE,
+// or negative slog levels (-4 for DEBUG, -8 for TRACE, etc.)
 func LogLevel() slog.Level {
 	level := slog.LevelInfo
 	if s := Var("OLLAMA_DEBUG"); s != "" {
 		if b, _ := strconv.ParseBool(s); b {
 			level = slog.LevelDebug
-		} else if i, _ := strconv.ParseInt(s, 10, 64); i != 0 {
-			level = slog.Level(i * -4)
+		} else if i, err := strconv.ParseInt(s, 10, 64); err == nil && i != 0 {
+			// Support both positive multipliers (1=DEBUG, 2=TRACE) and direct negative levels
+			if i > 0 {
+				level = slog.Level(i * -4)
+			} else {
+				level = slog.Level(i)
+			}
 		}
 	}
 
