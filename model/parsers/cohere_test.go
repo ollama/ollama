@@ -266,3 +266,58 @@ func TestCohereParseBareContentBeforeEndOfTurn(t *testing.T) {
 		t.Errorf("content = %q, want %q", content, "plain answer")
 	}
 }
+
+func TestCohereFlushThinkingOnDone(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{name: "single less-than suffix", raw: "checking x <"},
+		{name: "partial end-thinking tag", raw: "thought<|END_"},
+		{name: "trailing spaces before EOF", raw: "step 1   "},
+		{name: "spaces then partial tag", raw: "step 1 <|END_TH"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			byteChunks := make([]string, 0, len(tc.raw)+1)
+			for i := 0; i < len(tc.raw); i++ {
+				byteChunks = append(byteChunks, tc.raw[i:i+1])
+			}
+			byteChunks = append(byteChunks, "")
+
+			chunkSets := []struct {
+				label  string
+				chunks []string
+			}{
+				{label: "single done", chunks: []string{tc.raw}},
+				{label: "empty done", chunks: []string{tc.raw, ""}},
+				{label: "byte chunks", chunks: byteChunks},
+			}
+
+			for _, cs := range chunkSets {
+				t.Run(cs.label, func(t *testing.T) {
+					p := &CohereParser{}
+					p.Init(nil, nil, nil)
+					content, thinking, calls := cohereAddAll(t, p, cs.chunks)
+					if thinking != tc.raw {
+						t.Errorf("thinking = %q, want %q", thinking, tc.raw)
+					}
+					if content != "" || len(calls) != 0 {
+						t.Errorf("unexpected content=%q calls=%v", content, calls)
+					}
+				})
+			}
+		})
+	}
+
+	// Closed thinking still trims whitespace immediately preceding <|END_THINKING|>.
+	p := &CohereParser{}
+	p.Init(nil, nil, nil)
+	content, thinking, _ := cohereAddAll(t, p, []string{
+		"thought   ", "<|END_THINKING|><|START_TEXT|>hi<|END_TEXT|>",
+	})
+	if thinking != "thought" || content != "hi" {
+		t.Errorf("closed thinking = %q, content = %q", thinking, content)
+	}
+}
