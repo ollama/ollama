@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Cunning Claw](https://github.com/Dragon-Forge-master/cunning-claw) - Local desktop agent that works your shell, browser and email, and asks before it acts
 
 #### Mobile
 
