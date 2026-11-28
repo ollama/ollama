@@ -12,9 +12,38 @@ import (
 	"github.com/ollama/ollama/model/renderers"
 )
 
+// PPLX returns a complete span answer at each Locate row's index.
+func (c *Compiled) pplxLocateAnswer(answers []json.RawMessage, row int) (json.RawMessage, error) {
+	name := c.fields[row].Name
+	if len(answers) != len(c.fields) || len(answers[row]) == 0 {
+		return nil, fmt.Errorf("scorer returned no Locate answer for %q", name)
+	}
+	var answer struct {
+		Type  string            `json:"type"`
+		Spans []json.RawMessage `json:"spans"`
+	}
+	if err := json.Unmarshal(answers[row], &answer); err != nil || answer.Type != "locate" || answer.Spans == nil {
+		return nil, fmt.Errorf("scorer returned an invalid Locate answer for %q", name)
+	}
+	return answers[row], nil
+}
+
 // encodePPLX preserves question order and JSON object order. The publisher's
 // readout assigns answer codes by position, so sorting choices changes scores.
 func encodePPLX(req Request, c *Compiled) error {
+	for _, question := range req.Questions.All() {
+		if question.Type != "locate" {
+			continue
+		}
+		if len(req.Images) != 0 {
+			return fmt.Errorf("Locate requires text state and no images")
+		}
+		var text string
+		if err := json.Unmarshal(req.State, &text); err != nil || text == "" {
+			return fmt.Errorf("Locate requires a nonempty text state")
+		}
+		break
+	}
 	state, err := pplxDescribe(req.State)
 	if err != nil {
 		return fmt.Errorf("state: %w", err)
@@ -38,6 +67,19 @@ func pplxField(name string, q Question) (compiledField, []string, error) {
 	field := compiledField{Field: Field{Name: name}, typ: q.Type}
 	if strings.TrimSpace(name) == "" {
 		return field, nil, fmt.Errorf("field name must not be empty")
+	}
+	if q.Type == "locate" {
+		field.Description = name
+		if raw := bytes.TrimSpace(q.Instructions); len(raw) > 0 && string(raw) != "null" {
+			var instructions string
+			if err := json.Unmarshal(raw, &instructions); err != nil {
+				return field, nil, fmt.Errorf("Locate instructions must be text or null")
+			}
+			if strings.TrimSpace(instructions) != "" {
+				field.Description = instructions
+			}
+		}
+		return field, nil, nil
 	}
 	field.Description = "Choose the best matching option."
 	if raw := bytes.TrimSpace(q.Instructions); !pplxFalsy(raw) {

@@ -901,6 +901,17 @@ components:
           maxItems: 10
           items:
             type: string
+    SystemOneLocateQuestion:
+      title: Locate
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [locate]
+        instructions:
+          type: [string, "null"]
+          description: What to find verbatim in the state. If omitted, null, or blank, the question name is used. Requires a model with Locate support, a nonempty text state, and no images.
     SystemOneRequest:
       type: object
       required: [model, state, questions]
@@ -929,6 +940,7 @@ components:
               - $ref: "#/components/schemas/SystemOneChoiceQuestion"
               - $ref: "#/components/schemas/SystemOneNoulQuestion"
               - $ref: "#/components/schemas/SystemOneScoreQuestion"
+              - $ref: "#/components/schemas/SystemOneLocateQuestion"
         keep_alive:
           oneOf:
             - type: string
@@ -997,6 +1009,39 @@ components:
           description: Probabilities keyed by zero-based criterion indices as strings.
         confidence:
           $ref: "#/components/schemas/SystemOneConfidence"
+    SystemOneLocateSpan:
+      type: object
+      required: [start, end, text, score]
+      properties:
+        start:
+          type: integer
+          minimum: 0
+          description: Inclusive offset in Unicode code points from the start of the state.
+        end:
+          type: integer
+          minimum: 0
+          description: Exclusive offset in Unicode code points from the start of the state.
+        text:
+          type: string
+          description: Verbatim state text between start and end.
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Model score for the span.
+    SystemOneLocateAnswer:
+      title: Locate
+      type: object
+      required: [type, spans]
+      properties:
+        type:
+          type: string
+          enum: [locate]
+        spans:
+          type: array
+          description: Located spans in state order. Empty when none pass the model's threshold.
+          items:
+            $ref: "#/components/schemas/SystemOneLocateSpan"
     SystemOneResponse:
       type: object
       required: [model, answers, usage]
@@ -1012,6 +1057,7 @@ components:
               - $ref: "#/components/schemas/SystemOneChoiceAnswer"
               - $ref: "#/components/schemas/SystemOneNoulAnswer"
               - $ref: "#/components/schemas/SystemOneScoreAnswer"
+              - $ref: "#/components/schemas/SystemOneLocateAnswer"
         usage:
           type: object
           required: [input_tokens, output_tokens]
@@ -1190,7 +1236,7 @@ paths:
     post:
       summary: Answer typed questions
       description: |
-        Answer choice, yes/no, and scoring questions with a System One model, locally or in Ollama's cloud. Requires Ollama v0.35.0 or later, or v0.40.5 or later for cloud models. See the [decision guide](/capabilities/decision) for examples.
+        Answer choice, yes/no, scoring, and model-supported Locate questions with a System One model, locally or in Ollama's cloud. Requires Ollama v0.35.0 or later, or v0.40.5 or later for cloud models. Locate requires a compatible local model and a release that includes Locate support. See the [decision guide](/capabilities/decision) for examples.
       operationId: systemone
       servers:
         - url: http://localhost:11434

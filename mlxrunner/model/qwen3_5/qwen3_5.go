@@ -1106,6 +1106,16 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, pos
 	if cfg.NoncausalFullAttention {
 		mask = nn.AttentionMask{}
 	}
+	if len(b.Layout) == 1 {
+		if layout, ok := b.Layout[0].(*IsolatedLayout); ok {
+			if cached, found := b.Memo.Get(layout); found {
+				mask = cached.(nn.AttentionMask)
+			} else {
+				mask = layout.attentionMask(L)
+				b.Memo.Put(layout, mask)
+			}
+		}
+	}
 	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(mask))
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	gateSigmoid := mlx.Sigmoid(gate)
@@ -1262,7 +1272,15 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *
 	var r *mlx.Array
 	normed := l.InputNorm.Forward(x, cfg.RMSNormEps)
 	if l.IsLinear {
-		r = l.Linear.Forward(normed, b, c, B, L, cfg)
+		if len(b.Layout) == 1 {
+			if layout, ok := b.Layout[0].(*IsolatedLayout); ok {
+				r = l.Linear.forwardIsolated(normed, b, cfg, layout)
+			} else {
+				r = l.Linear.Forward(normed, b, c, B, L, cfg)
+			}
+		} else {
+			r = l.Linear.Forward(normed, b, c, B, L, cfg)
+		}
 	} else {
 		r = l.FullAttn.Forward(normed, b, c, positions, B, L, cfg, mropeCos, mropeSin)
 	}

@@ -2,6 +2,7 @@ package pplxdecider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -17,8 +18,9 @@ import (
 var _ model.Scorer = (*Model)(nil)
 
 const (
-	imageMarker   = "<|vision_start|><|image_pad|><|vision_end|>"
-	readoutMarker = "<|fim_suffix|>"
+	imageMarker     = "<|vision_start|><|image_pad|><|vision_end|>"
+	readoutMarker   = "<|fim_suffix|>"
+	contextSentinel = "\x00pplx-decider-context-end\x00"
 )
 
 var specialTokenPattern = regexp.MustCompile(`<\|[^<>]+\|>|<tts_[a-z_]+>`)
@@ -107,6 +109,103 @@ func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*mode
 	return prepared, segments, markers, nil
 }
 
+// V4 tokenizes the open user turn and each question independently. The
+// separator and readout marker are individual tokens, as in the publisher's
+// chunked protocol.
+func (m *Model) scoreContextV4(input llm.ScoreRequest) (string, int, error) {
+	var body strings.Builder
+	for range input.Images {
+		body.WriteString(imageMarker)
+	}
+	body.WriteString("State:\n")
+	body.WriteString(escapeDecisionText(input.State))
+	body.WriteString(contextSentinel)
+	userBody := body.String()
+	prompt, err := renderers.RenderWithRenderer("qwen3.8", []api.Message{
+		{Role: "system", Content: input.System},
+		{Role: "user", Content: userBody},
+	}, nil, &api.ThinkValue{Value: false})
+	if err != nil {
+		return "", 0, err
+	}
+	start := strings.LastIndex(prompt, userBody)
+	if start < 0 {
+		return "", 0, fmt.Errorf("rendered Perplexity context lost its user message")
+	}
+	return prompt[:start+len(userBody)-len(contextSentinel)], start, nil
+}
+
+func (m *Model) questionTextV4(row llm.ScoreRow) (string, error) {
+	if row.Question == nil || len(row.Question.Options) < 1 || len(row.Question.Options) > len(m.config.Codes) {
+		return "", fmt.Errorf("invalid Perplexity question option count")
+	}
+	var text strings.Builder
+	text.WriteString("Question:\n")
+	text.WriteString(escapeDecisionText(row.Question.Instructions))
+	text.WriteString("\nOptions:\n")
+	for i, option := range row.Question.Options {
+		if i > 0 {
+			text.WriteByte('\n')
+		}
+		fmt.Fprintf(&text, "%s: %s", m.config.Codes[i], escapeDecisionText(option))
+	}
+	return text.String(), nil
+}
+
+func (m *Model) questionTokensV4(row llm.ScoreRow) ([]int32, error) {
+	text, err := m.questionTextV4(row)
+	if err != nil {
+		return nil, err
+	}
+	return append(m.Tokenizer().Encode(text, false), m.markerID), nil
+}
+
+func (m *Model) planScoreV4(input llm.ScoreRequest) ([]scoreChunk, error) {
+	context, imageStart, err := m.scoreContextV4(input)
+	if err != nil {
+		return nil, err
+	}
+	chunks := make([]scoreChunk, 0, len(input.Rows))
+	for i, row := range input.Rows {
+		question, err := m.questionTokensV4(row)
+		if err != nil {
+			return nil, fmt.Errorf("question %d: %w", i, err)
+		}
+		var segments []model.Segment
+		start := 0
+		for j, image := range input.Images {
+			end := imageStart + j*len(imageMarker)
+			if end > len(context) || !strings.HasPrefix(context[end:], imageMarker) {
+				return nil, fmt.Errorf("image %d is missing from the rendered context", j)
+			}
+			segments = append(segments, model.Segment{Tokens: m.Tokenizer().Encode(context[start:end], false)})
+			segments = append(segments, model.Segment{Kind: "image", Data: image})
+			start = end + len(imageMarker)
+		}
+		segments = append(segments,
+			model.Segment{Tokens: m.Tokenizer().Encode(context[start:], false)},
+			model.Segment{Tokens: []int32{m.separatorID}},
+			model.Segment{Tokens: question},
+		)
+		prepared, err := m.PrepareMedia(segments)
+		if err != nil {
+			return nil, err
+		}
+		// MXFP8 decision confidence can drift when MLX combines independent
+		// sequences. Preserve the publisher's separate forward shape.
+		prepared.Isolated = m.Config.QuantMode == "mxfp8"
+		if len(prepared.Tokens) > input.MaxTokens {
+			return nil, fmt.Errorf("question %d needs %d tokens with state and images; limit is %d", i, len(prepared.Tokens), input.MaxTokens)
+		}
+		marker := int32(len(prepared.Tokens) - 1)
+		if prepared.Tokens[marker] != m.markerID {
+			return nil, fmt.Errorf("question %d lost its readout marker", i)
+		}
+		chunks = append(chunks, scoreChunk{rows: input.Rows[i : i+1], prepared: prepared, markers: []int32{marker}, segments: segments})
+	}
+	return chunks, nil
+}
+
 type scoreChunk struct {
 	rows     []llm.ScoreRow
 	prepared *model.PreparedRequest
@@ -117,6 +216,9 @@ type scoreChunk struct {
 // A request shares one noncausal sequence. Split only when its complete
 // sequence exceeds the context limit, keeping the state and images in each part.
 func (m *Model) planScore(input llm.ScoreRequest) ([]scoreChunk, error) {
+	if m.joint.Version == 4 {
+		return m.planScoreV4(input)
+	}
 	var chunks []scoreChunk
 	var split func([]llm.ScoreRow) error
 	split = func(rows []llm.ScoreRow) error {
@@ -144,13 +246,77 @@ func (m *Model) planScore(input llm.ScoreRequest) ([]scoreChunk, error) {
 }
 
 func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
+	if m.joint.Version != 4 || !hasLocate(input.Rows) {
+		return m.scoreDecisions(ctx, input, forward)
+	}
+	badRequest := func(message string) (llm.ScoreResponse, error) {
+		return llm.ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: message}
+	}
+	if len(input.Rows) > 128 || input.State == "" || len(input.Images) != 0 {
+		return badRequest("Locate requires a v1.3 text-only checkpoint, nonempty state, no images, and at most 128 questions")
+	}
+	if input.System == "" || input.MaxTokens < 1 || input.MaxTokens > m.MaxContextLength() {
+		return badRequest("invalid Perplexity system prompt or context limit")
+	}
+	var decisions, locations []llm.ScoreRow
+	var decisionIndices, locateIndices []int
+	for i, row := range input.Rows {
+		if row.Question == nil {
+			return badRequest("question schema is missing")
+		}
+		if row.Question.Type == "locate" {
+			locations = append(locations, row)
+			locateIndices = append(locateIndices, i)
+		} else {
+			decisions = append(decisions, row)
+			decisionIndices = append(decisionIndices, i)
+		}
+	}
+	cached := 0
+	result := llm.ScoreResponse{
+		Logits:  make([][]float32, len(input.Rows)),
+		Answers: make([]json.RawMessage, len(input.Rows)), CachedTokens: &cached,
+	}
+	if len(decisions) > 0 {
+		request := input
+		request.Rows = decisions
+		scored, err := m.scoreDecisions(ctx, request, forward)
+		if err != nil {
+			return llm.ScoreResponse{}, err
+		}
+		for i, at := range decisionIndices {
+			result.Logits[at] = scored.Logits[i]
+		}
+		result.InputTokens += scored.InputTokens
+		if scored.CachedTokens != nil {
+			cached += *scored.CachedTokens
+		}
+	}
+	request := input
+	request.Rows = locations
+	spans, tokens, err := m.scoreLocate(ctx, request, forward)
+	if err != nil {
+		return llm.ScoreResponse{}, err
+	}
+	encoded, err := encodeLocateAnswers(spans)
+	if err != nil {
+		return llm.ScoreResponse{}, err
+	}
+	for i, at := range locateIndices {
+		result.Answers[at] = encoded[i]
+	}
+	result.InputTokens += tokens
+	return result, ctx.Err()
+}
+
+func (m *Model) scoreDecisions(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
 	cached := 0
 	result.CachedTokens = &cached
 	badRequest := func(err error) (llm.ScoreResponse, error) {
 		return result, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
-	if input.System == "" || len(input.Rows) < 1 || len(input.Rows) > 64 || input.MaxTokens < 1 || input.MaxTokens > m.MaxContextLength() {
+	if input.System == "" || len(input.Rows) < 1 || (m.joint.Version == 3 && len(input.Rows) > 64) || input.MaxTokens < 1 || input.MaxTokens > m.MaxContextLength() {
 		return badRequest(fmt.Errorf("invalid Perplexity system prompt, question count, or context limit"))
 	}
 	if err := ctx.Err(); err != nil {

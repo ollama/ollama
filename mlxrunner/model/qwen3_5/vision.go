@@ -498,7 +498,16 @@ func ropePositions(b *batch.Batch, L int32) []int32 {
 		row := out[r*3*int(L):]
 		var layout *visionLayout
 		if b.Layout[r] != nil {
-			layout = b.Layout[r].(*visionLayout)
+			switch value := b.Layout[r].(type) {
+			case *visionLayout:
+				layout = value
+			case *IsolatedLayout:
+				positions := value.tokenPositions(L)
+				copy(row[:L], positions)
+				copy(row[L:2*L], positions)
+				copy(row[2*L:3*L], positions)
+				continue
+			}
 		}
 		for i := range L {
 			p := base + i

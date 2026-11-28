@@ -1,9 +1,9 @@
 ---
 title: Decision
-description: Classify text, estimate yes/no probabilities, and score ordered criteria.
+description: Classify text, estimate yes/no probabilities, score ordered criteria, and locate spans with compatible models.
 ---
 
-Use System One to classify text, answer yes/no questions, or score text against a rubric.
+Use System One to classify text, answer yes/no questions, score text against a rubric, or locate spans with a compatible model.
 
 See the [full list of decision models](https://ollama.com/search?c=decision).
 
@@ -109,6 +109,41 @@ Example response:
 }
 ```
 
+## Locate spans in text
+
+Models with Locate support can return verbatim spans from a text state. Use a local Ollama release that includes Locate support. Set the question type to `locate` and describe what to find in `instructions`. The state must be a nonempty string, and Locate requests cannot include images.
+
+```shell locate.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "your-locate-model",
+    "state": "Ada met René in Zürich. Bob emailed Ada.",
+    "questions": {
+      "people": {
+        "type": "locate",
+        "instructions": "Person names"
+      }
+    }
+  }'
+```
+
+The answer includes spans in state order:
+
+```json
+{
+  "type": "locate",
+  "spans": [
+    {"start": 0, "end": 3, "text": "Ada", "score": 0.995},
+    {"start": 8, "end": 12, "text": "René", "score": 0.996},
+    {"start": 24, "end": 27, "text": "Bob", "score": 0.998},
+    {"start": 36, "end": 39, "text": "Ada", "score": 0.999}
+  ]
+}
+```
+
+`start` is inclusive and `end` is exclusive. Both count Unicode code points from the start of `state`, rather than UTF-8 bytes. A precomposed accented letter counts as one code point; a letter followed by a combining mark counts as two. `text` is the corresponding substring. Scores vary by model, and `spans` is empty when nothing passes its threshold. You can combine Locate and decision questions in one text request when the model supports both.
+
 ## Judge an image
 
 [Clef](https://ollama.com/library/clef) and [Clef Flash](https://ollama.com/library/clef-flash) read images alongside the state. Send base64-encoded PNG, JPEG, or WebP files in `images`; they are shared by all questions, in request order. URLs and data URLs are not accepted. `state` is still required — it holds the context for the decision.
@@ -203,6 +238,7 @@ Cloud requests accept up to 64 questions, named with up to 100 ASCII letters, di
 | `choice` | 2–26 named options with descriptions | The most likely option and each option's probability |
 | `noul` | Descriptions for `"false"` and `"true"` | The probability of `true`, from 0 to 1 |
 | `score` | 2–10 descriptions, ordered from lowest to highest | The probability-weighted average of the zero-based levels |
+| `locate` | No criteria; text instructions describe what to find | Verbatim spans with Unicode code-point offsets and scores, on compatible models |
 
 For the urgency criteria below:
 
