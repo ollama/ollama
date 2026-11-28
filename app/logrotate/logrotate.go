@@ -8,6 +8,7 @@ package logrotate
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -19,9 +20,8 @@ func Rotate(filename string) {
 		return
 	}
 
-	index := strings.LastIndex(filename, ".")
-	pre := filename[:index]
-	post := "." + filename[index+1:]
+	post := filepath.Ext(filename)
+	pre := strings.TrimSuffix(filename, post)
 	for i := MaxLogFiles; i > 0; i-- {
 		older := pre + "-" + strconv.Itoa(i) + post
 		newer := pre + "-" + strconv.Itoa(i-1) + post
