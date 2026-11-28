@@ -147,9 +147,9 @@ func (p *FunctionGemmaParser) eat() ([]functionGemmaEvent, bool) {
 				events = append(events, functionGemmaEventToolCall{toolCall: tc})
 			}
 
-			if !strings.Contains(remaining, functionGemmaFunctionCallOpen) {
-				p.state = FunctionGemmaCollectingContent
-			}
+			// Re-enter content even when another call is already buffered, so
+			// intervening text and its opening tag are handled normally.
+			p.state = FunctionGemmaCollectingContent
 			return events, true
 		}
 		return nil, false

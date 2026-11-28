@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -429,4 +430,71 @@ func TestFunctionGemmaParser_HasSupport(t *testing.T) {
 	parser := &FunctionGemmaParser{}
 	assert.True(t, parser.HasToolSupport())
 	assert.False(t, parser.HasThinkingSupport())
+}
+
+func TestFunctionGemmaParserContentBetweenCalls(t *testing.T) {
+	first := "<start_function_call>call:get_weather{city:<escape>Paris<escape>}<end_function_call>"
+	second := "<start_function_call>call:get_weather{city:<escape>Oslo<escape>}<end_function_call>"
+	wantCalls := []api.ToolCall{
+		{Function: api.ToolCallFunction{
+			Index: 0, Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"}),
+		}},
+		{Function: api.ToolCallFunction{
+			Index: 1, Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Oslo"}),
+		}},
+	}
+	for _, tt := range []struct {
+		name    string
+		between string
+	}{
+		{name: "plain content", between: "Checking Oslo next. "},
+		{name: "call-like content", between: "Example call:other{}; checking Oslo next. "},
+		{name: "unicode content", between: "Paris → Oslo: météo. "},
+		{name: "adjacent calls"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			input := "Before. " + first + tt.between + second + " After."
+			wantContent := "Before. " + tt.between + " After."
+			check := func(t *testing.T, chunks []string) {
+				t.Helper()
+				p := &FunctionGemmaParser{}
+				p.Init(nil, nil, nil)
+				var content string
+				var calls []api.ToolCall
+				for i, chunk := range chunks {
+					text, thinking, parsed, err := p.Add(chunk, i == len(chunks)-1)
+					if err != nil {
+						t.Fatalf("Add: %v", err)
+					}
+					if thinking != "" {
+						t.Fatalf("unexpected thinking: %q", thinking)
+					}
+					content += text
+					calls = append(calls, parsed...)
+				}
+				if content != wantContent {
+					t.Errorf("content = %q, want %q", content, wantContent)
+				}
+				if diff := cmp.Diff(wantCalls, calls, argsComparer); diff != "" {
+					t.Errorf("calls mismatch (-want +got):\n%s", diff)
+				}
+			}
+
+			t.Run("whole response", func(t *testing.T) {
+				check(t, []string{input})
+			})
+			for split := 0; split <= len(input); split++ {
+				t.Run(fmt.Sprintf("split at %d", split), func(t *testing.T) {
+					check(t, []string{input[:split], input[split:]})
+				})
+			}
+			t.Run("one byte per chunk", func(t *testing.T) {
+				chunks := make([]string, len(input))
+				for i := range chunks {
+					chunks[i] = input[i : i+1]
+				}
+				check(t, chunks)
+			})
+		})
+	}
 }
