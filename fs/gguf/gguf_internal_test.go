@@ -55,6 +55,21 @@ func TestReadFileMetadataRejectsMalformedValues(t *testing.T) {
 			},
 			want: "alignment 0",
 		},
+		{
+			name: "non-power-of-2 alignment",
+			data: func(t *testing.T) []byte {
+				var b bytes.Buffer
+				writeInternalRaw(t, &b, []byte("GGUF"))
+				writeInternalRaw(t, &b, uint32(3))
+				writeInternalRaw(t, &b, uint64(0))
+				writeInternalRaw(t, &b, uint64(1))
+				writeInternalString(t, &b, "general.alignment")
+				writeInternalRaw(t, &b, typeUint32)
+				writeInternalRaw(t, &b, uint32(3))
+				return b.Bytes()
+			},
+			want: "alignment 3",
+		},
 	}
 
 	for _, tt := range tests {
