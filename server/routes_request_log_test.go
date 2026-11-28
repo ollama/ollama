@@ -14,6 +14,7 @@ import (
 
 func TestInferenceRequestLoggerMiddlewareWritesReplayArtifacts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 	logDir := t.TempDir()
 	requestLogger := &inferenceRequestLogger{dir: logDir}
@@ -85,6 +86,31 @@ func TestInferenceRequestLoggerMiddlewareWritesReplayArtifacts(t *testing.T) {
 	bodyFileName := filepath.Base(bodyFiles[0])
 	if !strings.Contains(curlString, "@\"${SCRIPT_DIR}/"+bodyFileName+"\"") {
 		t.Fatalf("curl log does not reference sibling body file: %s", curlString)
+	}
+}
+
+func TestInferenceRequestLoggerUsesUnixSocketForReplay(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "ollama.sock")
+	t.Setenv("OLLAMA_HOST", "unix://"+socketPath)
+
+	logDir := t.TempDir()
+	requestLogger := &inferenceRequestLogger{dir: logDir}
+	requestLogger.log("/api/generate", http.MethodPost, "http", "localhost", "application/json", []byte("{}"))
+
+	curlFiles, err := filepath.Glob(filepath.Join(logDir, "*_api_generate_request.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(curlFiles) != 1 {
+		t.Fatalf("expected 1 curl log, got %d (%v)", len(curlFiles), curlFiles)
+	}
+	curlData, err := os.ReadFile(curlFiles[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	curl := string(curlData)
+	if !strings.Contains(curl, "--unix-socket \""+socketPath+"\"") || !strings.Contains(curl, "http://localhost/api/generate") {
+		t.Fatalf("curl log does not target Unix socket: %s", curl)
 	}
 }
 
