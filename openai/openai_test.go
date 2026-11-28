@@ -835,6 +835,68 @@ func TestToChatCompletion_WithLogprobs(t *testing.T) {
 	}
 }
 
+func TestChatLogprobsIncludeRequiredFields(t *testing.T) {
+	resp := api.ChatResponse{
+		Model:      "test-model",
+		Message:    api.Message{Role: "assistant", Content: "hi"},
+		Done:       true,
+		DoneReason: "stop",
+		Logprobs: []api.Logprob{
+			{TokenLogprob: api.TokenLogprob{Token: "hi", Logprob: -0.1, Bytes: []int{104, 105}}},
+			{
+				TokenLogprob: api.TokenLogprob{Token: "!", Logprob: -0.2},
+				TopLogprobs:  []api.TokenLogprob{{Token: "!", Logprob: -0.2}},
+			},
+		},
+	}
+
+	for name, v := range map[string]any{
+		"completion": ToChatCompletion("id", resp),
+		"chunk":      toChunk("id", resp, false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			b, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got struct {
+				Choices []struct {
+					Logprobs struct {
+						Content []map[string]json.RawMessage `json:"content"`
+					} `json:"logprobs"`
+				} `json:"choices"`
+			}
+			if err := json.Unmarshal(b, &got); err != nil {
+				t.Fatal(err)
+			}
+			entries := got.Choices[0].Logprobs.Content
+			if len(entries) != 2 {
+				t.Fatalf("got %d logprob entries: %s", len(entries), b)
+			}
+			for i, entry := range entries {
+				for _, key := range []string{"token", "logprob", "bytes", "top_logprobs"} {
+					if _, ok := entry[key]; !ok {
+						t.Errorf("entry %d has no %q: %s", i, key, b)
+					}
+				}
+			}
+			if got := string(entries[0]["top_logprobs"]); got != "[]" {
+				t.Errorf("top_logprobs = %s, want []", got)
+			}
+			if got := string(entries[0]["bytes"]); got != "[104,105]" {
+				t.Errorf("bytes = %s, want [104,105]", got)
+			}
+			var top []map[string]json.RawMessage
+			if err := json.Unmarshal(entries[1]["top_logprobs"], &top); err != nil || len(top) != 1 {
+				t.Fatalf("top_logprobs = %s", entries[1]["top_logprobs"])
+			}
+			if _, ok := top[0]["bytes"]; !ok {
+				t.Errorf("top_logprobs entry has no \"bytes\": %s", b)
+			}
+		})
+	}
+}
+
 func TestToChatCompletion_WithoutLogprobs(t *testing.T) {
 	createdAt := time.Unix(1234567890, 0)
 	resp := api.ChatResponse{
