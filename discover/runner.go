@@ -443,22 +443,23 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 			libDirs = append(libDirs, libDir)
 		}
 		sort.Sort(sort.Reverse(sort.StringSlice(libDirs)))
-		anyMissing := false
 		var newest string
 		for _, newest = range libDirs {
+			// A candidate is usable if every device found by any other
+			// version of the library is also supported by the candidate
+			anyMissing := false
 			for _, libDir := range libDirs {
 				if libDir == newest {
 					continue
 				}
-				if len(byLibDirs[newest]) != len(byLibDirs[libDir]) {
-					anyMissing = true
-					break
-				}
-				for dev := range byLibDirs[newest] {
-					if _, found := byLibDirs[libDir][dev]; !found {
+				for dev := range byLibDirs[libDir] {
+					if _, found := byLibDirs[newest][dev]; !found {
 						anyMissing = true
 						break
 					}
+				}
+				if anyMissing {
+					break
 				}
 			}
 			if !anyMissing {
