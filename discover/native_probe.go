@@ -41,6 +41,7 @@ type nativeProbeDevice struct {
 	CUDADriverMinor     int    `json:"cuda_driver_minor,omitempty"`
 	NVIDIADriverMajor   int    `json:"nvidia_driver_major,omitempty"`
 	GFXTarget           string `json:"gfx_target,omitempty"`
+	IntelIPVersion      uint32 `json:"intel_ip_version,omitempty"`
 }
 
 type nativeProbeResult struct {
@@ -203,6 +204,9 @@ func mergeNativeProbeDevice(dst *nativeProbeDevice, src nativeProbeDevice) {
 	}
 	if dst.GFXTarget == "" {
 		dst.GFXTarget = src.GFXTarget
+	}
+	if dst.IntelIPVersion == 0 {
+		dst.IntelIPVersion = src.IntelIPVersion
 	}
 }
 
