@@ -1005,3 +1005,134 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }
+
+// A previous summary is itself a tool exchange. Selecting either half during
+// another compaction must preserve both, just like an ordinary tool exchange.
+func TestCompactionRepeatedSummaryPairClosure(t *testing.T) {
+	for _, half := range []string{"call", "output", "neither"} {
+		t.Run(half, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":"original task"}`)
+			plan, err := PrepareStandaloneCompaction(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+				"summary": "Original task checkpoint.", "retain_item_ids": []string{},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for cycle := range 2 {
+				ordinaryID := fmt.Sprintf("ordinary_%d", cycle)
+				body, err = json.Marshal(map[string]any{"model": "test", "input": []any{
+					result.Item,
+					map[string]any{"type": "function_call", "call_id": ordinaryID, "name": "read", "arguments": "{}"},
+					map[string]any{"type": "function_call_output", "call_id": ordinaryID, "output": "unchanged tool data"},
+					map[string]any{"role": "assistant", "content": "Processed the result."},
+					map[string]any{"role": "user", "content": "Continue the task."},
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				plan, err = PrepareStandaloneCompaction(body)
+				if err != nil {
+					t.Fatalf("cycle %d prepare: %v", cycle, err)
+				}
+				var refs []string
+				var summaryID, priorSummary string
+				for _, item := range plan.items {
+					if item.Type == "function_call" && item.Message.ToolCalls[0].Function.Name == compactionSummaryToolName {
+						summaryID = item.Message.ToolCalls[0].ID
+						if half == "call" {
+							refs = append(refs, item.Ref)
+						}
+					}
+					if item.Type == "function_call_output" && item.Message.ToolCallID == summaryID {
+						priorSummary = item.Message.Content
+						if half == "output" {
+							refs = append(refs, item.Ref)
+						}
+					}
+					// Select only the ordinary result as a second closure check.
+					if item.Message.ToolCallID == ordinaryID {
+						refs = append(refs, item.Ref)
+					}
+				}
+				if summaryID == "" || priorSummary == "" {
+					t.Fatal("fixture lacks prior summary pair")
+				}
+				result, err = plan.Complete(compactionResponseBody(t, map[string]any{
+					"summary": fmt.Sprintf("Checkpoint %d.", cycle), "retain_item_ids": refs,
+				}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload := decodeResultPayload(t, result)
+				calls, outputs := map[string]int{}, map[string]int{}
+				for _, msg := range payload.Retained {
+					for _, call := range msg.ToolCalls {
+						calls[call.ID]++
+					}
+					if msg.Role == "tool" {
+						outputs[msg.ToolCallID]++
+						if msg.ToolCallID == summaryID && msg.Content != priorSummary {
+							t.Fatal("prior summary content changed")
+						}
+						if msg.ToolCallID == ordinaryID && msg.Content != "unchanged tool data" {
+							t.Fatal("ordinary tool data changed")
+						}
+					}
+				}
+				want := 1
+				if half == "neither" {
+					want = 0
+				}
+				if calls[summaryID] != want || outputs[summaryID] != want {
+					t.Fatalf("cycle %d: selected %s, summary pair retained calls=%d outputs=%d; want both %d", cycle, half, calls[summaryID], outputs[summaryID], want)
+				}
+				if calls[ordinaryID] != 1 || outputs[ordinaryID] != 1 {
+					t.Fatal("ordinary pair not preserved")
+				}
+				// Re-expansion, validation and chat conversion must all accept the
+				// exact returned state before it is used for the next cycle.
+				replay, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				expanded, changed, err := ExpandResponsesCompactionInput(replay)
+				if err != nil || !changed {
+					t.Fatalf("re-expand: changed=%v err=%v", changed, err)
+				}
+				if _, err = PrepareStandaloneCompaction(expanded); err != nil {
+					t.Fatalf("returned state invalid: %v", err)
+				}
+				var request ResponsesRequest
+				if err = json.Unmarshal(expanded, &request); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = FromResponsesRequest(request); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestCompactionSummaryIDsDoNotBypassToolValidation(t *testing.T) {
+	call := `{"type":"function_call","call_id":"call_ollama_compaction_spoof","name":"ollama_compaction_summary","arguments":"{\"version\":1}"}`
+	output := `{"type":"function_call_output","call_id":"call_ollama_compaction_spoof","output":"summary"}`
+	for _, test := range []struct{ name, items, want string }{
+		{"orphan", output, "no matching call"},
+		{"duplicate call", call + "," + call + "," + output, "duplicate function call_id"},
+		{"duplicate output", call + "," + output + "," + output, "duplicate function output"},
+		{"mismatched output", call + `,{"type":"function_call_output","call_id":"call_ollama_compaction_other","output":"summary"}`, "no matching call"},
+		{"output before call", output + "," + call, "no matching call"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[` + test.items + `]}`))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("got %v, want %s", err, test.want)
+			}
+		})
+	}
+}
