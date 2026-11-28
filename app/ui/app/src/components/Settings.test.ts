@@ -23,7 +23,6 @@ describe("Settings defaults", () => {
     const updateSettings = vi.fn(() => settingsUpdate.promise);
     const updateCloud = vi.fn().mockResolvedValue(undefined);
     const updateShowAppsInMenu = vi.fn().mockResolvedValue(undefined);
-    const resetChatGPTModels = vi.fn().mockResolvedValue(true);
     let resolveClaudeReset!: (succeeded: boolean) => void;
     const claudeReset = new Promise<boolean>((resolve) => {
       resolveClaudeReset = resolve;
@@ -35,7 +34,6 @@ describe("Settings defaults", () => {
       updateSettings,
       updateCloud,
       updateShowAppsInMenu,
-      resetChatGPTModels,
       resetClaudeMappings,
       currentSettings: currentSettings({
         Expose: true,
@@ -49,7 +47,6 @@ describe("Settings defaults", () => {
     await vi.waitFor(() => expect(updateSettings).toHaveBeenCalledOnce());
     expect(updateCloud).toHaveBeenCalledWith(true);
     expect(updateShowAppsInMenu).not.toHaveBeenCalled();
-    expect(resetChatGPTModels).not.toHaveBeenCalled();
     expect(resetClaudeMappings).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
 
@@ -63,7 +60,6 @@ describe("Settings defaults", () => {
     settingsUpdate.resolve();
     await vi.waitFor(() => expect(resetClaudeMappings).toHaveBeenCalledOnce());
     expect(updateShowAppsInMenu).toHaveBeenCalledWith(true);
-    expect(resetChatGPTModels).toHaveBeenCalledOnce();
     expect(onSaved).not.toHaveBeenCalled();
 
     resolveClaudeReset(true);
@@ -77,9 +73,6 @@ describe("Settings defaults", () => {
       updateShowAppsInMenu.mock.invocationCallOrder[0],
     );
     expect(updateShowAppsInMenu.mock.invocationCallOrder[0]).toBeLessThan(
-      resetChatGPTModels.mock.invocationCallOrder[0],
-    );
-    expect(resetChatGPTModels.mock.invocationCallOrder[0]).toBeLessThan(
       resetClaudeMappings.mock.invocationCallOrder[0],
     );
     expect(resetClaudeMappings.mock.invocationCallOrder[0]).toBeLessThan(
@@ -95,7 +88,6 @@ describe("Settings defaults", () => {
       updateSettings: vi.fn().mockResolvedValue(undefined),
       updateCloud,
       updateShowAppsInMenu,
-      resetChatGPTModels: vi.fn().mockResolvedValue(true),
       resetClaudeMappings: vi.fn().mockResolvedValue(true),
       currentSettings: currentSettings(),
       currentShowAppsInMenu: true,
@@ -118,7 +110,6 @@ describe("Settings defaults", () => {
       updateSettings: vi.fn().mockResolvedValue(undefined),
       updateCloud,
       updateShowAppsInMenu: vi.fn().mockResolvedValue(undefined),
-      resetChatGPTModels: vi.fn().mockResolvedValue(true),
       resetClaudeMappings: vi.fn().mockResolvedValue(true),
       currentSettings: currentSettings(),
       currentShowAppsInMenu: true,
@@ -140,7 +131,6 @@ describe("Settings defaults", () => {
       updateSettings: vi.fn().mockResolvedValue(undefined),
       updateCloud,
       updateShowAppsInMenu: vi.fn().mockResolvedValue(undefined),
-      resetChatGPTModels: vi.fn().mockResolvedValue(true),
       resetClaudeMappings: vi.fn().mockResolvedValue(true),
       currentSettings: currentSettings(),
       currentShowAppsInMenu: true,
@@ -154,7 +144,6 @@ describe("Settings defaults", () => {
   it("restores Cloud and leaves Claude untouched when settings fail", async () => {
     const updateCloud = vi.fn().mockResolvedValue(undefined);
     const updateShowAppsInMenu = vi.fn().mockResolvedValue(undefined);
-    const resetChatGPTModels = vi.fn().mockResolvedValue(true);
     const resetClaudeMappings = vi.fn().mockResolvedValue(true);
     const onSaved = vi.fn();
 
@@ -163,7 +152,6 @@ describe("Settings defaults", () => {
         updateSettings: vi.fn().mockRejectedValue(new Error("restart failed")),
         updateCloud,
         updateShowAppsInMenu,
-        resetChatGPTModels,
         resetClaudeMappings,
         currentSettings: currentSettings({
           Expose: true,
@@ -176,7 +164,6 @@ describe("Settings defaults", () => {
     ).rejects.toThrow("restart failed");
 
     expect(updateCloud.mock.calls).toEqual([[true], [false]]);
-    expect(resetChatGPTModels).not.toHaveBeenCalled();
     expect(resetClaudeMappings).not.toHaveBeenCalled();
     expect(updateShowAppsInMenu).not.toHaveBeenCalled();
     expect(onSaved).not.toHaveBeenCalled();
@@ -191,7 +178,6 @@ describe("Settings defaults", () => {
         updateSettings: vi.fn().mockResolvedValue(undefined),
         updateCloud: vi.fn().mockRejectedValue(new Error("cloud failed")),
         updateShowAppsInMenu,
-        resetChatGPTModels: vi.fn().mockResolvedValue(true),
         resetClaudeMappings: vi.fn().mockResolvedValue(true),
         currentSettings: currentSettings(),
         currentShowAppsInMenu: true,
@@ -219,7 +205,6 @@ describe("Settings defaults", () => {
         updateSettings,
         updateCloud,
         updateShowAppsInMenu,
-        resetChatGPTModels: vi.fn().mockResolvedValue(true),
         resetClaudeMappings: vi.fn().mockResolvedValue(false),
         currentSettings: previousSettings,
         currentShowAppsInMenu: false,
@@ -230,35 +215,6 @@ describe("Settings defaults", () => {
 
     expect(updateCloud.mock.calls).toEqual([[true], [false]]);
     expect(updateSettings).toHaveBeenCalledTimes(2);
-    expect(updateSettings.mock.calls[1][0]).toBe(previousSettings);
-    expect(updateShowAppsInMenu.mock.calls).toEqual([[true], [false]]);
-    expect(onSaved).not.toHaveBeenCalled();
-  });
-
-  it("stops before Claude and rolls settings back when ChatGPT cannot be reset", async () => {
-    const onSaved = vi.fn();
-    const updateSettings = vi.fn().mockResolvedValue(undefined);
-    const updateCloud = vi.fn().mockResolvedValue(undefined);
-    const updateShowAppsInMenu = vi.fn().mockResolvedValue(undefined);
-    const resetClaudeMappings = vi.fn().mockResolvedValue(true);
-    const previousSettings = currentSettings({ Expose: true });
-
-    await expect(
-      applySettingsDefaults({
-        updateSettings,
-        updateCloud,
-        updateShowAppsInMenu,
-        resetChatGPTModels: vi.fn().mockResolvedValue(false),
-        resetClaudeMappings,
-        currentSettings: previousSettings,
-        currentShowAppsInMenu: false,
-        cloudSource: "config",
-        onSaved,
-      }),
-    ).rejects.toThrow("ChatGPT models could not be reset");
-
-    expect(resetClaudeMappings).not.toHaveBeenCalled();
-    expect(updateCloud.mock.calls).toEqual([[true], [false]]);
     expect(updateSettings.mock.calls[1][0]).toBe(previousSettings);
     expect(updateShowAppsInMenu.mock.calls).toEqual([[true], [false]]);
     expect(onSaved).not.toHaveBeenCalled();
