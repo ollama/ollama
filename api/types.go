@@ -1073,6 +1073,7 @@ type ProcessModelResponse struct {
 	SizeVRAM      int64        `json:"size_vram"`
 	ContextLength int          `json:"context_length"`
 	Runner        string       `json:"runner,omitempty"`
+	Evicting      bool         `json:"evicting,omitempty"`
 }
 
 type TokenResponse struct {

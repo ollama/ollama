@@ -2866,6 +2866,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 			ExpiresAt:     v.expiresAt,
 			ContextLength: contextLength,
 			Runner:        runner,
+			Evicting:      v.evicting,
 		}
 
 		models = append(models, mr)
