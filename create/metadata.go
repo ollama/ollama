@@ -306,6 +306,8 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 		return "qwen3", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
 		return "nemotron-3-nano", nil
+	case strings.HasPrefix(s, "olala"):
+		return "olala", nil
 	default:
 		return "", nil
 	}
@@ -352,6 +354,8 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 		return "nemotron-3.5-super", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
 		return nemotronRendererNameFromTemplate(modelDir, chatTemplate)
+	case strings.HasPrefix(s, "olala"):
+		return "olala", nil
 	default:
 		return "", nil
 	}

@@ -36,6 +36,9 @@ type gpuKernel struct {
 	// kernels always receive row-contiguous inputs.
 	strided bool
 
+	// atomicOutputs declares the outputs as atomic<T> buffers.
+	atomicOutputs bool
+
 	// fallback computes the same outputs with graph ops when no GPU
 	// backend can run the launch.
 	fallback func(launch gpuLaunch) []*Array
@@ -76,6 +79,8 @@ type gpuLaunch struct {
 	grid        [3]int
 	threadGroup [3]int
 	inputs      []*Array
+	// initValue, when set, fills the outputs before the kernel runs.
+	initValue *float32
 }
 
 func cStringVector(values []string) (C.mlx_vector_string, func(), error) {
@@ -176,7 +181,7 @@ func (k *gpuKernel) getMetal() (C.mlx_fast_metal_kernel, bool) {
 			cHeader,
 			// ensure_row_contiguous unless the kernel reads strides.
 			C.bool(!k.strided),
-			C.bool(false),
+			C.bool(k.atomicOutputs),
 		)
 		if err := mlxError(k.metalKernel); err != nil {
 			k.disableMetal("creating kernel failed", err)
@@ -225,6 +230,12 @@ func (k *gpuKernel) applyMetal(launch gpuLaunch) ([]*Array, bool) {
 		}
 		if err := mlxError(C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(shape), C.size_t(len(shape)), C.mlx_dtype(out.dtype))); err != nil {
 			k.disableMetal("adding output failed", err)
+			return nil, false
+		}
+	}
+	if launch.initValue != nil {
+		if err := mlxError(C.mlx_fast_metal_kernel_config_set_init_value(cfg, C.float(*launch.initValue))); err != nil {
+			k.disableMetal("setting init value failed", err)
 			return nil, false
 		}
 	}

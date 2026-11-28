@@ -101,6 +101,8 @@ func rendererForName(name string) Renderer {
 		// Used for Olmo-3-32B-Think
 		renderer := &Olmo3ThinkRenderer{Variant: Olmo3Think32B}
 		return renderer
+	case "olala":
+		return &OlalaRenderer{}
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
 	case "nemotron-3.5-nano":

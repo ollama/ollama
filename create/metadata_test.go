@@ -239,6 +239,21 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantRenderer: "poolside-v1",
 		},
 		{
+			name:         "olala",
+			config:       `{"architectures":["OlalaForCausalLM"],"model_type":"olala"}`,
+			wantParser:   "olala",
+			wantRenderer: "olala",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:         "olala model type",
+			config:       `{"model_type":"olala"}`,
+			standalone:   true,
+			wantParser:   "olala",
+			wantRenderer: "olala",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
 			name:         "nemotron text",
 			config:       `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`,
 			wantParser:   "nemotron-3-nano",
