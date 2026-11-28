@@ -2,108 +2,97 @@
 title: Pi
 ---
 
-Pi is a minimal and extensible coding agent.
+[Pi](https://pi.dev/) is a terminal coding agent. Use the Ollama plugin to connect Pi to local models and Ollama's cloud.
 
 ## Quick setup
 
-```bash
+```shell
 ollama launch pi
 ```
 
-This installs Pi if needed, configures Ollama as a provider including web tools, and drops you into an interactive session.
+Ollama installs Pi and the plugin if needed, then opens Pi. It keeps the version of Pi you already have.
 
-To configure without launching:
-
-```shell
-ollama launch pi --config
-```
-
-### Run directly with a model
+Use Pi 1.5.2 or newer. If you installed an older version with npm, update it before launching.
 
 ```shell
-ollama launch pi --model qwen3.5:cloud
+npm install -g @earendil-works/pi-coding-agent@latest
 ```
 
-Cloud models are also available at [ollama.com](https://ollama.com/search?c=cloud).
+In Pi, run `/model` to choose your default model.
 
-## Extensions 
+For direct access to Ollama's cloud, run `/login ollama` and enter an [Ollama API key](https://ollama.com/settings/keys) before choosing a `cloud/` model. See [manual setup](#manual-setup) to install the plugin yourself.
 
-Pi ships with four core tools: `read`, `write`, `edit`, and `bash`. All other capabilities are added through its extension system.
+## Run directly with a model
 
-On-demand capability packages invoked via `/skill:name` commands.  
+After saving your Ollama API key with `/login ollama`, start a session with DeepSeek's V4.1 Flash.
 
-Install from npm or git:
-
-```bash
-pi install npm:@foo/some-tools
-pi install git:github.com/user/repo@v1
+```shell
+ollama launch pi --model cloud/deepseek-v4.1-flash
 ```
 
-See all packages at [pi.dev](https://pi.dev/packages) 
+`--model` selects a model for one session. Pi keeps your saved default. Browse [cloud models](https://ollama.com/search?c=cloud).
+
+## Extensions
+
+Pi includes `read`, `write`, `edit`, and `bash`. Add tools and skills with [Pi packages](https://pi.dev/packages) from npm or Git. Run an installed skill with `/skill:name`.
 
 ### Web search
 
-Pi can use web search and fetch tools via the `@ollama/pi-web-search` package.
+The Ollama plugin adds web search and fetch. In Pi, run `/web on` to enable them for the session. Run `/web off` to turn them off.
 
-When launching Pi through Ollama, package install/update is managed automatically.
-To install manually:
-
-```bash
-pi install npm:@ollama/pi-web-search
-```
+The tools use the Ollama API key from `/login ollama` or `OLLAMA_API_KEY`. Without a key, they use your Ollama server. Sign in on that server with `ollama signin`.
 
 ### Autoresearch with `pi-autoresearch`
 
-[pi-autoresearch](https://github.com/davebcn87/pi-autoresearch) brings autonomous experiment loops to Pi. Inspired by Karpathy's autoresearch, it turns any measurable metric into an optimization target: test speed, bundle size, build time, model training loss, Lighthouse scores.
+[pi-autoresearch](https://github.com/davebcn87/pi-autoresearch) runs experiments to improve a metric, such as test runtime or bundle size. It follows Andrej Karpathy's autoresearch loop.
 
-```bash
-pi install https://github.com/davebcn87/pi-autoresearch
+```shell
+pi install npm:pi-autoresearch
 ```
 
-Tell Pi what to optimize. It runs experiments, benchmarks each one, keeps improvements, reverts regressions, and repeats — all autonomously. A built-in dashboard tracks every run with confidence scoring to distinguish real gains from benchmark noise.
+Give Pi a goal.
 
-```bash
+```text
 /autoresearch optimize unit test runtime
 ```
 
-Each kept experiment is automatically committed. Each failed one is reverted. When you're done, Pi can group improvements into independent branches for clean review and merge.
+The extension measures each change, commits improvements, and reverts regressions. The dashboard tracks results. Run `/autoresearch finalize` to group kept changes into branches for review.
 
 ## Manual setup
 
-### Install
+### Install Pi and the Ollama plugin
 
-Install [Pi](https://github.com/earendil-works/pi):
+[Install or update Pi](https://docs.pi.dev/latest/quickstart) to version 1.5.2 or newer, then install the Ollama plugin.
 
-```bash
-npm install -g @earendil-works/pi-coding-agent
+```shell
+pi install https://github.com/ollama/pi-ollama
 ```
 
+### Cloud models
 
+Start Pi.
 
-Add a configuration block to `~/.pi/agent/models.json`:
-
-```json
-{
-  "providers": {
-    "ollama": {
-      "baseUrl": "http://localhost:11434/v1",
-      "api": "openai-completions",
-      "apiKey": "ollama",
-      "models": [
-        {
-          "id": "qwen3-coder"
-        }
-      ]
-    }
-  }
-}
+```shell
+pi
 ```
 
-Update `~/.pi/agent/settings.json` to set the default provider:
+Run `/login ollama` in Pi and enter your API key. Use `/model` to choose a `cloud/` model. Pi connects directly to Ollama's cloud, so you can use it without a local server.
 
-```json
-{
-  "defaultProvider": "ollama",
-  "defaultModel": "qwen3-coder"
-}
+### Local models
+
+Install and start [Ollama](https://ollama.com/download). Download a model, such as Google DeepMind's Gemma 4 12B, and start Pi.
+
+```shell
+ollama pull gemma4:12b
+pi
 ```
+
+Run `/model` in Pi and choose a model labeled **local**. The default local server works without an API key.
+
+Set `OLLAMA_HOST` to choose the server Pi connects to.
+
+```shell
+OLLAMA_HOST=http://localhost:11434 pi
+```
+
+To use cloud models through your Ollama server, run `ollama signin` on the server. In Pi, choose a model labeled **Cloud via server**.
