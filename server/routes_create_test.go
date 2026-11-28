@@ -1669,12 +1669,12 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 	})
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("exected status code 200, actual %d", w.Code)
+		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
 	w = createRequest(t, s.ShowHandler, api.ShowRequest{Model: "test"})
 	if w.Code != http.StatusOK {
-		t.Fatalf("exected status code 200, actual %d", w.Code)
+		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
 	var resp api.ShowResponse
