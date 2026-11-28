@@ -15,9 +15,6 @@ import (
 type Gemma4Renderer struct {
 	useImgTags          bool
 	emptyBlockOnNothink bool
-	// Render assistant content before its tool calls instead of after the
-	// tool responses.
-	contentBeforeToolCalls bool
 	// Ask for speech translation in the model card's transcribe-then-translate
 	// format, which the large models follow and the small ones don't.
 	transcribeThenTranslate bool
@@ -100,11 +97,7 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			sb.WriteString("\n<channel|>")
 		}
 
-		contentFirst := r.contentBeforeToolCalls && role == "model" && len(message.ToolCalls) > 0
-		messageHadContent := false
-		if contentFirst {
-			messageHadContent = r.renderMessageContent(&sb, message, role, &imageOffset)
-		}
+		r.renderMessageContent(&sb, message, role, &imageOffset)
 
 		if len(message.ToolCalls) > 0 {
 			for _, tc := range message.ToolCalls {
@@ -123,15 +116,11 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			}
 		}
 
-		if !contentFirst {
-			messageHadContent = r.renderMessageContent(&sb, message, role, &imageOffset)
-		}
-
 		nextNonToolRole := r.nextNonToolRole(loopMessages, i)
 		continuesIntoNext := role == "model" && nextNonToolRole == "assistant" && (len(message.ToolCalls) == 0 || toolResponsesEmitted)
 		if prevMessageType == "tool_call" && !toolResponsesEmitted {
 			sb.WriteString("<|tool_response>")
-		} else if !continuesIntoNext && !(toolResponsesEmitted && !messageHadContent && nextNonToolRole == "") {
+		} else if !continuesIntoNext && !(toolResponsesEmitted && nextNonToolRole == "") {
 			sb.WriteString("<turn|>\n")
 		}
 
@@ -171,20 +160,17 @@ func stripThinking(text string) string {
 	return strings.TrimSpace(result.String())
 }
 
-// renderMessageContent writes a message's content and reports whether it had any.
-func (r *Gemma4Renderer) renderMessageContent(sb *strings.Builder, message api.Message, role string, imageOffset *int) bool {
+func (r *Gemma4Renderer) renderMessageContent(sb *strings.Builder, message api.Message, role string, imageOffset *int) {
 	if role == "model" {
 		if message.Content == "" && len(message.Images) == 0 {
-			return false
+			return
 		}
 		message.Content = stripThinking(message.Content)
 		r.renderContent(sb, message, imageOffset, false)
-		return r.messageHasContent(message)
+		return
 	}
 
 	r.renderContent(sb, message, imageOffset, true)
-	message.Content = strings.TrimSpace(message.Content)
-	return r.messageHasContent(message)
 }
 
 // renderContent writes a message's content, interleaving [img-N] tags for images.
@@ -214,10 +200,6 @@ func (r *Gemma4Renderer) nextNonToolRole(messages []api.Message, idx int) string
 		}
 	}
 	return ""
-}
-
-func (r *Gemma4Renderer) messageHasContent(message api.Message) bool {
-	return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0
 }
 
 func (r *Gemma4Renderer) toolResponseName(message api.Message, toolCalls []api.ToolCall) string {
