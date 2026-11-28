@@ -36,6 +36,9 @@ type CogitoParser struct {
 	state     CogitoParserState
 	buffer    strings.Builder
 	callIndex int
+	// trimContentStart drops the whitespace between </think> and the content,
+	// which often arrives in later chunks than the tag itself
+	trimContentStart bool
 }
 
 func (p *CogitoParser) HasToolSupport() bool {
@@ -181,6 +184,7 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = CogitoCollectingContent
+			p.trimContentStart = true
 
 			if len(thinking) > 0 {
 				events = append(events, cogitoEventThinkingContent{content: thinking})
@@ -214,6 +218,16 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 		}
 
 	case CogitoCollectingContent:
+		if p.trimContentStart {
+			bufStr = strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+			p.buffer.Reset()
+			if bufStr == "" {
+				return events, false
+			}
+			p.buffer.WriteString(bufStr)
+			p.trimContentStart = false
+		}
+
 		switch {
 		case strings.Contains(bufStr, cogitoToolCallsBeginTag): // content[<｜tool▁calls▁begin｜>] -> tool calls
 			split := strings.SplitN(bufStr, cogitoToolCallsBeginTag, 2)
