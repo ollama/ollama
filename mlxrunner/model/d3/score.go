@@ -57,59 +57,147 @@ func (m *Model) scorePrompt(input llm.ScoreRequest, question *llm.ScoreQuestion)
 	return prompt, start, nil
 }
 
-func (m *Model) prepareRow(input llm.ScoreRequest, question *llm.ScoreQuestion) (*model.PreparedRequest, []model.Segment, error) {
-	prompt, imageStart, err := m.scorePrompt(input, question)
-	if err != nil {
-		return nil, nil, err
+func (m *Model) scoreSegments(prompt string, imageStart int, images []api.ImageData) ([]model.Segment, error) {
+	if len(images) == 0 {
+		return []model.Segment{{Tokens: m.Tokenizer().Encode(prompt, false)}}, nil
 	}
-	if len(input.Images) == 0 {
-		prepared, err := m.PrepareMedia([]model.Segment{{Tokens: m.Tokenizer().Encode(prompt, false)}})
-		return prepared, nil, err
-	}
-	segments := make([]model.Segment, 0, 2*len(input.Images)+1)
+	segments := make([]model.Segment, 0, 2*len(images)+1)
 	start := 0
-	for i, image := range input.Images {
+	for i, image := range images {
+		if len(image) == 0 {
+			return nil, fmt.Errorf("image %d must not be empty", i)
+		}
 		end := imageStart + i*len(imageMarker)
 		if !strings.HasPrefix(prompt[end:], imageMarker) {
-			return nil, nil, fmt.Errorf("image %d is missing from the rendered d3 prompt", i)
+			return nil, fmt.Errorf("image %d is missing from the rendered d3 prompt", i)
 		}
 		segments = append(segments, model.Segment{Tokens: m.Tokenizer().Encode(prompt[start:end], false)})
 		segments = append(segments, model.Segment{Kind: "image", Data: image})
 		start = end + len(imageMarker)
 	}
 	segments = append(segments, model.Segment{Tokens: m.Tokenizer().Encode(prompt[start:], false)})
-	prepared, err := m.PrepareMedia(segments)
-	return prepared, segments, err
+	return segments, nil
+}
+
+type scoreRow struct {
+	segments    []model.Segment
+	optionCount int
+	tokenCount  int
+}
+
+type renderedRow struct {
+	prompt      string
+	imageStart  int
+	optionCount int
+}
+
+// scorePlan contains the validated input rows. Images are preprocessed only
+// for the first row; later rows reuse their token count and prepare media as
+// they run, without retaining a decoded copy per question.
+type scorePlan struct {
+	rows  []scoreRow
+	first *model.PreparedRequest
+}
+
+func (m *Model) renderScore(ctx context.Context, input llm.ScoreRequest) ([]renderedRow, error) {
+	rows := make([]renderedRow, len(input.Rows))
+	var promptBytes int
+	for i, row := range input.Rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		prompt, imageStart, err := m.scorePrompt(input, row.Question)
+		if err != nil {
+			return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("question %d: %v", i, err)}
+		}
+		if len(prompt) > llm.MaxScorePromptBytes-promptBytes {
+			return nil, llm.ErrScorePromptTooLarge
+		}
+		promptBytes += len(prompt)
+		rows[i] = renderedRow{prompt: prompt, imageStart: imageStart, optionCount: len(row.Question.Options)}
+	}
+	return rows, nil
+}
+
+// prepareScore renders and validates every question before inference begins.
+func (m *Model) prepareScore(ctx context.Context, input llm.ScoreRequest) (*scorePlan, error) {
+	badRequest := func(err error) (*scorePlan, error) {
+		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+	}
+	if len(input.Rows) < 1 || len(input.Rows) > 64 || input.MaxTokens < 1 || input.MaxTokens > m.MaxContextLength() {
+		return badRequest(fmt.Errorf("invalid d3 question count or context limit"))
+	}
+	rendered, err := m.renderScore(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	plan := &scorePlan{rows: make([]scoreRow, len(rendered))}
+	for i, row := range rendered {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		segments, err := m.scoreSegments(row.prompt, row.imageStart, input.Images)
+		if err != nil {
+			return badRequest(fmt.Errorf("question %d: %w", i, err))
+		}
+		plan.rows[i] = scoreRow{segments: segments, optionCount: row.optionCount}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	first, err := m.PrepareMedia(plan.rows[0].segments)
+	if err != nil {
+		return badRequest(fmt.Errorf("question 0: %w", err))
+	}
+	plan.first = first
+	textTokens := func(segments []model.Segment) int {
+		var count int
+		for _, segment := range segments {
+			count += len(segment.Tokens)
+		}
+		return count
+	}
+	// Qwen's image expansion depends on image contents, which are shared by
+	// every row. Text changes the image positions, but not their token count.
+	imageTokens := len(first.Tokens) - textTokens(plan.rows[0].segments)
+	for i := range plan.rows {
+		count := textTokens(plan.rows[i].segments) + imageTokens
+		if count < 1 || count > input.MaxTokens {
+			return badRequest(fmt.Errorf("question %d needs %d tokens; limit is %d", i, count, input.MaxTokens))
+		}
+		plan.rows[i].tokenCount = count
+	}
+	return plan, ctx.Err()
 }
 
 func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
 	cached := 0
 	result.CachedTokens = &cached
-	badRequest := func(err error) (llm.ScoreResponse, error) {
-		return result, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+	plan, err := m.prepareScore(ctx, input)
+	if err != nil {
+		return result, err
 	}
-	if len(input.Rows) < 1 || len(input.Rows) > 64 || input.MaxTokens < 1 || input.MaxTokens > m.MaxContextLength() {
-		return badRequest(fmt.Errorf("invalid d3 question count or context limit"))
-	}
-	for i, row := range input.Rows {
+	for i, row := range plan.rows {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		prepared, segments, err := m.prepareRow(input, row.Question)
-		if err != nil {
-			return badRequest(fmt.Errorf("question %d: %w", i, err))
+		prepared := plan.first
+		plan.first = nil
+		if i > 0 {
+			prepared, err = m.PrepareMedia(row.segments)
+			if err != nil {
+				return result, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("question %d: %v", i, err)}
+			}
 		}
-		if err := ctx.Err(); err != nil {
-			return result, err
+		if len(prepared.Tokens) != row.tokenCount {
+			return result, fmt.Errorf("question %d changed length during d3 preparation", i)
 		}
-		if len(prepared.Tokens) > input.MaxTokens {
-			return badRequest(fmt.Errorf("question %d needs %d tokens; limit is %d", i, len(prepared.Tokens), input.MaxTokens))
-		}
-		_, err = forward(ctx, prepared, segments, func(hidden *mlx.Array) error {
-			result.Logits = append(result.Logits, m.scoreLogits(hidden, len(prepared.Tokens)-1, len(row.Question.Options)))
+		restored, err := forward(ctx, prepared, row.segments, func(hidden *mlx.Array) error {
+			result.Logits = append(result.Logits, m.scoreLogits(hidden, len(prepared.Tokens)-1, row.optionCount))
 			return nil
 		})
+		cached += restored
 		if err != nil {
 			return result, err
 		}

@@ -20,8 +20,8 @@ func TestCompileClef(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Render(func([]api.Message) (string, error) { t.Fatal("Clef must not use a chat template"); return "", nil }); err != nil {
-		t.Fatal(err)
+	if c.NeedsChatRender() {
+		t.Fatal("Clef must prepare its own prompts")
 	}
 	input := c.Request
 	if len(input.Fields) != 3 || len(c.Request.Rows) != 0 {
