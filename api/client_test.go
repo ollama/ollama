@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -220,6 +222,105 @@ func TestClientStreamReportsReadErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), io.ErrUnexpectedEOF.Error()) {
 		t.Fatalf("expected unexpected EOF, got %v", err)
+	}
+}
+
+func TestClientChatSmallStreamAllocation(t *testing.T) {
+	client := NewClient(
+		&url.URL{Scheme: "http", Host: "example.com"},
+		&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"message":{"content":"hello"},"done":true}` + "\n")),
+				Header:     make(http.Header),
+			}, nil
+		})},
+	)
+
+	var received bool
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	err := client.Chat(t.Context(), &ChatRequest{Model: "test"}, func(response ChatResponse) error {
+		received = true
+		if response.Message.Content != "hello" || !response.Done {
+			t.Fatalf("unexpected response: %#v", response)
+		}
+		return nil
+	})
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !received {
+		t.Fatal("no response received")
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated >= 1024*1024 {
+		t.Fatalf("small stream allocated %d bytes, want less than 1 MiB", allocated)
+	}
+}
+
+func TestClientChatStreamBufferGrowth(t *testing.T) {
+	const prefix = `{"message":{"content":"`
+	const suffix = `"},"done":true}` + "\n"
+	for _, size := range []int{64 * 1024, maxBufferSize - 1, maxBufferSize, maxBufferSize + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			content := strings.Repeat("x", size-len(prefix)-len(suffix))
+			body := prefix + content + suffix
+			client := NewClient(
+				&url.URL{Scheme: "http", Host: "example.com"},
+				&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Header:     make(http.Header),
+					}, nil
+				})},
+			)
+			calls := 0
+			err := client.Chat(t.Context(), &ChatRequest{Model: "test"}, func(response ChatResponse) error {
+				calls++
+				if response.Message.Content != content || !response.Done {
+					t.Fatal("response content was not preserved")
+				}
+				return nil
+			})
+			if size > maxBufferSize {
+				if !errors.Is(err, bufio.ErrTooLong) || calls != 0 {
+					t.Fatalf("oversized stream: error = %v, callbacks = %d", err, calls)
+				}
+				return
+			}
+			if err != nil || calls != 1 {
+				t.Fatalf("stream: error = %v, callbacks = %d", err, calls)
+			}
+		})
+	}
+}
+
+func BenchmarkClientChatStream(b *testing.B) {
+	for _, size := range []int{32, 64 * 1024, 1024 * 1024, maxBufferSize - 128} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			body := `{"message":{"content":"` + strings.Repeat("x", size) + `"},"done":true}` + "\n"
+			client := NewClient(
+				&url.URL{Scheme: "http", Host: "example.com"},
+				&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Header:     make(http.Header),
+					}, nil
+				})},
+			)
+			request := &ChatRequest{Model: "test"}
+			b.ReportAllocs()
+			b.SetBytes(int64(len(body)))
+			b.ResetTimer()
+			for b.Loop() {
+				if err := client.Chat(b.Context(), request, func(ChatResponse) error { return nil }); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
