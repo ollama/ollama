@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -204,6 +205,7 @@ func describeModelFromManifest(name model.Name, mf *manifest.Manifest, runner st
 	// A model that will not load is the one a user most needs to see, in
 	// order to remove it. Report what the manifest says.
 	if m == nil {
+		summary.Details.ContextLength = effectiveContextLength(summary.Details.ContextLength)
 		return summary, nil
 	}
 	summary.Details.ParentModel = m.ParentModel
@@ -224,7 +226,21 @@ func describeModelFromManifest(name model.Name, mf *manifest.Manifest, runner st
 		}
 	}
 
+	summary.Details.ContextLength = effectiveContextLength(summary.Details.ContextLength)
+
 	return summary, nil
+}
+
+// effectiveContextLength returns the context length the server will actually
+// honor for a model. OLLAMA_CONTEXT_LENGTH caps the model's native context
+// length, so the capped length is reported instead of the native one. The
+// native length is reported when the cap is unset or larger than the model
+// supports.
+func effectiveContextLength(native int) int {
+	if limit := int(envconfig.ContextLength()); limit > 0 {
+		return min(native, limit)
+	}
+	return native
 }
 
 func readModelListConfig(mf *manifest.Manifest) (model.ConfigV2, error) {
