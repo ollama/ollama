@@ -1119,26 +1119,29 @@ func TestCodexDesktopNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if len(forwarded.Input) != 4 {
+	if len(forwarded.Input) != 5 {
 		t.Fatalf("forwarded input = %#v", forwarded.Input)
 	}
-	developer := forwarded.Input[0]
+	if forwarded.Input[0]["type"] != "compaction" || forwarded.Input[0]["encrypted_content"] != "opaque" {
+		t.Fatalf("compaction was not passed to the Responses adapter: %#v", forwarded.Input[0])
+	}
+	developer := forwarded.Input[1]
 	if developer["type"] != "message" || developer["role"] != "system" {
 		t.Fatalf("developer instructions were not promoted for Ollama: %#v", developer)
 	}
-	call := forwarded.Input[1]
+	call := forwarded.Input[2]
 	if call["type"] != "function_call" || call["call_id"] != "call_1" || call["name"] != "apply_patch" {
 		t.Fatalf("converted call = %#v", call)
 	}
 	if call["arguments"] != `{"input":"*** Begin Patch"}` {
 		t.Fatalf("converted arguments = %#v", call["arguments"])
 	}
-	output := forwarded.Input[2]
+	output := forwarded.Input[3]
 	if output["type"] != "function_call_output" || output["call_id"] != "call_1" || output["output"] != "Success" {
 		t.Fatalf("converted output = %#v", output)
 	}
-	if forwarded.Input[3]["type"] != "message" || forwarded.Input[3]["role"] != "user" {
-		t.Fatalf("user message was not preserved: %#v", forwarded.Input[3])
+	if forwarded.Input[4]["type"] != "message" || forwarded.Input[4]["role"] != "user" {
+		t.Fatalf("user message was not preserved: %#v", forwarded.Input[4])
 	}
 }
 
@@ -1184,10 +1187,10 @@ func TestCodexDesktopPreservesToolSearchAndOllamaCompactionForOllama(t *testing.
 	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
 		t.Fatal(err)
 	}
-	if len(forwarded.Input) != 5 {
+	if len(forwarded.Input) != 6 {
 		t.Fatalf("forwarded input = %#v", forwarded.Input)
 	}
-	wantTypes := []string{"compaction", "tool_search_call", "tool_search_output", "message", "compaction_trigger"}
+	wantTypes := []string{"compaction", "compaction", "tool_search_call", "tool_search_output", "message", "compaction_trigger"}
 	for i, want := range wantTypes {
 		if got := forwarded.Input[i]["type"]; got != want {
 			t.Fatalf("forwarded input[%d] type = %#v, want %q", i, got, want)
