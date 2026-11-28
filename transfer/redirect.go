@@ -56,11 +56,12 @@ var blockedIPv4Nets = []*net.IPNet{
 	parseIPNet("240.0.0.0/4"),     // reserved
 }
 
-// Current IPv6 global unicast allocations are within 2000::/3. Deny the
-// special-purpose ranges in that block too, including transition prefixes.
+// In addition to the well-known NAT64 prefix, allow current IPv6 global
+// unicast allocations within 2000::/3, excluding special-purpose ranges.
 var (
-	publicIPv6Net   = parseIPNet("2000::/3")
-	blockedIPv6Nets = []*net.IPNet{
+	nat64WellKnownNet = parseIPNet("64:ff9b::/96")
+	publicIPv6Net     = parseIPNet("2000::/3")
+	blockedIPv6Nets   = []*net.IPNet{
 		parseIPNet("2001::/23"),
 		parseIPNet("2001:db8::/32"),
 		parseIPNet("2002::/16"),
@@ -79,6 +80,12 @@ func parseIPNet(s string) *net.IPNet {
 
 // isPublicIP reports whether ip is a globally routed address.
 func isPublicIP(ip net.IP) bool {
+	// RFC 6052's well-known NAT64 prefix embeds the IPv4 destination in
+	// the last 32 bits. Apply all IPv4 checks, including private ranges,
+	// without replacing the IPv6 address used to reach the translator.
+	if nat64WellKnownNet.Contains(ip) {
+		return isPublicIP(ip.To16()[12:])
+	}
 	if !ip.IsGlobalUnicast() ||
 		ip.IsLoopback() ||
 		ip.IsPrivate() ||
