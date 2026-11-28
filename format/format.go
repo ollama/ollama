@@ -25,9 +25,16 @@ func HumanNumber(b uint64) string {
 		if number == math.Floor(number) {
 			return fmt.Sprintf("%.0fM", number) // no decimals if whole number
 		}
+		if math.Round(number*100)/100 >= Thousand {
+			return "1B" // rounding would display "1000.00M", so promote to the next unit
+		}
 		return fmt.Sprintf("%.2fM", number) // two decimals if not a whole number
 	case b >= Thousand:
-		return fmt.Sprintf("%.0fK", float64(b)/Thousand)
+		number := float64(b) / Thousand
+		if math.Round(number) >= Thousand {
+			return "1M" // rounding would display "1000K", so promote to the next unit
+		}
+		return fmt.Sprintf("%.0fK", number)
 	default:
 		return strconv.FormatUint(b, 10)
 	}
