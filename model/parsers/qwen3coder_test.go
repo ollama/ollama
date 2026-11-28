@@ -1046,9 +1046,60 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserPreservesToolMarkupWithoutTools(t *testing.T) {
+	const prefix = "<tool"
+	const rest = "_call><function=lookup></function></tool_call>"
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{name: "single chunk", chunks: []string{prefix + rest}},
+		{name: "split tag", chunks: []string{prefix, rest}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := Qwen3CoderParser{}
+			parser.Init(nil, nil, nil)
+
+			var content string
+			for i, chunk := range tc.chunks {
+				text, _, calls, err := parser.Add(chunk, i == len(tc.chunks)-1)
+				if err != nil || len(calls) != 0 {
+					t.Fatalf("Add(%q) returned calls %v, error %v", chunk, calls, err)
+				}
+				content += text
+			}
+			if content != prefix+rest {
+				t.Errorf("content = %q, want %q", content, prefix+rest)
+			}
+		})
+	}
+}
+
+func TestReasoningParsersKeepToolMarkupWithoutTools(t *testing.T) {
+	const markup = "<tool_call><function=lookup></function></tool_call>"
+	for _, name := range []string{"qwen3.5", "nemotron-3-nano"} {
+		t.Run(name, func(t *testing.T) {
+			parser := ParserForName(name)
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			content, thinking, calls, err := parser.Add("Example: "+markup, false)
+			if err != nil || len(calls) != 0 || content != "" {
+				t.Fatalf("reasoning chunk returned content %q, calls %v, error %v", content, calls, err)
+			}
+			content, tail, calls, err := parser.Add("</think>Done.", true)
+			if err != nil || len(calls) != 0 || content != "Done." {
+				t.Fatalf("final chunk returned content %q, calls %v, error %v", content, calls, err)
+			}
+			if got := thinking + tail; got != "Example: "+markup {
+				t.Errorf("thinking = %q, want %q", got, "Example: "+markup)
+			}
+		})
+	}
+}
+
 func TestQwen3CoderParserToolCallIndexing(t *testing.T) {
 	parser := Qwen3CoderParser{}
-	parser.Init(nil, nil, nil)
+	parser.Init([]api.Tool{tool("first", nil), tool("second", nil), tool("third", nil)}, nil, nil)
 
 	input := `<tool_call><function=first><parameter=a>1</parameter></function></tool_call>
 <tool_call><function=second><parameter=b>2</parameter></function></tool_call>
@@ -1086,7 +1137,7 @@ func TestQwen3CoderParserDoneFlushesBufferedContent(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			parser := Qwen3CoderParser{}
-			parser.Init(nil, nil, nil)
+			parser.Init([]api.Tool{tool("test", nil)}, nil, nil)
 
 			var got string
 			for _, chunk := range tt.chunks {
@@ -1162,14 +1213,14 @@ func TestQwen3CoderParserToolCallIndexingStreaming(t *testing.T) {
 
 func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
 	parser := Qwen3CoderParser{}
-	parser.Init(nil, nil, nil)
+	parser.Init([]api.Tool{tool("first", nil)}, nil, nil)
 
 	_, _, _, err := parser.Add("<tool_call><function=first><parameter=a>1</parameter></function></tool_call>", true)
 	if err != nil {
 		t.Fatalf("first parse failed: %v", err)
 	}
 
-	parser.Init(nil, nil, nil)
+	parser.Init([]api.Tool{tool("second", nil)}, nil, nil)
 	_, _, calls, err := parser.Add("<tool_call><function=second><parameter=b>2</parameter></function></tool_call>", true)
 	if err != nil {
 		t.Fatalf("second parse failed: %v", err)
@@ -1200,7 +1251,7 @@ func TestQwen3CoderParserRejectsMalformedParameters(t *testing.T) {
 </function>`,
 	} {
 		parser := Qwen3CoderParser{}
-		parser.Init(nil, nil, nil)
+		parser.Init([]api.Tool{tool("write", nil), tool("edit", nil)}, nil, nil)
 		_, _, calls, err := parser.Add(toolOpenTag+raw+toolCloseTag, true)
 		if err == nil || len(calls) != 0 {
 			t.Errorf("raw=%q: expected rejection without tool calls, got calls=%#v, err=%v", raw, calls, err)
