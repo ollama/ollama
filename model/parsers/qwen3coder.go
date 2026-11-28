@@ -71,7 +71,14 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 				events = append(events, qwenEventContent{content: p.acc.String()})
 			}
 		case qwenParserState_CollectingToolContent:
-			events = append(events, qwenEventContent{content: toolOpenTag + p.acc.String()})
+			// Small models often stop after </function> without </tool_call>.
+			// Recover such a call if it parses; anything else stays content.
+			raw := p.acc.String()
+			if isSingleToolCall(raw) {
+				events = append(events, qwenEventRawToolCall{raw: raw})
+			} else {
+				events = append(events, qwenEventContent{content: toolOpenTag + raw})
+			}
 		}
 		p.acc.Reset()
 		p.state = qwenParserState_LookingForToolStart
@@ -421,6 +428,24 @@ var (
 	qwenTagRegex    = regexp.MustCompile(`<(\w+)=([^>]+)>`)
 	qwenXMLTagRegex = regexp.MustCompile(`</?(?:function|parameter)(?:\s+name="[^"]*")?>`)
 )
+
+// isSingleToolCall reports whether raw is exactly one named function element,
+// surrounded only by whitespace, that decodes like parseToolCall input. The
+// decoder skips leading text and stops after the first element, so both ends
+// are checked here. Leading text is checked after transformToXML because a
+// malformed opener such as `<function=>` is escaped into text there.
+func isSingleToolCall(raw string) bool {
+	xmlString := transformToXML(raw)
+	if !strings.HasPrefix(strings.TrimLeftFunc(xmlString, unicode.IsSpace), "<function ") {
+		return false
+	}
+	dec := xml.NewDecoder(strings.NewReader(xmlString))
+	var functionCall XMLFunctionCall
+	if err := dec.Decode(&functionCall); err != nil {
+		return false
+	}
+	return functionCall.Name != "" && strings.TrimSpace(xmlString[dec.InputOffset():]) == ""
+}
 
 // transformToXML transforms a raw qwen tool call with xml-like tags into valid
 // xml so that it can be parsed by any xml parser
