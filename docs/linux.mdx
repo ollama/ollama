@@ -45,6 +45,20 @@ curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tar.zst \
     | sudo tar x -C /usr
 ```
 
+### Intel Arc GPU install
+
+The install script detects discrete Intel Arc GPUs by PCI device ID (Alchemist
+and Battlemage, including Arc Pro B60) via `/sys/bus/pci/devices` — not by OS
+version. The base package includes the Vulkan backend for Intel GPUs.
+
+When a oneAPI package is published for the release, the install script also
+downloads it automatically. You can install it manually the same way as ROCm:
+
+```shell
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-oneapi.tar.zst \
+    | sudo tar x -C /usr
+```
+
 ### ARM64 install
 
 Download and extract the ARM64-specific package:
