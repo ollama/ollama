@@ -60,8 +60,7 @@ func TestRegisterCustomParser(t *testing.T) {
 
 // TestThinkingClose checks that a parser reports the strings ending its
 // thinking exactly when its response begins inside thinking: not when the
-// request turns thinking off, when an assistant prefill continues content, or
-// when the parser suppresses thinking for tools.
+// request turns thinking off, or when an assistant prefill continues content.
 func TestThinkingClose(t *testing.T) {
 	think := func(v bool) *api.ThinkValue { return &api.ThinkValue{Value: v} }
 	contentPrefill := &api.Message{Role: "assistant", Content: "The answer"}
@@ -89,7 +88,7 @@ func TestThinkingClose(t *testing.T) {
 		{parser: "deepseek3", think: think(true), want: thinkTag},
 		{parser: "deepseek3"},
 		{parser: "cogito", think: think(true), want: thinkTag},
-		{parser: "cogito", think: think(true), tools: []api.Tool{tool}},
+		{parser: "cogito", think: think(true), tools: []api.Tool{tool}, want: thinkTag},
 		{parser: "cohere", want: []string{"<|END_THINKING|>"}},
 		{parser: "cohere", think: think(false)},
 		{parser: "gemma4", think: think(true), want: []string{"<channel|>"}},
