@@ -55,6 +55,24 @@ func TestReadFileMetadataRejectsMalformedValues(t *testing.T) {
 			},
 			want: "alignment 0",
 		},
+		{
+			name: "duplicate key",
+			data: func(t *testing.T) []byte {
+				var b bytes.Buffer
+				writeInternalRaw(t, &b, []byte("GGUF"))
+				writeInternalRaw(t, &b, uint32(3))
+				writeInternalRaw(t, &b, uint64(0))
+				writeInternalRaw(t, &b, uint64(2))
+				writeInternalString(t, &b, "general.architecture")
+				writeInternalRaw(t, &b, typeString)
+				writeInternalString(t, &b, "llama")
+				writeInternalString(t, &b, "general.architecture")
+				writeInternalRaw(t, &b, typeString)
+				writeInternalString(t, &b, "gpt2")
+				return b.Bytes()
+			},
+			want: "duplicate key",
+		},
 	}
 
 	for _, tt := range tests {
