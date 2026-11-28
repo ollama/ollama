@@ -375,6 +375,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 		if err != nil {
 			return err
 		}
+		req.Header.Set("User-Agent", userAgent())
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
 		resp, err := client.Do(req)
 		if err != nil {

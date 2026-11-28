@@ -247,6 +247,35 @@ func TestDownloadChunkReturnsWhenTransferCompletes(t *testing.T) {
 	}
 }
 
+func TestDownloadChunkSendsUserAgent(t *testing.T) {
+	var gotUserAgent atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUserAgent.Store(r.UserAgent())
+		w.Header().Set("Content-Length", "1")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte{0})
+	}))
+	t.Cleanup(server.Close)
+
+	requestURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	download := &blobDownload{
+		Name:   filepath.Join(t.TempDir(), "blob"),
+		Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	part := &blobDownloadPart{Size: 1, blobDownload: download}
+	if err := download.downloadChunk(t.Context(), server.Client(), requestURL, io.Discard, part); err != nil {
+		t.Fatalf("downloadChunk() error = %v, want nil", err)
+	}
+
+	if got, _ := gotUserAgent.Load().(string); !strings.HasPrefix(got, "ollama/") {
+		t.Errorf("User-Agent = %q, want ollama/ prefix", got)
+	}
+}
+
 func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 	requestStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
