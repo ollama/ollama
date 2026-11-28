@@ -821,7 +821,7 @@ func TestPiCatalogMetadataFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			models, err := c.piModelCatalog(t.Context(), LaunchModel{Name: "primary"}, modelShowTimeout)
+			models, err := c.piModelCatalog(t.Context(), LaunchModel{Name: "primary"}, modelShowTimeout, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -904,11 +904,11 @@ func TestPiResolvedPrimaryIsNotShownTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	remaining := modelShowTimeout
-	primary, _, err := c.piTargetModel(t.Context(), "primary", &remaining, nil)
+	primary, _, err := c.piTargetModel(t.Context(), "primary", &remaining, nil, false)
 	if err != nil || !primary.HasCapability(modelpkg.CapabilityCompletion) {
 		t.Fatalf("target resolution = %+v, %v", primary, err)
 	}
-	models, err := c.piModelCatalog(t.Context(), primary, remaining)
+	models, err := c.piModelCatalog(t.Context(), primary, remaining, false)
 	if err != nil {
 		t.Fatalf("resolved primary was invalidated by catalog enrichment: %v", err)
 	}
@@ -955,7 +955,7 @@ func TestPiMetadataFallbackNormalizesLatest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	models, err := c.piModelCatalog(t.Context(), LaunchModel{Name: "primary", ContextLength: 32768, Capabilities: []modelpkg.Capability{modelpkg.CapabilityCompletion}}, modelShowTimeout)
+	models, err := c.piModelCatalog(t.Context(), LaunchModel{Name: "primary", ContextLength: 32768, Capabilities: []modelpkg.Capability{modelpkg.CapabilityCompletion}}, modelShowTimeout, false)
 	if err != nil {
 		t.Fatal(err)
 	}

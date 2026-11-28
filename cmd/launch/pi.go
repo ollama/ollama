@@ -89,6 +89,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 	pick := req.ForceConfigure || req.ConfigureOnly || target == ""
 	picked := false
 	var models []LaunchModel
+	var fallbackThinking map[string]*api.ModelRecommendationThinking
 	for {
 		if pick {
 			cancelDiscovery()
@@ -101,8 +102,11 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			discoveryCtx, cancelDiscovery = context.WithTimeout(ctx, piModelDiscoveryTimeout)
 			defer cancelDiscovery()
 		}
+		// The regular launch already refreshes the catalog. Only setup or an
+		// explicit model selection should incur a lookup just for thinking controls.
+		discoverThinking := picked || req.ModelOverride != ""
 		remaining := piModelDiscoveryTimeout
-		model, retryAfterAuth, err := c.piTargetModel(discoveryCtx, target, &remaining, nil)
+		model, retryAfterAuth, err := c.piTargetModel(discoveryCtx, target, &remaining, nil, discoverThinking)
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			err = nil
 		}
@@ -118,7 +122,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 			if err := pullMissingModelWithPolicy(ctx, c.apiClient, target, c.policy.missingModelPolicy()); err != nil {
 				return err
 			}
-			model, retryAfterAuth, err = c.piTargetModel(ctx, target, &remaining, nil)
+			model, retryAfterAuth, err = c.piTargetModel(ctx, target, &remaining, nil, discoverThinking)
 		}
 		if err != nil {
 			return err
@@ -165,7 +169,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 				discoveryCtx, cancelDiscovery = context.WithTimeout(ctx, piModelDiscoveryTimeout)
 				defer cancelDiscovery()
 				remaining = piModelDiscoveryTimeout
-				model, _, err = c.piTargetModel(discoveryCtx, target, &remaining, &model)
+				model, _, err = c.piTargetModel(discoveryCtx, target, &remaining, &model, discoverThinking)
 				if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 					err = nil
 				}
@@ -181,7 +185,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 				}
 			}
 		}
-		models, err = c.piModelCatalog(discoveryCtx, model, remaining)
+		models, fallbackThinking, err = c.piModelCatalogWithFallback(discoveryCtx, model, remaining, discoverThinking)
 		if err != nil {
 			return err
 		}
@@ -191,7 +195,7 @@ func (c *launcherClient) launchPiIntegration(ctx context.Context, pi *Pi, saved 
 		break
 	}
 
-	configured, err := pi.writeConfig(models, discoveryCtx.Err() != nil)
+	configured, err := pi.writeConfigModels(models, discoveryCtx.Err() != nil, fallbackThinking)
 	if err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -228,7 +232,7 @@ func (p *Pi) currentModel() (string, error) {
 // piTargetModel retains inventory fallback metadata when /show requires sign-in.
 // Its second result marks an authorization failure that needs a fresh lookup.
 // A fallback forces a fresh lookup without discarding already resolved metadata.
-func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration, fallback *LaunchModel) (LaunchModel, bool, error) {
+func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget *time.Duration, fallback *LaunchModel, discoverThinking bool) (LaunchModel, bool, error) {
 	var inventory []LaunchModel
 	if c.inventory != nil {
 		inventory = c.inventory.snapshot()
@@ -244,7 +248,8 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 			return model, false, fmt.Errorf("cloud is disabled; enable cloud to use %s", name)
 		}
 	}
-	if fallback == nil && model.ContextLength > 0 && len(model.Capabilities) > 0 {
+	metadataComplete := fallback == nil && model.ContextLength > 0 && len(model.Capabilities) > 0
+	if metadataComplete && !discoverThinking {
 		return model, false, nil
 	}
 	showCtx, cancel := context.WithTimeout(ctx, *budget)
@@ -253,6 +258,10 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 	show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: name})
 	*budget -= time.Since(started)
 	if err != nil {
+		if metadataComplete {
+			// Failure of a lookup for thinking alone should not invalidate the target.
+			return model, false, nil
+		}
 		if showCtx.Err() != nil {
 			return model, false, showCtx.Err()
 		}
@@ -270,6 +279,12 @@ func (c *launcherClient) piTargetModel(ctx context.Context, name string, budget 
 			return model, errors.As(err, &auth), nil
 		}
 		return model, false, err
+	}
+	if show.Thinking.Valid() {
+		model.Thinking = show.Thinking.Clone()
+	}
+	if metadataComplete {
+		return model, false, nil
 	}
 	if show.RemoteModel != "" {
 		model.RemoteModel = show.RemoteModel
@@ -304,16 +319,21 @@ func (c *launcherClient) piSelectableModels(ctx context.Context, items []ModelIt
 	})
 }
 
-func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel, budget time.Duration) ([]LaunchModel, error) {
+func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel, budget time.Duration, discoverThinking bool) ([]LaunchModel, error) {
+	models, _, err := c.piModelCatalogWithFallback(ctx, primary, budget, discoverThinking)
+	return models, err
+}
+
+func (c *launcherClient) piModelCatalogWithFallback(ctx context.Context, primary LaunchModel, budget time.Duration, discoverThinking bool) ([]LaunchModel, map[string]*api.ModelRecommendationThinking, error) {
 	inventory, err := c.modelInventory().Load(ctx)
 	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		inventory, err = c.modelInventory().Refresh(ctx)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return []LaunchModel{primary}, nil
+		return []LaunchModel{primary}, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
 	if model, ok := findLaunchModel(inventory, primary.Name); ok {
@@ -337,8 +357,13 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 		seen[key] = true
 		models = append(models, model)
 	}
-	for _, rec := range c.recommendations(ctx) {
+	recommendations := c.recommendations(ctx)
+	fallbackThinking := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
+	for _, rec := range recommendations {
 		key := launchModelRecommendationKey(rec.Name)
+		if rec.Thinking.Valid() {
+			fallbackThinking[key] = rec.Thinking.Clone()
+		}
 		if seen[key] || cloudDisabled || !isCloudModelName(rec.Name) || isDeprecatedLaunchModel(rec.Name) {
 			continue
 		}
@@ -349,8 +374,8 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 	// TODO: Use a more narrowly scoped model metadata API instead of /show here.
 	showCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	for i := range models {
-		models[i] = models[i].WithCloudLimits()
+	for i, model := range models {
+		models[i] = model.WithCloudLimits()
 	}
 	var wg sync.WaitGroup
 	jobs := make(chan int)
@@ -358,16 +383,21 @@ func (c *launcherClient) piModelCatalog(ctx context.Context, primary LaunchModel
 		wg.Go(func() {
 			for i := range jobs {
 				model := &models[i]
-				if model.ContextLength > 0 && len(model.Capabilities) > 0 {
+				metadataComplete := model.ContextLength > 0 && len(model.Capabilities) > 0
+				needsThinking := discoverThinking && !model.Thinking.Valid() && model.HasCapability("thinking")
+				if metadataComplete && !needsThinking {
 					continue
 				}
 				show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: model.Name})
 				if err != nil {
 					var status api.StatusError
-					if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+					if !metadataComplete && errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
 						model.Name = ""
 					}
 					continue
+				}
+				if show.Thinking.Valid() {
+					model.Thinking = show.Thinking.Clone()
 				}
 				if model.ContextLength <= 0 {
 					model.ContextLength, _ = modelInfoContextLength(show.ModelInfo)
@@ -390,21 +420,21 @@ queue:
 	close(jobs)
 	wg.Wait()
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+		return nil, nil, err
 	}
 	if !piSupportsChat(models[0]) {
-		return nil, fmt.Errorf("model %q does not support chat; choose a chat model", primary.Name)
+		return nil, nil, fmt.Errorf("model %q does not support chat; choose a chat model", primary.Name)
 	}
 	if cloudDisabled && models[0].Remote {
-		return nil, fmt.Errorf("cloud is disabled; enable cloud to use %s", primary.Name)
+		return nil, nil, fmt.Errorf("cloud is disabled; enable cloud to use %s", primary.Name)
 	}
 	if models[0].Name == "" {
-		return nil, fmt.Errorf("model %q is no longer available", primary.Name)
+		return nil, nil, fmt.Errorf("model %q is no longer available", primary.Name)
 	}
 	models = slices.DeleteFunc(models, func(model LaunchModel) bool {
 		return model.Name == "" || !piSupportsChat(model) || (cloudDisabled && model.Remote)
 	})
-	return models, nil
+	return models, fallbackThinking, nil
 }
 
 func (p *Pi) Run(model string, _ []LaunchModel, args []string) error {
@@ -917,6 +947,10 @@ func (p *Pi) Edit(models []LaunchModel) error {
 }
 
 func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, error) {
+	return p.writeConfigModels(models, preserveCatalog, nil)
+}
+
+func (p *Pi) writeConfigModels(models []LaunchModel, preserveCatalog bool, fallbackThinking map[string]*api.ModelRecommendationThinking) (string, error) {
 	if len(models) == 0 {
 		return "", nil
 	}
@@ -1003,18 +1037,41 @@ func (p *Pi) writeConfig(models []LaunchModel, preserveCatalog bool) (string, er
 			continue
 		}
 		entry := createConfig(model)
-		// A failed metadata lookup must not erase previously known limits or
-		// capabilities for a model that remains in the inventory.
 		if old := managed[key]; old != nil {
-			if model.ContextLength <= 0 && hasContextWindow(old) {
-				entry["contextWindow"] = old["contextWindow"]
-			}
-			if len(model.Capabilities) == 0 {
-				for _, key := range []string{"input", "reasoning"} {
-					if value, ok := old[key]; ok {
+			// Preserve custom fields except when rebuilding a stale managed cloud entry.
+			if _, knownCloud := lookupCloudModelLimit(model.Name); hasContextWindow(old) || !knownCloud {
+				for key, value := range old {
+					switch key {
+					case "id", "_launch", "input", "contextWindow", "reasoning", "thinkingLevelMap":
+					default:
 						entry[key] = value
 					}
 				}
+			}
+			// A failed or skipped lookup must not erase previously known controls.
+			if model.ContextLength <= 0 && hasContextWindow(old) {
+				entry["contextWindow"] = old["contextWindow"]
+			}
+			if input, ok := old["input"]; ok && len(model.Capabilities) == 0 {
+				entry["input"] = input
+			}
+			// Prefer live /api/show results, then previously saved controls,
+			// and use recommendations only to backfill entries with no map yet.
+			if _, refreshed := entry["thinkingLevelMap"]; !refreshed {
+				levels, known := old["thinkingLevelMap"]
+				if known {
+					entry["thinkingLevelMap"] = levels
+				}
+				if reasoning, ok := old["reasoning"]; ok && (known || len(model.Capabilities) == 0) {
+					entry["reasoning"] = reasoning
+				}
+			}
+		}
+		if _, ok := entry["thinkingLevelMap"]; !ok {
+			if fallback := fallbackThinking[key]; fallback.Valid() {
+				fallbackModel := model
+				fallbackModel.Thinking = fallback
+				setPiThinkingControls(entry, fallbackModel)
 			}
 		}
 		newModels = append(newModels, entry)
@@ -1123,9 +1180,59 @@ func createConfig(model LaunchModel) map[string]any {
 		cfg["reasoning"] = true
 	}
 
+	setPiThinkingControls(cfg, model)
+
 	if model.ContextLength > 0 {
 		cfg["contextWindow"] = model.ContextLength
 	}
 
 	return cfg
+}
+
+// setPiThinkingControls writes only controls that can be represented through
+// Pi's OpenAI-compatible endpoint. Unknown metadata leaves existing settings intact.
+func setPiThinkingControls(cfg map[string]any, model LaunchModel) {
+	thinking := model.Thinking
+	if !thinking.Valid() {
+		return
+	}
+
+	// Missing keys inherit Pi defaults, so unsupported levels must be explicit nulls.
+	levels := map[string]any{
+		"off": nil, "minimal": nil, "low": nil, "medium": nil,
+		"high": nil, "xhigh": nil, "max": nil,
+	}
+	hasNamed := false
+	for _, value := range thinking.Values {
+		if _, ok := value.(string); ok {
+			hasNamed = true
+		}
+	}
+
+	reasoning := false
+	for _, value := range thinking.Values {
+		switch value := value.(type) {
+		case bool:
+			if !value {
+				levels["off"] = "none"
+			} else if !hasNamed {
+				// The OpenAI adapter maps high to true for boolean-only models.
+				// With named controls it preserves the string instead, so high
+				// must not be invented as a boolean alias for mixed descriptors.
+				levels["high"] = "high"
+				reasoning = true
+			}
+		case string:
+			switch value {
+			case "minimal", "low", "medium", "high", "xhigh", "max":
+				levels[value] = value
+				reasoning = true
+			}
+		}
+	}
+	if !reasoning && !(len(thinking.Values) == 1 && thinking.Supports(false)) {
+		return // No representable thinking level; retain the capability fallback.
+	}
+	cfg["reasoning"] = reasoning
+	cfg["thinkingLevelMap"] = levels
 }
