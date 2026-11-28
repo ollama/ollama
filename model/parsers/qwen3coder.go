@@ -364,7 +364,7 @@ func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 
 	// Try number (float)
 	if typeSet["number"] {
-		if f, err := strconv.ParseFloat(raw, 64); err == nil {
+		if f, ok := parseFiniteFloat(raw); ok {
 			// If the number has no decimal part, return as int (matching reference)
 			if f == math.Trunc(f) {
 				i := int64(f)

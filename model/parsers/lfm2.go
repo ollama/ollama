@@ -639,7 +639,7 @@ func parsePythonLiteral(token string) (any, error) {
 	if v, err := strconv.ParseInt(token, 10, 64); err == nil {
 		return v, nil
 	}
-	if v, err := strconv.ParseFloat(token, 64); err == nil {
+	if v, ok := parseFiniteFloat(token); ok {
 		return v, nil
 	}
 

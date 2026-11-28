@@ -393,7 +393,7 @@ func parseOlmo3Value(s string) (any, error) {
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return i, nil
 	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
+	if f, ok := parseFiniteFloat(s); ok {
 		return f, nil
 	}
 
