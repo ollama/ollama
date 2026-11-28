@@ -185,9 +185,14 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 	switch p.state {
 	case Gemma4CollectingContent:
+		// A <channel|> reached in this state is always unmatched: a real thinking
+		// block would have switched us to Gemma4CollectingThinking. So it is
+		// dropped from the content ahead of whichever tag dispatches first, not
+		// only when it is the sole tag in the buffer (issue #18288).
+
 		// Check for thinking open tag
 		if idx := strings.Index(bufStr, gemma4ThinkingOpenTag); idx != -1 {
-			contentBefore := bufStr[:idx]
+			contentBefore := strings.ReplaceAll(bufStr[:idx], gemma4ThinkingCloseTag, "")
 			remaining := bufStr[idx+len(gemma4ThinkingOpenTag):]
 
 			p.buffer.Reset()
@@ -203,7 +208,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 		// Check for tool call open tag
 		if idx := strings.Index(bufStr, gemma4ToolCallOpenTag); idx != -1 {
-			contentBefore := bufStr[:idx]
+			contentBefore := strings.ReplaceAll(bufStr[:idx], gemma4ThinkingCloseTag, "")
 			remaining := bufStr[idx+len(gemma4ToolCallOpenTag):]
 
 			p.buffer.Reset()
@@ -216,9 +221,25 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			return events, true
 		}
 
+		// Handle stray <channel|> without matching open tag (issue #18288).
+		// Gemma 4 can emit this control token when thinking is disabled or
+		// as a bug, so we drop it rather than leaking it as content.
+		if idx := strings.Index(bufStr, gemma4ThinkingCloseTag); idx != -1 {
+			contentBefore := bufStr[:idx]
+			remaining := bufStr[idx+len(gemma4ThinkingCloseTag):]
+
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
+
+			if contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace); len(contentBefore) > 0 {
+				events = append(events, gemma4EventContent{content: contentBefore})
+			}
+			return events, true
+		}
+
 		// Check for partial tag overlap
 		if !done {
-			if overlapLen := longestOverlap(bufStr, gemma4ThinkingOpenTag, gemma4ToolCallOpenTag); overlapLen > 0 {
+			if overlapLen := longestOverlap(bufStr, gemma4ThinkingOpenTag, gemma4ToolCallOpenTag, gemma4ThinkingCloseTag); overlapLen > 0 {
 				beforePartialTag := bufStr[:len(bufStr)-overlapLen]
 				trailingLen := trailingWhitespaceLen(beforePartialTag)
 				ambiguousStart := len(beforePartialTag) - trailingLen
