@@ -384,6 +384,13 @@ export async function* sendMessage(
     signal,
   });
 
+  // Without this the error body is parsed as JSONL and every event is dropped,
+  // so the send looks successful and fails silently.
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || `Failed to send message (${response.status})`);
+  }
+
   for await (const event of parseJsonlFromResponse<ChatEventUnion>(response)) {
     switch (event.eventName) {
       case "download":
