@@ -227,6 +227,7 @@ console.log(response.message.content);
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
 - [oxi](https://github.com/maziluiosif/oxi) - Native Rust desktop coding agent with editor, Git panel and terminal
+- [Agent Tree](https://github.com/MikeGT4/agent-tree) - Claude Code side pane that can hand simple tasks to a local Ollama model
 
 ### Libraries & SDKs
 
