@@ -294,6 +294,8 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				case errors.Is(err, errPartStalled):
 					try--
 					continue
+				case !isRetryable(err):
+					return err
 				case err != nil:
 					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
 					slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
@@ -364,6 +366,16 @@ func sameRegistryOrigin(a, b *url.URL) bool {
 	return port(a) == port(b)
 }
 
+func isRetryable(err error) bool {
+	var statusErr api.StatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.StatusCode == http.StatusRequestTimeout ||
+			statusErr.StatusCode == http.StatusTooManyRequests ||
+			statusErr.StatusCode >= http.StatusInternalServerError
+	}
+	return true
+}
+
 func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
 	g, ctx := errgroup.WithContext(ctx)
 	attemptStarted := time.Now()
@@ -381,6 +393,29 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 			return err
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusPartialContent && (resp.StatusCode != http.StatusOK || part.StartsAt() != 0 || (b.Total > 0 && part.StopsAt() != b.Total)) {
+			status := resp.Status
+			if status == "" {
+				status = fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+			}
+			statusErr := api.StatusError{
+				StatusCode: resp.StatusCode,
+				Status:     status,
+			}
+			if resp.StatusCode == http.StatusOK {
+				statusErr.ErrorMessage = "range request not supported"
+			} else {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+				if err := json.Unmarshal(body, &statusErr); err != nil || statusErr.ErrorMessage == "" {
+					msg := strings.TrimSpace(string(body))
+					if msg != status && msg != strconv.Itoa(resp.StatusCode) {
+						statusErr.ErrorMessage = msg
+					}
+				}
+			}
+			return statusErr
+		}
 
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
