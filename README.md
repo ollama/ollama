@@ -177,6 +177,7 @@ console.log(response.message.content);
 
 #### Desktop
 
+- [Arynwood MCP](https://arynwood.com/mcp/) - Local-first Linux desktop workspace with Ollama chat, knowledge search, and MCP tools
 - [Dify.AI](https://github.com/langgenius/dify) - LLM app development platform
 - [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) - All-in-one AI app for Mac, Windows, and Linux
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid) - Cross-platform mobile and desktop client
