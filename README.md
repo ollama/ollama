@@ -304,6 +304,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [ollama-update](https://github.com/bgupta/ollama-update) - Check for model updates without pulling; pulls only what changed and rebuilds custom Modelfiles
 
 ### Productivity & Apps
 
