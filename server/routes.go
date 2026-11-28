@@ -305,6 +305,8 @@ func signinURL() (string, error) {
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
+// GenerateHandler handles api/generate. It would return the llm response. For details please refer to api.md
+// Note that the completion logic appears in llm/server.go:completion
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
