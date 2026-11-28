@@ -712,6 +712,16 @@ func repairGemma4RawTerminalStringValueForKey(s, key string, props *api.ToolProp
 		}
 
 		valueEnd := gemma4RawStringValueEnd(s, valueStart, props)
+		// The model sometimes writes the closing delimiter without the
+		// opening one. If the raw value already ends with the delimiter,
+		// reuse it as the closing delimiter instead of wrapping it
+		// inside a new pair, so the value gets exactly one opening and
+		// one closing delimiter.
+		trimmedEnd := gemma4TrimRightSpaceIndex(s[:valueEnd])
+		if trimmedEnd-valueStart >= len(gemma4StringDelimiter) && strings.HasSuffix(s[valueStart:trimmedEnd], gemma4StringDelimiter) {
+			delimStart := trimmedEnd - len(gemma4StringDelimiter)
+			return s[:valueStart] + gemma4StringDelimiter + s[valueStart:delimStart] + gemma4StringDelimiter + s[trimmedEnd:], true
+		}
 		return s[:valueStart] + gemma4StringDelimiter + s[valueStart:valueEnd] + gemma4StringDelimiter + s[valueEnd:], true
 	}
 
