@@ -946,6 +946,11 @@ type ShowResponse struct {
 	Manifests      []ManifestSummary  `json:"manifests,omitempty"`
 	ModifiedAt     time.Time          `json:"modified_at,omitempty"`
 	Requires       string             `json:"requires,omitempty"`
+
+	// ServingContextLength is the per-request local context limit when an
+	// explicit configuration makes it known without loading the model. Zero
+	// means unknown; the architecture maximum remains in ModelInfo.
+	ServingContextLength int `json:"serving_context_length,omitempty"`
 }
 
 // ManifestSummary describes one child manifest available through a model tag.

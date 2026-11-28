@@ -646,14 +646,22 @@ printf '%s\n' "$CLAUDE_CODE_MAX_CONTEXT_TOKENS" "$CLAUDE_CODE_AUTO_COMPACT_WINDO
 		name  string
 		model LaunchModel
 		want  string
+		args  []string
 	}{
 		{name: "cloud model absent from fallback table", model: LaunchModel{Name: "muse-spark-open:cloud", ContextLength: 1048576}, want: "1048576"},
 		{name: "remote model without cloud suffix", model: LaunchModel{Name: "custom-cloud", Remote: true, ContextLength: 262144}, want: "262144"},
 		{name: "local trained maximum is not the allocated context", model: LaunchModel{Name: "qwen3:8b", ContextLength: 131072}, want: "12345"},
+		{name: "known local serving limit below auto compact minimum", model: LaunchModel{Name: "gemma4:12b", ContextLength: 262144, ServingContextLength: 65536}, want: "65536"},
+		{name: "managed sonnet alias retains local capacity", model: LaunchModel{Name: "gemma4:12b", ServingContextLength: 65536}, args: []string{"--model", "sonnet"}, want: "65536"},
+		{name: "managed opus alias retains local capacity", model: LaunchModel{Name: "gemma4:12b", ServingContextLength: 65536}, args: []string{"--model=opus"}, want: "65536"},
+		{name: "managed haiku alias retains local capacity", model: LaunchModel{Name: "gemma4:12b", ServingContextLength: 65536}, args: []string{"--model", "haiku"}, want: "65536"},
+		{name: "managed opusplan alias retains local capacity", model: LaunchModel{Name: "gemma4:12b", ServingContextLength: 65536}, args: []string{"--model=opusplan"}, want: "65536"},
+		{name: "different passed-through model cannot borrow local capacity", model: LaunchModel{Name: "gemma4:12b", ServingContextLength: 65536}, args: []string{"--model=other-local"}, want: "12345"},
+		{name: "later different model overrides managed alias", model: LaunchModel{Name: "gemma4:12b", ServingContextLength: 65536}, args: []string{"--model", "sonnet", "--model", "other-local"}, want: "12345"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			models := []LaunchModel{{Name: "other:cloud", ContextLength: 65536}, tt.model}
-			if err := (&Claude{}).Run(tt.model.Name, models, nil); err != nil {
+			if err := (&Claude{}).Run(tt.model.Name, models, tt.args); err != nil {
 				t.Fatal(err)
 			}
 			got, err := os.ReadFile(output)

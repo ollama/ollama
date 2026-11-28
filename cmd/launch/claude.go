@@ -55,6 +55,31 @@ func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 		return err
 	}
 
+	// A passed-through --model can select a different client model. The local
+	// serving metadata belongs only to the model resolved by this launcher.
+	contextModel := model
+	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--model" && i+1 < len(args) {
+			contextModel = args[i+1]
+		} else if value, ok := strings.CutPrefix(arg, "--model="); ok {
+			contextModel = value
+		}
+	}
+	// These aliases all use the selected Ollama model through modelEnvVars.
+	switch contextModel {
+	case "opus", "sonnet", "haiku", "opusplan":
+		contextModel = model
+	}
+	if !SameModelRef(contextModel, model) {
+		models = cloneLaunchModels(models)
+		for i := range models {
+			models[i].ServingContextLength = 0
+		}
+	}
+
 	cmd := exec.Command(claudePath, c.args(model, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -214,6 +239,10 @@ func (c *Claude) modelEnvVars(model string, models []LaunchModel) []string {
 				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(ctxLen, claudeMaxAutoCompactWindow)))
 			}
 		}
+	} else if resolved.ServingContextLength > 0 {
+		// MAX applies below the AUTO_COMPACT_WINDOW minimum too. Leave
+		// compaction to the user's environment, CLI flags and settings.
+		env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(resolved.ServingContextLength))
 	}
 
 	return env
