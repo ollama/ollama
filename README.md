@@ -319,6 +319,7 @@ console.log(response.message.content);
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama) - Ollama in Raycast
 - [Painting Droid](https://github.com/mateuszmigas/painting-droid) - Painting app with AI integrations
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
+- [Open Game Master](https://github.com/Lebbitheplow/open-game-master) - Local AI game master for solo and group 5e tabletop campaigns
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
 
