@@ -1502,6 +1502,7 @@ didCompleteWithError:(NSError *)error {
 - (BOOL)windowShouldClose:(id)sender {
     // Keep the webview alive without restoring the window on app activation.
     [sender orderOut:nil];
+    [self hide];
     return NO;
 }
 
