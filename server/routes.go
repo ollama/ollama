@@ -333,6 +333,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		req.Think = &api.ThinkValue{Value: false}
+	}
+
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))
@@ -725,6 +729,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	var customStripper *thinkStripper
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
+		if openingTag == "" {
+			openingTag = "<think>"
+		}
+		if closingTag == "" {
+			closingTag = "</think>"
+		}
+		customStripper = &thinkStripper{
+			openingTag: openingTag,
+			closingTag: closingTag,
+		}
+	}
+
 	var thinkTagParser *thinkingparser.Parser
 	if builtinParser == nil {
 		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
@@ -771,6 +790,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			ThinkingClose:   thinkingClose,
 			FormatFrames:    formatFrames,
 		}, func(cr llm.CompletionResponse) {
+			if customStripper != nil {
+				cr.Content = customStripper.process(cr.Content, cr.Done)
+				if cr.Content == "" && !cr.Done {
+					return
+				}
+			}
+
 			res := api.GenerateResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -827,6 +853,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				// Emit chunks that carry logprobs even if the parser is still buffering
 				// visible content, otherwise generate logprobs disappear for models with
 				// builtin thinking/tool parsers.
+				if os.Getenv("OLLAMA_NO_THINK") == "true" {
+					res.Thinking = ""
+				}
 				if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
 					ch <- res
 				}
@@ -834,7 +863,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				return
 			}
 
-			ch <- res
+			if os.Getenv("OLLAMA_NO_THINK") == "true" {
+				res.Thinking = ""
+			}
+			if res.Response != "" || res.Thinking != "" || res.Done || len(res.ToolCalls) > 0 || len(res.Logprobs) > 0 {
+				ch <- res
+			}
 		}); err != nil {
 			if parserErr == nil {
 				s.sched.expireRunnersForRuntimeOOM(m, err)
@@ -2975,6 +3009,9 @@ func llamaServerConfigForModel(m *Model) llm.LlamaServerConfig {
 }
 
 func usesOllamaRenderedChat(m *Model) bool {
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		return true // Force Go renderer so we can inject tags into the prompt string
+	}
 	return m != nil && (m.Config.Renderer != "" || m.Config.Parser != "" || shouldUseHarmony(m) || shouldUseGoTemplate(m))
 }
 
@@ -3069,6 +3106,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
+	}
+
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		req.Think = &api.ThinkValue{Value: false}
 	}
 
 	modelRef, err := parseAndValidateModelRef(req.Model)
@@ -3328,6 +3369,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		prompt += "\n<channel|>\n</think>\n"
+	}
+
 	// If debug mode is enabled, return the rendered template instead of calling the model
 	if req.DebugRenderOnly {
 		c.JSON(http.StatusOK, api.ChatResponse{
@@ -3339,6 +3384,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			},
 		})
 		return
+	}
+
+	var customStripper *thinkStripper
+	if os.Getenv("OLLAMA_NO_THINK") == "true" {
+		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
+		if openingTag == "" {
+			openingTag = "<think>"
+		}
+		if closingTag == "" {
+			closingTag = "</think>"
+		}
+		customStripper = &thinkStripper{
+			openingTag: openingTag,
+			closingTag: closingTag,
+		}
 	}
 
 	var thinkTagParser *thinkingparser.Parser
@@ -3384,6 +3444,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			ThinkingClose:   thinkingClose,
 			FormatFrames:    formatFrames,
 		}, func(r llm.CompletionResponse) {
+			if customStripper != nil {
+				r.Content = customStripper.process(r.Content, r.Done)
+				if r.Content == "" && !r.Done {
+					return
+				}
+			}
+
 			res := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -3423,6 +3490,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.Message.ToolCalls = toolCalls
 
 				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
+					if os.Getenv("OLLAMA_NO_THINK") == "true" {
+						res.Message.Thinking = ""
+					}
 					slog.Log(ctx, logutil.LevelTrace, "builtin parser output", "parser", parserName, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 					ch <- res
 				} else {
@@ -3470,7 +3540,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 			}
 
-			ch <- res
+			if os.Getenv("OLLAMA_NO_THINK") == "true" {
+				res.Message.Thinking = ""
+			}
+
+			if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
+				ch <- res
+			}
 		})
 		if parserErr != nil {
 			ch <- gin.H{"error": parserErr.Error()}
@@ -3724,4 +3800,68 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+type thinkStripper struct {
+	streamBuf  string
+	inThink    bool
+	openingTag string
+	closingTag string
+}
+
+func (s *thinkStripper) process(content string, done bool) string {
+	if s.openingTag == "" || s.closingTag == "" {
+		return content
+	}
+	s.streamBuf += content
+	var out string
+	for {
+		if !s.inThink {
+			idx := strings.Index(s.streamBuf, s.openingTag)
+			if idx >= 0 {
+				out += s.streamBuf[:idx]
+				s.streamBuf = s.streamBuf[idx+len(s.openingTag):]
+				s.inThink = true
+				continue
+			}
+			overlapLen := overlapString(s.streamBuf, s.openingTag)
+			if overlapLen > 0 {
+				out += s.streamBuf[:len(s.streamBuf)-overlapLen]
+				s.streamBuf = s.streamBuf[len(s.streamBuf)-overlapLen:]
+			} else {
+				out += s.streamBuf
+				s.streamBuf = ""
+			}
+			break
+		} else {
+			idx := strings.Index(s.streamBuf, s.closingTag)
+			if idx >= 0 {
+				s.streamBuf = s.streamBuf[idx+len(s.closingTag):]
+				s.inThink = false
+				continue
+			}
+			if len(s.streamBuf) > len(s.closingTag) {
+				s.streamBuf = s.streamBuf[len(s.streamBuf)-len(s.closingTag):]
+			}
+			break
+		}
+	}
+	if done {
+		out += s.streamBuf
+		s.streamBuf = ""
+	}
+	return out
+}
+
+func overlapString(s, delim string) int {
+	max := len(delim)
+	if len(s) < max {
+		max = len(s)
+	}
+	for i := max; i > 0; i-- {
+		if strings.HasSuffix(s, delim[:i]) {
+			return i
+		}
+	}
+	return 0
 }
