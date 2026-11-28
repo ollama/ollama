@@ -510,6 +510,7 @@ func TestFunctionConvertAndAdd(t *testing.T) {
 		want []string
 	}{
 		{name: "basic dupe handling", in: []string{"get weather", "get weather"}, want: []string{"get_weather", "get_weather_2"}},
+		{name: "leading Unicode digit", in: []string{"١weather"}, want: []string{"_١weather"}},
 		{name: "dupes from different user-specified names", in: []string{"get weather", "get_weather", "get-weather"}, want: []string{"get_weather", "get_weather_2", "get_weather_3"}},
 		{name: "non dupes after dupes", in: []string{"get weather", "get_weather", "get-weather", "something-different"}, want: []string{"get_weather", "get_weather_2", "get_weather_3", "something_different"}},
 		{name: "multiple sets of dupes", in: []string{"a", "a", "b", "a", "a", "b", "a"}, want: []string{"a", "a_2", "b", "a_3", "a_4", "b_2", "a_5"}},
@@ -524,6 +525,9 @@ func TestFunctionConvertAndAdd(t *testing.T) {
 				want := tt.want[j]
 				if got != want {
 					t.Errorf("case %d: got %q, want %q", i, got, want)
+				}
+				if original := parser.OriginalFromConverted(got); original != in {
+					t.Errorf("case %d: OriginalFromConverted(%q) = %q, want %q", i, got, original, in)
 				}
 				// check that the maps are correct
 				if parser.userToHarmony[in] != want {
