@@ -1,11 +1,11 @@
 ---
-title: Tool calling 
+title: Tool calling
 ---
 
 Ollama supports tool calling (also known as function calling) which allows a model to invoke tools and incorporate their results into its replies.
 
 ## Calling a single tool
-Invoke a single tool and include its response in a follow-up request. 
+Invoke a single tool and include its response in a follow-up request.
 
 Also known as "single-shot" tool calling.
 
@@ -68,7 +68,7 @@ Also known as "single-shot" tool calling.
     pip install ollama -U
 
     # with uv
-    uv add ollama    
+    uv add ollama
     ```
 
     ```python
@@ -76,7 +76,7 @@ Also known as "single-shot" tool calling.
 
     def get_temperature(city: str) -> str:
       """Get the current temperature for a city
-      
+
       Args:
         city: The name of the city
 
@@ -274,7 +274,7 @@ Also known as "single-shot" tool calling.
 
     def get_temperature(city: str) -> str:
       """Get the current temperature for a city
-      
+
       Args:
         city: The name of the city
 
@@ -290,7 +290,7 @@ Also known as "single-shot" tool calling.
 
     def get_conditions(city: str) -> str:
       """Get the current weather conditions for a city
-      
+
       Args:
         city: The name of the city
 
@@ -308,13 +308,13 @@ Also known as "single-shot" tool calling.
     messages = [{'role': 'user', 'content': 'What are the current weather conditions and temperature in New York and London?'}]
 
     # The python client automatically parses functions as a tool schema so we can pass them directly
-    # Schemas can be passed directly in the tools list as well 
+    # Schemas can be passed directly in the tools list as well
     response = chat(model='qwen3', messages=messages, tools=[get_temperature, get_conditions], think=True)
 
     # add the assistant message to the messages
     messages.append(response.message)
     if response.message.tool_calls:
-      # process each tool call 
+      # process each tool call
       for call in response.message.tool_calls:
         # execute the appropriate tool
         if call.function.name == 'get_temperature':
@@ -396,7 +396,7 @@ Also known as "single-shot" tool calling.
     // add the assistant message to the messages
     messages.push(response.message)
     if (response.message.tool_calls) {
-      // process each tool call 
+      // process each tool call
       for (const call of response.message.tool_calls) {
         // execute the appropriate tool
         let result: string
@@ -424,9 +424,9 @@ Also known as "single-shot" tool calling.
 
 ## Multi-turn tool calling (Agent loop)
 
-An agent loop allows the model to decide when to invoke tools and incorporate their results into its replies. 
+An agent loop allows the model to decide when to invoke tools and incorporate their results into its replies.
 
-It also might help to tell the model that it is in a loop and can make multiple tool calls. 
+It also might help to tell the model that it is in a loop and can make multiple tool calls.
 
 <Tabs>
   <Tab title="Python">
@@ -590,12 +590,12 @@ When streaming, gather every chunk of `thinking`, `content`, and `tool_calls`, t
 <Tabs>
   <Tab title="Python">
 ```python
-from ollama import chat 
+from ollama import chat
 
 
 def get_temperature(city: str) -> str:
   """Get the current temperature for a city
-  
+
   Args:
     city: The name of the city
 
@@ -756,7 +756,7 @@ from ollama import chat
 
 def get_temperature(city: str) -> str:
   """Get the current temperature for a city
-  
+
   Args:
     city: The name of the city
 
