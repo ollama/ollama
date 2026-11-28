@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
@@ -471,13 +472,76 @@ func parseOlmo3Object(s string) (map[string]any, error) {
 }
 
 func unescapeString(s string) string {
-	// Handle common escape sequences
-	s = strings.ReplaceAll(s, `\\`, "\x00") // Placeholder for backslash
-	s = strings.ReplaceAll(s, `\"`, `"`)
-	s = strings.ReplaceAll(s, `\'`, `'`)
-	s = strings.ReplaceAll(s, `\n`, "\n")
-	s = strings.ReplaceAll(s, `\t`, "\t")
-	s = strings.ReplaceAll(s, `\r`, "\r")
-	s = strings.ReplaceAll(s, "\x00", `\`) // Restore backslash
-	return s
+	// Single pass: the existing placeholder approach breaks when a decoded
+	// \u escape produces the placeholder byte itself (e.g. \u0000 → NUL,
+	// or \u005c → backslash re-introducing an unprocessed escape), so both
+	// backslash handling and \uXXXX decoding run over one scan instead.
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != '\\' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		next := s[i+1]
+		if next == 'u' && i+6 <= len(s) {
+			if r, ok := parseUnicodeEscape(s[i+2 : i+6]); ok {
+				i += 6
+				if r >= 0xD800 && r <= 0xDBFF && i+6 <= len(s) && s[i] == '\\' && s[i+1] == 'u' {
+					if r2, ok2 := parseUnicodeEscape(s[i+2 : i+6]); ok2 && r2 >= 0xDC00 && r2 <= 0xDFFF {
+						b.WriteRune(utf16.DecodeRune(rune(r), rune(r2)))
+						i += 6
+						continue
+					}
+				}
+				b.WriteRune(rune(r))
+				continue
+			}
+		}
+		if i+2 <= len(s) {
+			switch next {
+			case '\\':
+				b.WriteByte('\\')
+				i += 2
+				continue
+			case '"':
+				b.WriteByte('"')
+				i += 2
+				continue
+			case '\'':
+				b.WriteByte('\'')
+				i += 2
+				continue
+			case 'n':
+				b.WriteByte('\n')
+				i += 2
+				continue
+			case 't':
+				b.WriteByte('\t')
+				i += 2
+				continue
+			case 'r':
+				b.WriteByte('\r')
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func parseUnicodeEscape(s string) (uint32, bool) {
+	v, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	return uint32(v), true
 }
