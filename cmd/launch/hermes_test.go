@@ -174,6 +174,9 @@ func TestHermesConfigurePreservesExistingConfigAndEnablesWeb(t *testing.T) {
 	if got, _ := ollamaProvider["api"].(string); got != srv.URL+"/v1" {
 		t.Fatalf("expected providers entry api %q, got %q", srv.URL+"/v1", got)
 	}
+	if got := ollamaProvider["api_key"]; got != hermesPlaceholderKey {
+		t.Fatalf("expected local provider discovery key %q, got %v", hermesPlaceholderKey, got)
+	}
 	if got, _ := ollamaProvider["default_model"].(string); got != "gemma4" {
 		t.Fatalf("expected providers entry default_model gemma4, got %q", got)
 	}
@@ -208,6 +211,7 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 		"  ollama:\n" +
 		"    name: Ollama\n" +
 		"    api: http://127.0.0.1:11434/v1\n" +
+		"    key_env: HERMES_TEST_OLLAMA_KEY\n" +
 		"    default_model: old-model\n" +
 		"    models:\n" +
 		"      - old-model\n" +
@@ -284,6 +288,9 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 	}
 	if got, _ := ollamaProvider["extra_field"].(string); got != "keep-me" {
 		t.Fatalf("expected providers entry extra_field to be preserved, got %q", got)
+	}
+	if got := ollamaProvider["key_env"]; got != "HERMES_TEST_OLLAMA_KEY" || ollamaProvider["api_key"] != nil {
+		t.Fatal("expected existing credential source to remain the only provider credential")
 	}
 	providerModels, _ := ollamaProvider["models"].([]any)
 	if len(providerModels) != 3 {
@@ -490,6 +497,52 @@ func TestHermesPathsUsesHermesHomeOverride(t *testing.T) {
 	want := filepath.Join(hermesHome, "config.yaml")
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("expected HERMES_HOME config path %q, got %v", want, got)
+	}
+}
+
+func TestHermesProviderKeyStaysOnLoopback(t *testing.T) {
+	entry := map[string]any{"api": "http://[::1]:11434/v1"}
+	configureHermesProviderKey(entry, "http://[::1]:11434/v1")
+	if entry["api_key"] != hermesPlaceholderKey {
+		t.Fatal("expected discovery key for IPv6 loopback")
+	}
+	configureHermesProviderKey(entry, "https://ollama.example/v1")
+	if _, exists := entry["api_key"]; exists {
+		t.Fatal("unexpected loopback placeholder after switching to a remote Ollama host")
+	}
+}
+
+func TestMigrateHermesProviderKey(t *testing.T) {
+	dir := t.TempDir()
+	setTestHome(t, dir)
+	t.Setenv("HERMES_HOME", dir)
+	path := filepath.Join(dir, "config.yaml")
+	const endpoint = "http://localhost:11434/v1"
+	const original = `model:
+    base_url: http://localhost:11434/v1
+    default: gemma4
+    provider: ollama-launch
+providers:
+    ollama-launch:
+        api: http://localhost:11434/v1
+        default_model: gemma4
+        models:
+            - gemma4
+            - qwen3.5
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateHermesProviderKey(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(original, "        default_model:", "        api_key: ollama\n        default_model:", 1)
+	if string(data) != want {
+		t.Fatalf("migration should add only the provider key, got:\n%s", data)
 	}
 }
 

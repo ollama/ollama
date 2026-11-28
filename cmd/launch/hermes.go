@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,6 +83,9 @@ func (h *Hermes) Run(_ string, _ []LaunchModel, args []string) error {
 	if err := h.runGatewaySetupPreflight(args, func() error {
 		return hermesAttachedCommand(bin, "gateway", "setup").Run()
 	}); err != nil {
+		return err
+	}
+	if err := migrateHermesProviderKey(hermesBaseURL()); err != nil {
 		return err
 	}
 	return hermesAttachedCommand(bin, args...).Run()
@@ -700,6 +705,7 @@ func applyHermesManagedProviders(cfg map[string]any, baseURL string, model strin
 	if entry == nil {
 		entry = make(map[string]any)
 	}
+	configureHermesProviderKey(entry, baseURL)
 	entry["name"] = hermesProviderName
 	entry["api"] = baseURL
 	entry["default_model"] = model
@@ -714,6 +720,67 @@ func applyHermesManagedProviders(cfg map[string]any, baseURL string, model strin
 		return
 	}
 	cfg["custom_providers"] = customProviders
+}
+
+func configureHermesProviderKey(entry map[string]any, baseURL string) bool {
+	if !hermesLoopbackURL(baseURL) {
+		previousURL, _ := entry["api"].(string)
+		if entry["api_key"] == hermesPlaceholderKey && hermesLoopbackURL(previousURL) {
+			delete(entry, "api_key")
+			return true
+		}
+		return false
+	}
+	for _, field := range []string{"api_key", "key_env", "api_key_env", "key_cmd"} {
+		if value, _ := entry[field].(string); strings.TrimSpace(value) != "" {
+			return false
+		}
+	}
+	// Hermes treats a keyless provider's saved list as an allowlist.
+	entry["api_key"] = hermesPlaceholderKey
+	return true
+}
+
+func migrateHermesProviderKey(baseURL string) error {
+	if !hermesLoopbackURL(baseURL) {
+		return nil
+	}
+	path, err := hermesConfigPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var cfg map[string]any
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("parse hermes config: %w", err)
+	}
+	if hermesManagedCurrentModel(cfg, baseURL) == "" {
+		return nil
+	}
+	entry := hermesManagedProviderEntry(hermesUserProviders(cfg["providers"]))
+	if !configureHermesProviderKey(entry, baseURL) {
+		return nil
+	}
+	data, err = yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(path, data, "hermes")
+}
+
+func hermesLoopbackURL(raw string) bool {
+	u, err := url.Parse(hermesNormalizeURL(raw))
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
 }
 
 func hermesManagedCurrentModel(cfg map[string]any, baseURL string) string {
