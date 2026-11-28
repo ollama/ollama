@@ -95,7 +95,7 @@ Sometimes the Ollama can have difficulties initializing the GPU. When you check 
 - Is the uvm driver loaded? `sudo nvidia-modprobe -u`
 - Try reloading the nvidia_uvm driver - `sudo rmmod nvidia_uvm` then `sudo modprobe nvidia_uvm`
 - Try rebooting
-- Make sure you're running the latest nvidia drivers
+- Run `nvidia-smi` on the host to check the loaded driver version. Compare it with the [NVIDIA hardware requirements](/gpu#nvidia) for your GPU’s compute capability. Use a driver branch that still supports your GPU.
 
 If none of those resolve the problem, gather additional information and file an issue:
 
