@@ -219,6 +219,7 @@ func createModel(ctx context.Context, opts createOptions, p *progress.Progress) 
 		pipelineOpts.Requires = opts.Modelfile.Requires
 		pipelineOpts.DraftDir = opts.Modelfile.Draft
 		pipelineOpts.DraftQuantize = opts.DraftQuantize
+		pipelineOpts.Parameters = opts.Modelfile.Parameters
 	}
 	err := create.Create(
 		ctx,

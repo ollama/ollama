@@ -13,29 +13,40 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+// configInference records which resolved config values came from source
+// metadata rather than an explicit create request value. Create surfaces
+// inferred values to the user; explicit values need no explanation.
+type configInference struct {
+	renderer        bool
+	parser          bool
+	hasChatTemplate bool
+}
+
 // inferSafetensorsConfig derives the manifest config shared by local and
 // server-side safetensors imports. Explicit parser and renderer values take
-// precedence when compatible with the source model's scoring format.
-func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverride, rendererOverride string) (model.ConfigV2, error) {
+// precedence when compatible with the source model's scoring format; the
+// returned configInference records which values came from source metadata.
+func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverride, rendererOverride string) (model.ConfigV2, configInference, error) {
 	chatTemplate, err := readChatTemplateStrict(modelDir)
 	if err != nil {
-		return model.ConfigV2{}, err
+		return model.ConfigV2{}, configInference{}, err
 	}
 
 	var parserName, rendererName, sourceDecisionRenderer string
 	var decisionModel, decisionVision bool
+	var parserInferred, rendererInferred bool
 	switch cfg.Architecture() {
 	case "Qwen3_5Model":
 		hasSidecar, err := hasPplxSidecar(modelDir)
 		if err != nil {
-			return model.ConfigV2{}, err
+			return model.ConfigV2{}, configInference{}, err
 		}
 		if !hasSidecar {
-			return model.ConfigV2{}, fmt.Errorf("Qwen3_5Model requires decision sidecars")
+			return model.ConfigV2{}, configInference{}, fmt.Errorf("Qwen3_5Model requires decision sidecars")
 		}
 		format, err := qwenDecisionFormat(modelDir)
 		if err != nil {
-			return model.ConfigV2{}, err
+			return model.ConfigV2{}, configInference{}, err
 		}
 		rendererName = "pplx"
 		if format == d3FormatID {
@@ -63,12 +74,14 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 	default:
 		parserName, err = parserNameForConfig(modelDir, cfg, chatTemplate)
 		if err != nil {
-			return model.ConfigV2{}, err
+			return model.ConfigV2{}, configInference{}, err
 		}
 		rendererName, err = rendererNameForConfig(modelDir, cfg, chatTemplate)
 		if err != nil {
-			return model.ConfigV2{}, err
+			return model.ConfigV2{}, configInference{}, err
 		}
+		parserInferred = parserOverride == "" && parserName != ""
+		rendererInferred = rendererOverride == "" && rendererName != ""
 	}
 	if parserOverride != "" {
 		parserName = parserOverride
@@ -77,7 +90,7 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		rendererName = rendererOverride
 	}
 	if cfg.Architecture() == "Qwen3_5Model" && (rendererName != sourceDecisionRenderer || parserName != "") {
-		return model.ConfigV2{}, fmt.Errorf("Qwen3.5 decision models require renderer %q and no parser (got renderer %q, parser %q)", sourceDecisionRenderer, rendererName, parserName)
+		return model.ConfigV2{}, configInference{}, fmt.Errorf("Qwen3.5 decision models require renderer %q and no parser (got renderer %q, parser %q)", sourceDecisionRenderer, rendererName, parserName)
 	}
 
 	var capabilities []string
@@ -99,7 +112,7 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 	}
 	generationDefaults, err := readHFGenerationDefaults(modelDir)
 	if err != nil {
-		return model.ConfigV2{}, err
+		return model.ConfigV2{}, configInference{}, err
 	}
 
 	config := model.ConfigV2{
@@ -109,7 +122,12 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		Capabilities:       capabilities,
 		GenerationDefaults: generationDefaults,
 	}
-	return config, nil
+	inferred := configInference{
+		renderer:        rendererInferred,
+		parser:          parserInferred,
+		hasChatTemplate: chatTemplate != "",
+	}
+	return config, inferred, nil
 }
 
 func readHFGenerationDefaults(modelDir string) (model.GenerationDefaults, error) {
