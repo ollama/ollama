@@ -319,6 +319,19 @@ func TestCogitoParser_StreamingEdgeCases(t *testing.T) {
 			hasThinkingSupport: true,
 		},
 		{
+			name: "whitespace_after_thinking_tag_in_later_chunks",
+			chunks: []string{
+				"Let me think.</think>",
+				"\n\n",
+				" \t",
+				"The answer",
+				"\n\nis 42.",
+			},
+			expectedContent:    "The answer\n\nis 42.",
+			expectedThinking:   "Let me think.",
+			hasThinkingSupport: true,
+		},
+		{
 			name: "split_tool_calls_begin_tag_conservative_parsing",
 			chunks: []string{
 				"Content before<｜tool▁calls▁beg",
