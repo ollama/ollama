@@ -69,6 +69,14 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 				return filepath.Join(home, ".omp", "agent", "models.yml")
 			},
 		},
+		{
+			name:   "wirken",
+			binary: "wirken",
+			runner: &Wirken{},
+			checkPath: func(home string) string {
+				return filepath.Join(home, ".wirken", "provider.json")
+			},
+		},
 	}
 
 	for _, tt := range tests {
