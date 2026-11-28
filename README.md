@@ -227,6 +227,7 @@ console.log(response.message.content);
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
 - [oxi](https://github.com/maziluiosif/oxi) - Native Rust desktop coding agent with editor, Git panel and terminal
+- [Mercury CLI](https://github.com/Whq02/MercuryCLI) - Terminal coding agent with a debugger and syntax-tree rewrites
 
 ### Libraries & SDKs
 
