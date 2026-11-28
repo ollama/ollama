@@ -1722,6 +1722,8 @@ func (c *ResponsesStreamConverter) processThinking(thinking string) []ResponsesS
 
 	// Start reasoning item if not started
 	if !c.reasoningStarted {
+		// A preceding text item must close before reasoning uses the next output index.
+		events = append(events, c.FinishMessageItem()...)
 		c.reasoningStarted = true
 		c.reasoningItemID = fmt.Sprintf("rs_%d", rand.Intn(999999))
 

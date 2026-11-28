@@ -3336,6 +3336,45 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 	}
 }
 
+func TestResponsesStreamConverter_TextThenThinkingUsesNewOutputIndex(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{Message: api.Message{Content: "first"}})
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Thinking: "hmm"}})...)
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Content: "second"}, Done: true})...)
+
+	added := map[any]int{}
+	done := map[int]any{}
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.added":
+			id := data["item"].(map[string]any)["id"]
+			for other, index := range added {
+				if index == data["output_index"].(int) {
+					t.Fatalf("%v added at output index %d already used by %v", id, index, other)
+				}
+			}
+			added[id] = data["output_index"].(int)
+		case "response.output_item.done":
+			id := data["item"].(map[string]any)["id"]
+			if index := data["output_index"].(int); index != added[id] {
+				t.Fatalf("%v added at output index %d but done at %d", id, added[id], index)
+			}
+			done[data["output_index"].(int)] = id
+		}
+	}
+	last := events[len(events)-1]
+	output := last.Data.(map[string]any)["response"].(map[string]any)["output"].([]any)
+	if len(output) != 3 {
+		t.Fatalf("terminal output count = %d, want 3: %#v", len(output), output)
+	}
+	for i, raw := range output {
+		if got := raw.(map[string]any)["id"]; got != done[i] {
+			t.Fatalf("terminal output[%d] ID = %v, streamed done ID = %v", i, got, done[i])
+		}
+	}
+}
+
 func TestResponsesStreamConverter_TextThenToolCompletion(t *testing.T) {
 	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
 	events := converter.Process(api.ChatResponse{Message: api.Message{Content: "checking weather"}})
