@@ -305,7 +305,8 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.config), 0o600); err != nil {
+			configData := []byte(tt.config)
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), configData, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if tt.decisionSidecar {
@@ -348,6 +349,7 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 		{parser: "poolside-v1", want: []string{"completion", "tools", "thinking"}},
 		{parser: "functiongemma", want: []string{"completion", "tools"}},
 		{parser: "glimmer", want: []string{"completion", "tools", "thinking"}},
+		{parser: "deepseek-v41", want: []string{"completion", "tools", "thinking"}},
 	} {
 		t.Run(tt.parser, func(t *testing.T) {
 			dir := t.TempDir()

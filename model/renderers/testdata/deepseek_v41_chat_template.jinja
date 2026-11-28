@@ -1,0 +1,252 @@
+{#- DeepSeek-V4.1 chat template, ported from encoding/encoding.py in the model repo.
+    Extra kwargs: thinking_mode ("thinking" | "chat", default "thinking"; enable_thinking=true/false is accepted
+    as an alias), drop_thinking (default true), reasoning_effort (int in [1, 100] or "low"/"medium"/"high"/"max",
+    default "high"). Assistant reasoning is read from reasoning_content, or from thinking as an alias. -#}
+{%- set IMG = "<｜deepseek_image｜>" -%}
+{%- set DSML = "｜DSML｜" -%}
+
+{%- if thinking_mode is not defined -%}
+    {%- set thinking_mode = "chat" if (enable_thinking is defined and enable_thinking is not none and not enable_thinking) else "thinking" -%}
+{%- endif -%}
+{%- if thinking_mode not in ["chat", "thinking"] -%}
+    {{- raise_exception("Invalid thinking_mode `" ~ thinking_mode ~ "`, should be \"chat\" or \"thinking\"") -}}
+{%- endif -%}
+{%- if drop_thinking is not defined -%}{%- set drop_thinking = true -%}{%- endif -%}
+{%- if add_generation_prompt is not defined -%}{%- set add_generation_prompt = false -%}{%- endif -%}
+{%- if tools is not defined -%}{%- set tools = none -%}{%- endif -%}
+
+{%- if reasoning_effort is not defined or reasoning_effort is none -%}{%- set reasoning_effort = "high" -%}{%- endif -%}
+{%- set effort_map = {"low": 50, "medium": 62, "high": 75, "max": 100} -%}
+{%- if reasoning_effort is string and reasoning_effort in effort_map -%}
+    {%- set budget = effort_map[reasoning_effort] -%}
+{%- elif reasoning_effort is integer and 1 <= reasoning_effort <= 100 -%}
+    {%- set budget = reasoning_effort -%}
+{%- else -%}
+    {{- raise_exception("Invalid reasoning effort: " ~ reasoning_effort ~ ", should be int within [1,100] or one of \"low\", \"medium\", \"high\", \"max\"") -}}
+{%- endif -%}
+
+{#- Text of text/image blocks joined by blank lines; other block types are dropped. -#}
+{%- macro joined_text(blocks) -%}
+    {%- set jt = namespace(parts=[]) -%}
+    {%- for b in blocks -%}
+        {%- if b.type == "text" -%}
+            {%- if IMG in (b.text or "") -%}{{- raise_exception("Text block contains image placeholder " ~ IMG ~ ". Images should be separate content blocks.") -}}{%- endif -%}
+            {%- set jt.parts = jt.parts + [b.text or ""] -%}
+        {%- elif b.type in ["image", "image_url"] -%}
+            {%- set jt.parts = jt.parts + [IMG] -%}
+        {%- endif -%}
+    {%- endfor -%}
+    {{- jt.parts | join("\n\n") -}}
+{%- endmacro -%}
+
+{#- Splits/validates "ns::name" against an explicit namespace and returns the qualified name. -#}
+{%- macro qualified_name(name, ns) -%}
+    {%- if ns is mapping -%}{%- set ns = ns.name -%}{%- endif -%}
+    {%- set parts = name.split("::", 1) -%}
+    {%- if parts | length == 2 -%}
+        {%- if ns is not none and ns != parts[0] -%}{{- raise_exception("Conflicting tool namespaces: " ~ ns ~ " != " ~ parts[0]) -}}{%- endif -%}
+        {%- set ns = parts[0] -%}
+        {%- set name = parts[1] -%}
+    {%- endif -%}
+    {%- if "::" in name -%}{{- raise_exception("Tool name must not contain '::': " ~ name) -}}{%- endif -%}
+    {%- if ns is not none and "::" in ns -%}{{- raise_exception("Tool namespace must not contain '::': " ~ ns) -}}{%- endif -%}
+    {{- name if ns is none else ns ~ "::" ~ name -}}
+{%- endmacro -%}
+
+{%- macro render_tools(tool_list) -%}
+    {%- set ts = namespace(schemas=[]) -%}
+    {%- for tool in tool_list -%}
+        {%- set fn = tool.function if tool.function is defined else tool -%}
+        {%- set ns = tool.namespace if tool.namespace is defined and tool.namespace is not none else fn.get("namespace") -%}
+        {%- set schema = namespace(d={}) -%}
+        {%- for k, v in fn.items() if k != "namespace" -%}{%- set schema.d = dict(schema.d, **{k: v}) -%}{%- endfor -%}
+        {%- set schema.d = dict(schema.d, name=qualified_name(fn.name, ns)) -%}
+        {%- if ns is mapping and ns.description -%}
+            {%- set schema.d = dict(schema.d, description=ns.description ~ "\n" ~ (fn.description or "")) -%}
+        {%- endif -%}
+        {%- set ts.schemas = ts.schemas + [schema.d | tojson] -%}
+    {%- endfor -%}
+    {{- "## Tools\n\nYou have access to a set of tools to help answer the user's question. You can invoke tools by writing a \"<｜DSML｜ calls>\" block like the following:\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"$TOOL_NAME\">\n<｜DSML｜ parameter name=\"$PARAMETER_NAME\" string=\"true|false\">$PARAMETER_VALUE</｜DSML｜ parameter>\n...\n</｜DSML｜ invoke>\n<｜DSML｜ invoke name=\"$TOOL_NAME2\">\n...\n</｜DSML｜ invoke>\n</｜DSML｜ calls>\n\nString parameters should be specified as is and set `string=\"true\"`. For all other types (numbers, booleans, arrays, objects), pass the value in JSON format and set `string=\"false\"`.\n\nIf thinking_mode is enabled (triggered by <think>), you MUST output your complete reasoning inside <think>...</think> BEFORE any tool calls or final response.\n\nOtherwise, output directly after </think> with tool calls or final response.\n\n### Available Tool Schemas\n\n" -}}
+    {{- ts.schemas | join("\n") -}}
+    {{- "\n\nYou MUST strictly follow the above defined tool name and parameter schemas to invoke tool calls.\n" -}}
+{%- endmacro -%}
+
+{#- 1. Merge tool results (and consecutive user turns) into user messages made of content blocks. -#}
+{%- set mns = namespace(list=[]) -%}
+{%- for msg in messages -%}
+    {%- set content = msg.get("content") -%}
+    {%- set is_blocks = content is iterable and content is not string and content is not mapping -%}
+    {%- if content is string and IMG in content -%}
+        {{- raise_exception("Message content contains image special token " ~ IMG ~ ". Images should be provided as image content blocks.") -}}
+    {%- endif -%}
+    {%- set rc = msg.reasoning_content if msg.get("reasoning_content") is not none else msg.get("thinking") -%}
+    {%- if rc is string and IMG in rc -%}
+        {{- raise_exception("reasoning_content contains image special token " ~ IMG) -}}
+    {%- endif -%}
+    {%- set prev = mns.list[-1] if mns.list else none -%}
+    {%- if msg.role == "tool" -%}
+        {%- set tblock = {"type": "tool_result", "tool_use_id": msg.get("tool_call_id", ""), "content": joined_text(content) if is_blocks else msg.get("content", "")} -%}
+        {%- if prev is not none and prev.role == "user" -%}
+            {%- set mns.list = mns.list[:-1] + [dict(prev, content_blocks=prev.content_blocks + [tblock])] -%}
+        {%- else -%}
+            {%- set mns.list = mns.list + [{"role": "user", "content_blocks": [tblock]}] -%}
+        {%- endif -%}
+    {%- elif msg.role == "user" -%}
+        {%- set blocks = content if is_blocks else [{"type": "text", "text": content or ""}] -%}
+        {%- if prev is not none and prev.role == "user" and prev.get("task") is none -%}
+            {%- set mns.list = mns.list[:-1] + [dict(prev, content_blocks=prev.content_blocks + blocks)] -%}
+        {%- else -%}
+            {%- set mns.list = mns.list + [dict(msg, content_blocks=blocks)] -%}
+        {%- endif -%}
+    {%- else -%}
+        {%- set mns.list = mns.list + [msg] -%}
+    {%- endif -%}
+{%- endfor -%}
+
+{#- Top-level tools attach to a leading system message, or to a new empty one. -#}
+{%- if tools -%}
+    {%- if mns.list and mns.list[0].role == "system" -%}
+        {%- if not mns.list[0].get("tools") -%}{%- set mns.list = [dict(mns.list[0], tools=tools)] + mns.list[1:] -%}{%- endif -%}
+    {%- else -%}
+        {%- set mns.list = [{"role": "system", "content": "", "tools": tools}] + mns.list -%}
+    {%- endif -%}
+{%- endif -%}
+
+{#- 2. Reorder tool results to match the tool_calls order of the preceding assistant message. -#}
+{%- set sns = namespace(list=[], ids=[]) -%}
+{%- for m in mns.list -%}
+    {%- if m.role == "assistant" and m.get("tool_calls") -%}
+        {%- set sns.ids = [] -%}
+        {%- for tc in m.tool_calls -%}
+            {%- set sns.ids = sns.ids + [tc.get("id") or tc.get("function", {}).get("id", "")] -%}
+        {%- endfor -%}
+        {%- set sns.list = sns.list + [m] -%}
+    {%- elif m.role == "user" and m.content_blocks -%}
+        {%- set tb = namespace(blocks=[]) -%}
+        {%- for b in m.content_blocks if b.type == "tool_result" -%}
+            {%- set order = namespace(idx=0) -%}
+            {%- for tc_id in sns.ids -%}
+                {%- if tc_id and tc_id == b.get("tool_use_id", "") -%}{%- set order.idx = loop.index0 -%}{%- endif -%}
+            {%- endfor -%}
+            {%- set tb.blocks = tb.blocks + [dict(b, _order=order.idx)] -%}
+        {%- endfor -%}
+        {%- if tb.blocks | length > 1 -%}
+            {%- set sorted_blocks = tb.blocks | sort(attribute="_order") -%}
+            {%- set rb = namespace(blocks=[], i=0) -%}
+            {%- for b in m.content_blocks -%}
+                {%- if b.type == "tool_result" -%}
+                    {%- set rb.blocks = rb.blocks + [sorted_blocks[rb.i]] -%}
+                    {%- set rb.i = rb.i + 1 -%}
+                {%- else -%}
+                    {%- set rb.blocks = rb.blocks + [b] -%}
+                {%- endif -%}
+            {%- endfor -%}
+            {%- set sns.list = sns.list + [dict(m, content_blocks=rb.blocks)] -%}
+        {%- else -%}
+            {%- set sns.list = sns.list + [m] -%}
+        {%- endif -%}
+    {%- else -%}
+        {%- set sns.list = sns.list + [m] -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- set msgs = sns.list -%}
+
+{#- Mid-conversation system messages count as user turns. Tools anywhere disable drop_thinking. -#}
+{%- set state = namespace(last_user=-1, has_tools=false) -%}
+{%- for m in msgs -%}
+    {%- if m.role == "user" or (m.role == "system" and loop.index0 > 0) -%}{%- set state.last_user = loop.index0 -%}{%- endif -%}
+    {%- if m.get("tools") -%}{%- set state.has_tools = true -%}{%- endif -%}
+{%- endfor -%}
+{%- set effective_drop = drop_thinking and not state.has_tools -%}
+{%- set thinking = thinking_mode == "thinking" -%}
+
+{{- "<｜begin▁of▁sentence｜>" -}}
+{#- 3. Render each message. -#}
+{%- for m in msgs -%}
+    {%- set idx = loop.index0 -%}
+    {%- set content = m.get("content") -%}
+    {%- if content is iterable and content is not string and content is not mapping -%}{%- set content = joined_text(content) -%}{%- endif -%}
+
+    {%- if idx == 0 -%}
+        {%- if thinking or m.role == "system" -%}{{- "<｜System｜>" -}}{%- endif -%}
+        {%- if thinking -%}{{- "Reasoning Effort: " ~ budget ~ " (range 1-100, the higher the value, the more thorough the reasoning)\n\n" -}}{%- endif -%}
+    {%- endif -%}
+
+    {%- if m.role == "system" -%}
+        {%- if idx > 0 -%}{{- "<｜System｜>" -}}{%- endif -%}
+        {{- content or "" -}}
+        {%- if m.get("tools") -%}{{- "\n\n" ~ render_tools(m.tools) -}}{%- endif -%}
+        {%- if m.get("response_format") -%}
+            {{- "\n\n## Response Format:\n\nYou MUST strictly adhere to the following schema to reply:\n" ~ (m.response_format | tojson) -}}
+        {%- endif -%}
+
+    {%- elif m.role == "user" -%}
+        {{- "<｜User｜>" -}}
+        {%- set up = namespace(parts=[]) -%}
+        {%- for b in m.content_blocks -%}
+            {%- if b.type == "text" -%}
+                {%- if IMG in (b.text or "") -%}{{- raise_exception("Text block contains image placeholder " ~ IMG ~ ". Images should be separate content blocks.") -}}{%- endif -%}
+                {%- set up.parts = up.parts + [b.text or ""] -%}
+            {%- elif b.type in ["image", "image_url"] -%}
+                {%- set up.parts = up.parts + [IMG] -%}
+            {%- elif b.type == "tool_result" -%}
+                {%- set tc = b.get("content", "") -%}
+                {%- if tc is iterable and tc is not string and tc is not mapping -%}
+                    {%- set sub = namespace(parts=[]) -%}
+                    {%- for s in tc -%}
+                        {%- if s.type == "text" -%}{%- set sub.parts = sub.parts + [s.get("text", "")] -%}
+                        {%- elif s.type in ["image", "image_url"] -%}{%- set sub.parts = sub.parts + [IMG] -%}
+                        {%- else -%}{%- set sub.parts = sub.parts + ["[Unsupported " ~ s.type ~ "]"] -%}
+                        {%- endif -%}
+                    {%- endfor -%}
+                    {%- set tc = sub.parts | join("\n\n") -%}
+                {%- endif -%}
+                {%- set up.parts = up.parts + ["<tool_result>" ~ tc ~ "</tool_result>"] -%}
+            {%- else -%}
+                {%- set up.parts = up.parts + ["[Unsupported " ~ b.type ~ "]"] -%}
+            {%- endif -%}
+        {%- endfor -%}
+        {{- up.parts | join("\n\n") -}}
+
+    {%- elif m.role == "latest_reminder" -%}
+        {{- "<｜latest_reminder｜>" ~ content -}}
+
+    {%- elif m.role == "assistant" -%}
+        {%- set prev_has_task = idx > 0 and msgs[idx - 1].get("task") is not none -%}
+        {%- if thinking and not prev_has_task and (not effective_drop or idx > state.last_user) -%}
+            {{- ((m.reasoning_content if m.get("reasoning_content") is not none else m.get("thinking")) or "") ~ "</think>" -}}
+        {%- endif -%}
+        {{- content or "" -}}
+        {%- if m.get("tool_calls") -%}
+            {%- set tcs = namespace(lines=[]) -%}
+            {%- for tc in m.tool_calls -%}
+                {%- set fn = tc.function -%}
+                {%- set params = namespace(lines=[]) -%}
+                {%- set args = fn.arguments if fn.arguments is mapping else {"arguments": fn.arguments} -%}
+                {%- for k, v in args.items() -%}
+                    {%- set params.lines = params.lines + ["<" ~ DSML ~ " parameter name=\"" ~ k ~ "\" string=\"" ~ ("true" if v is string else "false") ~ "\">" ~ (v if v is string else v | tojson) ~ "</" ~ DSML ~ " parameter>"] -%}
+                {%- endfor -%}
+                {%- set name = qualified_name(fn.name, tc.get("namespace") or fn.get("namespace")) -%}
+                {%- set tcs.lines = tcs.lines + ["<" ~ DSML ~ " invoke name=\"" ~ name ~ "\">\n" ~ params.lines | join("\n") ~ "\n</" ~ DSML ~ " invoke>"] -%}
+            {%- endfor -%}
+            {{- "\n\n<" ~ DSML ~ " calls>\n" ~ tcs.lines | join("\n") ~ "\n</" ~ DSML ~ " calls>" -}}
+        {%- endif -%}
+        {%- if not m.get("wo_eos", false) -%}{{- "<｜end▁of▁sentence｜>" -}}{%- endif -%}
+
+    {%- else -%}
+        {{- raise_exception("Unknown role: " ~ m.role) -}}
+    {%- endif -%}
+
+    {#- Transition tokens, only when the next message is an assistant/latest_reminder turn or this is the last one. -#}
+    {%- if loop.last or msgs[idx + 1].role in ["assistant", "latest_reminder"] -%}
+        {%- set task = m.get("task") -%}
+        {%- if task is not none -%}
+            {%- set task_tokens = {"action": "<｜action｜>", "query": "<｜query｜>", "authority": "<｜authority｜>", "domain": "<｜domain｜>", "title": "<｜title｜>", "read_url": "<｜read_url｜>"} -%}
+            {%- if task not in task_tokens -%}{{- raise_exception("Invalid task: '" ~ task ~ "'") -}}{%- endif -%}
+            {%- if task == "action" -%}{{- "<｜Assistant｜>" ~ ("<think>" if thinking else "</think>") -}}{%- endif -%}
+            {{- task_tokens[task] -}}
+        {%- elif (m.role == "user" or (m.role == "system" and idx > 0)) and (add_generation_prompt or not loop.last) -%}
+            {{- "<｜Assistant｜>" ~ ("<think>" if thinking and (not effective_drop or idx >= state.last_user) else "</think>") -}}
+        {%- endif -%}
+    {%- endif -%}
+{%- endfor -%}

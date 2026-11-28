@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -118,6 +119,65 @@ func NewTensorDataFromBytes(name, dtype string, shape []int32, rawData []byte) *
 		Size:   int64(len(rawData)),
 		reader: io.NewSectionReader(bytes.NewReader(rawData), 0, int64(len(rawData))),
 	}
+}
+
+// ConcatTensorData presents adjacent source tensors as one tensor without
+// materializing their bytes. This is used for large expert banks, where an
+// in-memory concatenation can be several gigabytes.
+func ConcatTensorData(name, dtype string, shape []int32, parts []*TensorData) (*TensorData, error) {
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("concatenate %s: no source tensors", name)
+	}
+	var size int64
+	ends := make([]int64, len(parts))
+	for i, part := range parts {
+		if part == nil || part.reader == nil || part.Size < 0 || part.Size > math.MaxInt64-size {
+			return nil, fmt.Errorf("concatenate %s: invalid source tensor %d", name, i)
+		}
+		size += part.Size
+		ends[i] = size
+	}
+	return &TensorData{
+		Name:   name,
+		Dtype:  dtype,
+		Shape:  append([]int32(nil), shape...),
+		Size:   size,
+		reader: io.NewSectionReader(&tensorPartsReaderAt{parts: parts, ends: ends}, 0, size),
+	}, nil
+}
+
+type tensorPartsReaderAt struct {
+	parts []*TensorData
+	ends  []int64
+}
+
+func (r *tensorPartsReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off < 0 {
+		return 0, fmt.Errorf("negative tensor offset %d", off)
+	}
+	n := 0
+	for len(p) > 0 && off < r.ends[len(r.ends)-1] {
+		i := sort.Search(len(r.ends), func(i int) bool { return r.ends[i] > off })
+		start := int64(0)
+		if i > 0 {
+			start = r.ends[i-1]
+		}
+		chunk := min(int64(len(p)), r.ends[i]-off)
+		count, err := r.parts[i].reader.ReadAt(p[:chunk], off-start)
+		n += count
+		off += int64(count)
+		p = p[count:]
+		if err != nil && !(err == io.EOF && int64(count) == chunk) {
+			return n, err
+		}
+		if int64(count) != chunk {
+			return n, io.ErrUnexpectedEOF
+		}
+	}
+	if len(p) > 0 {
+		return n, io.EOF
+	}
+	return n, nil
 }
 
 // ExtractRawFromSafetensors reads a safetensors-wrapped reader and extracts

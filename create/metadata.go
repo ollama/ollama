@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ollama/ollama/mlxrunner/model/deepseek_v41"
 	modelparsers "github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
@@ -17,6 +18,16 @@ import (
 // server-side safetensors imports. Explicit parser and renderer values take
 // precedence when compatible with the source model's scoring format.
 func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverride, rendererOverride string) (model.ConfigV2, error) {
+	if cfg.Architecture() == "DeepseekV41ForCausalLM" {
+		path := filepath.Join(modelDir, "config.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return model.ConfigV2{}, fmt.Errorf("read %s: %w", path, err)
+		}
+		if err := deepseek_v41.ValidateConfig(data); err != nil {
+			return model.ConfigV2{}, fmt.Errorf("unsupported DeepSeek V4.1 source config: %w", err)
+		}
+	}
 	chatTemplate, err := readChatTemplateStrict(modelDir)
 	if err != nil {
 		return model.ConfigV2{}, err
@@ -93,6 +104,12 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		capabilities = []string{"speech"}
 	} else {
 		capabilities = inferCompletionCapabilitiesFromConfig(cfg, chatTemplate, parserName)
+	}
+	if cfg.Architecture() == "DeepseekV41ForCausalLM" {
+		capabilities = []string{"completion"}
+		if cfg.VisionConfig != nil {
+			capabilities = append(capabilities, "vision")
+		}
 	}
 	if rendererName == "lfm3-omni" || rendererName == "lfm3-audio" {
 		capabilities = lfm3AudioCapabilities(capabilities)
@@ -282,6 +299,8 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "deepseekv41forcausallm" || s == "deepseek_v41":
+		return "deepseek-v41", nil
 	case s == "ricursiveforcausallm" || s == "ricursive":
 		return "ripple", nil
 	case strings.Contains(s, "flint"):
@@ -324,6 +343,8 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "deepseekv41forcausallm" || s == "deepseek_v41":
+		return "deepseek-v41", nil
 	case s == "ricursiveforcausallm" || s == "ricursive":
 		return "ripple", nil
 	case strings.Contains(s, "flint"):
