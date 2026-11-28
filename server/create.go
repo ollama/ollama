@@ -885,6 +885,18 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 					case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
 						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
+					case "ornith":
+						config.Renderer = cmp.Or(config.Renderer, "ornith")
+						config.Parser = cmp.Or(config.Parser, "ornith")
+					case "qwen35", "qwen35moe":
+						generalName := strings.ToLower(layer.GGUF.KeyValue("general.name").String())
+						if strings.Contains(generalName, "ornith") {
+							config.Renderer = cmp.Or(config.Renderer, "ornith")
+							config.Parser = cmp.Or(config.Parser, "ornith")
+						} else {
+							config.Renderer = cmp.Or(config.Renderer, "qwen3.5")
+							config.Parser = cmp.Or(config.Parser, "qwen3.5")
+						}
 					}
 				}
 			case manifest.MediaTypeImageDraft:
