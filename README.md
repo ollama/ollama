@@ -321,6 +321,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [Sparkkeep](https://github.com/BurlacuAndrei/sparkkeep) - Self-hosted action engine and triage board for links, notes, and media with local AI
 
 ### Observability & Monitoring
 
