@@ -31,31 +31,34 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 	var systemMessage *api.Message
 	filteredMessages := make([]api.Message, 0, len(messages))
 	for i, message := range messages {
-		if message.Role == "system" {
-			if systemMessage == nil {
-				systemMessage = &messages[i]
-			}
+		if message.Role == "system" && systemMessage == nil {
+			systemMessage = &messages[i]
 			continue
 		}
 		filteredMessages = append(filteredMessages, message)
 	}
 
-	// Render system message
-	if systemMessage != nil {
-		// Custom system message - single newline after "system"
+	writeSystemMessage := func(content string) error {
 		sb.WriteString("<|im_start|>system\n")
-		sb.WriteString(systemMessage.Content)
+		sb.WriteString(content)
 
 		if len(tools) > 0 {
 			functionsJSON, err := marshalWithSpaces(tools)
 			if err != nil {
-				return "", err
+				return err
 			}
 			sb.WriteString("<functions>")
 			sb.WriteString(string(functionsJSON))
 			sb.WriteString("</functions>")
 		}
 		sb.WriteString("<|im_end|>\n")
+		return nil
+	}
+
+	if systemMessage != nil {
+		if err := writeSystemMessage(systemMessage.Content); err != nil {
+			return "", err
+		}
 	} else {
 		// Default system message - single newline after "system"
 		sb.WriteString("<|im_start|>system\n")
@@ -85,6 +88,11 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 		lastMessage := i == len(filteredMessages)-1
 
 		switch message.Role {
+		case "system":
+			if err := writeSystemMessage(message.Content); err != nil {
+				return "", err
+			}
+
 		case "user":
 			sb.WriteString("<|im_start|>user\n")
 			sb.WriteString(message.Content)

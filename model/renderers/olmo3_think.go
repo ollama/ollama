@@ -36,10 +36,8 @@ func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api
 	var systemMessage *api.Message
 	filteredMessages := make([]api.Message, 0, len(messages))
 	for i, message := range messages {
-		if message.Role == "system" {
-			if systemMessage == nil {
-				systemMessage = &messages[i]
-			}
+		if message.Role == "system" && systemMessage == nil {
+			systemMessage = &messages[i]
 			continue
 		}
 		// Skip tool messages - Think models don't support tools
@@ -68,6 +66,12 @@ func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api
 
 	for _, message := range filteredMessages {
 		switch message.Role {
+		case "system":
+			sb.WriteString("<|im_start|>system\n")
+			sb.WriteString(message.Content)
+			sb.WriteString(olmo3ThinkFunctionsSuffix)
+			sb.WriteString("<|im_end|>\n")
+
 		case "user":
 			sb.WriteString("<|im_start|>user\n")
 			sb.WriteString(message.Content)
