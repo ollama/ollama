@@ -15,7 +15,7 @@ func renderContentWithImageTags(content string, imageCount int, imageOffset int)
 		return content, imageOffset
 	}
 
-	if strings.Contains(content, "[img-") {
+	if indexedImageTagPresent(content, imageCount, imageOffset) {
 		return content, imageOffset + imageCount
 	}
 
@@ -36,4 +36,17 @@ func renderContentWithImageTags(content string, imageCount int, imageOffset int)
 	}
 
 	return prefix.String() + content, imageOffset + imageCount
+}
+
+// indexedImageTagPresent reports whether content already has a numbered
+// placeholder for every image in [imageOffset, imageOffset+imageCount).
+// One match is not enough: arr[img-1] is not the tag for image 0, and a
+// two-image message still needs [img-0].
+func indexedImageTagPresent(content string, imageCount, imageOffset int) bool {
+	for i := range imageCount {
+		if !strings.Contains(content, fmt.Sprintf("[img-%d]", imageOffset+i)) {
+			return false
+		}
+	}
+	return true
 }

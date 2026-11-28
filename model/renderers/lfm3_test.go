@@ -67,6 +67,8 @@ func TestLFM3RendererImageTag(t *testing.T) {
 		{name: "two images", role: "user", content: "Compare them.", images: 2, want: "[img-0][img-1]Compare them."},
 		{name: "explicit markers", role: "user", content: "A [img] B [img] C", images: 2, want: "A [img-0] B [img-1] C"},
 		{name: "indexed marker", role: "user", content: "Describe [img-0]", images: 1, want: "Describe [img-0]"},
+		{name: "stray img substring", role: "user", content: "What does arr[img-1] mean?", images: 1, want: "[img-0]What does arr[img-1] mean?"},
+		{name: "one index does not cover the batch", role: "user", content: "What does arr[img-1] mean?", images: 2, want: "[img-0][img-1]What does arr[img-1] mean?"},
 		{name: "indexed markers", role: "user", content: "Compare [img-0] and [img-1]", images: 2, want: "Compare [img-0] and [img-1]"},
 		{name: "indexed tool image", role: "tool", content: "Found [img-0]", images: 1, want: "<tool_response>\nFound [img-0]\n</tool_response>"},
 		{name: "publisher marker", role: "user", content: "A " + lfm3Image + " B", images: 1, want: "A [img-0] B"},
