@@ -3,6 +3,7 @@ import ChatForm from "./ChatForm";
 import { FileUpload } from "./FileUpload";
 import { DisplayStale } from "./DisplayStale";
 import { DisplayLogin } from "./DisplayLogin";
+import { ErrorMessage } from "./ErrorMessage";
 import {
   useChat,
   useSendMessage,
@@ -201,6 +202,11 @@ export default function Chat({ chatId }: { chatId: string }) {
       {chatId === "new" ? (
         <div className="flex flex-col h-screen justify-center relative">
           <div className="px-6">
+            {chatError && (
+              <div className="mx-auto max-w-[768px]">
+                <ErrorMessage error={chatError} />
+              </div>
+            )}
             <ChatForm
               hasMessages={false}
               onSubmit={handleChatFormSubmit}
