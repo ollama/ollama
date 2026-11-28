@@ -341,11 +341,11 @@ func (i *Instance) Readline() (string, error) {
 }
 
 func (i *Instance) HistoryEnable() {
-	i.History.Enabled = true
+	i.History.setEnabled(true)
 }
 
 func (i *Instance) HistoryDisable() {
-	i.History.Enabled = false
+	i.History.setEnabled(false)
 }
 
 func (i *Instance) historyPrev(buf *Buffer, currentLineBuf *[]rune) {
