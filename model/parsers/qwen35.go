@@ -110,7 +110,7 @@ func (p *Qwen35Parser) Add(s string, done bool) (content string, thinking string
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwen35EventContent:
-			parsedContent, _, parsedCalls, err := p.toolParser.Add(event.content, done)
+			parsedContent, _, parsedCalls, err := p.toolParser.Add(event.content, false)
 			if err != nil {
 				slog.Warn("qwen3.5 tool call parsing failed", "error", err)
 				return "", "", nil, err
@@ -120,6 +120,20 @@ func (p *Qwen35Parser) Add(s string, done bool) (content string, thinking string
 		case qwen35EventThinkingContent:
 			thinkingSb.WriteString(event.content)
 		}
+	}
+
+	// Flush the tool call parser even when this call produced no content
+	// event, as with the empty final chunk that ends a stream. Otherwise the
+	// text it holds back (a partial tag, trailing whitespace or an unclosed
+	// tool call) is lost.
+	if done {
+		parsedContent, _, parsedCalls, err := p.toolParser.Add("", true)
+		if err != nil {
+			slog.Warn("qwen3.5 tool call parsing failed", "error", err)
+			return "", "", nil, err
+		}
+		contentSb.WriteString(parsedContent)
+		calls = append(calls, parsedCalls...)
 	}
 
 	return contentSb.String(), thinkingSb.String(), calls, nil
