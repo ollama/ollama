@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -362,12 +363,20 @@ func RetrieveMiddleware() gin.HandlerFunc {
 
 func CompletionsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req openai.CompletionRequest
-		err := c.ShouldBindJSON(&req)
+		data, err := readRequestBody(c)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
+
+		var req openai.CompletionRequest
+		err = c.ShouldBindJSON(&req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		logUnrecognizedFields("completions", req.Model, data, req)
 
 		var b bytes.Buffer
 		genReq, err := openai.FromCompleteRequest(req)
@@ -397,12 +406,20 @@ func CompletionsMiddleware() gin.HandlerFunc {
 
 func EmbeddingsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req openai.EmbedRequest
-		err := c.ShouldBindJSON(&req)
+		data, err := readRequestBody(c)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
+
+		var req openai.EmbedRequest
+		err = c.ShouldBindJSON(&req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		logUnrecognizedFields("embeddings", req.Model, data, req)
 
 		// Validate encoding_format parameter
 		if req.EncodingFormat != "" {
@@ -446,14 +463,84 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 	}
 }
 
+// readRequestBody reads the full request body and restores it so that the
+// request can still be bound later.
+func readRequestBody(c *gin.Context) ([]byte, error) {
+	data, err := io.ReadAll(c.Request.Body)
+	if err == nil {
+		c.Request.Body = io.NopCloser(bytes.NewReader(data))
+	}
+	return data, err
+}
+
+// logUnrecognizedFields reports top-level request fields that req does not
+// recognize. OpenAI-compatible servers accept unknown fields, but the typed
+// request conversion drops them without any signal, leaving clients unable
+// to tell that anything was ignored; this surfaces the drop in the server log.
+func logUnrecognizedFields(endpoint string, model string, data []byte, req any) {
+	fields := unrecognizedJSONFields(data, reflect.TypeOf(req))
+	if len(fields) == 0 {
+		return
+	}
+	slog.Info("openai-compat: ignoring unrecognized request fields",
+		"endpoint", endpoint,
+		"model", model,
+		"fields", fields)
+}
+
+// unrecognizedJSONFields returns the top-level keys in data that do not match
+// any exported json field of typ. Keys are compared case-insensitively because
+// encoding/json resolves struct fields case-insensitively, so "Max_Tokens"
+// decodes into max_tokens and is not unrecognized. Nested objects are not
+// inspected: only top-level fields are dropped by the request conversion.
+func unrecognizedJSONFields(data []byte, typ reflect.Type) []string {
+	if typ == nil || typ.Kind() != reflect.Struct {
+		return nil
+	}
+
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil || len(fields) == 0 {
+		return nil
+	}
+
+	known := make(map[string]struct{})
+	for _, f := range reflect.VisibleFields(typ) {
+		if !f.IsExported() {
+			continue
+		}
+		tag := strings.Split(f.Tag.Get("json"), ",")[0]
+		if tag == "" {
+			tag = f.Name
+		}
+		known[strings.ToLower(tag)] = struct{}{}
+	}
+
+	var unrecognized []string
+	for key := range fields {
+		if _, ok := known[strings.ToLower(key)]; !ok {
+			unrecognized = append(unrecognized, key)
+		}
+	}
+	slices.Sort(unrecognized)
+	return unrecognized
+}
+
 func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req openai.ChatCompletionRequest
-		err := c.ShouldBindJSON(&req)
+		data, err := readRequestBody(c)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
+
+		var req openai.ChatCompletionRequest
+		err = c.ShouldBindJSON(&req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		logUnrecognizedFields("chat/completions", req.Model, data, req)
 
 		if len(req.Messages) == 0 {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "[] is too short - 'messages'"))
