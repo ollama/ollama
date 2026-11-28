@@ -1071,6 +1071,31 @@ func TestRepairGemma4SingleQuotedValues(t *testing.T) {
 			input:    `{pattern:'abc}`,
 			expected: `{pattern:'abc}`,
 		},
+		{
+			name:     "converts_single_quoted_list_item",
+			input:    `{domain:['climate']}`,
+			expected: `{domain:[<|"|>climate<|"|>]}`,
+		},
+		{
+			name:     "converts_multiple_single_quoted_list_items",
+			input:    `{domain:['sensor', 'weather'],name:['Outdoor temperature']}`,
+			expected: `{domain:[<|"|>sensor<|"|>, <|"|>weather<|"|>],name:[<|"|>Outdoor temperature<|"|>]}`,
+		},
+		{
+			name:     "converts_single_quoted_items_in_mixed_list",
+			input:    `{tags:[<|"|>a<|"|>,'b']}`,
+			expected: `{tags:[<|"|>a<|"|>,<|"|>b<|"|>]}`,
+		},
+		{
+			name:     "converts_single_quoted_values_in_objects_inside_list",
+			input:    `{edits:[{old:'a',new:<|"|>b<|"|>},'c']}`,
+			expected: `{edits:[{old:<|"|>a<|"|>,new:<|"|>b<|"|>},<|"|>c<|"|>]}`,
+		},
+		{
+			name:     "preserves_apostrophe_inside_gemma_quoted_list_item",
+			input:    `{names:[<|"|>it's<|"|>,<|"|>ok<|"|>]}`,
+			expected: `{names:[<|"|>it's<|"|>,<|"|>ok<|"|>]}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1435,6 +1460,33 @@ func TestParseGemma4ToolCall_RepairsMultipleProperties(t *testing.T) {
 					Arguments: testArgs(map[string]any{
 						"path":    "/tmp",
 						"command": "ls",
+					}),
+				},
+			},
+		},
+		{
+			name:    "single_quoted_list_items",
+			content: `call:homeassistant__GetLiveContext{domain:['sensor'],name:['Weather Station Temperature']}`,
+			tools:   []api.Tool{gemma4TestStringTool("homeassistant__GetLiveContext", "domain", "name")},
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "homeassistant__GetLiveContext",
+					Arguments: testArgs(map[string]any{
+						"domain": []any{"sensor"},
+						"name":   []any{"Weather Station Temperature"},
+					}),
+				},
+			},
+		},
+		{
+			name:    "single_quoted_list_items_with_spaces",
+			content: `call:homeassistant__GetLiveContext{domain:['sensor', 'weather']}`,
+			tools:   []api.Tool{gemma4TestStringTool("homeassistant__GetLiveContext", "domain")},
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "homeassistant__GetLiveContext",
+					Arguments: testArgs(map[string]any{
+						"domain": []any{"sensor", "weather"},
 					}),
 				},
 			},
