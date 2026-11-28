@@ -23,6 +23,10 @@ func (t *Tokenizer) normalize(s string) string {
 	if t.normalizeNFC {
 		s = norm.NFC.String(s)
 	}
+	// Hugging Face's Prepend normalizer leaves empty input unchanged.
+	if t.normalizePrepend != "" && s != "" {
+		s = t.normalizePrepend + s
+	}
 	if t.normalizeSpaces {
 		s = strings.ReplaceAll(s, " ", "▁")
 	}
