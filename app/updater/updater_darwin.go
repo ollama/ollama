@@ -13,7 +13,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -135,18 +134,8 @@ func DoUpgrade(interactive bool) error {
 			// We don't want to prompt for permission if we're attempting to upgrade at startup
 			return fmt.Errorf("unable to upgrade in non-interactive mode with permission problems: %w", err)
 		}
-		// TODO actually inspect the error and look for permission problems before trying chown
-		slog.Warn("unable to backup old version due to permission problems, changing ownership", "error", err)
-		u, err := user.Current()
-		if err != nil {
-			return err
-		}
-		if !chownWithAuthorization(u.Username) {
-			return fmt.Errorf("unable to change permissions to complete upgrade")
-		}
-		if err := os.Rename(BundlePath, appBackup); err != nil {
-			return fmt.Errorf("unable to perform upgrade - failed to stage old version: %w", err)
-		}
+		slog.Warn("unable to backup old version due to permission problems, using privileged update", "error", err)
+		return upgradeWithAuthorization(r)
 	}
 
 	// Get ready to try to unwind a partial upgrade failure during unzip
@@ -166,6 +155,68 @@ func DoUpgrade(interactive bool) error {
 		}
 	}()
 
+	if err := extractBundle(r, BundlePath); err != nil {
+		anyFailures = true
+		return err
+	}
+
+	finishUpgrade()
+	return nil
+}
+
+// upgradeWithAuthorization updates a bundle the current user can't modify. The
+// update is extracted as the current user, then a single privileged step swaps
+// it into place and preserves the original owner, so the bundle is never
+// handed over to the logged-in user.
+func upgradeWithAuthorization(r *zip.ReadCloser) error {
+	stageRoot := filepath.Join(appBackupDir, "staged")
+	if err := os.RemoveAll(stageRoot); err != nil {
+		return fmt.Errorf("unable to clean staging dir %s: %w", stageRoot, err)
+	}
+	defer os.RemoveAll(stageRoot)
+	newApp := filepath.Join(stageRoot, "Ollama.app")
+	if err := extractBundle(r, newApp); err != nil {
+		return err
+	}
+
+	fi, err := os.Stat(BundlePath)
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("unable to determine owner of %s", BundlePath)
+	}
+	owner := fmt.Sprintf("%d:%d", st.Uid, st.Gid)
+
+	if !swapBundle(BundlePath, newApp, owner) {
+		return fmt.Errorf("unable to get permission to complete upgrade")
+	}
+	// The exit status of the privileged step isn't available, so verify.
+	if _, err := os.Stat(newApp); err == nil {
+		return fmt.Errorf("unable to perform upgrade - privileged update did not complete")
+	}
+	if _, err := os.Stat(filepath.Join(BundlePath, "Contents")); err != nil {
+		return fmt.Errorf("unable to perform upgrade - bundle missing after update: %w", err)
+	}
+
+	finishUpgrade()
+	return nil
+}
+
+func finishUpgrade() {
+	f, err := os.OpenFile(UpgradeMarkerFile, os.O_RDONLY|os.O_CREATE, 0o666)
+	if err != nil {
+		slog.Warn("unable to create marker file", "file", UpgradeMarkerFile, "error", err)
+	} else {
+		f.Close()
+	}
+	// Make sure to remove the staged download now that we succeeded so we don't inadvertently try again.
+	cleanupOldDownloads(UpdateStageDir)
+}
+
+// extractBundle extracts the Ollama.app/ contents of the archive into root.
+func extractBundle(r *zip.ReadCloser, root string) error {
 	// Bundle contents Ollama.app/Contents/...
 	links := []*zip.File{}
 	for _, f := range r.File {
@@ -176,14 +227,12 @@ func DoUpgrade(interactive bool) error {
 		}
 		name := s[1]
 		if strings.HasSuffix(name, "/") {
-			d, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
+			d, err := bundleEntryPath(root, name, bundleEntryRelative)
 			if err != nil {
-				anyFailures = true
 				return err
 			}
 			err = os.MkdirAll(d, 0o755)
 			if err != nil {
-				anyFailures = true
 				return fmt.Errorf("failed to mkdir %s: %w", d, err)
 			}
 			continue
@@ -194,13 +243,11 @@ func DoUpgrade(interactive bool) error {
 			continue
 		}
 
-		destName, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
+		destName, err := bundleEntryPath(root, name, bundleEntryRelative)
 		if err != nil {
-			anyFailures = true
 			return err
 		}
 		if err := extractBundleFile(f, destName, name); err != nil {
-			anyFailures = true
 			return err
 		}
 	}
@@ -213,45 +260,30 @@ func DoUpgrade(interactive bool) error {
 		name := s[1]
 		src, err := f.Open()
 		if err != nil {
-			anyFailures = true
 			return err
 		}
 		buf, err := io.ReadAll(src)
 		if err != nil {
-			anyFailures = true
 			return err
 		}
 		link := string(buf)
 		if link == "" {
-			anyFailures = true
 			return fmt.Errorf("bundle contains empty symlink %s", f.Name)
 		}
 		if filepath.IsAbs(link) {
-			anyFailures = true
 			return fmt.Errorf("bundle contains absolute symlink %s -> %s", f.Name, link)
 		}
 		if !validBundleLinkTarget(name, link, bundleEntryRelative) {
-			anyFailures = true
 			return fmt.Errorf("bundle contains invalid symlink %s -> %s", f.Name, link)
 		}
-		destName, err := bundleEntryPath(BundlePath, name, bundleEntryRelative)
+		destName, err := bundleEntryPath(root, name, bundleEntryRelative)
 		if err != nil {
-			anyFailures = true
 			return err
 		}
 		if err = os.Symlink(link, destName); err != nil {
-			anyFailures = true
 			return err
 		}
 	}
-
-	f, err := os.OpenFile(UpgradeMarkerFile, os.O_RDONLY|os.O_CREATE, 0o666)
-	if err != nil {
-		slog.Warn("unable to create marker file", "file", UpgradeMarkerFile, "error", err)
-	}
-	f.Close()
-	// Make sure to remove the staged download now that we succeeded so we don't inadvertently try again.
-	cleanupOldDownloads(UpdateStageDir)
 
 	return nil
 }
@@ -431,10 +463,35 @@ func IsUpdatePending() bool {
 	return getStagedUpdate() != ""
 }
 
-func chownWithAuthorization(user string) bool {
-	u := C.CString(user)
-	defer C.free(unsafe.Pointer(u))
-	return bool(C.chownWithAuthorization(u))
+// swapBundleScript atomically replaces the app bundle ($1) with a staged
+// bundle ($2) and gives it the owner ($3, uid:gid) of the bundle it replaces.
+// The old bundle is restored if the swap fails part way.
+const swapBundleScript = `set -e
+app="$1"; new="$2"; owner="$3"
+old="$app.old.$$"
+chown -R "$owner" "$new"
+mv "$app" "$old"
+if ! mv "$new" "$app"; then
+	mv "$old" "$app"
+	exit 1
+fi
+rm -rf "$old"
+`
+
+// swapBundle replaces app with newApp. It is a variable so tests can run it
+// without prompting for administrator credentials.
+var swapBundle = swapBundleWithAuthorization
+
+func swapBundleWithAuthorization(app, newApp, owner string) bool {
+	script := C.CString(swapBundleScript)
+	defer C.free(unsafe.Pointer(script))
+	a := C.CString(app)
+	defer C.free(unsafe.Pointer(a))
+	n := C.CString(newApp)
+	defer C.free(unsafe.Pointer(n))
+	o := C.CString(owner)
+	defer C.free(unsafe.Pointer(o))
+	return bool(C.runScriptWithAuthorization(script, a, n, o))
 }
 
 func verifyExtractedBundle(path string) error {
