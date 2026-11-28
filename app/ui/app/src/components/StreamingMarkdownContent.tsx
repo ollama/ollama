@@ -161,6 +161,8 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           prose-pre:my-0
           prose-pre:max-w-full
           prose-pre:pt-1
+          [&_ul]:list-inside
+          [&_ol]:list-inside
           [&_table]:border-collapse
           [&_table]:w-full
           [&_table]:border
@@ -207,6 +209,9 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           dark:prose-ul:marker:text-neutral-300
           dark:prose-li:marker:text-neutral-300
           break-words
+          border-1
+          border-solid
+          border-transparent
         `}
       >
         <StreamingMarkdownErrorBoundary
