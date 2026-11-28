@@ -85,29 +85,31 @@ type Qwen3CoderRenderer struct{}
 func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
-	// filter out system messages and choose the first (if any) to win
-	var systemMessage string
-	var filteredMessages []api.Message
-	for _, message := range messages {
-		if message.Role != "system" {
-			filteredMessages = append(filteredMessages, message)
+	// Use the first system message as the header and keep later turns in order.
+	var systemMessage *api.Message
+	filteredMessages := make([]api.Message, 0, len(messages))
+	for i, message := range messages {
+		if message.Role == "system" && systemMessage == nil {
+			systemMessage = &messages[i]
 			continue
 		}
-
-		if systemMessage == "" {
-			systemMessage = message.Content
-		}
+		filteredMessages = append(filteredMessages, message)
 	}
 
-	if systemMessage != "" || len(tools) > 0 {
+	var systemContent string
+	if systemMessage != nil {
+		systemContent = systemMessage.Content
+	}
+
+	if systemContent != "" || len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
 
 		// if we have tools but no system message, match the reference implementation by providing a default system message
-		if systemMessage == "" {
-			systemMessage = "You are Qwen, a helpful AI assistant that can interact with a computer to solve tasks."
+		if systemContent == "" {
+			systemContent = "You are Qwen, a helpful AI assistant that can interact with a computer to solve tasks."
 		}
 
-		sb.WriteString(systemMessage)
+		sb.WriteString(systemContent)
 
 		if len(tools) > 0 {
 			sb.WriteString("\n\n# Tools\n\nYou have access to the following functions:\n\n")
