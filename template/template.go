@@ -610,7 +610,8 @@ func deleteNode(n parse.Node, fn func(parse.Node) bool) parse.Node {
 		case *parse.BranchNode:
 			t.List = walk(t.List).(*parse.ListNode)
 			if t.ElseList != nil {
-				t.ElseList = walk(t.ElseList).(*parse.ListNode)
+				// The walk can cut the entire else branch after finding a response.
+				t.ElseList, _ = walk(t.ElseList).(*parse.ListNode)
 			}
 		case *parse.ActionNode:
 			n := walk(t.Pipe)
