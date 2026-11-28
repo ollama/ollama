@@ -15,10 +15,12 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"unsafe"
 
+	"github.com/ollama/ollama/app/version"
 	"golang.org/x/sys/unix"
 )
 
@@ -412,7 +414,52 @@ func DoUpgradeAtStartup() error {
 	return DoUpgrade(false)
 }
 
+var shortVersionRE = regexp.MustCompile(`<key>CFBundleShortVersionString</key>\s*<string>([^<]*)</string>`)
+
+// stagedBundleVersion returns the CFBundleShortVersionString of the app inside
+// the update archive, or "" if it can't be determined.
+func stagedBundleVersion(zipPath string) string {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return ""
+	}
+	defer r.Close()
+	for _, f := range r.File {
+		if f.Name != updateArchiveRoot+"/Contents/Info.plist" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return ""
+		}
+		defer rc.Close()
+		data, err := io.ReadAll(io.LimitReader(rc, 1<<20))
+		if err != nil {
+			return ""
+		}
+		if m := shortVersionRE.FindSubmatch(data); m != nil {
+			return strings.TrimSpace(string(m[1]))
+		}
+		return ""
+	}
+	return ""
+}
+
 func getStagedUpdate() string {
+	bundle := lookupStagedUpdate()
+	if bundle == "" {
+		return ""
+	}
+	// Ignore (and remove) a staged update that matches what is already running
+	if v := stagedBundleVersion(bundle); v != "" && v == strings.TrimPrefix(version.Version, "v") {
+		slog.Info("discarding staged update matching the running version", "version", v)
+		cleanupOldDownloads(UpdateStageDir)
+		return ""
+	}
+	return bundle
+}
+
+func lookupStagedUpdate() string {
 	files, err := filepath.Glob(filepath.Join(UpdateStageDir, "*", "*.zip"))
 	if err != nil {
 		slog.Debug("failed to lookup downloads", "error", err)
