@@ -83,6 +83,43 @@ func TestConnectableHost(t *testing.T) {
 	}
 }
 
+func TestHosts(t *testing.T) {
+	cases := map[string]struct {
+		value  string
+		expect []string
+	}{
+		"empty":            {"", []string{"http://127.0.0.1:11434"}},
+		"single":           {"192.168.1.5:8080", []string{"http://192.168.1.5:8080"}},
+		"multiple":         {"127.0.0.1,172.28.48.1", []string{"http://127.0.0.1:11434", "http://172.28.48.1:11434"}},
+		"multiple + ports": {"127.0.0.1:11434,172.28.48.1:11435", []string{"http://127.0.0.1:11434", "http://172.28.48.1:11435"}},
+		"with spaces":      {" 127.0.0.1 , 172.28.48.1:9999 ", []string{"http://127.0.0.1:11434", "http://172.28.48.1:9999"}},
+		"trailing comma":   {"127.0.0.1,", []string{"http://127.0.0.1:11434"}},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_HOST", tt.value)
+			hosts := Hosts()
+			if len(hosts) != len(tt.expect) {
+				t.Fatalf("%s: expected %d hosts, got %d", name, len(tt.expect), len(hosts))
+			}
+			for i, h := range hosts {
+				if h.String() != tt.expect[i] {
+					t.Errorf("%s[%d]: expected %s, got %s", name, i, tt.expect[i], h.String())
+				}
+			}
+		})
+	}
+}
+
+func TestHostMultipleReturnsFirst(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "192.168.1.5:8080,172.28.48.1:9999")
+	host := Host()
+	if host.String() != "http://192.168.1.5:8080" {
+		t.Errorf("expected first host, got %s", host.String())
+	}
+}
+
 func TestOrigins(t *testing.T) {
 	cases := []struct {
 		value  string
