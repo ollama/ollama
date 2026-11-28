@@ -282,6 +282,7 @@ console.log(response.message.content);
 - [Archyve](https://github.com/nickthecook/archyve) - RAG-enabling document library
 - [Casibase](https://casibase.org) - AI knowledge base with RAG and SSO
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) - Native client with RAG and multi-agent automation
+- [Loom](https://github.com/ClickHouse/loom) - Self-hosted memory and document search for AI agents, with [Ollama for local model inference](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
 
 ### Bots & Messaging
 
