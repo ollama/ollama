@@ -294,9 +294,9 @@ func (r *Runner) runBatchRequests(ctx context.Context) error {
 				}
 			})
 			if measure {
-				// Reserve transient workspace and growth of live cache buffers.
-				// Prefill buffers can be larger than their decode-time state.
-				s.snapshotWorkspace = max(s.snapshotWorkspace, int64(peak-before))
+				// Reserve transient workspace above persistent live cache growth,
+				// which is already accounted for in ActiveMemory and liveBytes.
+				s.updateSnapshotWorkspace(before, peak, mlx.ActiveMemory())
 			}
 			// Release unused allocator buffers after the round's temporaries
 			// are freed, once all responses have drained.
