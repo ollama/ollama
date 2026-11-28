@@ -417,7 +417,9 @@ export class Settings {
     LastHomeView: string;
     OnboardingVersion: number;
     AutoUpdateEnabled: boolean;
+    AlwaysOnTop: boolean;
     ClaudeDesktopUsed: boolean;
+    CodexDesktopUsed: boolean;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -438,7 +440,9 @@ export class Settings {
         this.LastHomeView = source["LastHomeView"];
         this.OnboardingVersion = source["OnboardingVersion"];
         this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
+        this.AlwaysOnTop = source["AlwaysOnTop"];
         this.ClaudeDesktopUsed = source["ClaudeDesktopUsed"];
+        this.CodexDesktopUsed = source["CodexDesktopUsed"];
     }
 }
 export class SettingsResponse {
