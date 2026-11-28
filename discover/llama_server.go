@@ -281,9 +281,11 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 		// Skip pseudo-devices like BLAS/Accelerate that report zero memory.
 		// These are CPU math libraries, not real GPUs — they shouldn't appear
 		// as inference compute devices or inflate the scheduler's GPU count.
+		// They also do not take a slot in the GPU backend's own numbering:
+		// counting them here would shift the IDs later exported through
+		// GGML_VK_VISIBLE_DEVICES and friends past the backend's real devices.
 		if totalMiB == 0 {
 			slog.Debug("skipping pseudo-device with zero memory", "name", name, "description", description)
-			deviceIndex++
 			continue
 		}
 
