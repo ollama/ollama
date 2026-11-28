@@ -29,6 +29,7 @@ func TestMain(m *testing.M) {
 	previousAccessResolver := claudeAccessStateResolver
 	previousLocalResolver := claudeLocalModelsResolver
 	previousCloudResolver := claudeCloudModelsResolver
+	previousChatResolver := claudeLocalChatModelsResolver
 	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
 		return proxy.DefaultClaudeDesktopModels(), "fallback"
 	}
@@ -40,12 +41,14 @@ func TestMain(m *testing.M) {
 		}, nil
 	}
 	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeLocalChatModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
 	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) { return nil, nil }
 	code := m.Run()
 	claudeModelsLoader = previousLoader
 	claudeAccessStateResolver = previousAccessResolver
 	claudeLocalModelsResolver = previousLocalResolver
 	claudeCloudModelsResolver = previousCloudResolver
+	claudeLocalChatModelsResolver = previousChatResolver
 	os.Exit(code)
 }
 
